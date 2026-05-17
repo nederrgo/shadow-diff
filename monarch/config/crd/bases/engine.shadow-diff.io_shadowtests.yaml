@@ -1,0 +1,110 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: shadowtests.engine.shadow-diff.io
+spec:
+  group: engine.shadow-diff.io
+  names:
+    kind: ShadowTest
+    listKind: ShadowTestList
+    plural: shadowtests
+    shortNames:
+    - st
+    singular: shadowtest
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ShadowTest is the Schema for the shadowtests API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of ShadowTest
+            properties:
+              applicationPort:
+                description: |-
+                  ApplicationPort is the TCP port the app container listens on (Envoy forwards here).
+                  Must differ from ServicePort when Envoy fronts ingress. Defaults to servicePort+1 if unset.
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
+              beruGRPCAddress:
+                description: BeruGRPCAddress is the host:port of the Beru ext_proc
+                  gRPC service.
+                type: string
+              beruGRPCTimeout:
+                description: BeruGRPCTimeout is the ext_proc gRPC timeout (e.g. "2s").
+                type: string
+              newImage:
+                description: NewImage is the container image for the Candidate pod.
+                type: string
+              oldImage:
+                description: OldImage is the container image for Control-A and Control-B
+                  pods.
+                type: string
+              servicePort:
+                description: ServicePort is the TCP port the Envoy ingress listener
+                  binds on in shadow pods.
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
+              targetDeployment:
+                description: |-
+                  TargetDeployment is the name of the production Deployment whose pod template
+                  (inline env vars from the first container) is mirrored for shadow pods.
+                type: string
+              targetNamespace:
+                description: TargetNamespace is the namespace containing TargetDeployment.
+                type: string
+            required:
+            - newImage
+            - oldImage
+            - servicePort
+            - targetDeployment
+            - targetNamespace
+            type: object
+          status:
+            description: status defines the observed state of ShadowTest
+            properties:
+              message:
+                description: Message carries human-readable detail, including MVP
+                  limitations (skipped envFrom, etc.).
+                type: string
+              phase:
+                description: Phase is a high-level summary of reconciliation (e.g.
+                  Ready, Progressing, Failed).
+                type: string
+              shadowNamespace:
+                description: ShadowNamespace is the dedicated namespace where control/candidate
+                  Deployments run.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,49 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/*
+monarch/bin/*
+beru/bin/*
+Dockerfile.cross
+
+# Test binary, built with `go test -c`
+*.test
+
+# Coverage (make test / make test-all)
+*.out
+cover.out
+**/cover.out
+*.coverprofile
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Env / secrets (never commit credentials)
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kubernetes Generated files - skip generated files, except for vendored files
+!vendor/**/zz_generated.*
+
+# Editor and IDE
+.idea
+.vscode
+.cursor/
+*.swp
+*.swo
+*~
+
+# Local kubeconfig may contain secrets
+*.kubeconfig
+
+# Ephemeral test pods / debug (optional local files)
+*.log

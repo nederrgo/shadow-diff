@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- engine_v1alpha1_shadowtest.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
