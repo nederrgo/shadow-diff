@@ -1,142 +1,140 @@
-Here is a comprehensive Markdown document outlining the future architecture of the project. You can save this as `ARCHITECTURE_V2.md` or `FUTURE_ARCHITECTURE.md` in your repository. 
+This is the **Monarch V2 Core Architecture** document. It synthesizes our brainstorming into a single source of truth for the project, covering implementation, data flow, and the "Air-Gapped" security model.
 
 ***
 
-# Monarch — Future Architecture & Vision
+# Monarch V2: Core Architecture & Implementation Plan
 
-This document describes the target architecture for the **Monarch** shadow testing ecosystem. 
+Monarch is an open-source, cloud-native shadow testing engine designed for **all things TCP**. It uses eBPF for transparent traffic mirroring and a modular plugin system to analyze any protocol—from HTTP/gRPC to SQL and Message Queues—without modifying application code.
 
-Moving beyond basic Kubernetes workload provisioning, Monarch is evolving into a **modular, cloud-native traffic analysis platform**. It aims to securely mirror, replay, and diff traffic for any protocol (HTTP, gRPC, Redis, PostgreSQL, etc.) by decoupling Kubernetes orchestration, high-performance packet capture, traffic routing, and noise-canceling diff logic.
+## 1. Design Principles
+1. **Zero Intrusion:** No sidecars, no code changes, no service mesh required.
+2. **Protocol Agnostic:** Move L7 intelligence into Go plugins; keep the core (eBPF/Operator) "dumb."
+3. **Side-Effect Free:** Physical isolation of shadow environments to prevent production data corruption.
+4. **Noise Cancellation:** The A/B/Candidate model to eliminate non-deterministic false positives.
 
 ---
 
-## High-Level System Context
-
-The ecosystem is divided into four primary components:
-1.  **Monarch:** The Control Plane (Kubernetes Operator).
-2.  **The Tapper:** The eBPF Data Plane (High-performance L4 mirroring).
-3.  **Igris:** The Traffic Router & Protocol Framer.
-4.  **Beru:** The Diffing & Analysis Engine.
+## 2. System Architecture
 
 ```mermaid
 flowchart TD
   subgraph Production [Production Namespace]
-    Tgt[Target Pod\nIP: 10.0.0.5]
+    Tgt[Target Pod]
   end
 
-  subgraph Node [Kubernetes Node Kernel]
+  subgraph Node [Node Kernel]
     eBPF[eBPF Tapper\nL3/L4 Filtering]
-    eBPF_Map[(eBPF IP/Port Map)]
+    Map[(eBPF IP/Port Map)]
   end
 
-  subgraph Shadow [Shadow Namespace]
-    Igris[Igris Router\nProtocol Framer]
-    Beru[Beru Analyzer\nNoise Canceler]
+  subgraph Shadow [Shadow Namespace - AIR GAPPED]
+    Gateway[Shadow Gateway Pod]
+    subgraph GatewayContainer [Go Process]
+      Igris[Igris: Router/Framer]
+      Beru[Beru: Differ/Analyzer]
+    end
     
     A[Control A]
     B[Control B]
     C[Candidate]
   end
 
-  subgraph ControlPlane [Control Plane]
-    Monarch[Monarch Operator]
-  end
-
-  %% Control Plane Flow
-  Monarch -.->|Watches Target Pod IPs\nUpdates Map| eBPF_Map
-  Monarch -.->|Provisions & Mounts Configs| Shadow
-  
-  %% Data Plane Flow
-  UserClient -->|Real Traffic| Tgt
-  Tgt -.->|tc/kprobe| eBPF
-  eBPF_Map -.->|Filter Check| eBPF
-  
-  eBPF == RingBuffer ==> Igris
-  Igris == Frames Request ==> A & B & C
-  A & B & C == Responses ==> Beru
-  Igris -.->|Passes Expected Protocol| Beru
+  Monarch[Monarch Operator] -->|1. Provision| Shadow
+  Monarch -->|2. Update Map| Map
+  Tgt -.->|3. Capture| eBPF
+  eBPF == 4. TCP Stream ==> Igris
+  Igris == 5. Multiplex & Scrub ==> A & B & C
+  A & B & C == 6. Response ==> Igris
+  Igris == 7. Handoff ==> Beru
 ```
 
 ---
 
-## Component Deep Dive
+## 3. Component Breakdown
 
-### 1. Monarch (The Orchestrator)
-Monarch remains the Kubernetes Operator (`controller-runtime`), but its responsibilities are strictly focused on **infrastructure, configuration, and security**.
+### A. Monarch (The Orchestrator)
+*   **Role:** K8s Operator.
+*   **Logic:** Manages the lifecycle of the `ShadowTest` CRD. 
+*   **Security:** Automatically provisions the shadow namespace and injects **Deny-All Egress** NetworkPolicies. It clones Secrets/ConfigMaps so shadow pods boot correctly but are network-isolated.
 
-*   **State Synchronization:** Deep-copies the Target Deployment's configurations (including ConfigMaps and Secrets) to ensure shadow pods can boot.
-*   **eBPF Management:** Watches the K8s API for target Pod IP changes (scale up/down, rollouts) and continuously updates the shared **eBPF Maps** so the Tapper knows which traffic to mirror.
-*   **Security Enforcement:** Injects strict `NetworkPolicies` into the shadow namespace. Egress is blackholed (except to `Igris`/`Beru`) to guarantee shadow deployments cannot mutate production databases or external APIs.
+### B. The Tapper (eBPF Data Plane)
+*   **Role:** High-performance packet mirroring.
+*   **Logic:** A C program attached to the node's network interface. It checks a BPF Map for target IPs/Ports. If a match is found, it clones the packet and sends it to user-space via a RingBuffer.
 
-### 2. The Tapper (eBPF Data Plane)
-To support "all things TCP" without crushing node CPU, traffic mirroring is handled in the Linux kernel via eBPF.
+### C. Igris (The Router & Replayer)
+*   **Role:** TCP Framing and Egress Virtualization.
+*   **Logic:** 
+    *   Uses **Plugins** to identify request boundaries in a raw TCP stream.
+    *   **Multiplexing:** Opens 3 connections to A, B, and C.
+    *   **Scrubbing:** Removes PII/Sensitive headers (Authorization, Cookies) before sending traffic to Beru.
+    *   **Virtualization (Roadmap):** Acts as a mock for outbound database/API calls.
 
-*   **Zero L7 Logic:** The Tapper is completely protocol-agnostic. It does not parse HTTP or read headers.
-*   **L4 Filtering:** It intercepts raw network packets and checks the Destination IP and Port against the eBPF Map provided by Monarch. If there is a match, it clones the raw TCP stream and pushes it to a user-space RingBuffer.
-
-### 3. Igris (The Router & Framer)
-Igris bridges the raw TCP stream to the application layer. It receives the raw byte stream from the eBPF Tapper.
-
-*   **Protocol Framing:** Raw TCP cannot be blindly copied to 3 destinations. Igris uses the **Plugin Architecture** to know where a request starts and ends (e.g., finding `\r\n\r\n` for HTTP, or parsing RESP arrays for Redis).
-*   **L7 Filtering:** Drops requests that the user explicitly wants to ignore (e.g., dropping `/healthz` endpoints, or dropping all `POST` requests to prevent state mutation in the shadow env).
-*   **Replay:** Opens isolated TCP connections to Control A, Control B, and Candidate, multiplexing the framed request to all three simultaneously.
-
-### 4. Beru (The Differ & Analyzer)
-Beru is the intelligence layer. It receives the responses from A, B, and the Candidate via Igris.
-
-*   **Noise Cancellation (Normalization):** Uses the Plugin Architecture to strip dynamic, non-deterministic data (e.g., `Date` headers, UUIDs, auto-incrementing DB IDs, timestamps).
-*   **A/B/C Diffing Algorithm:** Compares Control A to Control B to establish a baseline of "acceptable variance" (noise). It then compares Candidate to the baseline. If Candidate differs in a way A and B did not, it flags a **Regression**.
+### D. Beru (The Differ)
+*   **Role:** Noise-canceling comparison engine.
+*   **Logic:** Compares `Control A vs Control B` to find "dynamic noise" (timestamps, IDs). It then compares the `Candidate` against the controls, ignoring that noise to find real regressions.
 
 ---
 
-## The Modularity Strategy (Plugin Ecosystem)
+## 4. Security & Blast Radius Model
 
-To support new technologies without rewriting the core system, **Igris and Beru are completely modular.** They utilize a unified interface (via HashiCorp `go-plugin` or WASM).
+Monarch is designed with a **Zero-Trust** approach to shadow testing.
 
-When a user defines `spec.protocol: "redis"` in the `ShadowTest` CRD, Monarch loads the Redis Add-on into Igris and Beru.
+| Threat Scenario | Monarch Defense | Result |
+| :--- | :--- | :--- |
+| **Shadow Pod Compromise** | No ServiceAccount tokens + Deny-All Egress. | Attacker is trapped in a network-less sandbox. |
+| **Data Leakage (PII)** | Igris Scrubbing Plugin. | Sensitive data is masked before being logged or diffed. |
+| **Production Corruption** | NetworkPolicy + Igris Write-Blocking. | Shadow pods physically cannot reach production DBs. |
+| **Kernel Instability** | eBPF Verifier + Resource Limits. | Tapper cannot crash the node or consume infinite CPU. |
 
-### The `ProtocolPlugin` Interface
+---
 
-Anyone in the open-source community can write an add-on by implementing three distinct functions:
+## 5. Implementation Roadmap
+
+### Phase 1: Foundation (The Operator)
+*   Initialize `ShadowTest` CRD.
+*   Implement Namespace and Deployment replication logic.
+*   Implement "Air-Gap" NetworkPolicy injection.
+
+### Phase 2: The Pipe (eBPF)
+*   Write C-based eBPF probe for L4 mirroring.
+*   Build Go-based DaemonSet agent to read from RingBuffer.
+*   Establish secure transport from Node Agent to Igris Gateway.
+
+### Phase 3: The Brain (Igris & Beru)
+*   Define the `ProtocolPlugin` interface.
+*   Build the HTTP/1.1 MVP Plugin.
+*   Implement A/B/C multiplexing and the Beru diffing algorithm.
+
+### Phase 4: Advanced Behavioral Diffing
+*   **Egress Interception:** Handle "Reads" from DBs via Igris passthrough.
+*   **Async Support:** Support RabbitMQ/Kafka by diffing outbound "Publish" attempts.
+*   **Context Replay:** Record external API responses from production and replay them to shadow pods.
+
+---
+
+## 6. The Plugin Interface (Go)
+
+To add support for a new technology (e.g., PostgreSQL), a contributor only needs to implement this interface:
 
 ```go
 type ProtocolPlugin interface {
-    // 1. Framer (Used by Igris)
-    // Chunks the raw TCP stream from eBPF into individual, complete requests.
+    // Framing: Chunks raw TCP into requests
     ExtractMessage(rawStream []byte) (messages [][]byte, bytesConsumed int)
 
-    // 2. Normalizer (Used by Beru)
-    // Strips out timestamps, random IDs, or volatile headers before diffing.
-    Normalize(response []byte) (normalizedResponse []byte)
+    // Security: Strips PII/Credentials
+    Scrub(payload []byte) (safePayload []byte)
 
-    // 3. Differ (Used by Beru)
-    // Compares normalized payloads (e.g., JSON structure, SQL rows).
-    Diff(controlA []byte, controlB []byte, candidate []byte) DiffResult
+    // Analysis: Normalizes noise (timestamps/IDs) and diffs
+    Normalize(response []byte) (normalizedResponse []byte)
+    Diff(controlA, controlB, candidate []byte) DiffResult
 }
 ```
 
-### Supported Technologies (Roadmap)
-*   **MVP:** HTTP/1.1 (REST/JSON)
-*   **Phase 2:** gRPC / HTTP2
-*   **Phase 3 (Community Add-ons):** Redis, PostgreSQL, Kafka, raw TCP wrappers.
-
 ---
 
-## Data Flow: Lifecycle of a Request
-
-1.  **Map Update:** Monarch detects target Pod `10.0.0.5:8080` and writes it to the eBPF Map.
-2.  **Capture:** A client sends an HTTP `GET /users` request to the target pod. The eBPF Tapper sees `10.0.0.5:8080`, clones the packets, and sends them to the RingBuffer.
-3.  **Framing:** Igris pulls the bytes, uses the HTTP plugin's `ExtractMessage` function to reconstruct the full HTTP request, and determines it is safe to replay.
-4.  **Routing:** Igris sends the cloned request to Control A, Control B, and Candidate.
-5.  **Response:** The three pods process the request and return HTTP responses.
-6.  **Normalization:** Beru receives the responses, uses the HTTP plugin to strip out the `Date: ...` and `X-Request-Id: ...` headers.
-7.  **Analysis:** Beru compares the bodies. If A and B match, but Candidate returns a 500 or missing JSON field, Beru logs a diff failure and exposes the metric to Prometheus.
-
----
-
-## Security & State Safety
-
-Shadow testing carries the inherent risk of mutating production state (e.g., sending duplicate purchase requests or writing to a production database). This architecture mitigates this via a **defense-in-depth** approach:
-
-1.  **L7 Dropping (Igris):** Add-ons can be configured to drop mutating requests entirely (e.g., drop `POST/PUT/DELETE` or drop SQL `INSERT/UPDATE`).
-2.  **Egress Blackholing (Monarch):** Monarch strictly enforces a Kubernetes `NetworkPolicy` in the shadow namespace. Even if a mutating request gets through Igris, the shadow pods literally cannot route traffic to external databases or APIs. They will safely fail or timeout, preventing catastrophic production corruption.
+## 7. Operational Flow Summary
+1.  **User** applies a `ShadowTest` CRD.
+2.  **Monarch** creates an air-gapped namespace, clones the target service (A, B, and Candidate), and updates the **eBPF Map**.
+3.  **eBPF** mirrors traffic from the production pod to **Igris**.
+4.  **Igris** frames the TCP stream, scrubs sensitive data, and replays it to the three shadow pods.
+5.  **Beru** analyzes the responses, establishment a noise baseline, and alerts on regressions.
