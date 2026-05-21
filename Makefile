@@ -1,6 +1,10 @@
 # Shadow-Diff monorepo: delegate Monarch (operator) targets to monarch/, Beru to beru/.
 MONARCH_DIR := monarch
 BERU_DIR := beru
+IGRIS_DIR := igris
+SIPHON_DIR := siphon
+SIPHON_IMG ?= siphon:latest
+IGRIS_IMG ?= igris:latest
 BERU_IMG ?= beru:latest
 IMG ?= controller:latest
 
@@ -13,13 +17,34 @@ MONARCH_TARGETS := all help manifests generate fmt vet test setup-test-e2e test-
 $(MONARCH_TARGETS):
 	@$(MAKE) -C $(MONARCH_DIR) $(MAKECMDGOALS) IMG=$(IMG) BERU_IMG=$(BERU_IMG)
 
-.PHONY: beru-test beru-build
+.PHONY: beru-test beru-build igris-test igris-build igris-docker-build \
+	siphon-test siphon-build siphon-docker-build
 beru-test: ## Run Beru unit tests.
 	@$(MAKE) -C $(BERU_DIR) test
 
 beru-build: ## Build Beru binary.
 	@$(MAKE) -C $(BERU_DIR) build
 
-test-all: ## Run Monarch and Beru tests.
+igris-test: ## Run Igris unit tests.
+	@$(MAKE) -C $(IGRIS_DIR) test
+
+igris-build: ## Build Igris binary.
+	@$(MAKE) -C $(IGRIS_DIR) build
+
+igris-docker-build: ## Build Igris container image.
+	@$(MAKE) -C $(IGRIS_DIR) docker-build IGRIS_IMG=$(IGRIS_IMG)
+
+siphon-test: ## Run Siphon unit tests.
+	@$(MAKE) -C $(SIPHON_DIR) test
+
+siphon-build: ## Build Siphon agent binary.
+	@$(MAKE) -C $(SIPHON_DIR) build
+
+siphon-docker-build: ## Build Siphon container image.
+	@$(MAKE) -C $(SIPHON_DIR) docker-build SIPHON_IMG=$(SIPHON_IMG)
+
+test-all: ## Run Monarch, Beru, Igris, and Siphon tests.
 	@$(MAKE) -C $(MONARCH_DIR) test
 	@$(MAKE) -C $(BERU_DIR) test
+	@$(MAKE) -C $(IGRIS_DIR) test
+	@$(MAKE) -C $(SIPHON_DIR) test

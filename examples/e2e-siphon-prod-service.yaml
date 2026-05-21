@@ -1,0 +1,13 @@
+# Production Service for ShadowTest targetDeployment my-prod-app (port 80).
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-prod-app
+  namespace: default
+spec:
+  selector:
+    app: my-prod-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

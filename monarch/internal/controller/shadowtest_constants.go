@@ -28,6 +28,20 @@ const (
 	defaultBeruGRPCAddress = "beru.beru-system.svc.cluster.local:50051"
 	defaultBeruGRPCTimeout = "2s"
 	envBeruGRPCAddress     = "BERU_GRPC_ADDRESS"
+
+	containerIgris               = "igris"
+	defaultIgrisImage            = "igris:latest"
+	configMapKeyListenersJSON    = "listeners.json"
+	volumeNameIgrisConfig        = "igris-config"
+	envControlAURL               = "CONTROL_A_URL"
+	envControlBURL               = "CONTROL_B_URL"
+	envCandidateURL              = "CANDIDATE_URL"
+	envControlAAddr              = "CONTROL_A_ADDR"
+	envControlBAddr              = "CONTROL_B_ADDR"
+	envCandidateAddr             = "CANDIDATE_ADDR"
+	envIgrisListenersFile        = "IGRIS_LISTENERS_FILE"
+	defaultIgrisListenersPath    = "/etc/igris/listeners.json"
+	igrisTerminationGraceSeconds = int64(35)
 )
 
 var envoyImagePullPolicy = corev1.PullIfNotPresent

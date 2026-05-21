@@ -1,0 +1,43 @@
+# ShadowTest tuned for Kind E2E: prod (port 80) -> Siphon -> Igris:80 -> Envoy:8888 -> echo:8080 -> Beru
+#
+# Apply:
+#   kubectl apply -f examples/e2e-shadowtest.yaml
+#   kubectl apply -f examples/e2e-prod-app.yaml   # optional: align prod with echo on :80
+#
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: my-app-shadow
+  namespace: default
+spec:
+  targetDeployment: my-prod-app
+  targetNamespace: default
+
+  # Shadow pods (control-a, control-b, candidate)
+  oldImage: mendhak/http-https-echo:latest
+  newImage: mendhak/http-https-echo:latest
+
+  # Envoy ingress on shadow pods; Igris multicasts to control-* at this port
+  servicePort: 8888
+  # http-https-echo listens here (Envoy forwards 8888 -> 8080)
+  applicationPort: 8080
+
+  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
+
+  # Igris listen ports:
+  #   80  — Siphon replays captured prod traffic (prod pod dst port 80)
+  #   8888 — optional manual tests: curl igris:8888/get
+  inputs:
+    - port: 80
+      driver: http_request
+    - port: 8888
+      driver: http_request
+
+  igris:
+    image: igris:dev
+    replicas: 1
+
+  siphon:
+    enabled: true
+    image: siphon:dev
+    sampleRate: 100

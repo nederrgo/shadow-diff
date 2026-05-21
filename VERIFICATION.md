@@ -1,6 +1,6 @@
-# Verification guide — Monarch & Beru on Kubernetes
+# Verification guide — Monarch, Beru & Igris
 
-Step-by-step commands to confirm Monarch (shadow Deployments + Envoy sidecars) and Beru (gRPC `ReportTraffic`) work on Ubuntu with a reachable cluster.
+Step-by-step commands to confirm Monarch (shadow Deployments + Envoy sidecars), Beru (gRPC `ReportTraffic` / ext_proc), and Igris (HTTP multicaster) work on Ubuntu with a reachable cluster or locally.
 
 For operator install details, see [monarch/DEPLOYMENT.md](monarch/DEPLOYMENT.md).
 
@@ -28,6 +28,7 @@ Set paths for the rest of the session:
 export REPO=/home/projects/monarch   # adjust to your clone path
 export MONARCH_IMG=monarch:dev
 export BERU_IMG=beru:dev
+export IGRIS_IMG=igris:dev
 cd "$REPO"
 ```
 
@@ -240,13 +241,196 @@ grpcurl -plaintext -d '{"pod_role":"control-b","trace_id":"trace-b"}' \
 
 ```bash
 cd "$REPO"
-make test
-make test-all
+make test              # Monarch unit tests (forwarded to monarch/)
+make igris-test        # Igris unit tests
+make test-all          # Monarch + Beru + Igris
 ```
 
 ---
 
-## 8. Cleanup (optional)
+## 8. Phase 3a — Igris modular traffic engine
+
+Igris uses a **core engine** plus **HTTP add-on** (MVP). It returns **202 Accepted** immediately, clones requests to three shadow targets, injects **`x-shadow-trace-id`** on all outbound calls, and logs `multicast complete` for Beru correlation.
+
+**Monarch always deploys Igris** in the shadow namespace. Optional `spec.inputs` defines listener ports (default: `servicePort` → `http`). `ShadowTest` stays **`Progressing`** until Igris `AvailableReplicas > 0`.
+
+### Build and unit tests
+
+```bash
+cd "$REPO"
+make -C igris test
+make -C igris build    # binary: igris/bin/igris
+make igris-docker-build IGRIS_IMG=$IGRIS_IMG
+```
+
+### Local smoke test (three mock backends)
+
+Terminal 1–3 — simple HTTP servers:
+
+```bash
+python3 -m http.server 9001 &
+python3 -m http.server 9002 &
+python3 -m http.server 9003 &
+```
+
+Terminal 4 — Igris:
+
+```bash
+export CONTROL_A_URL=http://127.0.0.1:9001
+export CONTROL_B_URL=http://127.0.0.1:9002
+export CANDIDATE_URL=http://127.0.0.1:9003
+make -C igris run
+```
+
+Terminal 5 — send traffic:
+
+```bash
+curl -i -X POST http://localhost:8080/orders?q=1 \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer secret' \
+  -H 'x-shadow-trace-id: trace-igris-1' \
+  -d '{"price":10}'
+```
+
+Expected:
+
+- HTTP **202** with `x-shadow-trace-id: trace-igris-1` in the response.
+- Igris logs include `multicast complete` with `trace_id`, `method`, `path`, and per-target `status_code` (or `error`).
+- Mock servers receive POST `/orders?q=1` **without** `Authorization` (redacted).
+
+Invalid config exits immediately (before listening):
+
+```bash
+CONTROL_A_URL=ftp://bad make -C igris run   # expect exit 1
+```
+
+### Cluster E2E (Monarch-deployed Igris)
+
+Build and load the Igris image (same pattern as Beru):
+
+```bash
+make igris-docker-build IGRIS_IMG=$IGRIS_IMG
+# kind load docker-image $IGRIS_IMG
+```
+
+Ensure `ShadowTest` spec includes Beru address and optional inputs:
+
+```yaml
+spec:
+  servicePort: 80
+  applicationPort: 8081
+  inputs:
+    - port: 80
+      addon: http
+  igris:
+    image: igris:dev
+```
+
+After `status.phase: Ready` (Igris + shadows available):
+
+```bash
+export SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
+
+kubectl get deploy,svc -n "$SHADOW_NS" | grep igris
+kubectl get cm -n "$SHADOW_NS" my-app-shadow-igris-config -o jsonpath='{.data.listeners\.json}'
+
+kubectl port-forward -n "$SHADOW_NS" svc/my-app-shadow-igris 8080:80
+```
+
+Send traffic (new terminal):
+
+```bash
+curl -i -H 'x-shadow-trace-id: e2e-igris-1' http://localhost:8080/
+kubectl logs -n beru-system deployment/beru -f
+```
+
+Confirm Beru correlates ingress for trace `e2e-igris-1` across control-a, control-b, and candidate.
+
+### Graceful shutdown
+
+```bash
+# With Igris running, send a slow request then SIGTERM
+kill -TERM $(pgrep -f 'bin/igris')
+```
+
+Expected: process stops accepting new connections, waits for in-flight multicasts to finish (`multicast complete` in logs), then exits.
+
+### Igris environment reference
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `CONTROL_A_URL` | yes | — | Base URL for control-a (http/https) |
+| `CONTROL_B_URL` | yes | — | Base URL for control-b |
+| `CANDIDATE_URL` | yes | — | Base URL for candidate |
+| `IGRIS_LISTENERS_FILE` | no | `/etc/igris/listeners.json` | Port → add-on map (from ConfigMap) |
+| `IGRIS_WORKER_POOL_SIZE` | no | `min(32, 4×CPU)` | Multicast worker pool |
+
+---
+
+## Phase 3b — AF_PACKET Siphon (automatic prod capture)
+
+### Deploy Siphon
+
+```bash
+kubectl apply -k "$REPO/siphon/deploy/"
+kubectl -n siphon-system rollout status daemonset/siphon-agent --timeout=120s
+```
+
+Requires **privileged** `hostNetwork` pods on each node. With `SIPHON_INTERFACE=any`, the agent captures on all active non-loopback interfaces (e.g. `eth0`, `cni0`, `veth*` on Kind).
+
+### ShadowTest with Siphon
+
+Apply a `ShadowTest` as in earlier sections. When `status.phase` is **Ready**, Monarch:
+
+1. Lists **production** pod IPs for `spec.targetDeployment`
+2. Pushes merged config to every `siphon-agent` pod (`POST /v1/config`)
+3. Sets `status.captureTargets`, `status.siphonPhase`, `status.igrisEndpoint`
+
+Optional spec:
+
+```yaml
+spec:
+  siphon:
+    enabled: true
+    sampleRate: 100   # percent of new flows (sticky per 4-tuple)
+    image: siphon:latest
+```
+
+### Verify capture path
+
+```bash
+# Siphon agent status (from any siphon pod IP)
+kubectl get pods -n siphon-system -o wide
+SIPHON_POD_IP=$(kubectl get pods -n siphon-system -l app.kubernetes.io/name=siphon-agent -o jsonpath='{.items[0].status.podIP}')
+curl -s "http://${SIPHON_POD_IP}:8080/v1/status" | jq .
+
+# Hit production (not shadow)
+kubectl port-forward -n default svc/my-prod-app 8080:80 &
+curl -s http://127.0.0.1:8080/
+
+# Igris should show multicasts
+export SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
+kubectl logs -n "$SHADOW_NS" deploy/$(kubectl get deploy -n "$SHADOW_NS" -o name | grep igris | sed 's|deployment.apps/||') -f
+```
+
+On **Kind**, confirm `/v1/status` lists `interfaces` including `cni0` or a `veth` — not only `eth0`. Siphon logs should show `Reassembled HTTP request` after curling production.
+
+### Build Siphon locally
+
+```bash
+cd "$REPO/siphon"
+make build    # requires Linux + gcc (CGO for afpacket)
+make docker-build SIPHON_IMG=siphon:dev
+kind load docker-image siphon:dev   # if using Kind
+```
+
+---
+
+## 9. Cleanup (optional)
+
+```bash
+kubectl delete -k "$REPO/siphon/deploy/"
+```
 
 ```bash
 kubectl delete shadowtest my-app-shadow -n default
@@ -269,6 +453,8 @@ make uninstall
 | Pods `1/2` not Ready | Envoy sidecar failing | `kubectl logs ... -c envoy-sidecar` |
 | `grpcurl` connection refused | Beru not ready or no port-forward | Check `beru-system` pods; re-run port-forward |
 | Wrong cluster | Multiple kube contexts | `kubectl config current-context` |
+| Siphon `Degraded`, empty capture | TC not on CNI iface / no prod traffic | Check `/v1/status`; hit prod Service URL |
+| No Igris logs after prod curl | `sampleRate` 0 or wrong pod IPs | `kubectl get shadowtest -o yaml` → `captureTargets` |
 
 ---
 
@@ -348,3 +534,6 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | grep -E '
 - [ ] Three Envoy ConfigMaps in shadow namespace
 - [ ] Beru pod running in `beru-system`
 - [ ] `grpcurl ReportTraffic` returns `{}` and log shows received report
+- [ ] `make -C igris test` passes
+- [ ] Igris returns 202 and multicasts to three targets (local smoke or cluster port-forwards)
+- [ ] `x-shadow-trace-id` present on Igris response and shadow/Beru correlation (Phase 2b)

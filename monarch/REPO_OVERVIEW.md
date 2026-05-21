@@ -2,13 +2,14 @@
 
 This is a KubeBuilder-based Kubernetes Operator project for the `ShadowTest` CRD (`engine.shadow-diff.io/v1alpha1`).
 
-It lives in the Shadow-Diff monorepo at `monarch/` (sibling to `beru/`). Run `make` from the repo root or from this directory.
+It lives in the Shadow-Diff monorepo at `monarch/` (sibling to `beru/` and `igris/`). Run `make` from the repo root or from this directory.
 
 ## High-Level Layout
 
 ```text
 <repo-root>/
   beru/                # Beru gRPC differ (separate Go module)
+  igris/               # Igris HTTP multicaster (separate Go module, Phase 3a)
   monarch/             # This operator
     api/               # Kubernetes API (CRD Go types)
     cmd/               # Entrypoint (manager bootstrap)
@@ -122,3 +123,12 @@ It lives in the Shadow-Diff monorepo at `monarch/` (sibling to `beru/`). Run `ma
   - `<name>-candidate`
 - Copies **literal env vars only** from target primary container (MVP behavior).
 - Uses finalizer cleanup for shadow namespace lifecycle.
+
+## Sibling services (not in this directory)
+
+| Service | Path | Role |
+|---------|------|------|
+| **Beru** | `beru/` | gRPC ingest + diff-of-diffs; Envoy sidecars report via `ext_proc` |
+| **Igris** | `igris/` | Modular traffic engine (core + HTTP add-on) — Monarch deploys it per ShadowTest |
+
+Monarch provisions shadow Deployments, Envoy config, shadow Services, and Igris (`listeners.json` from `spec.inputs`). See [ARCHITECTURE.md](../ARCHITECTURE.md).

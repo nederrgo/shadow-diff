@@ -17,8 +17,57 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// InputSpec declares an Igris listener port and input driver.
+type InputSpec struct {
+	// Port is the TCP port Igris binds for this input.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// Driver selects how Igris handles traffic on this port (http_request or tcp_stream).
+	// When empty, Monarch infers from the port (servicePort and 80/443/8080 → http_request).
+	// +kubebuilder:validation:Enum=http_request;tcp_stream
+	// +optional
+	Driver string `json:"driver,omitempty"`
+
+	// Addon is deprecated; use driver. Legacy value "http" maps to http_request.
+	// +optional
+	Addon string `json:"addon,omitempty"`
+}
+
+// SiphonSpec configures the cluster-wide AF_PACKET capture agent.
+type SiphonSpec struct {
+	// Enabled disables Siphon config push when explicitly false.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Image overrides the Siphon DaemonSet container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// SampleRate is the percentage (0-100) of new TCP flows to sample.
+	// +optional
+	SampleRate *int32 `json:"sampleRate,omitempty"`
+}
+
+// IgrisSpec overrides the always-deployed Igris workload.
+type IgrisSpec struct {
+	// Image overrides the default Igris container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// Replicas defaults to 1.
+	// +optional
+	Replicas *int32 `json:"replicas,omitempty"`
+
+	// Resources for the Igris container.
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+}
 
 // ShadowTestSpec defines the desired state of ShadowTest.
 type ShadowTestSpec struct {
@@ -54,6 +103,19 @@ type ShadowTestSpec struct {
 	// BeruGRPCTimeout is the ext_proc gRPC timeout (e.g. "2s").
 	// +optional
 	BeruGRPCTimeout string `json:"beruGRPCTimeout,omitempty"`
+
+	// Inputs defines Igris listener ports and drivers. When empty, Monarch defaults to
+	// a single HTTP listener on servicePort.
+	// +optional
+	Inputs []InputSpec `json:"inputs,omitempty"`
+
+	// Igris overrides image, replicas, or resources for the Igris traffic hub (always deployed).
+	// +optional
+	Igris *IgrisSpec `json:"igris,omitempty"`
+
+	// Siphon configures kernel-level traffic capture to Igris.
+	// +optional
+	Siphon *SiphonSpec `json:"siphon,omitempty"`
 }
 
 // ShadowTestStatus defines the observed state of ShadowTest.
@@ -69,6 +131,18 @@ type ShadowTestStatus struct {
 	// ShadowNamespace is the dedicated namespace where control/candidate Deployments run.
 	// +optional
 	ShadowNamespace string `json:"shadowNamespace,omitempty"`
+
+	// CaptureTargets lists production pod IPs pushed to Siphon agents.
+	// +optional
+	CaptureTargets []string `json:"captureTargets,omitempty"`
+
+	// SiphonPhase summarizes Siphon config push (Ready, Degraded, Disabled).
+	// +optional
+	SiphonPhase string `json:"siphonPhase,omitempty"`
+
+	// IgrisEndpoint is the DNS host:port Monarch configured for capture forwarding.
+	// +optional
+	IgrisEndpoint string `json:"igrisEndpoint,omitempty"`
 }
 
 // +kubebuilder:object:root=true

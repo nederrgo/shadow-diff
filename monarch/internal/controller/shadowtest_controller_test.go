@@ -120,7 +120,7 @@ var _ = Describe("ShadowTest Controller", func() {
 			}))
 		})
 
-		It("should create three shadow deployments in the dedicated namespace", func() {
+		It("should create shadow deployments, Igris, and services in the dedicated namespace", func() {
 			rec := &ShadowTestReconciler{
 				Client: k8sClient,
 				Scheme: clientgoscheme.Scheme,
@@ -137,21 +137,56 @@ var _ = Describe("ShadowTest Controller", func() {
 
 			var deps appsv1.DeploymentList
 			Expect(k8sClient.List(ctx, &deps, client.InNamespace(shadowNS))).To(Succeed())
-			Expect(deps.Items).To(HaveLen(3))
+			Expect(deps.Items).To(HaveLen(4))
 
 			roles := map[string]struct{}{}
+			var shadowDeps []appsv1.Deployment
 			for _, d := range deps.Items {
-				roles[d.Labels[labelRole]] = struct{}{}
+				if role := d.Labels[labelRole]; role != "" {
+					roles[role] = struct{}{}
+					shadowDeps = append(shadowDeps, d)
+				}
 			}
 			Expect(roles).To(HaveKey(roleControlA))
 			Expect(roles).To(HaveKey(roleControlB))
 			Expect(roles).To(HaveKey(roleCandidate))
+			Expect(shadowDeps).To(HaveLen(3))
+
+			st := &enginev1alpha1.ShadowTest{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+			}
+			var igrisDeploy appsv1.Deployment
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: shadowNS,
+				Name:      igrisDeploymentName(st),
+			}, &igrisDeploy)).To(Succeed())
+			Expect(igrisDeploy.Spec.Template.Spec.Containers[0].Name).To(Equal(containerIgris))
+			var envNames []string
+			for _, e := range igrisDeploy.Spec.Template.Spec.Containers[0].Env {
+				envNames = append(envNames, e.Name)
+			}
+			Expect(envNames).To(ContainElements(
+				envControlAURL, envControlBURL, envCandidateURL,
+				envControlAAddr, envControlBAddr, envCandidateAddr,
+				envIgrisListenersFile,
+			))
 
 			var cms corev1.ConfigMapList
 			Expect(k8sClient.List(ctx, &cms, client.InNamespace(shadowNS))).To(Succeed())
-			Expect(cms.Items).To(HaveLen(3))
+			Expect(cms.Items).To(HaveLen(4))
 
-			for _, d := range deps.Items {
+			var igrisCM corev1.ConfigMap
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: shadowNS,
+				Name:      igrisConfigMapName(st),
+			}, &igrisCM)).To(Succeed())
+			Expect(igrisCM.Data[configMapKeyListenersJSON]).To(ContainSubstring(`"driver":"http_request"`))
+
+			var svcs corev1.ServiceList
+			Expect(k8sClient.List(ctx, &svcs, client.InNamespace(shadowNS))).To(Succeed())
+			Expect(svcs.Items).To(HaveLen(4))
+
+			for _, d := range shadowDeps {
 				role := d.Labels[labelRole]
 				Expect(d.Spec.Template.Spec.Containers).To(HaveLen(2))
 				Expect(d.Spec.Template.Spec.Containers[0].Name).To(Equal("app"))

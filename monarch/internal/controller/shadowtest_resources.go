@@ -119,16 +119,13 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 				},
 			},
 		}
-		appPort := applicationPortFor(st)
 		beruAddr := beruGRPCAddressFor(st)
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{
 			{
 				Name:  "app",
 				Image: image,
-				Ports: []corev1.ContainerPort{
-					{Name: "http", ContainerPort: appPort, Protocol: corev1.ProtocolTCP},
-				},
-				Env: env,
+				Ports: appContainerPortsFor(st),
+				Env:   env,
 			},
 			{
 				Name:            containerEnvoySidecar,
@@ -153,9 +150,28 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 }
 
 func (r *ShadowTestReconciler) patchStatus(ctx context.Context, st *enginev1alpha1.ShadowTest, phase, message, shadowNS string) error {
+	return r.patchStatusFull(ctx, st, phase, message, shadowNS, nil, "", "")
+}
+
+func (r *ShadowTestReconciler) patchStatusFull(
+	ctx context.Context,
+	st *enginev1alpha1.ShadowTest,
+	phase, message, shadowNS string,
+	captureTargets []string,
+	siphonPhase, igrisEndpoint string,
+) error {
 	base := st.DeepCopy()
 	st.Status.Phase = phase
 	st.Status.Message = message
 	st.Status.ShadowNamespace = shadowNS
+	if captureTargets != nil {
+		st.Status.CaptureTargets = captureTargets
+	}
+	if siphonPhase != "" {
+		st.Status.SiphonPhase = siphonPhase
+	}
+	if igrisEndpoint != "" {
+		st.Status.IgrisEndpoint = igrisEndpoint
+	}
 	return r.Status().Patch(ctx, st, client.MergeFrom(base))
 }
