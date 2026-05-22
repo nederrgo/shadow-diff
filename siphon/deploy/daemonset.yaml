@@ -1,3 +1,16 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: siphon-system
+  labels:
+    app.kubernetes.io/name: siphon
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: siphon-agent
+  namespace: siphon-system
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -17,20 +30,34 @@ spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       serviceAccountName: siphon-agent
-      tolerations:
-        - operator: Exists
       containers:
         - name: agent
           image: siphon:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: PullIfNotPresent
           securityContext:
-            privileged: true
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_RAW
+                - NET_ADMIN
           env:
             - name: SIPHON_INTERFACE
-              value: any
+              value: "any"
             - name: SIPHON_API_ADDR
               value: ":8080"
           ports:
             - name: http
               containerPort: 8080
-              protocol: TCP
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+      tolerations:
+        - operator: Exists

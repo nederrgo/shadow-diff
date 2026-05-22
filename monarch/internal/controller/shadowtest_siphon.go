@@ -89,12 +89,22 @@ func (r *ShadowTestReconciler) ensureSiphonDaemonSet(ctx context.Context, image 
 		ds.Spec.Template.Spec.HostNetwork = true
 		ds.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
 		ds.Spec.Template.Spec.ServiceAccountName = siphonDaemonSetName
-		priv := true
+		runAsUser := int64(0)
+		runAsGroup := int64(0)
+		privEscalation := false
 		container := corev1.Container{
 			Name:            "agent",
 			Image:           image,
 			ImagePullPolicy: corev1.PullIfNotPresent,
-			SecurityContext: &corev1.SecurityContext{Privileged: &priv},
+			SecurityContext: &corev1.SecurityContext{
+				RunAsUser:                &runAsUser,
+				RunAsGroup:               &runAsGroup,
+				AllowPrivilegeEscalation: &privEscalation,
+				Capabilities: &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+					Add:  []corev1.Capability{"NET_RAW", "NET_ADMIN"},
+				},
+			},
 			Env: []corev1.EnvVar{
 				{Name: "SIPHON_INTERFACE", Value: "any"},
 				{Name: "SIPHON_API_ADDR", Value: ":8080"},

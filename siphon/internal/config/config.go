@@ -2,157 +2,105 @@ package config
 
 import (
 	"fmt"
-	"net"
 	"sync"
 )
 
-// Payload is the Monarch POST /v1/config body.
-type Payload struct {
-	SampleRate int      `json:"sample_rate"`
-	Targets    []Target `json:"targets"`
-}
-
-// Target is one ShadowTest capture route.
-type Target struct {
-	ShadowTest  string     `json:"shadowtest"`
-	TargetIPs   []string   `json:"target_ips"`
-	TargetPorts []int      `json:"target_ports"`
-	IgrisHost   string     `json:"igris_host"`
-	Listeners   []Listener `json:"listeners"`
-}
-
-// Listener is an Igris ingress port and driver.
-type Listener struct {
+type SiphonListener struct {
 	Port   int    `json:"port"`
 	Driver string `json:"driver"`
 }
 
-// Store holds the active configuration with atomic swap.
-type Store struct {
-	mu      sync.RWMutex
-	payload Payload
+type SiphonTarget struct {
+	ShadowTest  string           `json:"shadowtest"`
+	TargetIPs   []string         `json:"target_ips"`
+	TargetPorts []int            `json:"target_ports"`
+	IgrisHost   string           `json:"igris_host"`
+	Listeners   []SiphonListener `json:"listeners"`
 }
 
-func NewStore() *Store {
-	return &Store{}
+type SiphonConfig struct {
+	SampleRate int            `json:"sample_rate"`
+	Targets    []SiphonTarget `json:"targets"`
 }
 
-func (s *Store) Get() Payload {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.payload
+type Manager struct {
+	mu          sync.RWMutex
+	cfg         SiphonConfig
+	targetIPs   map[string]bool
+	targetPorts map[int]bool
+	targetMap   map[string]*SiphonTarget // key: "IP:Port"
+	portDrivers map[string]string        // key: "IP:Port" -> driver (e.g. "http_request")
 }
 
-func (s *Store) Set(p Payload) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.payload = p
-}
-
-// Validate checks the payload shape.
-func (p *Payload) Validate() error {
-	if p.SampleRate < 0 || p.SampleRate > 100 {
-		return fmt.Errorf("sample_rate must be 0-100")
+func NewManager() *Manager {
+	return &Manager{
+		targetIPs:   make(map[string]bool),
+		targetPorts: make(map[int]bool),
+		targetMap:   make(map[string]*SiphonTarget),
+		portDrivers: make(map[string]string),
 	}
-	for _, t := range p.Targets {
-		if t.IgrisHost == "" {
-			return fmt.Errorf("target %q: igris_host required", t.ShadowTest)
-		}
+}
+
+func (m *Manager) Update(cfg SiphonConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.cfg = cfg
+	m.targetIPs = make(map[string]bool)
+	m.targetPorts = make(map[int]bool)
+	m.targetMap = make(map[string]*SiphonTarget)
+	m.portDrivers = make(map[string]string)
+
+	for i := range cfg.Targets {
+		t := &cfg.Targets[i]
 		for _, ip := range t.TargetIPs {
-			if net.ParseIP(ip) == nil {
-				return fmt.Errorf("target %q: invalid IP %q", t.ShadowTest, ip)
-			}
-		}
-		for _, port := range t.TargetPorts {
-			if port < 1 || port > 65535 {
-				return fmt.Errorf("target %q: invalid port %d", t.ShadowTest, port)
+			m.targetIPs[ip] = true
+			for _, port := range t.TargetPorts {
+				m.targetPorts[port] = true
+				key := fmt.Sprintf("%s:%d", ip, port)
+				m.targetMap[key] = t
+
+				// Map to driver
+				driver := "tcp_stream" // default fallback
+				for _, l := range t.Listeners {
+					if l.Port == port {
+						driver = l.Driver
+						break
+					}
+				}
+				m.portDrivers[key] = driver
 			}
 		}
 	}
-	return nil
 }
 
-// UnionCaptureTargets returns deduplicated IPs and ports for BPF.
-func (p *Payload) UnionCaptureTargets() (ips []string, ports []int) {
-	ipSeen := map[string]struct{}{}
-	portSeen := map[int]struct{}{}
-	for _, t := range p.Targets {
-		for _, ip := range t.TargetIPs {
-			if _, ok := ipSeen[ip]; !ok {
-				ipSeen[ip] = struct{}{}
-				ips = append(ips, ip)
-			}
-		}
-		for _, port := range t.TargetPorts {
-			if _, ok := portSeen[port]; !ok {
-				portSeen[port] = struct{}{}
-				ports = append(ports, port)
-			}
-		}
+func (m *Manager) GetConfig() SiphonConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cfg
+}
+
+func (m *Manager) IsTarget(ip string, port int) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	key := fmt.Sprintf("%s:%d", ip, port)
+	_, ok := m.targetMap[key]
+	return ok
+}
+
+func (m *Manager) LookupTarget(ip string, port int) (*SiphonTarget, string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	key := fmt.Sprintf("%s:%d", ip, port)
+	t, ok := m.targetMap[key]
+	if !ok {
+		return nil, "", false
 	}
-	return ips, ports
+	return t, m.portDrivers[key], true
 }
 
-// HTTPListenerPorts maps prod dst port -> true when driver is http_request.
-func (p Payload) HTTPListenerPorts() map[int]struct{} {
-	out := map[int]struct{}{}
-	for _, t := range p.Targets {
-		http := false
-		for _, l := range t.Listeners {
-			if l.Driver == "http_request" {
-				http = true
-				break
-			}
-		}
-		if !http {
-			continue
-		}
-		for _, port := range t.TargetPorts {
-			out[port] = struct{}{}
-		}
-	}
-	return out
-}
-
-// Route matches a captured flow to its ShadowTest target and listener port on Igris.
-type Route struct {
-	Target       Target
-	IgrisPort    int
-	ShadowTestID string
-}
-
-// LookupRoute finds the target for dst IP and port.
-func (p *Payload) LookupRoute(dstIP string, dstPort int) (Route, bool) {
-	for _, t := range p.Targets {
-		ipMatch := false
-		for _, ip := range t.TargetIPs {
-			if ip == dstIP {
-				ipMatch = true
-				break
-			}
-		}
-		if !ipMatch {
-			continue
-		}
-		portMatch := false
-		for _, port := range t.TargetPorts {
-			if port == dstPort {
-				portMatch = true
-				break
-			}
-		}
-		if !portMatch {
-			continue
-		}
-		for _, l := range t.Listeners {
-			if l.Driver != "http_request" {
-				continue
-			}
-			// Monarch uses the same port for prod capture and Igris listener.
-			if l.Port == dstPort {
-				return Route{Target: t, IgrisPort: l.Port, ShadowTestID: t.ShadowTest}, true
-			}
-		}
-	}
-	return Route{}, false
+func (m *Manager) HasAnyTargets() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.targetMap) > 0
 }
