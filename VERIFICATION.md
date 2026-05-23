@@ -376,7 +376,11 @@ kubectl apply -k "$REPO/siphon/deploy/"
 kubectl -n siphon-system rollout status daemonset/siphon-agent --timeout=120s
 ```
 
-Requires **privileged** `hostNetwork` pods on each node. With `SIPHON_INTERFACE=any`, the agent captures on all active non-loopback interfaces (e.g. `eth0`, `cni0`, `veth*` on Kind).
+Siphon is deployed as a DaemonSet with `hostNetwork: true` using granular capabilities (`CAP_NET_RAW` and `CAP_NET_ADMIN` under root user `runAsUser: 0`) instead of full privileged access. 
+
+Siphon implements **high-performance kernel-level BPF (libpcap) filtering** dynamically. When configuration is POSTed to Siphon's HTTP control API, the Siphon agent compiles a target packet filter of IPv4 host/port clauses (`tcp and ( (host <IP> and port <Port>) or ... )`) and attaches it directly to the socket via the kernel BPF subsystem. This ensures zero-copy filtering at the kernel level for maximum performance. Userspace processing is then only used for sticky flow sampling (TTL-based map) and relaxed TCP stream assembly before multicasting to Igris.
+
+With `SIPHON_INTERFACE=any`, the agent captures on all active non-loopback interfaces (e.g. `eth0`, `cni0`, `veth*` on Kind).
 
 ### ShadowTest with Siphon
 
@@ -415,6 +419,16 @@ kubectl logs -n "$SHADOW_NS" deploy/$(kubectl get deploy -n "$SHADOW_NS" -o name
 
 On **Kind**, confirm `/v1/status` lists `interfaces` including `cni0` or a `veth` — not only `eth0`. Siphon logs should show `Reassembled HTTP request` after curling production.
 
+### One-shot Kind reset (recommended)
+
+From the repo root, builds/loads images, deploys Monarch/Beru/Siphon/prod/ShadowTest with **correct ports** (`prod:80`, `Envoy:8888`, `app:80`), and waits for `Ready`:
+
+```bash
+./scripts/e2e-reset-kind.sh --run-test
+```
+
+Flags: `--skip-build`, `--skip-load`, `--no-reset`, `--run-test`. Then run `./examples/e2e-pipeline-test.sh` anytime.
+
 ### Build Siphon locally
 
 ```bash
@@ -422,6 +436,7 @@ cd "$REPO/siphon"
 make build    # requires Linux + gcc (CGO for afpacket)
 make docker-build SIPHON_IMG=siphon:dev
 kind load docker-image siphon:dev   # if using Kind
+kubectl rollout restart daemonset/siphon-agent -n siphon-system   # after kind load
 ```
 
 ---

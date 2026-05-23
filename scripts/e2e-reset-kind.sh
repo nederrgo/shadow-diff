@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# Reset and deploy the full Monarch E2E stack on Kind with correct ports.
+#
+# Port model (do not change without updating manifests):
+#   prod pod          -> :80   (HTTP_PORT=80, captured by Siphon BPF)
+#   Igris listener    -> :80   (replays captured prod traffic)
+#   Envoy ingress     -> :8888 (Igris multicasts to shadow Services here)
+#   shadow app (echo) -> :80   (applicationPort; env copied from prod)
+#
+# Usage:
+#   ./scripts/e2e-reset-kind.sh              # full reset + deploy + wait Ready
+#   ./scripts/e2e-reset-kind.sh --run-test   # above, then ./examples/e2e-pipeline-test.sh
+#   ./scripts/e2e-reset-kind.sh --skip-build # assume images already built/loaded
+#   ./scripts/e2e-reset-kind.sh --no-reset   # deploy/upgrade only (no deletes)
+#
+set -euo pipefail
+
+REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
+cd "$REPO"
+
+KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
+MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
+BERU_IMG="${BERU_IMG:-beru:dev}"
+IGRIS_IMG="${IGRIS_IMG:-igris:dev}"
+SIPHON_IMG="${SIPHON_IMG:-siphon:dev}"
+
+SHADOWTEST="${SHADOWTEST:-my-app-shadow}"
+SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
+
+SKIP_BUILD=0
+SKIP_LOAD=0
+NO_RESET=0
+RUN_TEST=0
+
+usage() {
+  sed -n '2,12p' "$0"
+  echo "Flags: --skip-build --skip-load --no-reset --run-test -h"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-build) SKIP_BUILD=1 ;;
+    --skip-load)  SKIP_LOAD=1 ;;
+    --no-reset)   NO_RESET=1 ;;
+    --run-test)   RUN_TEST=1 ;;
+    -h|--help)    usage; exit 0 ;;
+    *) echo "Unknown flag: $1" >&2; usage; exit 1 ;;
+  esac
+  shift
+done
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing command: $1" >&2; exit 1; }
+}
+
+need kubectl
+if [[ "$SKIP_BUILD" -eq 0 ]] || [[ "$SKIP_LOAD" -eq 0 ]]; then
+  need docker
+fi
+if [[ "$SKIP_LOAD" -eq 0 ]]; then
+  need kind
+  [[ -n "${KIND_CLUSTER}" ]] || { echo "ERROR: no Kind cluster found; set KIND_CLUSTER" >&2; exit 1; }
+fi
+
+echo "==> Monarch E2E reset (cluster=${KIND_CLUSTER:-local})"
+echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG igris=$IGRIS_IMG siphon=$SIPHON_IMG"
+
+if [[ "$SKIP_BUILD" -eq 0 ]]; then
+  echo "==> Build container images"
+  make -C monarch docker-build IMG="$MONARCH_IMG"
+  make beru-docker-build BERU_IMG="$BERU_IMG"
+  make igris-docker-build IGRIS_IMG="$IGRIS_IMG"
+  make siphon-docker-build SIPHON_IMG="$SIPHON_IMG"
+fi
+
+if [[ "$SKIP_LOAD" -eq 0 ]]; then
+  echo "==> Load images into Kind ($KIND_CLUSTER)"
+  kind load docker-image "$MONARCH_IMG" --name "$KIND_CLUSTER"
+  kind load docker-image "$BERU_IMG" --name "$KIND_CLUSTER"
+  kind load docker-image "$IGRIS_IMG" --name "$KIND_CLUSTER"
+  kind load docker-image "$SIPHON_IMG" --name "$KIND_CLUSTER"
+fi
+
+if [[ "$NO_RESET" -eq 0 ]]; then
+  echo "==> Delete prior E2E resources (if any)"
+  kubectl delete shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --ignore-not-found --wait=false
+  kubectl delete deployment,service my-prod-app -n default --ignore-not-found --wait=false
+  # Allow Monarch to tear down shadow namespace
+  sleep 5
+fi
+
+echo "==> Monarch operator"
+make -C monarch install
+make -C monarch deploy IMG="$MONARCH_IMG"
+kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
+
+echo "==> Beru"
+kubectl apply -f beru/deploy/
+kubectl set image deployment/beru beru="$BERU_IMG" -n beru-system
+kubectl rollout status deployment/beru -n beru-system --timeout=120s
+
+echo "==> Siphon (hostNetwork, SIPHON_INTERFACE=any for Kind veth capture)"
+kubectl apply -f siphon/deploy/daemonset.yaml
+kubectl set image daemonset/siphon-agent agent="$SIPHON_IMG" -n siphon-system
+kubectl set env daemonset/siphon-agent -n siphon-system \
+  SIPHON_INTERFACE=any --containers=agent
+kubectl rollout restart daemonset/siphon-agent -n siphon-system
+kubectl rollout status daemonset/siphon-agent -n siphon-system --timeout=120s
+
+echo "==> Production app (echo on :80, memory limits)"
+kubectl apply -f examples/e2e-prod-app.yaml
+kubectl rollout status deployment/my-prod-app -n default --timeout=120s
+kubectl wait -n default --for=condition=Ready pod -l app=my-prod-app --timeout=120s
+
+echo "==> ShadowTest (servicePort=8888, applicationPort=80, Igris :80/:8888)"
+kubectl apply -f examples/e2e-shadowtest.yaml
+
+echo "==> Wait for ShadowTest Ready (phase=Ready required; siphon=Ready after Monarch hostIP fix)"
+for i in $(seq 1 36); do
+  phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+  siphon=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.siphonPhase}' 2>/dev/null || true)
+  if [[ "$phase" == "Ready" && "$siphon" == "Ready" ]]; then
+    break
+  fi
+  if [[ "$phase" == "Ready" && "$i" -ge 12 ]]; then
+    echo "    phase=Ready siphon=$siphon — continuing (reconcile may need updated Monarch; E2E script POSTs config via hostIP)"
+    break
+  fi
+  echo "    phase=$phase siphon=$siphon (${i}/36)"
+  sleep 5
+done
+
+kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o custom-columns=\
+PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTURE:.status.captureTargets
+
+SHADOW_NS=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.shadowNamespace}')
+phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.phase}')
+siphon_phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.siphonPhase}')
+if [[ "$phase" != "Ready" ]]; then
+  echo "ERROR: ShadowTest not Ready — check: kubectl describe shadowtest $SHADOWTEST -n $SHADOWTEST_NS" >&2
+  exit 1
+fi
+if [[ "$siphon_phase" == "Degraded" ]]; then
+  echo "WARN: siphonPhase=Degraded — Monarch could not POST /v1/config (rebuild/redeploy Monarch with hostIP fix, or use ./examples/e2e-pipeline-test.sh)"
+fi
+
+echo "==> Verify shadow Envoy -> app port (applicationPort=80)"
+for role in control-a control-b candidate; do
+  deploy="${SHADOWTEST}-${role}"
+  app_port=$(kubectl get deploy "$deploy" -n "$SHADOW_NS" -o jsonpath='{.spec.template.spec.containers[?(@.name=="app")].ports[0].containerPort}')
+  echo "    $deploy app containerPort=$app_port"
+done
+
+# Avoid racing the traffic test: annotate triggers Monarch reconcile which can roll Siphon.
+if [[ "$RUN_TEST" -eq 1 ]]; then
+  echo "==> Skipping reconcile annotate (--run-test: pipeline POSTs Siphon config)"
+  kubectl rollout status daemonset/siphon-agent -n siphon-system --timeout=120s
+  sleep 3
+else
+  echo "==> Nudge Siphon config from Monarch"
+  kubectl annotate shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
+    shadow-diff.io/reconcile="$(date +%s)" --overwrite
+fi
+
+echo ""
+echo "E2E stack is up."
+echo "  Shadow namespace: $SHADOW_NS"
+echo "  Prod IP:          $(kubectl get pods -n default -l app=my-prod-app -o jsonpath='{.items[0].status.podIP}')"
+echo "  Siphon API:       http://$(kubectl get pods -n siphon-system -l app.kubernetes.io/name=siphon-agent -o jsonpath='{.items[0].status.hostIP}'):8080"
+echo ""
+echo "Run traffic test:  ./examples/e2e-pipeline-test.sh"
+
+if [[ "$RUN_TEST" -eq 1 ]]; then
+  echo ""
+  exec ./examples/e2e-pipeline-test.sh
+fi

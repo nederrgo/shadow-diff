@@ -33,7 +33,7 @@ spec:
       containers:
         - name: agent
           image: siphon:latest
-          imagePullPolicy: PullIfNotPresent
+          imagePullPolicy: IfNotPresent
           securityContext:
             runAsUser: 0
             runAsGroup: 0

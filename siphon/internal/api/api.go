@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	"github.com/shadow-diff/siphon/internal/capture"
 	"github.com/shadow-diff/siphon/internal/config"
@@ -60,6 +61,21 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if s.cfgMgr.HasAnyTargets() {
 		if err := s.capMgr.Start(s.interfaceEnv); err != nil {
 			log.Printf("Error starting capture: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		// Handles may not be registered yet; retry BPF attach after capture loops start.
+		var applyErr error
+		for attempt := 0; attempt < 25; attempt++ {
+			applyErr = s.capMgr.ApplyBPFFilter()
+			if applyErr == nil {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if applyErr != nil {
+			log.Printf("Error applying BPF filter to interfaces: %v", applyErr)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}

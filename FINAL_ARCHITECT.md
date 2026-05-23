@@ -1,173 +1,237 @@
-This `ARCHITECTURE.md` file provides a high-level technical blueprint of the final product. It explains how **Monarch**, **Igris**, **Beru**, and the **eBPF Siphon** work together to create a safe, generic, and automated shadow testing platform.
+# Architecture: Shadow-Diff System (target state)
+
+This document is the **product-level blueprint** for Shadow-Diff: how **Monarch**, **Igris**, **Beru**, and **Siphon** work together. For day-to-day monorepo layout, reconcile details, and verification commands, see [ARCHITECTURE.md](ARCHITECTURE.md) and [VERIFICATION.md](VERIFICATION.md).
+
+**Capture agent note:** The original design called for a kernel **eBPF** (TC/XDP-style) siphon. The **implemented and verified** path uses **classic BPF** (libpcap/tcpdump expressions) compiled in Go and attached to **AF_PACKET** sockets—no custom eBPF bytecode in the cluster. Raw eBPF remains a possible future optimization, not the current MVP.
 
 ---
 
-# Architecture: Shadow-Diff System
-
 ## 1. Vision
-Shadow-Diff is a Kubernetes-native **Differential Shadowing** platform. It allows developers to test new versions of a service against real production traffic without impacting users. The system identifies regressions by comparing the behavior of a "Candidate" version against two identical "Control" versions to filter out non-deterministic noise (timestamps, random IDs).
 
-## 2. System Overview
-The system consists of four primary components:
-1.  **Monarch (Orchestrator):** A K8s Operator that manages the lifecycle of shadow environments.
-2.  **Igris (Modular Multicaster):** A protocol-aware traffic hub that redacts PII and fans out requests.
-3.  **Beru (Diff Engine):** The "Brain" that performs 3-way comparison and noise filtering.
-4.  **eBPF Siphon (Capture Agent):** A high-performance kernel-level agent that clones production traffic.
+Shadow-Diff is a Kubernetes-native **differential shadowing** platform. Developers test a new image against traffic shaped like production without serving real users from the candidate. The system compares **Candidate** vs two identical **Control** pods to separate real regressions from noise (timestamps, IDs, ordering).
 
-### High-Level Component Diagram
+---
+
+## 2. System overview
+
+| Component | Role |
+|-----------|------|
+| **Monarch** | K8s operator — `ShadowTest` CRD, shadow namespace, Envoy sidecars, Igris + Siphon orchestration |
+| **Siphon** | Node DaemonSet — passive capture, kernel BPF filter, TCP reassembly, forward to Igris |
+| **Igris** | Protocol hub — redact (HTTP), multicast to three shadows, `202 Accepted` |
+| **Beru** | Diff engine — correlate by `x-shadow-trace-id`, diff-of-diffs |
+
+### High-level component diagram
+
 ```mermaid
 flowchart TD
-    subgraph "Production Namespace"
-        ProdApp[Production App]
-        Siphon[eBPF Siphon Agent]
+    subgraph prodNode [Production node]
+        ProdApp[Production pods]
+        Siphon[Siphon agent hostNetwork]
+        BPF[Classic BPF filter]
+        Siphon --> BPF
+        BPF -->|matched frames| Siphon
     end
 
-    subgraph "Shadow Namespace (The Sandbox)"
-        Igris[Igris Multicaster]
-        subgraph "Shadow Environment"
-            A[Control-A: Old Version]
-            B[Control-B: Old Version]
-            C[Candidate: New Version]
-        end
-        Dep[(Shadow Dependencies: DB/Queue)]
+    subgraph shadowNS [Shadow namespace]
+        Igris[Igris multicaster]
+        A[Control-A + Envoy]
+        B[Control-B + Envoy]
+        C[Candidate + Envoy]
+        Dep[(Shadow dependencies)]
     end
 
-    Beru[Beru Diff Engine]
-    Monarch[Monarch Operator]
+    Beru[Beru gRPC]
+    Monarch[Monarch operator]
 
-    %% Traffic Flow
-    Siphon -->|Clone & Siphon| Igris
-    Igris -->|Multicast 1:3| A
-    Igris -->|Multicast 1:3| B
-    Igris -->|Multicast 1:3| C
-    
-    A -.->|ext_proc Report| Beru
-    B -.->|ext_proc Report| Beru
-    C -.->|ext_proc Report| Beru
-    
-    %% Dependency Flow
-    A & B & C -->|Redirected Egress| Dep
-    
-    %% Management
-    Monarch -->|Orchestrates| ShadowNS
+    ProdApp -.->|TCP on pod IP:port| BPF
+    Siphon -->|reassembled request bytes| Igris
+    Igris -->|HTTP :8888| A
+    Igris -->|HTTP :8888| B
+    Igris -->|HTTP :8888| C
+
+    A -.->|ext_proc| Beru
+    B -.->|ext_proc| Beru
+    C -.->|ext_proc| Beru
+
+    A & B & C --> Dep
+    Monarch --> shadowNS
+    Monarch -->|POST /v1/config| Siphon
 ```
 
 ---
 
-## 3. The 3-Way Diff Logic (The "Noise Filter")
-To avoid false positives, the system uses two baseline pods (**Control-A** and **Control-B**) running the exact same version of the code.
+## 3. The 3-way diff logic (noise filter)
 
-1.  **Noise Discovery:** Beru compares `Response(A)` vs `Response(B)`. Any field that differs (e.g., a timestamp) is marked as **Noise**.
-2.  **Regression Detection:** Beru compares `Response(A)` vs `Response(Candidate)`. 
-3.  **Final Result:** `(A vs Candidate Diff) - (Noise Mask) = Real Regression`.
+1. **Noise discovery:** Beru diffs Control-A vs Control-B (same `oldImage`). Fields that differ are treated as noise.
+2. **Regression detection:** Beru diffs Control-A vs Candidate.
+3. **Result:** `(A vs Candidate) − noise mask = candidate regressions`.
 
----
-
-## 4. Core Components
-
-### A. Monarch (The Orchestrator)
-Built with KubeBuilder, Monarch manages the `ShadowTest` Custom Resource (CRD).
-*   **Provisioning:** Clones the production deployment and injects Envoy sidecars.
-*   **Dependency Virtualization:** Creates ephemeral shadow databases (e.g., Mongo, Redis) and overwrites connection strings in the shadow pods.
-*   **Ready Gating:** Ensures the environment is only marked "Ready" when Igris and all 3 shadow pods are available.
-
-### B. Igris (The Modular Multicaster)
-A modular Go service that handles traffic distribution.
-*   **Protocol Add-ons:** Uses a driver-based architecture to handle HTTP, TCP, and eventually DB-specific protocols (Mongo, Redis).
-*   **Security:** Redacts sensitive PII (Authorization, Cookies) from HTTP traffic.
-*   **Trace ID Propagation:** Injects a unique `x-shadow-trace-id` into all cloned requests to ensure Beru can correlate the results.
-*   **Fire-and-Forget:** Returns a `202 Accepted` to the Siphon agent immediately to minimize capture overhead.
-
-### C. Beru (The Diff Engine)
-A high-concurrency Go service that acts as the judge.
-*   **ext_proc Integration:** Receives real-time reports from the Envoy sidecars in the shadow pods.
-*   **Ingest Store:** Buffers reports for a specific Trace ID and cleans up expired data via a TTL worker.
-*   **Structural Diffing:** Performs deep JSON comparison to find exact paths of divergence.
-
-### D. eBPF Siphon (The Capture Agent)
-A lightweight agent running on Kubernetes nodes.
-*   **Passive Capture:** Uses eBPF (Socket Filter or TC) to clone packets at the kernel level.
-*   **Zero-Impact:** Does not block production traffic. If the agent fails, production traffic continues unaffected.
-*   **Targeted Filtering:** Uses eBPF Maps to only capture traffic on ports and IPs specified by Monarch.
+Correlation uses **`x-shadow-trace-id`** (from Igris / Envoy `x-request-id` mutation).
 
 ---
 
-## 5. Security and Isolation
-The system is built on **Zero Trust** principles:
-*   **Network Isolation:** All shadow components live in a dedicated namespace with a `NetworkPolicy` preventing outbound access to the real world.
-*   **Data Redaction:** Igris strips credentials before traffic enters the shadow environment.
-*   **No Production Write-back:** Shadow pods are redirected to ephemeral databases or mocked dependencies to prevent production data corruption.
+## 4. Core components
 
-## 6. Traffic Lifecycle
-1.  **Request Hits Production:** A real user hits the production service.
-2.  **eBPF Siphon:** Clones the packet and sends it to **Igris**.
-3.  **Igris Multicast:** Igris redacts headers, adds a Trace ID, and sends the request to **Control-A, Control-B, and Candidate**.
-4.  **Shadow Processing:** The shadow pods process the request and talk to **Shadow Dependencies**.
-5.  **Envoy Reporting:** The Envoy sidecars in the shadow pods report the results to **Beru**.
-6.  **Comparison:** Beru identifies if the new code (Candidate) behaved differently than the old code (Control) after filtering for noise.
+### A. Monarch (orchestrator)
+
+KubeBuilder operator for `ShadowTest` (`engine.shadow-diff.io/v1alpha1`).
+
+- Provisions shadow namespace and three Deployments with **Envoy** sidecars (`ext_proc` → Beru).
+- Deploys **Igris** in the shadow namespace; writes `listeners.json` from `spec.inputs`.
+- Ensures **Siphon** DaemonSet in `siphon-system`; merges targets from all Ready ShadowTests and pushes **`POST /v1/config`** (via node **hostIP** when Siphon uses `hostNetwork`).
+- Copies **literal env** from the target Deployment’s first container (MVP).
+- **Ready** gating: shadows, Igris, and capture config reconciled before `status.phase: Ready`.
+
+**Key spec (ports example — http-https-echo on Kind):**
+
+| Field | Typical value | Meaning |
+|-------|----------------|---------|
+| `servicePort` | 8888 | Envoy ingress; Igris → shadow multicast |
+| `applicationPort` | 80 | Envoy → app container (must match copied `HTTP_PORT`) |
+| `inputs[].port` | 80, 8888 | Igris listeners; **80** = Siphon replay path |
+
+### B. Igris (modular multicaster)
+
+- Drivers: `http_request` (atomic, worker pool), `tcp_stream` (streaming).
+- HTTP: header redaction, **202 Accepted**, async clone to three shadow base URLs at **`servicePort`**.
+- Injects / preserves **`x-shadow-trace-id`** for Beru.
+- Graceful shutdown: drain atomic work and TCP relays before exit.
+
+### C. Beru (diff engine)
+
+- gRPC **`ReportTraffic`** and Envoy **ext_proc** ingress reports.
+- In-memory store with TTL; diff-of-diffs when A, B, C report for one trace.
+- JSON payloads from echo/HTTP shadows; non-JSON bodies logged and skipped for structural diff.
+
+### D. Siphon (capture agent) — classic BPF + Go
+
+**Not raw eBPF.** Siphon is implemented in Go with **`github.com/google/gopacket`**:
+
+| Layer | Technology |
+|-------|------------|
+| Socket | `afpacket.TPacket` (`hostNetwork`, `CAP_NET_RAW` / `CAP_NET_ADMIN`) |
+| Filter | **Classic BPF** string → `pcap.CompileBPFFilter` → `SetBPF` (IPv4 `host` + `port`, OR across targets) |
+| Match policy | Kernel drops non-matching frames before userspace |
+| Sampling | Sticky hash on TCP 4-tuple + TTL map (`sample_rate` %) |
+| Reassembly | `gopacket/tcpassembly` (relaxed flush on return path) |
+| Egress | TCP connection pool to **Igris** per `igris_host` + listener port |
+
+**Config (HTTP API):**
+
+```json
+{
+  "sample_rate": 100,
+  "targets": [{
+    "shadowtest": "default/my-app-shadow",
+    "target_ips": ["10.244.0.51"],
+    "target_ports": [80],
+    "igris_host": "my-app-shadow-igris.shadow-default-my-app-shadow.svc.cluster.local",
+    "listeners": [{ "port": 80, "driver": "http_request" }]
+  }]
+}
+```
+
+**Operational constraints:**
+
+- **IPv4 only** for BPF expressions today; IPv6 skipped at build time.
+- **`captureSnapLen`** (8192) must match TPacket frame size and pcap compile snaplen.
+- **Kind:** no `cni0` on many nodes — use `SIPHON_INTERFACE=any` to capture **`eth0` + `veth*`**.
+- After `kind load`, **`kubectl rollout restart`** the DaemonSet so pods pick up the new image digest.
+
+**Zero-impact intent:** Siphon is read-only on the wire; production forwarding is unchanged. Agent failure must not break prod paths (capture stops; prod continues).
+
+#### Planned vs implemented (capture)
+
+| Original plan (design) | Current MVP |
+|------------------------|-------------|
+| eBPF TC/XDP program + maps for IP/port | Classic BPF via libpcap on AF_PACKET |
+| eBPF map per ShadowTest | Single merged filter string from Monarch |
+| In-kernel sample rate | Userspace sticky sampling after BPF |
+| TLS termination in agent | Not implemented |
+
+---
+
+## 5. Security and isolation
+
+- Shadow workloads in a dedicated namespace; **NetworkPolicy** can block real-world egress (when applied).
+- Igris redacts sensitive HTTP headers before shadow multicast.
+- Shadow dependencies are ephemeral or mocked — no production write-back.
+- Siphon runs as root on the node only for capture capabilities; not `privileged` full.
+
+---
+
+## 6. Traffic lifecycle (verified E2E)
+
+1. **Request hits production** (pod IP, e.g. `:80`).
+2. **Kernel BPF** on node interfaces allows frames to/from that IP:port.
+3. **Siphon** samples the flow, reassembles TCP, forwards HTTP bytes to **Igris:80**.
+4. **Igris** returns **202**, multicasts to **control-a / control-b / candidate** at **Envoy :8888**.
+5. **Envoy** forwards to app **:80**; responses reported to **Beru** via ext_proc.
+6. **Beru** completes diff-of-diffs when all three roles reported.
+
+**Operator / Kind testing:**
+
+```bash
+./scripts/e2e-reset-kind.sh --run-test    # deploy stack + pipeline
+./examples/e2e-pipeline-test.sh           # traffic only (uses node hostIP for Siphon API)
+```
 
 ---
 
 ## 7. Extensibility
-The modular architecture allows for easy extension:
-*   **New Protocols:** Add a new `ProtocolDriver` to Igris (e.g., for Kafka or SQL).
-*   **New Persistance:** Add a Redis/Postgres backend to Beru for long-term regression analytics.
-*   **New Mocks:** Add downstream mocking rules to Monarch to simulate 3rd party API failures.
 
-To make the system truly extensible, I have added a **"Developer’s Guide: Adding a New Protocol"** section to the architecture documentation. 
-
-This section explains the specific code changes required in **Monarch**, **Igris**, and **Beru** to support a new technology (e.g., adding PostgreSQL or Kafka support).
+- **Igris:** new `ProtocolDriver` (e.g. Kafka, SQL) in `igris/internal/driver/`.
+- **Beru:** new payload codecs in `beru/internal/payload/`.
+- **Monarch:** CRD `inputs[].driver`, optional shadow dependency provisioning.
+- **Siphon:** extend `BuildBPFFilter` (IPv6 `ip6 host`, more clauses); optional future **raw eBPF** for lower overhead at very high PPS.
 
 ---
 
-## 8. Extension Guide: Adding a New Protocol
-To add support for a new protocol (e.g., **PostgreSQL**), follow this 3-step implementation path.
+## 8. Extension guide: adding a new protocol
 
-### Step 1: Monarch (The Orchestrator)
-**File:** `api/v1alpha1/shadowtest_types.go`
-1.  **Update the CRD:** Add the new protocol to the `Addon` enum validation in the `InputSpec` or `OutputSpec`.
-    ```go
-    // +kubebuilder:validation:Enum=http;mongodb;postgresql
-    Addon string `json:"addon"`
-    ```
-**File:** `internal/controller/shadowtest_igris.go`
-2.  **Update Listener Logic:** Ensure the `igrisListenersJSON` helper recognizes the new protocol and maps it to the correct port for the Igris ConfigMap.
+### Step 1: Monarch
 
----
+- Allow protocol in `spec.inputs` validation.
+- Map listener ports in `shadowtest_igris.go` / `shadowServicePorts`.
+- Add capture ports to Siphon target list via `buildSiphonTarget` (`target_ports` from resolved inputs).
 
-### Step 2: Igris (The Traffic Hub)
-**File:** `internal/addon/`
-1.  **Create a New Add-on:** Create a new package (e.g., `/igris/internal/addon/postgresql/`).
-2.  **Implement the `AddOn` Interface:**
-    *   **`ParseMetadata`:** Define how to extract a Trace ID from the PostgreSQL stream (or generate one if it's a new connection).
-    *   **`Transform`:** Implement "Handshake Scrubbing." For DBs, this usually means zeroing out the password bytes in the initial connection packets.
-    *   **`RespondEarly`:** For DBs, this is usually `false` (DBs require a stateful, long-lived connection, unlike HTTP's "Fire and Forget").
-**File:** `cmd/igris/main.go`
-3.  **Register the Add-on:**
-    ```go
-    registry["postgresql"] = postgres.NewAddon()
-    ```
+### Step 2: Igris
+
+- Implement driver under `igris/internal/driver/`.
+- Register in hub; handle atomic vs streaming semantics.
+- For DB-like protocols: stateful relay, scrub secrets in `Transform` / metadata parse.
+
+### Step 3: Beru
+
+- Add codec for non-JSON bodies; register in codec registry.
+
+### Step 4: Siphon
+
+- Ensure Monarch includes the **production listen port** in `target_ports` for BPF.
+- If not HTTP, wire `tcp_stream` listener and forwarding driver in assembly layer.
 
 ---
 
-### Step 3: Beru (The Diff Engine)
-**File:** `internal/payload/`
-1.  **Implement a New Codec:** If the protocol is not JSON, create a new `Codec` (e.g., `PostgresCodec`).
-    *   **`Normalize`:** Convert the raw binary SQL packets into a structured format (like a JSON string of the query) so the diffing engine can compare them.
-2.  **Register the Codec:** Add the codec to the `CodecRegistry` so Beru knows how to decode traffic based on the `content_type` or `protocol` metadata.
-
----
-
-## 9. Implementation Checklist for New Protocols
+## 9. Implementation checklist for new protocols
 
 | Component | Task | Responsibility |
-| :--- | :--- | :--- |
-| **Monarch** | CRD Validation | Allow the new protocol name in YAML. |
-| **Monarch** | Provisioning | (Optional) Add a "Shadow Instance" deployment for the new DB. |
-| **Igris** | Driver | Implement the binary parsing and secret redaction. |
-| **Igris** | Multicast | Define if the protocol is "Request/Response" or "Streaming." |
-| **Beru** | Codec | Translate binary packets into a diffable structure (JSON/Text). |
-| **Siphon** | Port Map | Ensure the eBPF agent knows to capture the new port. |
+|-----------|------|----------------|
+| **Monarch** | CRD / inputs | Declare port + driver |
+| **Monarch** | Shadow app port | `applicationPort` matches real container listen port |
+| **Siphon** | BPF clauses | `host <podIP> and port <prodPort>` per target |
+| **Igris** | Driver | Parse, redact, multicast or stream |
+| **Beru** | Codec | Normalize payloads for diff |
 
-### Summary of Extensibility
-Because the **Core Engine** in each service handles the "Plumbing" (K8s reconciliation, TCP streaming, and 3-way matching), a developer only needs to implement the **"Protocol Logic"** (the Add-on and the Codec) to add a new shadowing capability to the entire platform.
+---
+
+## 10. Related documents
+
+| Document | Contents |
+|----------|----------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Monorepo components, reconcile summary, Siphon/BPF detail |
+| [VERIFICATION.md](VERIFICATION.md) | Install and E2E verification (Phase 3b BPF, Kind notes) |
+| [examples/e2e-shadowtest.yaml](examples/e2e-shadowtest.yaml) | Reference ShadowTest with correct ports |
+| [scripts/e2e-reset-kind.sh](scripts/e2e-reset-kind.sh) | Kind reset/deploy script |
+
+Because each service keeps **plumbing** separate from **protocol logic**, new protocols mainly add an Igris driver + Beru codec + Monarch port wiring; Siphon only needs the production **IP:port** included in the BPF filter set.

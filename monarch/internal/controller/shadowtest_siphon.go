@@ -219,6 +219,15 @@ func (r *ShadowTestReconciler) pushGlobalSiphonConfig(ctx context.Context, pendi
 	return "Ready", nil
 }
 
+// siphonAgentAPIHost returns the address Monarch uses to reach the Siphon HTTP API.
+// Siphon runs with hostNetwork; on Kind the API listens on the node hostIP, not podIP.
+func siphonAgentAPIHost(pod corev1.Pod) string {
+	if pod.Spec.HostNetwork && pod.Status.HostIP != "" {
+		return pod.Status.HostIP
+	}
+	return pod.Status.PodIP
+}
+
 func (r *ShadowTestReconciler) postSiphonConfigToAgents(ctx context.Context, payload siphonConfigPayload) error {
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods, client.InNamespace(siphonSystemNamespace), client.MatchingLabels{
@@ -233,10 +242,11 @@ func (r *ShadowTestReconciler) postSiphonConfigToAgents(ctx context.Context, pay
 	client := &http.Client{Timeout: 10 * time.Second}
 	var firstErr error
 	for _, pod := range pods.Items {
-		if pod.Status.PodIP == "" || pod.Status.Phase != corev1.PodRunning {
+		apiHost := siphonAgentAPIHost(pod)
+		if apiHost == "" || pod.Status.Phase != corev1.PodRunning {
 			continue
 		}
-		url := fmt.Sprintf("http://%s:%d/v1/config", pod.Status.PodIP, siphonAPIPort)
+		url := fmt.Sprintf("http://%s:%d/v1/config", apiHost, siphonAPIPort)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
 			return err

@@ -3,8 +3,24 @@ package controller
 import (
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
+
+func TestSiphonAgentAPIHost(t *testing.T) {
+	pod := corev1.Pod{}
+	pod.Spec.HostNetwork = true
+	pod.Status.HostIP = "172.18.0.2"
+	pod.Status.PodIP = "10.244.0.5"
+	if got := siphonAgentAPIHost(pod); got != "172.18.0.2" {
+		t.Fatalf("hostNetwork: got %q want 172.18.0.2", got)
+	}
+	pod.Spec.HostNetwork = false
+	if got := siphonAgentAPIHost(pod); got != "10.244.0.5" {
+		t.Fatalf("pod network: got %q want 10.244.0.5", got)
+	}
+}
 
 func TestBuildSiphonTarget(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{}
