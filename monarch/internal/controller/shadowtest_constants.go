@@ -29,6 +29,13 @@ const (
 	defaultBeruGRPCTimeout = "2s"
 	envBeruGRPCAddress     = "BERU_GRPC_ADDRESS"
 
+	egressProxyPort     int32  = 15001
+	egressProxyURL      string = "http://127.0.0.1:15001"
+	envHTTPProxy        string = "HTTP_PROXY"
+	envHTTPSProxy       string = "HTTPS_PROXY"
+	envNoProxy          string = "NO_PROXY"
+	defaultNoProxyValue string = "127.0.0.1,localhost,.cluster.local,.svc"
+
 	containerIgris               = "igris"
 	defaultIgrisImage            = "igris:latest"
 	configMapKeyListenersJSON    = "listeners.json"

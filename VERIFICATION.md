@@ -532,6 +532,79 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | grep -E '
 
 ---
 
+## Phase 4a.1 — Egress interception & strict replay
+
+When `spec.downstreams` is set, Monarch injects `HTTP_PROXY=http://127.0.0.1:15001` into shadow app containers and configures an egress Envoy listener with **ext_proc** to Beru. Beru hashes outbound requests (JSON compacted, optional path stripping) and returns a seeded mock or **HTTP 599** on miss.
+
+### Prerequisites
+
+- Beru deployed with HTTP port **8080** (`beru/deploy/` includes `BERU_HTTP_ADDR=:8080`)
+- `ShadowTest` includes `downstreams` (see [`examples/e2e-shadowtest.yaml`](examples/e2e-shadowtest.yaml))
+
+### Automated Kind E2E
+
+After [`scripts/e2e-reset-kind.sh`](scripts/e2e-reset-kind.sh) deploys the stack:
+
+```bash
+./examples/e2e-egress-test.sh
+# or: ./scripts/e2e-reset-kind.sh --run-egress-test
+```
+
+The script verifies `HTTP_PROXY`, Envoy `egress_proxy` config, **599** on miss, `seed_mock`, and **200** mock hit.
+
+### Seed a mock response (manual)
+
+```bash
+kubectl port-forward svc/beru 8080:8080 -n beru-system &
+curl -s -X POST http://127.0.0.1:8080/v1/seed_mock \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "method": "POST",
+    "host": "httpbin.org",
+    "path": "/post",
+    "body": {"foo": 1},
+    "ignore_paths": [],
+    "response": {
+      "status": 200,
+      "headers": {"content-type": "application/json"},
+      "body": "{\"mock\":true}"
+    }
+  }'
+```
+
+Note the returned `hash` field.
+
+### Issue proxied egress from a shadow app pod
+
+```bash
+export SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
+
+kubectl exec -n "$SHADOW_NS" deploy/my-app-shadow-control-a -c app -- \
+  curl -s -x http://127.0.0.1:15001 http://httpbin.org/post \
+  -H 'Content-Type: application/json' -d '{"foo":1}'
+```
+
+Expected: `{"mock":true}` when the mock is seeded.
+
+### Verify 599 on miss
+
+Repeat the curl **without** seeding (or with a different body). Expected: HTTP **599** with body `Egress Regression`.
+
+Watch Beru logs:
+
+```bash
+kubectl logs -n beru-system deployment/beru -f | grep 'Egress Regression'
+```
+
+### Verify Envoy egress config
+
+```bash
+kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | \
+  grep -E 'egress_proxy|x-shadow-mode|request_body_mode: BUFFERED|httpbin.org'
+```
+
+---
+
 ## Phase 2a scope (superseded by 2b config)
 
 - Phase 2b Envoy config uses **ext_proc** + **generate_request_id** (no longer admin-only placeholder).
@@ -552,3 +625,5 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | grep -E '
 - [ ] `make -C igris test` passes
 - [ ] Igris returns 202 and multicasts to three targets (local smoke or cluster port-forwards)
 - [ ] `x-shadow-trace-id` present on Igris response and shadow/Beru correlation (Phase 2b)
+- [ ] Egress mock seeded via `POST /v1/seed_mock` and proxied curl returns mock (Phase 4a.1)
+- [ ] Unseeded egress returns HTTP 599 and Beru logs `Egress Regression` (Phase 4a.1)

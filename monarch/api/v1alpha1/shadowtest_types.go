@@ -54,6 +54,16 @@ type SiphonSpec struct {
 	SampleRate *int32 `json:"sampleRate,omitempty"`
 }
 
+// DownstreamSpec declares an outbound host intercepted by the egress proxy.
+type DownstreamSpec struct {
+	// Host is the downstream hostname (matches :authority / Host on proxied requests).
+	Host string `json:"host"`
+
+	// IgnoreRequestPaths are JSONPath expressions stripped before egress hashing (e.g. "$.timestamp").
+	// +optional
+	IgnoreRequestPaths []string `json:"ignoreRequestPaths,omitempty"`
+}
+
 // IgrisSpec overrides the always-deployed Igris workload.
 type IgrisSpec struct {
 	// Image overrides the default Igris container image.
@@ -116,6 +126,10 @@ type ShadowTestSpec struct {
 	// Siphon configures kernel-level traffic capture to Igris.
 	// +optional
 	Siphon *SiphonSpec `json:"siphon,omitempty"`
+
+	// Downstreams lists outbound hosts trapped by the egress proxy for strict replay.
+	// +optional
+	Downstreams []DownstreamSpec `json:"downstreams,omitempty"`
 }
 
 // ShadowTestStatus defines the observed state of ShadowTest.

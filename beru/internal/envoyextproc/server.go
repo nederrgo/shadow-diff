@@ -10,6 +10,7 @@ import (
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
 	"github.com/shadow-diff/beru/internal/ingest"
+	"github.com/shadow-diff/beru/internal/replay"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -26,6 +27,7 @@ type Server struct {
 	extprocv3.UnimplementedExternalProcessorServer
 	Log   *slog.Logger
 	Store *ingest.Store
+	Mocks *replay.MockStore
 	Role  string
 }
 
@@ -40,11 +42,37 @@ type streamState struct {
 // Process handles the ext_proc bidirectional stream.
 func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
 	role := s.Role
+	mode := ""
+	var downstreamConfigs []DownstreamConfig
 	if md, ok := metadata.FromIncomingContext(stream.Context()); ok {
 		if v := md.Get(headerShadowRole); len(v) > 0 && v[0] != "" {
 			role = v[0]
 		}
+		if v := md.Get(headerShadowMode); len(v) > 0 {
+			mode = v[0]
+		}
+		if v := md.Get(headerShadowDownstreamsConf); len(v) > 0 && v[0] != "" {
+			downstreamConfigs = parseDownstreamConfigs(v[0])
+		}
 	}
+
+	if mode == shadowModeEgress {
+		egress := &egressState{role: role, downstreamConfigs: downstreamConfigs}
+		for {
+			req, err := stream.Recv()
+			if err == io.EOF {
+				return nil
+			}
+			if err != nil {
+				return status.Errorf(codes.Unknown, "recv: %v", err)
+			}
+			resp := s.handleEgressRequest(egress, req)
+			if err := stream.Send(resp); err != nil {
+				return status.Errorf(codes.Unknown, "send: %v", err)
+			}
+		}
+	}
+
 	state := &streamState{role: role, responseMeta: map[string]string{}}
 	for {
 		req, err := stream.Recv()

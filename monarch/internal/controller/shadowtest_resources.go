@@ -120,21 +120,20 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 			},
 		}
 		beruAddr := beruGRPCAddressFor(st)
+		appEnv := appEnvWithEgressProxy(st, env)
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{
 			{
 				Name:  "app",
 				Image: image,
 				Ports: appContainerPortsFor(st),
-				Env:   env,
+				Env:   appEnv,
 			},
 			{
 				Name:            containerEnvoySidecar,
 				Image:           envoyImage,
 				ImagePullPolicy: envoyImagePullPolicy,
 				Args:            []string{"-c", "/etc/envoy/envoy.yaml", "--log-level", "info"},
-				Ports: []corev1.ContainerPort{
-					{Name: "ingress", ContainerPort: st.Spec.ServicePort, Protocol: corev1.ProtocolTCP},
-				},
+				Ports: envoyContainerPorts(st),
 				Env: []corev1.EnvVar{
 					{Name: envShadowRole, Value: role},
 					{Name: envBeruGRPCAddress, Value: beruAddr},

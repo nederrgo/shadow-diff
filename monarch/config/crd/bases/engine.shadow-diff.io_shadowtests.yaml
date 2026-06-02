@@ -56,6 +56,27 @@ spec:
               beruGRPCTimeout:
                 description: BeruGRPCTimeout is the ext_proc gRPC timeout (e.g. "2s").
                 type: string
+              downstreams:
+                description: Downstreams lists outbound hosts trapped by the egress
+                  proxy for strict replay.
+                items:
+                  description: DownstreamSpec declares an outbound host intercepted
+                    by the egress proxy.
+                  properties:
+                    host:
+                      description: Host is the downstream hostname (matches :authority
+                        / Host on proxied requests).
+                      type: string
+                    ignoreRequestPaths:
+                      description: IgnoreRequestPaths are JSONPath expressions stripped
+                        before egress hashing (e.g. "$.timestamp").
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - host
+                  type: object
+                type: array
               igris:
                 description: Igris overrides image, replicas, or resources for the
                   Igris traffic hub (always deployed).
