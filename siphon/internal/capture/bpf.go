@@ -12,19 +12,20 @@ import (
 )
 
 // BuildBPFFilter constructs a BPF (pcap-compatible) filter string for TCP traffic
-// matching the configured IPv4 targets. It filters bidirectionally using 'host <IP> and port <Port>' clauses.
+// matching configured IPv4 targets: ingress (host+port) and egress (src host).
 func BuildBPFFilter(cfg config.SiphonConfig) (string, error) {
 	if len(cfg.Targets) == 0 {
 		return "", errors.New("BPF builder: no targets configured")
 	}
 
-	// Deduplicate target IP and port combinations
 	type ipPort struct {
 		ip   string
 		port int
 	}
-	var pairs []ipPort
-	seen := make(map[string]map[int]bool)
+	var ingressPairs []ipPort
+	seenIngress := make(map[string]map[int]bool)
+	seenProdIPs := make(map[string]bool)
+	var prodIPs []string
 
 	var hasIPv6Logged bool
 
@@ -43,8 +44,13 @@ func BuildBPFFilter(cfg config.SiphonConfig) (string, error) {
 				continue
 			}
 
-			if _, ok := seen[ipStr]; !ok {
-				seen[ipStr] = make(map[int]bool)
+			if !seenProdIPs[ipStr] {
+				seenProdIPs[ipStr] = true
+				prodIPs = append(prodIPs, ipStr)
+			}
+
+			if _, ok := seenIngress[ipStr]; !ok {
+				seenIngress[ipStr] = make(map[int]bool)
 			}
 
 			for _, port := range target.TargetPorts {
@@ -52,35 +58,46 @@ func BuildBPFFilter(cfg config.SiphonConfig) (string, error) {
 					log.Printf("BPF builder warning: invalid port %d, skipping", port)
 					continue
 				}
-				if !seen[ipStr][port] {
-					seen[ipStr][port] = true
-					pairs = append(pairs, ipPort{ip: ipStr, port: port})
+				if !seenIngress[ipStr][port] {
+					seenIngress[ipStr][port] = true
+					ingressPairs = append(ingressPairs, ipPort{ip: ipStr, port: port})
 				}
 			}
 		}
 	}
 
-	if len(pairs) == 0 {
+	if len(ingressPairs) == 0 && len(prodIPs) == 0 {
 		return "", errors.New("BPF builder: no valid IPv4 target IP/port pairs found")
 	}
 
-	// Sort pairs to ensure deterministic BPF string output (useful for testing and dedup comparison)
-	sort.Slice(pairs, func(i, j int) bool {
-		if pairs[i].ip != pairs[j].ip {
-			return pairs[i].ip < pairs[j].ip
+	sort.Slice(ingressPairs, func(i, j int) bool {
+		if ingressPairs[i].ip != ingressPairs[j].ip {
+			return ingressPairs[i].ip < ingressPairs[j].ip
 		}
-		return pairs[i].port < pairs[j].port
+		return ingressPairs[i].port < ingressPairs[j].port
 	})
+	sort.Strings(prodIPs)
 
-	// Build clauses
-	var clauses []string
-	for _, pair := range pairs {
-		clauses = append(clauses, fmt.Sprintf("(host %s and port %d)", pair.ip, pair.port))
+	var ingressClauses []string
+	for _, pair := range ingressPairs {
+		ingressClauses = append(ingressClauses, fmt.Sprintf("(host %s and port %d)", pair.ip, pair.port))
 	}
 
-	filter := fmt.Sprintf("tcp and ( %s )", strings.Join(clauses, " or "))
+	var egressClauses []string
+	for _, ip := range prodIPs {
+		egressClauses = append(egressClauses, fmt.Sprintf("(src host %s)", ip))
+	}
 
-	// Check string length and log warning if > 8KB
+	var groups []string
+	if len(ingressClauses) > 0 {
+		groups = append(groups, strings.Join(ingressClauses, " or "))
+	}
+	if len(egressClauses) > 0 {
+		groups = append(groups, strings.Join(egressClauses, " or "))
+	}
+
+	filter := fmt.Sprintf("tcp and ( %s )", strings.Join(groups, " or "))
+
 	if len(filter) > 8*1024 {
 		log.Printf("BPF builder warning: BPF filter string length (%d bytes) exceeds 8KB; the filter may be too complex for some kernel versions", len(filter))
 	}

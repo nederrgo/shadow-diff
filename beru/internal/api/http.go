@@ -16,11 +16,11 @@ type Server struct {
 }
 
 type seedMockRequest struct {
-	Method      string          `json:"method"`
-	Host        string          `json:"host"`
-	Path        string          `json:"path"`
-	Body        json.RawMessage `json:"body"`
-	IgnorePaths []string        `json:"ignore_paths"`
+	Method      string           `json:"method"`
+	Host        string           `json:"host"`
+	Path        string           `json:"path"`
+	Body        json.RawMessage  `json:"body"`
+	IgnorePaths []string         `json:"ignore_paths"`
 	Response    seedMockResponse `json:"response"`
 }
 
@@ -33,6 +33,7 @@ type seedMockResponse struct {
 func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/seed_mock", s.handleSeedMock)
+	mux.HandleFunc("/v1/record_egress", s.handleRecordEgress)
 	s.Log.Info("Beru HTTP API listening", "addr", addr)
 	return http.ListenAndServe(addr, mux)
 }
@@ -42,6 +43,18 @@ func (s *Server) handleSeedMock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	s.putMockFromRequest(w, r)
+}
+
+func (s *Server) handleRecordEgress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.putMockFromRequest(w, r)
+}
+
+func (s *Server) putMockFromRequest(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)

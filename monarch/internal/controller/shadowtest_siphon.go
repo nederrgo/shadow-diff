@@ -33,12 +33,20 @@ type siphonConfigPayload struct {
 	Targets    []siphonTarget `json:"targets"`
 }
 
+type siphonDownstream struct {
+	Host         string   `json:"host"`
+	IgnorePaths  []string `json:"ignore_paths,omitempty"`
+}
+
 type siphonTarget struct {
-	ShadowTest  string           `json:"shadowtest"`
-	TargetIPs   []string         `json:"target_ips"`
-	TargetPorts []int            `json:"target_ports"`
-	IgrisHost   string           `json:"igris_host"`
-	Listeners   []siphonListener `json:"listeners"`
+	ShadowTest   string             `json:"shadowtest"`
+	TargetIPs    []string           `json:"target_ips"`
+	TargetPorts  []int              `json:"target_ports"`
+	IgrisHost    string             `json:"igris_host"`
+	Listeners    []siphonListener   `json:"listeners"`
+	BeruHTTPHost string             `json:"beru_http_host"`
+	Downstreams  []siphonDownstream `json:"downstreams,omitempty"`
+	ExcludeIPs   []string           `json:"exclude_ips,omitempty"`
 }
 
 type siphonListener struct {
@@ -137,7 +145,17 @@ func (r *ShadowTestReconciler) listTargetPodIPs(ctx context.Context, dep *appsv1
 	return ips, nil
 }
 
-func buildSiphonTarget(st *enginev1alpha1.ShadowTest, shadowNS string, podIPs []string) siphonTarget {
+func (r *ShadowTestReconciler) beruHTTPHostForSiphon(ctx context.Context, st *enginev1alpha1.ShadowTest) string {
+	var beruSvc corev1.Service
+	if err := r.Get(ctx, types.NamespacedName{Namespace: beruSystemNamespace, Name: beruServiceName}, &beruSvc); err == nil {
+		if ip := beruSvc.Spec.ClusterIP; ip != "" && ip != "None" {
+			return ip + ":8080"
+		}
+	}
+	return beruHTTPHostFor(st)
+}
+
+func buildSiphonTarget(st *enginev1alpha1.ShadowTest, shadowNS string, podIPs []string, excludeIPs []string, beruHTTPHost string) siphonTarget {
 	inputs := resolvedInputs(st)
 	var ports []int
 	var listeners []siphonListener
@@ -151,13 +169,40 @@ func buildSiphonTarget(st *enginev1alpha1.ShadowTest, shadowNS string, podIPs []
 		listeners = append(listeners, siphonListener{Port: int(in.Port), Driver: in.Driver})
 	}
 	host := shadowServiceHost(shadowNS, igrisServiceName(st))
-	return siphonTarget{
-		ShadowTest:  st.Namespace + "/" + st.Name,
-		TargetIPs:   podIPs,
-		TargetPorts: ports,
-		IgrisHost:   host,
-		Listeners:   listeners,
+	var downstreams []siphonDownstream
+	for _, d := range st.Spec.Downstreams {
+		downstreams = append(downstreams, siphonDownstream{
+			Host:        d.Host,
+			IgnorePaths: d.IgnoreRequestPaths,
+		})
 	}
+	return siphonTarget{
+		ShadowTest:   st.Namespace + "/" + st.Name,
+		TargetIPs:    podIPs,
+		TargetPorts:  ports,
+		IgrisHost:    host,
+		Listeners:    listeners,
+		BeruHTTPHost: beruHTTPHost,
+		Downstreams:  downstreams,
+		ExcludeIPs:   excludeIPs,
+	}
+}
+
+func (r *ShadowTestReconciler) resolveSiphonExcludeIPs(ctx context.Context, shadowNS string, st *enginev1alpha1.ShadowTest) []string {
+	var ips []string
+	var igrisSvc corev1.Service
+	if err := r.Get(ctx, types.NamespacedName{Namespace: shadowNS, Name: igrisServiceName(st)}, &igrisSvc); err == nil {
+		if ip := igrisSvc.Spec.ClusterIP; ip != "" && ip != "None" {
+			ips = append(ips, ip)
+		}
+	}
+	var beruSvc corev1.Service
+	if err := r.Get(ctx, types.NamespacedName{Namespace: beruSystemNamespace, Name: beruServiceName}, &beruSvc); err == nil {
+		if ip := beruSvc.Spec.ClusterIP; ip != "" && ip != "None" {
+			ips = append(ips, ip)
+		}
+	}
+	return ips
 }
 
 func (r *ShadowTestReconciler) pushGlobalSiphonConfig(ctx context.Context, pending *siphonTarget) (siphonPhase string, err error) {
@@ -187,7 +232,9 @@ func (r *ShadowTestReconciler) pushGlobalSiphonConfig(ctx context.Context, pendi
 			return "Degraded", err
 		}
 		payload.SampleRate = siphonSampleRate(st)
-		t := buildSiphonTarget(st, st.Status.ShadowNamespace, ips)
+		excludeIPs := r.resolveSiphonExcludeIPs(ctx, st.Status.ShadowNamespace, st)
+		beruHTTP := r.beruHTTPHostForSiphon(ctx, st)
+		t := buildSiphonTarget(st, st.Status.ShadowNamespace, ips, excludeIPs, beruHTTP)
 		targets = append(targets, t)
 		seen[t.ShadowTest] = struct{}{}
 	}
@@ -286,7 +333,9 @@ func (r *ShadowTestReconciler) reconcileSiphonCapture(
 	if err != nil {
 		return nil, "Degraded", err
 	}
-	pending := buildSiphonTarget(st, shadowNS, ips)
+	excludeIPs := r.resolveSiphonExcludeIPs(ctx, shadowNS, st)
+	beruHTTP := r.beruHTTPHostForSiphon(ctx, st)
+	pending := buildSiphonTarget(st, shadowNS, ips, excludeIPs, beruHTTP)
 	phase, err := r.pushGlobalSiphonConfig(ctx, &pending)
 	return ips, phase, err
 }

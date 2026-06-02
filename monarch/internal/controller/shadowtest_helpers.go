@@ -108,6 +108,14 @@ func beruGRPCAddressFor(st *enginev1alpha1.ShadowTest) string {
 	return defaultBeruGRPCAddress
 }
 
+func beruHTTPHostFor(st *enginev1alpha1.ShadowTest) string {
+	host, _, err := parseBeruHostPort(beruGRPCAddressFor(st))
+	if err != nil || host == "" {
+		return defaultBeruHTTPAddress
+	}
+	return fmt.Sprintf("%s:8080", host)
+}
+
 func beruGRPCTimeoutFor(st *enginev1alpha1.ShadowTest) string {
 	if st.Spec.BeruGRPCTimeout != "" {
 		return st.Spec.BeruGRPCTimeout

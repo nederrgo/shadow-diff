@@ -15,7 +15,7 @@ func TestBuildBPFFilter(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name: "single IP and port",
+			name: "single IP and port with egress",
 			cfg: config.SiphonConfig{
 				Targets: []config.SiphonTarget{
 					{
@@ -25,7 +25,7 @@ func TestBuildBPFFilter(t *testing.T) {
 				},
 			},
 			expectMatch: []string{
-				"tcp and ( (host 10.0.0.1 and port 80) )",
+				"tcp and ( (host 10.0.0.1 and port 80) or (src host 10.0.0.1) )",
 			},
 			expectError: false,
 		},
@@ -38,14 +38,13 @@ func TestBuildBPFFilter(t *testing.T) {
 						TargetPorts: []int{80, 443},
 					},
 					{
-						// duplicate
 						TargetIPs:   []string{"10.0.0.1"},
 						TargetPorts: []int{80},
 					},
 				},
 			},
 			expectMatch: []string{
-				"tcp and ( (host 10.0.0.1 and port 80) or (host 10.0.0.1 and port 443) or (host 10.0.0.2 and port 80) or (host 10.0.0.2 and port 443) )",
+				"tcp and ( (host 10.0.0.1 and port 80) or (host 10.0.0.1 and port 443) or (host 10.0.0.2 and port 80) or (host 10.0.0.2 and port 443) or (src host 10.0.0.1) or (src host 10.0.0.2) )",
 			},
 			expectError: false,
 		},
@@ -60,7 +59,7 @@ func TestBuildBPFFilter(t *testing.T) {
 				},
 			},
 			expectMatch: []string{
-				"tcp and ( (host 10.0.0.1 and port 80) )",
+				"tcp and ( (host 10.0.0.1 and port 80) or (src host 10.0.0.1) )",
 			},
 			expectError: false,
 		},
@@ -104,7 +103,6 @@ func TestBuildBPFFilter(t *testing.T) {
 }
 
 func TestBuildBPFFilterWarningOnLongFilter(t *testing.T) {
-	// Build a config with many target IPs to exceed 8KB length
 	var targets []config.SiphonTarget
 	for i := 0; i < 200; i++ {
 		targets = append(targets, config.SiphonTarget{
@@ -121,12 +119,10 @@ func TestBuildBPFFilterWarningOnLongFilter(t *testing.T) {
 		t.Fatalf("BuildBPFFilter() error = %v", err)
 	}
 
-	// This should run and still succeed. Let's just make sure it constructed a long filter
 	if len(filter) == 0 {
 		t.Fatal("Expected non-empty filter")
 	}
 
-	// Make sure the log message isn't breaking anything and that filter compiles or is produced
 	if !strings.HasPrefix(filter, "tcp and ( ") {
 		t.Errorf("Unexpected prefix: %q", filter[:15])
 	}

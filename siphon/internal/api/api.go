@@ -55,6 +55,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.cfgMgr.Update(payload)
+	for _, t := range payload.Targets {
+		log.Printf("Siphon target %q: prod_ips=%v downstreams=%d beru_http=%q",
+			t.ShadowTest, t.TargetIPs, len(t.Downstreams), t.BeruHTTPHost)
+	}
 	log.Printf("Received configuration update: %d targets", len(payload.Targets))
 
 	// Dynamically start capturing when first valid config is received
@@ -94,17 +98,29 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	ifaces, frames, packets := s.capMgr.Status()
 	activeSessions := s.sessionMap.ActiveCount()
-	targetsCount := len(s.cfgMgr.GetConfig().Targets)
-	sampleRate := s.cfgMgr.GetConfig().SampleRate
+	cfg := s.cfgMgr.GetConfig()
+	targetsCount := len(cfg.Targets)
+	sampleRate := cfg.SampleRate
+
+	downstreamsCount := 0
+	beruHTTPConfigured := false
+	for _, t := range cfg.Targets {
+		downstreamsCount += len(t.Downstreams)
+		if t.BeruHTTPHost != "" {
+			beruHTTPConfigured = true
+		}
+	}
 
 	status := map[string]interface{}{
-		"interfaces":         ifaces,
-		"frames_read":        frames,
-		"packets":            packets,
-		"requests_forwarded": atomic.LoadUint64(s.forwardCount),
-		"sample_rate":        sampleRate,
-		"active_sessions":    activeSessions,
-		"targets_count":      targetsCount,
+		"interfaces":           ifaces,
+		"frames_read":          frames,
+		"packets":              packets,
+		"requests_forwarded":   atomic.LoadUint64(s.forwardCount),
+		"sample_rate":          sampleRate,
+		"active_sessions":      activeSessions,
+		"targets_count":        targetsCount,
+		"downstreams_count":    downstreamsCount,
+		"beru_http_configured": beruHTTPConfigured,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

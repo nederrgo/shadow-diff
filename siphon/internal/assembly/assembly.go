@@ -11,19 +11,22 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/tcpassembly"
 	"github.com/shadow-diff/siphon/internal/config"
+	"github.com/shadow-diff/siphon/internal/egress"
 	"github.com/shadow-diff/siphon/internal/forward"
 )
 
 type StreamFactory struct {
 	cfgMgr       *config.Manager
 	poolMgr      *forward.PoolManager
+	egressStore  *egress.SessionStore
 	forwardCount *uint64 // requests_forwarded metric pointer
 }
 
-func NewStreamFactory(cfgMgr *config.Manager, poolMgr *forward.PoolManager, forwardCount *uint64) *StreamFactory {
+func NewStreamFactory(cfgMgr *config.Manager, poolMgr *forward.PoolManager, egressStore *egress.SessionStore, forwardCount *uint64) *StreamFactory {
 	return &StreamFactory{
 		cfgMgr:       cfgMgr,
 		poolMgr:      poolMgr,
+		egressStore:  egressStore,
 		forwardCount: forwardCount,
 	}
 }
@@ -38,7 +41,7 @@ func (f *StreamFactory) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream {
 	fmt.Sscanf(srcPortStr, "%d", &srcPort)
 	fmt.Sscanf(dstPortStr, "%d", &dstPort)
 
-	// Check if this is a request stream (Client -> Pod)
+	// Ingress request stream (Client -> Pod)
 	if f.cfgMgr.IsTarget(dstIP, dstPort) {
 		target, driver, ok := f.cfgMgr.LookupTarget(dstIP, dstPort)
 		if ok {
@@ -53,11 +56,31 @@ func (f *StreamFactory) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream {
 		}
 	}
 
-	// Check if this is a return stream (Pod -> Client)
+	// Ingress return stream (Pod -> Client)
 	if f.cfgMgr.IsTarget(srcIP, srcPort) {
 		return &returnStream{
 			srcIP:   srcIP,
 			srcPort: srcPort,
+		}
+	}
+
+	// Egress outbound (Prod -> Remote)
+	if f.cfgMgr.ShouldRecordEgress(srcIP, dstIP, dstPort, "") {
+		target, ok := f.cfgMgr.LookupTargetByProdIP(srcIP)
+		if ok {
+			flowKey := egress.FlowKey(srcIP, srcPort, dstIP, dstPort)
+			log.Printf("egress outbound stream %s", flowKey)
+			return f.egressStore.GetOrCreate(flowKey, true, target)
+		}
+	}
+
+	// Egress inbound (Remote -> Prod)
+	if f.cfgMgr.ShouldRecordEgressResponse(srcIP, dstIP, dstPort) {
+		target, ok := f.cfgMgr.LookupTargetByProdIP(dstIP)
+		if ok {
+			flowKey := egress.FlowKey(dstIP, dstPort, srcIP, srcPort)
+			log.Printf("egress inbound stream %s", flowKey)
+			return f.egressStore.GetOrCreate(flowKey, false, target)
 		}
 	}
 
@@ -129,11 +152,7 @@ type returnStream struct {
 }
 
 func (s *returnStream) Reassembled(reassemblies []tcpassembly.Reassembly) {
-	// Relaxed return path:
-	// In passive capture, the sniffer often misses production ACKs on the return leg.
-	// Standard reassembly can stall request streams if it blocks on return-path sequence checks.
-	// Therefore, we do not buffer or forward return-path data, and the assembler is flushed
-	// periodically to bypass sequence number checks and prevent memory accumulation from gaps.
+	// Relaxed return path: do not buffer or forward return-path data.
 }
 
 func (s *returnStream) ReassemblyComplete() {}

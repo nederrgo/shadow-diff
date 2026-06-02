@@ -26,7 +26,10 @@ const (
 	volumeNameEnvoyConfig = "envoy-config"
 
 	defaultBeruGRPCAddress = "beru.beru-system.svc.cluster.local:50051"
+	defaultBeruHTTPAddress = "beru.beru-system.svc.cluster.local:8080"
 	defaultBeruGRPCTimeout = "2s"
+	beruSystemNamespace    = "beru-system"
+	beruServiceName        = "beru"
 	envBeruGRPCAddress     = "BERU_GRPC_ADDRESS"
 
 	egressProxyPort     int32  = 15001

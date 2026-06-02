@@ -34,14 +34,17 @@ spec:
       driver: http_request
 
   igris:
+    # Image patched by ./scripts/e2e-reset-kind.sh from $IGRIS_IMG.
     image: igris:dev
     replicas: 1
 
   siphon:
     enabled: true
+    # Image patched by ./scripts/e2e-reset-kind.sh from $SIPHON_IMG (Monarch owns the DaemonSet).
     image: siphon:dev
     sampleRate: 100
 
+  # Egress recorder (Sprint 4a.2): Monarch pushes downstreams + beru_http_host to Siphon /v1/config.
   # Egress replay (Sprint 4a.1): trap outbound HTTP via HTTP_PROXY -> Envoy :15001 -> Beru
   downstreams:
     - host: httpbin.org

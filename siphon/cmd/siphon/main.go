@@ -12,6 +12,7 @@ import (
 	"github.com/shadow-diff/siphon/internal/assembly"
 	"github.com/shadow-diff/siphon/internal/capture"
 	"github.com/shadow-diff/siphon/internal/config"
+	"github.com/shadow-diff/siphon/internal/egress"
 	"github.com/shadow-diff/siphon/internal/forward"
 	"github.com/shadow-diff/siphon/internal/session"
 )
@@ -63,7 +64,9 @@ func main() {
 
 	var requestsForwarded uint64
 	poolMgr := forward.NewPoolManager(maxConns, 2*time.Second)
-	factory := assembly.NewStreamFactory(cfgMgr, poolMgr, &requestsForwarded)
+	forwarder := egress.NewForwarder()
+	egressStore := egress.NewSessionStore(forwarder)
+	factory := assembly.NewStreamFactory(cfgMgr, poolMgr, egressStore, &requestsForwarded)
 	capMgr := capture.NewCaptureManager(cfgMgr, sessionMap, factory)
 
 	// 3. Start Control API Server

@@ -93,6 +93,9 @@ func (cm *CaptureManager) Start(interfaceEnv string) error {
 	cm.wg.Add(1)
 	go cm.flushLoop()
 
+	cm.wg.Add(1)
+	go cm.flushOlderLoop()
+
 	return nil
 }
 
@@ -337,6 +340,21 @@ func compileAndAttachBPF(handle *afpacket.TPacket, filter string) error {
 	}
 
 	return nil
+}
+
+func (cm *CaptureManager) flushOlderLoop() {
+	defer cm.wg.Done()
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-cm.stopChan:
+			return
+		case <-ticker.C:
+			cm.assembler.FlushOlderThan(time.Now().Add(-2 * time.Minute))
+		}
+	}
 }
 
 func (cm *CaptureManager) flushLoop() {

@@ -3,6 +3,8 @@
 set -euo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=scripts/lib/siphon-config.sh
+source "$REPO/scripts/lib/siphon-config.sh"
 SHADOWTEST="${SHADOWTEST:-my-app-shadow}"
 SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
 TRACE_ID="${TRACE_ID:-e2e-$(date +%s)}"
@@ -46,16 +48,15 @@ if [[ -z "${PROD_IP}" ]]; then
 fi
 echo "Prod target: ${PROD_IP}:${PROD_PORT}"
 
-CONFIG_JSON=$(cat <<EOF
-{"sample_rate":100,"targets":[{"shadowtest":"${SHADOWTEST_NS}/${SHADOWTEST}","target_ips":["${PROD_IP}"],"target_ports":[${PROD_PORT}],"igris_host":"my-app-shadow-igris.${SHADOW_NS}.svc.cluster.local","listeners":[{"port":${IGRIS_LISTEN_PORT},"driver":"http_request"}]}]}
-EOF
-)
+echo "==> Wait for Monarch Siphon config (targets from ShadowTest reconcile)"
+wait_siphon_configured 0
 
-echo "==> POST /v1/config to Siphon"
-kubectl run curl-siphon-config --rm -i --restart=Never --image=curlimages/curl:latest -- \
-  curl -sf -X POST "http://${SIPHON_IP}:8080/v1/config" \
-  -H 'Content-Type: application/json' \
-  -d "${CONFIG_JSON}"
+SIPHON_IP=$(siphon_api_host)
+status_json=$(siphon_status_json "$SIPHON_IP")
+if echo "$status_json" | grep -q '"targets_count":0'; then
+  echo "ERROR: Siphon still has targets_count=0 after Monarch reconcile" >&2
+  exit 1
+fi
 
 echo "==> Siphon /v1/status (before traffic — want targets_count>=1, interfaces non-null)"
 kubectl run curl-siphon-status --rm -i --restart=Never --image=curlimages/curl:latest -- \
@@ -71,20 +72,16 @@ kubectl run "e2e-prod-${TRACE_ID}" --rm -i --restart=Never -n default --image=cu
 echo "==> Wait for Siphon -> Igris -> Beru"
 sleep 8
 
-# Siphon may have restarted (e.g. Monarch reconcile during reset); re-apply config if needed.
+# Siphon may have restarted; re-check config from Monarch if needed.
 kubectl wait -n siphon-system --for=condition=Ready pod \
   -l app.kubernetes.io/name=siphon-agent --timeout=120s
-SIPHON_IP=$(kubectl get pods -n siphon-system -l app.kubernetes.io/name=siphon-agent \
-  -o jsonpath='{.items[0].status.hostIP}')
-after_cfg=$(kubectl run curl-siphon-recheck --rm -i --restart=Never --image=curlimages/curl:latest -- \
-  curl -sf "http://${SIPHON_IP}:8080/v1/status" 2>/dev/null || echo '{}')
+SIPHON_IP=$(siphon_api_host)
+after_cfg=$(siphon_status_json "$SIPHON_IP")
 if echo "$after_cfg" | grep -q '"targets_count":0'; then
-  echo "==> Siphon lost config (pod restart?) — re-POST /v1/config"
-  PROD_IP=$(kubectl get pods -n default -l app=my-prod-app -o jsonpath='{.items[0].status.podIP}')
-  kubectl run curl-siphon-reconfig --rm -i --restart=Never --image=curlimages/curl:latest -- \
-    curl -sf -X POST "http://${SIPHON_IP}:8080/v1/config" \
-    -H 'Content-Type: application/json' \
-    -d "{\"sample_rate\":100,\"targets\":[{\"shadowtest\":\"${SHADOWTEST_NS}/${SHADOWTEST}\",\"target_ips\":[\"${PROD_IP}\"],\"target_ports\":[${PROD_PORT}],\"igris_host\":\"my-app-shadow-igris.${SHADOW_NS}.svc.cluster.local\",\"listeners\":[{\"port\":${IGRIS_LISTEN_PORT},\"driver\":\"http_request\"}]}]}"
+  echo "==> Siphon lost config (pod restart?) — nudge Monarch reconcile"
+  nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
+  sleep 5
+  wait_siphon_configured 0
   kubectl run "e2e-prod-retry-${TRACE_ID}" --rm -i --restart=Never -n default --image=curlimages/curl:latest -- \
     curl -sf -o /dev/null -w "prod_http_retry=%{http_code}\n" \
     -H "x-shadow-trace-id: ${TRACE_ID}-retry" \

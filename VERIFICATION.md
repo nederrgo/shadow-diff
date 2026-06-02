@@ -605,6 +605,43 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | \
 
 ---
 
+## Phase 4a.2 — Egress recorder (auto-seed from prod)
+
+Siphon captures prod outbound HTTP (cleartext), pairs request/response on each TCP connection, and POSTs to Beru `POST /v1/record_egress`. Beru hashes the request and stores the response in `MockStore` — no manual `seed_mock` required.
+
+### Automated Kind E2E
+
+```bash
+./examples/e2e-record-replay.sh
+# or: ./scripts/e2e-reset-kind.sh --run-record-replay
+```
+
+The script:
+
+1. POSTs from the **prod** pod directly to `http://httpbin.org/post` (no HTTP_PROXY)
+2. Polls shadow egress via Envoy proxy with the same body
+3. Expects HTTP **200** (auto-recorded response, not 599)
+
+### Manual record flow
+
+```bash
+# Trigger prod outbound (direct, not proxied)
+kubectl exec -n default deploy/my-prod-app -- \
+  curl -sS -X POST http://httpbin.org/post \
+    -H 'Content-Type: application/json' \
+    -d '{"e2e_record":1}'
+
+# Replay from shadow (via HTTP_PROXY)
+export SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
+kubectl exec -n "$SHADOW_NS" deploy/my-app-shadow-control-a -c app -- \
+  curl -s -x http://127.0.0.1:15001 http://httpbin.org/post \
+    -H 'Content-Type: application/json' -d '{"e2e_record":1}'
+```
+
+Watch Siphon for `egress forwarder: recorded` and Beru for incoming `/v1/record_egress`.
+
+---
+
 ## Phase 2a scope (superseded by 2b config)
 
 - Phase 2b Envoy config uses **ext_proc** + **generate_request_id** (no longer admin-only placeholder).
@@ -627,3 +664,4 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | \
 - [ ] `x-shadow-trace-id` present on Igris response and shadow/Beru correlation (Phase 2b)
 - [ ] Egress mock seeded via `POST /v1/seed_mock` and proxied curl returns mock (Phase 4a.1)
 - [ ] Unseeded egress returns HTTP 599 and Beru logs `Egress Regression` (Phase 4a.1)
+- [ ] Prod egress auto-recorded by Siphon and shadow replay returns 200 without `seed_mock` (Phase 4a.2)

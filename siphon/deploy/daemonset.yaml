@@ -11,6 +11,8 @@ metadata:
   name: siphon-agent
   namespace: siphon-system
 ---
+# Optional manual bootstrap (Monarch normally owns the DaemonSet via ShadowTest spec.siphon).
+# For Kind E2E use: kubectl apply -f siphon/deploy/rbac.yaml  (see scripts/e2e-reset-kind.sh)
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:

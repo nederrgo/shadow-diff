@@ -23,6 +23,9 @@ func TestConfigManager(t *testing.T) {
 					{Port: 80, Driver: "http_request"},
 					{Port: 8080, Driver: "tcp_stream"},
 				},
+				Downstreams: []SiphonDownstream{
+					{Host: "httpbin.org"},
+				},
 			},
 		},
 	}
@@ -55,5 +58,15 @@ func TestConfigManager(t *testing.T) {
 	_, driverStream, ok := mgr.LookupTarget("10.244.1.2", 8080)
 	if !ok || driverStream != "tcp_stream" {
 		t.Errorf("Expected driver stream to be tcp_stream, got %s (ok=%v)", driverStream, ok)
+	}
+
+	if !mgr.IsProdPodIP("10.244.1.2") {
+		t.Error("Expected prod pod IP")
+	}
+	if !mgr.ShouldRecordEgress("10.244.1.2", "93.184.216.34", 80, "") {
+		t.Error("Expected egress outbound to be recordable")
+	}
+	if mgr.ShouldRecordEgress("10.244.1.2", "10.244.1.2", 80, "") {
+		t.Error("Did not expect ingress destination to be recorded as egress")
 	}
 }
