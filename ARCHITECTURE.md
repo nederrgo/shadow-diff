@@ -2,7 +2,9 @@
 
 Shadow-Diff is an open-source differential testing framework for Kubernetes. It replays captured or synthetic traffic across **three isolated shadow workloads** (two identical controls plus a candidate) and compares responses to find regressions while filtering non-deterministic noise.
 
-This document describes how **Monarch**, **Igris**, and **Beru** fit together in the monorepo. For Monarch directory layout and development workflow, see [monarch/REPO_OVERVIEW.md](monarch/REPO_OVERVIEW.md).
+This document describes how **Monarch**, **Igris**, **Beru**, and **Siphon** fit together in the monorepo. For Monarch directory layout and development workflow, see [monarch/REPO_OVERVIEW.md](monarch/REPO_OVERVIEW.md).
+
+**Current MVP status (2026):** ingress capture and replay (Siphon → Igris → shadow Envoy → Beru diff-of-diffs), shadow egress strict replay (Phase 4a.1), and prod egress auto-recording into Beru’s mock store (Phase 4a.2) are implemented and covered by Kind E2E scripts. See [README.md](README.md) for a component summary and [VERIFICATION.md](VERIFICATION.md) for verification steps.
 
 ---
 
@@ -51,7 +53,7 @@ flowchart TB
     A[control-a + Envoy]
     B[control-b + Envoy]
     C[candidate + Envoy]
-    Beru[Beru gRPC]
+    Beru[Beru gRPC + HTTP :8080]
   end
 
   Client --> Igris
@@ -66,9 +68,28 @@ flowchart TB
   SNS --> A
   SNS --> B
   SNS --> C
-  A -->|ext_proc| Beru
-  B -->|ext_proc| Beru
-  C -->|ext_proc| Beru
+  A -->|ext_proc ingress| Beru
+  B -->|ext_proc ingress| Beru
+  C -->|ext_proc ingress| Beru
+  A -->|HTTP_PROXY egress| Beru
+  B -->|HTTP_PROXY egress| Beru
+  C -->|HTTP_PROXY egress| Beru
+  Cap -->|record_egress| Beru
+```
+
+```mermaid
+flowchart LR
+  subgraph egress [Egress - Phase 4a]
+    ProdOut[Prod outbound HTTP]
+    SiphonRec[Siphon egress recorder]
+    BeruMock[Beru MockStore HTTP :8080]
+    ShadowApp[Shadow app]
+    EgrEnv[Envoy egress :15001]
+    ProdOut --> SiphonRec
+    SiphonRec -->|POST /v1/record_egress| BeruMock
+    ShadowApp -->|HTTP_PROXY| EgrEnv
+    EgrEnv -->|ext_proc hash lookup| BeruMock
+  end
 ```
 
 ```mermaid
@@ -105,13 +126,17 @@ Monarch is a **Kubebuilder / controller-runtime** operator. It runs as a manager
 - Creates a **shadow namespace** and three **Deployments**: `<name>-control-a`, `<name>-control-b`, `<name>-candidate`.
 - Injects an **Envoy sidecar** per pod with config that includes `ext_proc` to Beru, request ID / `x-shadow-trace-id` handling, and ingress on `spec.applicationPort`.
 - Copies **literal `env` from the target’s first container only** (MVP); surfaces limitations in status.
-- Ensures **Siphon** DaemonSet (`siphon-system`), lists production pod IPs, and pushes capture config (`POST /v1/config`) using node **hostIP** when Siphon runs with `hostNetwork`.
+- Ensures **Siphon** DaemonSet in `siphon-system` (image from `spec.siphon.image`), lists production pod IPs, and pushes merged capture config (`POST /v1/config`) using node **hostIP** when Siphon runs with `hostNetwork`.
+- When **`spec.downstreams`** is set: injects `HTTP_PROXY=http://127.0.0.1:15001` into shadow app containers and renders Envoy **egress_proxy** listener with `ext_proc` to Beru (strict replay).
+- Maps **`spec.downstreams`** → Siphon `downstreams` + `beru_http_host` (Beru Service ClusterIP `:8080`) so prod egress can be auto-recorded (Phase 4a.2).
+- Resolves **exclude IPs** (Igris + Beru ClusterIPs) so Siphon BPF does not capture shadow/control-plane traffic.
 
 ### What it does not do
 
-- Deploy **Beru** (apply `beru/deploy/` separately). **Igris** is deployed by Monarch into each shadow namespace; **Siphon** manifest is applied separately or via `ensureSiphonDaemonSet`.
+- Deploy **Beru** (apply `beru/deploy/` separately).
 - Multicast HTTP traffic (that is **Igris**).
-- Run diffs (that is **Beru**).
+- Run diffs or store egress mocks (that is **Beru**).
+- Apply the Siphon DaemonSet manifest directly in Kind E2E — Monarch creates/patches the DaemonSet; only **`siphon/deploy/rbac.yaml`** (namespace + ServiceAccount) is applied upfront.
 
 ### Reconcile loop (summary)
 
@@ -140,10 +165,13 @@ sequenceDiagram
 | Igris listeners | `inputs[]` (`port`, `driver`); default `[{port: servicePort, driver: http_request}]` |
 | Igris overrides | `igris.image`, `igris.replicas`, `igris.resources` |
 | Siphon | `siphon.enabled`, `siphon.image`, `siphon.sampleRate` |
+| Egress hosts | `downstreams[]` (`host`, `ignoreRequestPaths`) — shadow proxy trap + Siphon egress record filter |
 
 **Lifecycle:** A finalizer blocks CR deletion until the shadow namespace is cleaned up.
 
-**Details:** [monarch/REPO_OVERVIEW.md](monarch/REPO_OVERVIEW.md), [monarch/DEPLOYMENT.md](monarch/DEPLOYMENT.md).
+**Siphon reconcile:** Monarch merges config for all Ready ShadowTests, calls `ensureSiphonDaemonSet(ctx, siphonImageFor(st))`, then `POST`s JSON to each agent’s hostIP. Status fields: `captureTargets`, `siphonPhase` (`Ready` / `Degraded` / `Disabled`), `igrisEndpoint`.
+
+**Details:** [monarch/REPO_OVERVIEW.md](monarch/REPO_OVERVIEW.md), [monarch/DEPLOYMENT.md](monarch/DEPLOYMENT.md), [`scripts/lib/siphon-config.sh`](scripts/lib/siphon-config.sh) (E2E wait helpers).
 
 ---
 
@@ -214,9 +242,18 @@ Monarch deploys Igris with **mixed-mode env** (all six `CONTROL_*_URL` + `CONTRO
 
 ---
 
-## Siphon (capture agent — Phase 3b)
+## Siphon (capture agent — Phase 3b + 4a.2)
 
-Siphon is a **pure Go** node agent (`siphon-system` DaemonSet) that mirrors production TCP traffic into the shadow pipeline. It does **not** load custom eBPF programs into the kernel; it uses **classic BPF** (the same expression language as tcpdump/libpcap), compiled in userspace and attached to an **AF_PACKET** (`TPacket`) socket.
+Siphon is a **pure Go** node agent (`siphon-system` DaemonSet) that mirrors production TCP traffic into the shadow pipeline and **records prod outbound HTTP** for egress replay. It does **not** load custom eBPF programs into the kernel; it uses **classic BPF** (the same expression language as tcpdump/libpcap), compiled in userspace and attached to an **AF_PACKET** (`TPacket`) socket.
+
+### Dual capture paths
+
+| Path | Direction | Action |
+|------|-----------|--------|
+| **Ingress replay** | Client → prod pod (dst port in `target_ports`) | TCP reassembly → HTTP forward to **Igris** |
+| **Egress recorder** | Prod pod → `spec.downstreams` host (cleartext HTTP) | Pair request/response → `POST` **Beru** `/v1/record_egress` |
+
+Egress recording requires Monarch to push `downstreams`, `beru_http_host`, and prod `target_ips` in the same `/v1/config` payload. BPF includes clauses for downstream host/port **and** `src host <prodIP>` so outbound flows from the prod pod are visible.
 
 ### Why classic BPF, not raw eBPF
 
@@ -235,10 +272,12 @@ flowchart LR
   bpf --> tpacket[afpacket TPacket]
   tpacket --> sample[Sticky 4-tuple sample]
   sample --> asm[tcpassembly]
-  asm --> pool[TCP pool to Igris]
+  asm --> ingress[Ingress HTTP to Igris]
+  asm --> egress[Egress parser + forwarder]
+  egress --> beruHTTP[Beru POST /v1/record_egress]
 ```
 
-1. **Monarch** (or the E2E script) `POST`s target pod **IPv4** + **ports** to `http://<node hostIP>:8080/v1/config` (Siphon uses `hostNetwork: true`).
+1. **Monarch** `POST`s target pod **IPv4**, **ports**, **igris_host**, **downstreams**, **beru_http_host**, **exclude_ips** to `http://<node hostIP>:8080/v1/config` (Siphon uses `hostNetwork: true`).
 2. **`BuildBPFFilter`** builds e.g. `tcp and ( (host 10.244.0.21 and port 80) or ... )` — `host` matches **both directions** (client→pod and pod→client) for reassembly.
 3. Filter is compiled with **`captureSnapLen`** (8192, shared with `OptFrameSize`) and attached per interface.
 4. On Kind without `cni0`, **`SIPHON_INTERFACE=any`** selects `eth0` plus all `veth*` peers carrying pod traffic.
@@ -248,8 +287,8 @@ flowchart LR
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /v1/config` | `sample_rate`, `targets[]` (`target_ips`, `target_ports`, `igris_host`, `listeners`) |
-| `GET /v1/status` | `frames_read`, `packets`, `requests_forwarded`, `interfaces`, `targets_count` |
+| `POST /v1/config` | `sample_rate`, `targets[]` (`target_ips`, `target_ports`, `igris_host`, `listeners`, `downstreams`, `beru_http_host`, `exclude_ips`) |
+| `GET /v1/status` | `frames_read`, `packets`, `requests_forwarded`, `interfaces`, `targets_count`, `downstreams_count`, `beru_http_configured` |
 
 `ApplyBPFFilter()` hot-updates all open handles when config changes (prod pod IP rollout) without restarting the DaemonSet.
 
@@ -262,9 +301,11 @@ flowchart LR
 | `runAsUser` | `0` |
 | `SIPHON_INTERFACE` | `any` (Kind: `eth0` + `veth*`); avoid `cni0` if absent on node |
 
-**Monarch:** `spec.siphon` (`enabled`, `image`, `sampleRate`); pushes global merged config; `status.siphonPhase` / `status.captureTargets`. Config POST uses **`pod.Status.HostIP`** when `hostNetwork` is enabled.
+**Monarch:** `spec.siphon` (`enabled`, `image`, `sampleRate`); creates/patches DaemonSet; pushes global merged config; `status.siphonPhase` / `status.captureTargets`. Config POST uses **`pod.Status.HostIP`** when `hostNetwork` is enabled.
 
-**Code:** [`siphon/internal/capture/`](siphon/internal/capture/) (`bpf.go`, `capture.go`), [`siphon/internal/api/`](siphon/internal/api/), [`monarch/internal/controller/shadowtest_siphon.go`](monarch/internal/controller/shadowtest_siphon.go).
+**Kind E2E:** [`scripts/e2e-reset-kind.sh`](scripts/e2e-reset-kind.sh) applies `siphon/deploy/rbac.yaml` only, patches `spec.siphon.image` from `$SIPHON_IMG`, and verifies Monarch pushed recorder config before tests. Do not fight Monarch with manual `kubectl set image` on the DaemonSet.
+
+**Code:** [`siphon/internal/capture/`](siphon/internal/capture/) (`bpf.go`, `capture.go`), [`siphon/internal/egress/`](siphon/internal/egress/) (session, parser, forwarder), [`siphon/internal/api/`](siphon/internal/api/), [`monarch/internal/controller/shadowtest_siphon.go`](monarch/internal/controller/shadowtest_siphon.go).
 
 ### Port alignment (E2E / http-https-echo)
 
@@ -278,18 +319,21 @@ See [`examples/e2e-shadowtest.yaml`](examples/e2e-shadowtest.yaml) and [`scripts
 
 ---
 
-## Beru (differ — Phase 2b)
+## Beru (differ — Phase 2b + egress HTTP)
 
-Beru is a **gRPC** server that receives traffic reports from Envoy sidecars and runs **diff-of-diffs** analysis.
+Beru is a **gRPC** server that receives traffic reports from Envoy sidecars and runs **diff-of-diffs** analysis. It also exposes an **HTTP API** on `:8080` for egress mock storage and auto-recording from Siphon.
 
 ### APIs
 
 | API | Purpose |
 |-----|---------|
-| **`TrafficReporter.ReportTraffic`** | Manual / direct reports (role, trace_id, payload) |
-| **Envoy `ext_proc`** | Observe ingress response headers/body; correlate by `x-shadow-trace-id` and `SHADOW_ROLE` |
+| **`TrafficReporter.ReportTraffic`** (gRPC) | Manual / direct ingress reports (role, trace_id, payload) |
+| **Envoy `ext_proc` (ingress)** | Observe shadow app response headers/body; correlate by `x-shadow-trace-id` and `SHADOW_ROLE` |
+| **Envoy `ext_proc` (egress)** | Hash outbound request (method, host, path, body; optional JSON path stripping); return mock or **HTTP 599** on miss |
+| **`POST /v1/seed_mock`** (HTTP) | Manually seed egress response (Phase 4a.1 E2E) |
+| **`POST /v1/record_egress`** (HTTP) | Auto-seed from Siphon prod capture — same storage as `seed_mock` (Phase 4a.2) |
 
-### Diff-of-diffs logic
+### Diff-of-diffs logic (ingress)
 
 1. **Diff(Control A, Control B)** → noise fields (change on identical builds).
 2. **Diff(Control A, Candidate)** → total changes.
@@ -297,7 +341,48 @@ Beru is a **gRPC** server that receives traffic reports from Envoy sidecars and 
 
 The ingest **store** holds pending traces (TTL / max size from env e.g. `BERU_TRACE_TTL`, `BERU_MAX_PENDING_TRACES`) until all three roles report or timeout.
 
-**Code:** [`beru/cmd/beru/main.go`](beru/cmd/beru/main.go), [`beru/internal/envoyextproc/`](beru/internal/envoyextproc/), [`beru/internal/ingest/`](beru/internal/ingest/).
+**Egress MockStore:** In-memory map keyed by request hash; shared by `seed_mock`, `record_egress`, and egress `ext_proc` lookup.
+
+**Code:** [`beru/cmd/beru/main.go`](beru/cmd/beru/main.go), [`beru/internal/envoyextproc/`](beru/internal/envoyextproc/), [`beru/internal/ingest/`](beru/internal/ingest/), [`beru/internal/api/http.go`](beru/internal/api/http.go).
+
+---
+
+## Egress replay (Phase 4a)
+
+### 4a.1 — Shadow strict replay
+
+When `spec.downstreams` lists external hosts (e.g. `httpbin.org`):
+
+1. Monarch injects **`HTTP_PROXY=http://127.0.0.1:15001`** into shadow app containers.
+2. Envoy **egress_proxy** listener (port 15001) terminates CONNECT/HTTP proxy requests, calls Beru **ext_proc** with buffered body, and returns stored mock or **599 Egress Regression** on miss.
+3. Tests seed mocks via **`POST /v1/seed_mock`** or rely on 4a.2 auto-record.
+
+**E2E:** [`examples/e2e-egress-test.sh`](examples/e2e-egress-test.sh)
+
+### 4a.2 — Prod auto-record
+
+1. Prod pod makes cleartext outbound HTTP to a configured downstream host.
+2. Siphon BPF matches prod-as-source flows, reassembles TCP, parses HTTP, pairs response.
+3. Siphon **`POST`s** `{method, host, path, body, response}` to Beru **`/v1/record_egress`** (`beru_http_host` from Monarch).
+4. Shadow replay via `HTTP_PROXY` hits the same hash → **200** without manual `seed_mock`.
+
+**E2E:** [`examples/e2e-record-replay.sh`](examples/e2e-record-replay.sh)
+
+```mermaid
+sequenceDiagram
+  participant P as Prod pod
+  participant S as Siphon
+  participant B as Beru HTTP
+  participant Sh as Shadow app
+  participant E as Envoy egress
+
+  P->>P: POST httpbin.org/post
+  S->>S: capture + pair response
+  S->>B: POST /v1/record_egress
+  Sh->>E: HTTP_PROXY same request
+  E->>B: ext_proc hash lookup
+  B->>Sh: recorded 200 body
+```
 
 ---
 
@@ -306,13 +391,13 @@ The ingest **store** holds pending traces (TTL / max size from env e.g. `BERU_TR
 | Component | Typical install |
 |-----------|-----------------|
 | Monarch | `make -C monarch deploy IMG=...` → `monarch-system` |
-| Beru | `kubectl apply -f beru/deploy/` → `beru-system` |
+| Beru | `kubectl apply -f beru/deploy/` → `beru-system` (gRPC `:50051`, HTTP `:8080`) |
 | Igris | Deployed by Monarch into each shadow namespace; image via `spec.igris.image` (default `igris:latest`) |
-| Siphon | `kubectl apply -f siphon/deploy/daemonset.yaml` → `siphon-system`; image via `spec.siphon.image` |
+| Siphon | **Monarch-managed DaemonSet** in `siphon-system`; bootstrap RBAC via `kubectl apply -f siphon/deploy/rbac.yaml`; image via `spec.siphon.image` |
 
-ShadowTest spec field **`beruGRPCAddress`** must match the Beru Service DNS name Envoy uses in generated YAML.
+ShadowTest fields **`beruGRPCAddress`** (Envoy ingress/egress ext_proc) and **`downstreams`** (egress trap + Siphon record filter) must align with deployed Beru and external hosts.
 
-**Kind E2E:** [`scripts/e2e-reset-kind.sh`](scripts/e2e-reset-kind.sh) (reset + deploy) and [`examples/e2e-pipeline-test.sh`](examples/e2e-pipeline-test.sh) (traffic test; config via node **hostIP**).
+**Kind E2E:** [`scripts/e2e-reset-kind.sh`](scripts/e2e-reset-kind.sh) — full reset/deploy, patches `$SIPHON_IMG` / `$IGRIS_IMG` on ShadowTest, verifies Siphon recorder config. Tests: [`examples/e2e-pipeline-test.sh`](examples/e2e-pipeline-test.sh) (ingress), [`examples/e2e-egress-test.sh`](examples/e2e-egress-test.sh) (4a.1), [`examples/e2e-record-replay.sh`](examples/e2e-record-replay.sh) (4a.2).
 
 ---
 
@@ -324,19 +409,24 @@ ShadowTest spec field **`beruGRPCAddress`** must match the Beru Service DNS name
 | HTTP multicast | Go, `net/http`, `log/slog` |
 | Shadow proxy | Envoy v1.26, `ext_proc`, ConfigMaps from Monarch |
 | Analysis | Go, gRPC, protobuf |
-| Capture | Go + `gopacket/afpacket`, **classic BPF** (libpcap compile), `tcpassembly`, sticky sampling, TCP forward to Igris |
+| Capture | Go + `gopacket/afpacket`, **classic BPF** (libpcap compile), `tcpassembly`, ingress forward to Igris, egress HTTP record to Beru |
+| Egress replay | Envoy egress listener + Beru HTTP MockStore + Siphon auto-record |
 
 ---
 
 ## MVP scope and roadmap
 
-| Area | Current MVP | Not yet / design only |
-|------|-------------|------------------------|
-| Monarch env copy | First container, literal `env` only | Full `envFrom`, volumes, HPA |
-| Traffic capture | Siphon: classic BPF + AF_PACKET → Igris (`siphon-system`, `hostNetwork`) | Raw eBPF programs, TLS decrypt, IPv6 BPF |
-| Siphon sampling | Global `sample_rate` + sticky 4-tuple map (TTL cap) | Per-ShadowTest rates in agent |
-| Beru storage | In-memory store | Redis / Postgres per design docs |
-| Igris | HTTP + TCP drivers, mixed-mode env | `async_message`, metrics |
+| Area | Status | Notes |
+|------|--------|-------|
+| Monarch shadow stack | **Done (MVP)** | Three Deployments, Envoy ingress + optional egress, Igris, env copy (first container literal `env` only) |
+| Ingress diff-of-diffs | **Done (MVP)** | Beru gRPC + Envoy ingress `ext_proc` |
+| Igris HTTP/TCP drivers | **Done (MVP)** | Mixed-mode env; `async_message` not implemented |
+| Siphon ingress capture | **Done (MVP)** | Classic BPF + AF_PACKET → Igris; sticky sampling |
+| Egress strict replay (4a.1) | **Done (MVP)** | `HTTP_PROXY`, Envoy egress, `seed_mock`, HTTP 599 on miss |
+| Egress auto-record (4a.2) | **Done (MVP)** | Siphon → `/v1/record_egress`; Kind E2E in `e2e-record-replay.sh` |
+| Monarch env copy | Partial | Full `envFrom`, volumes, HPA not yet |
+| Siphon | Partial | Global `sample_rate`; no TLS decrypt, IPv6 BPF, or raw eBPF programs |
+| Beru storage | Partial | In-memory ingress store + egress MockStore; no Redis/Postgres yet |
 
 ---
 
