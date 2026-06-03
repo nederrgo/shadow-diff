@@ -24,7 +24,7 @@ func main() {
 	defer cancel()
 
 	factories := map[string]func() driver.InputDriver{
-		"http_request": func() driver.InputDriver { return httpdriver.New() },
+		"http_request": func() driver.InputDriver { return httpdriver.New(cfg.MaxBodySize) },
 		"tcp_stream":   func() driver.InputDriver { return tcpdriver.New() },
 	}
 

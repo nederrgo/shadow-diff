@@ -1,5 +1,6 @@
 SIPHON_IMG ?= siphon:latest
 CONTAINER_TOOL ?= docker
+REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 
 .PHONY: build test docker-build run
 
@@ -10,7 +11,7 @@ test:
 	go test -v ./...
 
 docker-build:
-	$(CONTAINER_TOOL) build -t $(SIPHON_IMG) .
+	bash "$(REPO_ROOT)/scripts/lib/docker.sh" build -t $(SIPHON_IMG) .
 
 run: build
 	./bin/siphon

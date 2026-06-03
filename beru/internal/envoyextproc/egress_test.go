@@ -85,6 +85,17 @@ func TestHostWithoutPort(t *testing.T) {
 	}
 }
 
+func TestParseDownstreamConfigs_monarchJSON(t *testing.T) {
+	raw := `[{"host":"httpbin.org","ignoreRequestPaths":["$.nonce"]}]`
+	configs := parseDownstreamConfigs(raw)
+	if len(configs) != 1 {
+		t.Fatalf("configs: %v", configs)
+	}
+	if configs[0].Host != "httpbin.org" || len(configs[0].IgnoreRequestPaths) != 1 {
+		t.Fatalf("unexpected: %+v", configs[0])
+	}
+}
+
 func TestIgnorePathsForHost(t *testing.T) {
 	configs := []DownstreamConfig{
 		{Host: "api.example.com", IgnoreRequestPaths: []string{"$.timestamp"}},
@@ -92,5 +103,80 @@ func TestIgnorePathsForHost(t *testing.T) {
 	paths := ignorePathsForHost(configs, "api.example.com")
 	if len(paths) != 1 || paths[0] != "$.timestamp" {
 		t.Fatalf("unexpected paths: %v", paths)
+	}
+}
+
+// TestHandleEgressRequest_ignorePathsVariedBody verifies cache lookup strips ignored
+// JSON fields so requests differing only in those fields share the same mock hash.
+func TestHandleEgressRequest_ignorePathsVariedBody(t *testing.T) {
+	mocks := replay.NewMockStore()
+	s := &Server{Log: slog.Default(), Mocks: mocks}
+
+	host := "httpbin.org"
+	seedBody := []byte(`{"foo":1,"nonce":"seed-value"}`)
+	hash, err := replay.HashRequest("POST", host, "/post", seedBody, []string{"$.nonce"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mocks.Put(hash, replay.EarlyResponse{
+		StatusCode: 200,
+		Headers:    map[string]string{"content-type": "application/json"},
+		Body:       []byte(`{"mock":true}`),
+	})
+
+	configs := []DownstreamConfig{
+		{Host: host, IgnoreRequestPaths: []string{"$.nonce"}},
+	}
+	state := &egressState{role: "control-a", downstreamConfigs: configs}
+	s.handleEgressRequest(state, &extprocv3.ProcessingRequest{
+		Request: &extprocv3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: &extprocv3.HttpHeaders{
+				Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+					{Key: ":method", RawValue: []byte("POST")},
+					{Key: ":authority", RawValue: []byte(host)},
+					{Key: ":path", RawValue: []byte("/post")},
+				}},
+			},
+		},
+	})
+
+	variedBody := []byte(`{"foo":1,"nonce":"different-value"}`)
+	resp := s.handleEgressRequest(state, &extprocv3.ProcessingRequest{
+		Request: &extprocv3.ProcessingRequest_RequestBody{
+			RequestBody: &extprocv3.HttpBody{Body: variedBody, EndOfStream: true},
+		},
+	})
+	imm := resp.GetImmediateResponse()
+	if imm == nil {
+		t.Fatal("expected immediate response when ignored fields differ")
+	}
+	if imm.GetStatus().GetCode() != 200 {
+		t.Fatalf("expected mock hit 200, got %v (ignore paths may not be applied)", imm.GetStatus().GetCode())
+	}
+	if string(imm.GetBody()) != `{"mock":true}` {
+		t.Fatalf("unexpected body: %s", imm.GetBody())
+	}
+
+	// Without ignore paths the varied body must miss.
+	missState := &egressState{role: "control-a", downstreamConfigs: nil}
+	s.handleEgressRequest(missState, &extprocv3.ProcessingRequest{
+		Request: &extprocv3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: &extprocv3.HttpHeaders{
+				Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+					{Key: ":method", RawValue: []byte("POST")},
+					{Key: ":authority", RawValue: []byte(host)},
+					{Key: ":path", RawValue: []byte("/post")},
+				}},
+			},
+		},
+	})
+	missResp := s.handleEgressRequest(missState, &extprocv3.ProcessingRequest{
+		Request: &extprocv3.ProcessingRequest_RequestBody{
+			RequestBody: &extprocv3.HttpBody{Body: variedBody, EndOfStream: true},
+		},
+	})
+	missImm := missResp.GetImmediateResponse()
+	if missImm == nil || int(missImm.GetStatus().GetCode()) != egressMissStatus {
+		t.Fatalf("expected 599 without ignore paths, got %+v", missImm)
 	}
 }

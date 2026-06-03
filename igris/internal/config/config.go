@@ -14,6 +14,7 @@ import (
 const (
 	defaultListenersFile   = "/etc/igris/listeners.json"
 	defaultMaxTCPConns     = 1024
+	defaultMaxBodySize     = 2 << 20 // 2MB
 	defaultTCPDialTimeout  = 5 * time.Second
 	defaultTCPIdleTimeout  = 5 * time.Minute
 )
@@ -42,6 +43,7 @@ type Config struct {
 	CandidateAddr    string
 	WorkerPoolSize   int
 	MaxTCPConns      int
+	MaxBodySize      int64
 	TCPDialTimeout   time.Duration
 	TCPIdleTimeout   time.Duration
 }
@@ -56,11 +58,13 @@ func Load() Config {
 		ControlBAddr:   os.Getenv("CONTROL_B_ADDR"),
 		CandidateAddr:  os.Getenv("CANDIDATE_ADDR"),
 		MaxTCPConns:    defaultMaxTCPConns,
+		MaxBodySize:    defaultMaxBodySize,
 		TCPDialTimeout: defaultTCPDialTimeout,
 		TCPIdleTimeout: defaultTCPIdleTimeout,
 	}
 	cfg.WorkerPoolSize = workerPoolSizeFromEnv()
 	cfg.MaxTCPConns = intFromEnv("IGRIS_MAX_TCP_CONNS", defaultMaxTCPConns)
+	cfg.MaxBodySize = int64FromEnv("IGRIS_MAX_BODY_SIZE", defaultMaxBodySize)
 	if d, ok := durationFromEnv("IGRIS_TCP_DIAL_TIMEOUT"); ok {
 		cfg.TCPDialTimeout = d
 	}
@@ -110,6 +114,18 @@ func intFromEnv(key string, def int) int {
 		return def
 	}
 	var n int
+	if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+		return n
+	}
+	return def
+}
+
+func int64FromEnv(key string, def int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	var n int64
 	if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
 		return n
 	}
@@ -215,6 +231,9 @@ func (c Config) Validate() error {
 	}
 	if c.MaxTCPConns < 1 {
 		return fmt.Errorf("IGRIS_MAX_TCP_CONNS must be positive")
+	}
+	if c.MaxBodySize < 1 {
+		return fmt.Errorf("IGRIS_MAX_BODY_SIZE must be positive")
 	}
 	if c.TCPDialTimeout <= 0 || c.TCPIdleTimeout <= 0 {
 		return fmt.Errorf("TCP timeouts must be positive")

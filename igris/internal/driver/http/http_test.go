@@ -16,6 +16,8 @@ import (
 	"github.com/shadow-diff/igris/internal/payload"
 )
 
+const testMaxBodySize = 2 << 20
+
 func testConfig(targets ...*httptest.Server) config.Config {
 	return config.Config{
 		ControlAURL:    targets[0].URL,
@@ -33,7 +35,7 @@ func testConfig(targets ...*httptest.Server) config.Config {
 
 func TestTransformInjectsTraceID(t *testing.T) {
 	t.Parallel()
-	d := New()
+	d := New(testMaxBodySize)
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req.Header.Set(HeaderShadowTraceID, "trace-abc")
 	sess := &Session{Request: req, Body: nil}
@@ -89,7 +91,7 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 	req.Header.Set(HeaderShadowTraceID, "trace-fixed")
 	body, _ := io.ReadAll(req.Body)
 	_ = req.Body.Close()
-	if err := hub.HandleAtomic(New(), &Session{Request: req, Body: body, Writer: rec}); err != nil {
+	if err := hub.HandleAtomic(New(testMaxBodySize), &Session{Request: req, Body: body, Writer: rec}); err != nil {
 		t.Fatal(err)
 	}
 	hub.WaitPendingAtomic()
@@ -115,7 +117,7 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 
 func TestTransformRedactsHeaders(t *testing.T) {
 	t.Parallel()
-	d := New()
+	d := New(testMaxBodySize)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Cookie", "a=b")
@@ -170,7 +172,7 @@ func TestHandlerReturns202WithTrace(t *testing.T) {
 		TCPIdleTimeout: time.Minute,
 	}
 	hub := core.NewHub(cfg, slog.Default())
-	d := New()
+	d := New(testMaxBodySize)
 	d.Client = backend.Client()
 
 	mux := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +205,58 @@ func TestHandlerReturns202WithTrace(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("timeout waiting for backend %d", i)
 		}
+	}
+}
+
+func TestHandlerRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+
+	hits := make(chan struct{}, 3)
+	mkBackend := func() *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits <- struct{}{}
+			w.WriteHeader(http.StatusOK)
+		}))
+	}
+	s1, s2, s3 := mkBackend(), mkBackend(), mkBackend()
+	defer s1.Close()
+	defer s2.Close()
+	defer s3.Close()
+
+	const maxBody = 1024
+	cfg := config.Config{
+		ControlAURL:    s1.URL,
+		ControlBURL:    s2.URL,
+		CandidateURL:   s3.URL,
+		ControlAAddr:   "127.0.0.1",
+		ControlBAddr:   "127.0.0.1",
+		CandidateAddr:  "127.0.0.1",
+		WorkerPoolSize: 2,
+		MaxTCPConns:    8,
+		TCPDialTimeout: time.Second,
+		TCPIdleTimeout: time.Minute,
+	}
+	hub := core.NewHub(cfg, slog.Default())
+	d := New(maxBody)
+	d.Client = s1.Client()
+
+	srv := httptest.NewServer(d.handler(hub))
+	defer srv.Close()
+
+	oversized := bytes.Repeat([]byte("x"), maxBody+1)
+	resp, err := http.Post(srv.URL+"/", "application/json", bytes.NewReader(oversized))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", resp.StatusCode)
+	}
+
+	select {
+	case <-hits:
+		t.Fatal("backend received request for oversized body")
+	default:
 	}
 }
 

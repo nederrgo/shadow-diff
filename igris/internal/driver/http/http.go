@@ -21,12 +21,13 @@ const (
 
 // Driver implements the HTTP request input driver.
 type Driver struct {
-	Client *http.Client
-	Log    *slog.Logger
+	Client      *http.Client
+	Log         *slog.Logger
+	maxBodySize int64
 }
 
-func New() *Driver {
-	return &Driver{Client: &http.Client{}}
+func New(maxBodySize int64) *Driver {
+	return &Driver{Client: &http.Client{}, maxBodySize: maxBodySize}
 }
 
 func (d *Driver) Type() driver.Type { return driver.HTTPRequest }
@@ -120,9 +121,14 @@ func (d *Driver) Listen(ctx context.Context, port int, h driver.Handler) error {
 
 func (d *Driver) handler(h driver.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, d.maxBodySize)
 		body, err := io.ReadAll(r.Body)
 		_ = r.Body.Close()
 		if err != nil {
+			if _, ok := err.(*http.MaxBytesError); ok {
+				http.Error(w, "Payload Too Large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "failed to read request body", http.StatusBadRequest)
 			return
 		}

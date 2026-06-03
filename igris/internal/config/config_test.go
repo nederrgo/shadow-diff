@@ -17,6 +17,7 @@ func validCfg() Config {
 		CandidateAddr:  "c.shadow.svc.cluster.local",
 		Listeners:      []Listener{{Port: 80, Driver: "http_request"}},
 		MaxTCPConns:    1024,
+		MaxBodySize:    defaultMaxBodySize,
 		TCPDialTimeout: defaultTCPDialTimeout,
 		TCPIdleTimeout: defaultTCPIdleTimeout,
 	}

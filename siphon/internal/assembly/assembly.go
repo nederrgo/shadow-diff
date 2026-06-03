@@ -70,7 +70,7 @@ func (f *StreamFactory) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream {
 		if ok {
 			flowKey := egress.FlowKey(srcIP, srcPort, dstIP, dstPort)
 			log.Printf("egress outbound stream %s", flowKey)
-			return f.egressStore.GetOrCreate(flowKey, true, target)
+			return newCappedStream(f.egressStore.GetOrCreate(flowKey, true, target), flowKey)
 		}
 	}
 
@@ -80,7 +80,7 @@ func (f *StreamFactory) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream {
 		if ok {
 			flowKey := egress.FlowKey(dstIP, dstPort, srcIP, srcPort)
 			log.Printf("egress inbound stream %s", flowKey)
-			return f.egressStore.GetOrCreate(flowKey, false, target)
+			return newCappedStream(f.egressStore.GetOrCreate(flowKey, false, target), flowKey)
 		}
 	}
 
@@ -161,3 +161,47 @@ type discardStream struct{}
 
 func (s *discardStream) Reassembled(reassemblies []tcpassembly.Reassembly) {}
 func (s *discardStream) ReassemblyComplete()                             {}
+
+const defaultMaxStreamBytes = 5 << 20 // 5MB
+
+type cappedStream struct {
+	inner    tcpassembly.Stream
+	bytes    int
+	maxBytes int
+	discarded atomic.Bool
+	flowKey  string
+}
+
+func newCappedStream(inner tcpassembly.Stream, flowKey string) *cappedStream {
+	return &cappedStream{
+		inner:    inner,
+		maxBytes: defaultMaxStreamBytes,
+		flowKey:  flowKey,
+	}
+}
+
+func (s *cappedStream) Reassembled(reassemblies []tcpassembly.Reassembly) {
+	if s.discarded.Load() {
+		return
+	}
+	for _, r := range reassemblies {
+		if len(r.Bytes) == 0 {
+			continue
+		}
+		s.bytes += len(r.Bytes)
+		if s.bytes > s.maxBytes {
+			s.discarded.Store(true)
+			log.Printf("egress stream %s exceeded %d bytes, discarding", s.flowKey, s.maxBytes)
+			egress.ClosePipeWriter(s.inner)
+			return
+		}
+		s.inner.Reassembled([]tcpassembly.Reassembly{r})
+	}
+}
+
+func (s *cappedStream) ReassemblyComplete() {
+	if s.discarded.Load() {
+		return
+	}
+	s.inner.ReassemblyComplete()
+}

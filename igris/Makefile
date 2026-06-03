@@ -1,5 +1,6 @@
 IGRIS_IMG ?= igris:latest
 CONTAINER_TOOL ?= docker
+REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 
 .PHONY: build test docker-build run
 
@@ -10,7 +11,7 @@ test:
 	go test ./...
 
 docker-build:
-	$(CONTAINER_TOOL) build -t $(IGRIS_IMG) .
+	bash "$(REPO_ROOT)/scripts/lib/docker.sh" build -t $(IGRIS_IMG) .
 
 run: build
 	./bin/igris

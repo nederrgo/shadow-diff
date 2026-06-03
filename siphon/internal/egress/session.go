@@ -28,6 +28,13 @@ func (p *pipeStream) ReassemblyComplete() {
 	_ = p.pw.Close()
 }
 
+// ClosePipeWriter closes the pipe writer for a pipeStream returned by GetOrCreate.
+func ClosePipeWriter(s tcpassembly.Stream) {
+	if ps, ok := s.(*pipeStream); ok && ps.pw != nil {
+		_ = ps.pw.Close()
+	}
+}
+
 type SessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]*Session

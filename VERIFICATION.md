@@ -640,6 +640,25 @@ kubectl exec -n "$SHADOW_NS" deploy/my-app-shadow-control-a -c app -- \
 
 Watch Siphon for `egress forwarder: recorded` and Beru for incoming `/v1/record_egress`.
 
+### Unit tests (Sprint 4a.2)
+
+```bash
+make -C siphon test
+# or:
+cd siphon && go test ./internal/capture/... ./internal/egress/... ./internal/config/... -v -count=1
+```
+
+Covers: BPF ingress+egress clauses, `FlushOlderThan` goroutine lifecycle, keep-alive HTTP pairing (two transactions per connection), `ignore_paths` on records.
+
+### Verification checklist (4a.2)
+
+1. Rebuild/load `siphon`, `beru`, `monarch` into Kind (use fresh image tags after code changes).
+2. Apply [`examples/e2e-shadowtest.yaml`](examples/e2e-shadowtest.yaml) with `spec.downstreams`.
+3. Prod curl to `httpbin.org/post` → Siphon logs `egress forwarder: recorded …`.
+4. `./examples/e2e-record-replay.sh` → shadow egress **200** without `seed_mock`.
+5. Siphon status: `downstreams_count>0`, `beru_http_configured=true` (Monarch POST via hostIP).
+6. `go test ./internal/egress/...` — keep-alive parser test passes.
+
 ---
 
 ## Phase 2a scope (superseded by 2b config)
@@ -664,4 +683,5 @@ Watch Siphon for `egress forwarder: recorded` and Beru for incoming `/v1/record_
 - [ ] `x-shadow-trace-id` present on Igris response and shadow/Beru correlation (Phase 2b)
 - [ ] Egress mock seeded via `POST /v1/seed_mock` and proxied curl returns mock (Phase 4a.1)
 - [ ] Unseeded egress returns HTTP 599 and Beru logs `Egress Regression` (Phase 4a.1)
-- [ ] Prod egress auto-recorded by Siphon and shadow replay returns 200 without `seed_mock` (Phase 4a.2)
+- [ ] Prod egress auto-recorded by Siphon and shadow replay returns 200 without `seed_mock` (Phase 4a.2 — `./examples/e2e-record-replay.sh`)
+- [ ] `make -C siphon test` passes (BPF egress, FlushOlderThan, keep-alive parser)
