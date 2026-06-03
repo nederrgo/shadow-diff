@@ -26,8 +26,32 @@ const (
 	volumeNameEnvoyConfig = "envoy-config"
 
 	defaultBeruGRPCAddress = "beru.beru-system.svc.cluster.local:50051"
+	defaultBeruHTTPAddress = "beru.beru-system.svc.cluster.local:8080"
 	defaultBeruGRPCTimeout = "2s"
+	beruSystemNamespace    = "beru-system"
+	beruServiceName        = "beru"
 	envBeruGRPCAddress     = "BERU_GRPC_ADDRESS"
+
+	egressProxyPort     int32  = 15001
+	egressProxyURL      string = "http://127.0.0.1:15001"
+	envHTTPProxy        string = "HTTP_PROXY"
+	envHTTPSProxy       string = "HTTPS_PROXY"
+	envNoProxy          string = "NO_PROXY"
+	defaultNoProxyValue string = "127.0.0.1,localhost,.cluster.local,.svc"
+
+	containerIgris               = "igris"
+	defaultIgrisImage            = "igris:latest"
+	configMapKeyListenersJSON    = "listeners.json"
+	volumeNameIgrisConfig        = "igris-config"
+	envControlAURL               = "CONTROL_A_URL"
+	envControlBURL               = "CONTROL_B_URL"
+	envCandidateURL              = "CANDIDATE_URL"
+	envControlAAddr              = "CONTROL_A_ADDR"
+	envControlBAddr              = "CONTROL_B_ADDR"
+	envCandidateAddr             = "CANDIDATE_ADDR"
+	envIgrisListenersFile        = "IGRIS_LISTENERS_FILE"
+	defaultIgrisListenersPath    = "/etc/igris/listeners.json"
+	igrisTerminationGraceSeconds = int64(35)
 )
 
 var envoyImagePullPolicy = corev1.PullIfNotPresent

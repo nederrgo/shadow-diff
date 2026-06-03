@@ -26,7 +26,7 @@ type Config struct {
 
 func ConfigFromEnv() Config {
 	cfg := Config{
-		TraceTTL:         60 * time.Second,
+		TraceTTL:         30 * time.Second,
 		MaxPendingTraces: 5000,
 		SweepInterval:    10 * time.Second,
 	}
@@ -219,7 +219,7 @@ func (s *Store) enforceCapLocked() {
 			return
 		}
 		oldest := s.order[0]
-		s.log.Warn("Dropped pending trace due to store cap", "traceID", oldest)
+		s.log.Warn(fmt.Sprintf("Ingest Map Full - Evicting Trace %s", oldest))
 		delete(s.pending, oldest)
 		s.removeFromOrderLocked(oldest)
 	}

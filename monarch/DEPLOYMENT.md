@@ -240,6 +240,6 @@ make uninstall
 ## Related docs
 
 - [../VERIFICATION.md](../VERIFICATION.md) — step-by-step cluster verification (Monarch + Beru)
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — how reconciliation works
+- [ARCHITECTURE.md](../ARCHITECTURE.md) — Shadow-Diff system architecture (Monarch, Igris, Beru)
 - [REPO_OVERVIEW.md](./REPO_OVERVIEW.md) — repository layout
 - [config/samples/engine_v1alpha1_shadowtest.yaml](./config/samples/engine_v1alpha1_shadowtest.yaml) — example CR

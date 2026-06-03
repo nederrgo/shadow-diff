@@ -1,5 +1,6 @@
 BERU_IMG ?= beru:latest
 CONTAINER_TOOL ?= docker
+REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 
 PROTO_SRC = api/proto/beru/v1/traffic.proto
 PROTO_OUT = pkg/api/beru/v1
@@ -23,4 +24,4 @@ test:
 	go test ./...
 
 docker-build:
-	$(CONTAINER_TOOL) build -t $(BERU_IMG) .
+	bash "$(REPO_ROOT)/scripts/lib/docker.sh" build -t $(BERU_IMG) .

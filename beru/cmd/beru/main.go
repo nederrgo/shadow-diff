@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,8 +12,10 @@ import (
 	"google.golang.org/grpc"
 
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
+	"github.com/shadow-diff/beru/internal/api"
 	"github.com/shadow-diff/beru/internal/envoyextproc"
 	"github.com/shadow-diff/beru/internal/ingest"
+	"github.com/shadow-diff/beru/internal/replay"
 	"github.com/shadow-diff/beru/internal/server"
 )
 
@@ -30,12 +33,26 @@ func main() {
 
 	log := slog.Default()
 	store := ingest.NewStore(log, ingest.ConfigFromEnv())
+	mocks := replay.NewMockStore()
+
+	httpAddr := os.Getenv("BERU_HTTP_ADDR")
+	if httpAddr == "" {
+		httpAddr = ":8080"
+	}
+	httpSrv := &api.Server{Log: log, Mocks: mocks}
+	go func() {
+		if err := httpSrv.Start(httpAddr); err != nil && err != http.ErrServerClosed {
+			slog.Error("HTTP server stopped", "err", err)
+			os.Exit(1)
+		}
+	}()
 
 	srv := grpc.NewServer()
 	beruv1.RegisterTrafficReporterServer(srv, &server.TrafficReporter{Log: log, Store: store})
 	extprocv3.RegisterExternalProcessorServer(srv, &envoyextproc.Server{
 		Log:   log,
 		Store: store,
+		Mocks: mocks,
 		Role:  envoyextproc.RoleFromEnv(),
 	})
 

@@ -125,7 +125,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	bash ../scripts/lib/docker.sh build -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -133,7 +133,7 @@ docker-push: ## Push docker image with the manager.
 
 .PHONY: beru-docker-build
 beru-docker-build: ## Build the Beru gRPC service image.
-	$(CONTAINER_TOOL) build -f ../beru/Dockerfile -t ${BERU_IMG} ../beru
+	bash ../scripts/lib/docker.sh build -f ../beru/Dockerfile -t ${BERU_IMG} ../beru
 
 .PHONY: beru-docker-push
 beru-docker-push: ## Push the Beru gRPC service image.

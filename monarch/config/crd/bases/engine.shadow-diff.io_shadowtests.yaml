@@ -56,6 +56,128 @@ spec:
               beruGRPCTimeout:
                 description: BeruGRPCTimeout is the ext_proc gRPC timeout (e.g. "2s").
                 type: string
+              downstreams:
+                description: Downstreams lists outbound hosts trapped by the egress
+                  proxy for strict replay.
+                items:
+                  description: DownstreamSpec declares an outbound host intercepted
+                    by the egress proxy.
+                  properties:
+                    host:
+                      description: Host is the downstream hostname (matches :authority
+                        / Host on proxied requests).
+                      type: string
+                    ignoreRequestPaths:
+                      description: IgnoreRequestPaths are JSONPath expressions stripped
+                        before egress hashing (e.g. "$.timestamp").
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - host
+                  type: object
+                type: array
+              igris:
+                description: Igris overrides image, replicas, or resources for the
+                  Igris traffic hub (always deployed).
+                properties:
+                  image:
+                    description: Image overrides the default Igris container image.
+                    type: string
+                  replicas:
+                    description: Replicas defaults to 1.
+                    format: int32
+                    type: integer
+                  resources:
+                    description: Resources for the Igris container.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                type: object
+              inputs:
+                description: |-
+                  Inputs defines Igris listener ports and drivers. When empty, Monarch defaults to
+                  a single HTTP listener on servicePort.
+                items:
+                  description: InputSpec declares an Igris listener port and input
+                    driver.
+                  properties:
+                    addon:
+                      description: Addon is deprecated; use driver. Legacy value "http"
+                        maps to http_request.
+                      type: string
+                    driver:
+                      description: |-
+                        Driver selects how Igris handles traffic on this port (http_request or tcp_stream).
+                        When empty, Monarch infers from the port (servicePort and 80/443/8080 → http_request).
+                      enum:
+                      - http_request
+                      - tcp_stream
+                      type: string
+                    port:
+                      description: Port is the TCP port Igris binds for this input.
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                  required:
+                  - port
+                  type: object
+                type: array
               newImage:
                 description: NewImage is the container image for the Candidate pod.
                 type: string
@@ -70,6 +192,22 @@ spec:
                 maximum: 65535
                 minimum: 1
                 type: integer
+              siphon:
+                description: Siphon configures kernel-level traffic capture to Igris.
+                properties:
+                  enabled:
+                    description: Enabled disables Siphon config push when explicitly
+                      false.
+                    type: boolean
+                  image:
+                    description: Image overrides the Siphon DaemonSet container image.
+                    type: string
+                  sampleRate:
+                    description: SampleRate is the percentage (0-100) of new TCP flows
+                      to sample.
+                    format: int32
+                    type: integer
+                type: object
               targetDeployment:
                 description: |-
                   TargetDeployment is the name of the production Deployment whose pod template
@@ -88,6 +226,16 @@ spec:
           status:
             description: status defines the observed state of ShadowTest
             properties:
+              captureTargets:
+                description: CaptureTargets lists production pod IPs pushed to Siphon
+                  agents.
+                items:
+                  type: string
+                type: array
+              igrisEndpoint:
+                description: IgrisEndpoint is the DNS host:port Monarch configured
+                  for capture forwarding.
+                type: string
               message:
                 description: Message carries human-readable detail, including MVP
                   limitations (skipped envFrom, etc.).
@@ -99,6 +247,10 @@ spec:
               shadowNamespace:
                 description: ShadowNamespace is the dedicated namespace where control/candidate
                   Deployments run.
+                type: string
+              siphonPhase:
+                description: SiphonPhase summarizes Siphon config push (Ready, Degraded,
+                  Disabled).
                 type: string
             type: object
         required:

@@ -1,0 +1,47 @@
+# Optional: replace default nginx prod with http-https-echo on port 80
+# so prod capture + Beru diffs use JSON-friendly responses.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-prod-app
+  namespace: default
+  labels:
+    app: my-prod-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-prod-app
+  template:
+    metadata:
+      labels:
+        app: my-prod-app
+    spec:
+      containers:
+        - name: nginx
+          image: mendhak/http-https-echo:latest
+          env:
+            - name: HTTP_PORT
+              value: "80"
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-prod-app
+  namespace: default
+spec:
+  selector:
+    app: my-prod-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

@@ -66,6 +66,31 @@ func envFromTarget(dep *appsv1.Deployment) ([]corev1.EnvVar, string) {
 	return out, warn
 }
 
+func appEnvWithEgressProxy(st *enginev1alpha1.ShadowTest, base []corev1.EnvVar) []corev1.EnvVar {
+	if len(st.Spec.Downstreams) == 0 {
+		return base
+	}
+	out := append([]corev1.EnvVar{}, base...)
+	out = append(out,
+		corev1.EnvVar{Name: envHTTPProxy, Value: egressProxyURL},
+		corev1.EnvVar{Name: envHTTPSProxy, Value: egressProxyURL},
+		corev1.EnvVar{Name: envNoProxy, Value: defaultNoProxyValue},
+	)
+	return out
+}
+
+func envoyContainerPorts(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort {
+	ports := []corev1.ContainerPort{
+		{Name: "ingress", ContainerPort: st.Spec.ServicePort, Protocol: corev1.ProtocolTCP},
+	}
+	if len(st.Spec.Downstreams) > 0 {
+		ports = append(ports, corev1.ContainerPort{
+			Name: "egress", ContainerPort: egressProxyPort, Protocol: corev1.ProtocolTCP,
+		})
+	}
+	return ports
+}
+
 func applicationPortFor(st *enginev1alpha1.ShadowTest) int32 {
 	if st.Spec.ApplicationPort > 0 {
 		return st.Spec.ApplicationPort
@@ -81,6 +106,14 @@ func beruGRPCAddressFor(st *enginev1alpha1.ShadowTest) string {
 		return st.Spec.BeruGRPCAddress
 	}
 	return defaultBeruGRPCAddress
+}
+
+func beruHTTPHostFor(st *enginev1alpha1.ShadowTest) string {
+	host, _, err := parseBeruHostPort(beruGRPCAddressFor(st))
+	if err != nil || host == "" {
+		return defaultBeruHTTPAddress
+	}
+	return fmt.Sprintf("%s:8080", host)
 }
 
 func beruGRPCTimeoutFor(st *enginev1alpha1.ShadowTest) string {
