@@ -656,7 +656,7 @@ Covers: BPF ingress+egress clauses, `FlushOlderThan` goroutine lifecycle, keep-a
 2. Apply [`examples/e2e-shadowtest.yaml`](examples/e2e-shadowtest.yaml) with `spec.downstreams`.
 3. Prod curl to `httpbin.org/post` → Siphon logs `egress forwarder: recorded …`.
 4. `./examples/e2e-record-replay.sh` → shadow egress **200** without `seed_mock`.
-5. Siphon status: `downstreams_count>0`, `beru_http_configured=true` (Monarch POST via hostIP).
+5. Siphon status: `downstreams_count>0`, `recorder_host_configured=true` (Monarch POST via hostIP).
 6. `go test ./internal/egress/...` — keep-alive parser test passes.
 
 ---

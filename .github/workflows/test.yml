@@ -27,3 +27,6 @@ jobs:
         run: |
           cd monarch && go mod tidy && make test
           cd ../beru && go mod tidy && make test
+          cd ../igris && go mod tidy && make test
+          cd ../siphon && go mod tidy && make test
+          cd ../recorder && go mod tidy && make test

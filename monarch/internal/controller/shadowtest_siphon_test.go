@@ -30,7 +30,7 @@ func TestBuildSiphonTarget(t *testing.T) {
 
 	st.Spec.Downstreams = []enginev1alpha1.DownstreamSpec{{Host: "httpbin.org"}}
 
-	target := buildSiphonTarget(st, "shadow-default-my-st", []string{"10.244.1.2"}, nil, "10.96.0.1:8080")
+	target := buildSiphonTarget(st, "shadow-default-my-st", []string{"10.244.1.2"}, nil)
 	if target.ShadowTest != "default/my-st" {
 		t.Fatalf("shadowtest id %q", target.ShadowTest)
 	}
@@ -43,8 +43,9 @@ func TestBuildSiphonTarget(t *testing.T) {
 	if len(target.Listeners) == 0 {
 		t.Fatal("expected default listener")
 	}
-	if target.BeruHTTPHost != "10.96.0.1:8080" {
-		t.Fatalf("beru http host %q", target.BeruHTTPHost)
+	wantRecorder := "my-st-recorder.shadow-default-my-st.svc.cluster.local:8080"
+	if target.RecorderHost != wantRecorder {
+		t.Fatalf("recorder host %q want %q", target.RecorderHost, wantRecorder)
 	}
 	if len(target.Downstreams) != 1 || target.Downstreams[0].Host != "httpbin.org" {
 		t.Fatalf("downstreams %v", target.Downstreams)

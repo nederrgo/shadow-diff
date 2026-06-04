@@ -23,7 +23,7 @@ type SiphonTarget struct {
 	TargetPorts  []int              `json:"target_ports"`
 	IgrisHost    string             `json:"igris_host"`
 	Listeners    []SiphonListener   `json:"listeners"`
-	BeruHTTPHost string             `json:"beru_http_host"`
+	RecorderHost string             `json:"recorder_host"`
 	Downstreams  []SiphonDownstream `json:"downstreams,omitempty"`
 	ExcludeIPs   []string           `json:"exclude_ips,omitempty"`
 }

@@ -14,7 +14,8 @@ Monorepo for **differential testing on Kubernetes**: replay traffic across three
 | [`monarch/`](monarch/) | **Monarch** | Kubernetes operator — `ShadowTest` CRD, shadow namespace, Envoy sidecars, Igris + Siphon wiring | **MVP** — ingress replay, egress proxy, Siphon DaemonSet + config push |
 | [`igris/`](igris/) | **Igris** | Traffic hub — HTTP/TCP drivers, multicasts to control-a, control-b, candidate | **MVP** — HTTP + TCP drivers |
 | [`beru/`](beru/) | **Beru** | Differ + egress mock store — gRPC ingress diff-of-diffs, HTTP egress replay/recording | **MVP** — `ext_proc`, `seed_mock`, `record_egress` |
-| [`siphon/`](siphon/) | **Siphon** | Node capture agent — classic BPF, TCP reassembly, ingress forward to Igris, egress recorder to Beru | **MVP** — ingress capture + egress auto-record (Phase 4a.2) |
+| [`recorder/`](recorder/) | **Recorder** | Egress HTTP parser — framed TCP from Siphon, `POST` Beru `/v1/record_egress` | **MVP** — Phase 4a.2 |
+| [`siphon/`](siphon/) | **Siphon** | Node capture agent — classic BPF, TCP reassembly, ingress forward to Igris, egress relay to Recorder | **MVP** — ingress capture + egress auto-record (Phase 4a.2) |
 | [`project-files/`](project-files/) | Docs | Early design notes (partially superseded by ARCHITECTURE.md) | Reference |
 
 ---
@@ -28,7 +29,7 @@ Monarch is a **Kubebuilder / controller-runtime** operator. It reconciles `Shado
 - **Igris** in the shadow namespace (image/replicas from `spec.igris`)
 - **Siphon DaemonSet** in `siphon-system` (image from `spec.siphon`) and **`POST /v1/config`** to each agent using node **hostIP** (Siphon runs with `hostNetwork`)
 
-Monarch pushes a merged Siphon config per Ready ShadowTest: prod pod IPs, Igris listener ports, **`spec.downstreams`**, Beru HTTP address (`beru_http_host`), and exclude IPs for Igris/Beru ClusterIPs.
+Monarch deploys **Recorder** (when `spec.downstreams` is set) and pushes a merged Siphon config per Ready ShadowTest: prod pod IPs, Igris listener ports, **`spec.downstreams`**, **`recorder_host`**, and exclude IPs for Igris/Beru/Recorder ClusterIPs.
 
 Monarch does **not** deploy Beru — apply [`beru/deploy/`](beru/deploy/) separately.
 
@@ -43,9 +44,9 @@ Siphon runs as a **DaemonSet** on production nodes (`hostNetwork`, `CAP_NET_RAW`
 | Path | What it does |
 |------|----------------|
 | **Ingress (Phase 3b)** | Reassembles HTTP from prod → forwards to Igris on the matching listener port |
-| **Egress (Phase 4a.2)** | Captures prod outbound HTTP to `spec.downstreams` hosts, pairs request/response, `POST`s to Beru `/v1/record_egress` |
+| **Egress (Phase 4a.2)** | Captures prod outbound TCP to `spec.downstreams` flows, relays framed bytes to **Recorder** |
 
-Control API on `:8080`: `POST /v1/config`, `GET /v1/status` (`targets_count`, `downstreams_count`, `beru_http_configured`).
+Control API on `:8080`: `POST /v1/config`, `GET /v1/status` (`targets_count`, `downstreams_count`, `recorder_host_configured`).
 
 **Kind E2E:** Monarch owns the DaemonSet image and config. Apply only RBAC bootstrap (`siphon/deploy/rbac.yaml`); do not `kubectl set image` manually — patch `spec.siphon.image` on the ShadowTest (or use [`scripts/e2e-reset-kind.sh`](scripts/e2e-reset-kind.sh), which sets `$SIPHON_IMG`).
 

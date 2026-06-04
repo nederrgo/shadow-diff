@@ -1,53 +1,38 @@
-package egress
+package parse
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/shadow-diff/siphon/internal/config"
+	"github.com/shadow-diff/recorder/internal/beru"
+	"github.com/shadow-diff/recorder/internal/config"
 )
 
-// ParseBidirectionalStream reads paired HTTP transactions from pipe readers
-// and forwards each pair to Beru.
-func ParseBidirectionalStream(sess *Session, forward *Forwarder) {
-	target := sess.Target
-	if target == nil {
-		log.Printf("egress parser: session missing target config")
-		return
-	}
+// RunBidirectional reads paired HTTP transactions from pipe readers and posts to Beru.
+func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, downstreams []config.Downstream, client *beru.Client) {
+	defer reqR.Close()
+	defer resR.Close()
 
-	deadline := time.After(2 * time.Minute)
-	for sess.reqR == nil {
-		select {
-		case <-deadline:
-			log.Printf("egress parser: timed out waiting for request stream")
-			return
-		case <-time.After(2 * time.Millisecond):
-		}
-	}
-	reqReader := bufio.NewReader(sess.reqR)
-
-	for sess.resR == nil {
-		select {
-		case <-deadline:
-			log.Printf("egress parser: timed out waiting for response stream")
-			return
-		case <-time.After(2 * time.Millisecond):
-		}
-	}
-	resReader := bufio.NewReader(sess.resR)
+	reqReader := bufio.NewReader(reqR)
+	resReader := bufio.NewReader(resR)
 
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		req, err := http.ReadRequest(reqReader)
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("egress parser: ReadRequest error: %v", err)
+				log.Printf("recorder parser: ReadRequest error: %v", err)
 			}
 			return
 		}
@@ -60,19 +45,19 @@ func ParseBidirectionalStream(sess *Session, forward *Forwarder) {
 			host = req.URL.Host
 		}
 		if host == "" {
-			log.Printf("egress parser: request missing Host, skipping")
+			log.Printf("recorder parser: request missing Host, skipping")
 			discardHTTPResponse(resReader, req)
 			continue
 		}
-		if !configHostMatches(host, target.Downstreams) {
-			log.Printf("egress parser: host %q not in downstreams, skipping", host)
+		if !HostMatches(host, downstreams) {
+			log.Printf("recorder parser: host %q not in downstreams, skipping", host)
 			discardHTTPResponse(resReader, req)
 			continue
 		}
 
 		resp, err := http.ReadResponse(resReader, req)
 		if err != nil {
-			log.Printf("egress parser: ReadResponse error: %v", err)
+			log.Printf("recorder parser: ReadResponse error: %v", err)
 			return
 		}
 		respBody, _ := io.ReadAll(resp.Body)
@@ -91,27 +76,27 @@ func ParseBidirectionalStream(sess *Session, forward *Forwarder) {
 			}
 		}
 
-		record := RecordPayload{
+		record := beru.RecordPayload{
 			Method:      req.Method,
-			Host:        normalizeHTTPHost(host),
+			Host:        NormalizeHTTPHost(host),
 			Path:        path,
-			Body:        jsonRawBody(reqBody),
-			IgnorePaths: ignorePathsForHost(host, target.Downstreams),
-			Response: RecordResponse{
+			Body:        JSONRawBody(reqBody),
+			IgnorePaths: IgnorePathsForHost(host, downstreams),
+			Response: beru.RecordResponse{
 				Status:  resp.StatusCode,
 				Headers: headers,
 				Body:    string(respBody),
 			},
 		}
-
-		forward.PostAsync(target.BeruHTTPHost, record)
+		client.PostAsync(record)
 	}
 }
 
-func configHostMatches(host string, downstreams []config.SiphonDownstream) bool {
-	host = normalizeHTTPHost(host)
+// HostMatches reports whether host is allowed by downstream rules.
+func HostMatches(host string, downstreams []config.Downstream) bool {
+	host = NormalizeHTTPHost(host)
 	for _, d := range downstreams {
-		dh := normalizeHTTPHost(d.Host)
+		dh := NormalizeHTTPHost(d.Host)
 		if dh == host {
 			return true
 		}
@@ -125,7 +110,8 @@ func configHostMatches(host string, downstreams []config.SiphonDownstream) bool 
 	return false
 }
 
-func normalizeHTTPHost(host string) string {
+// NormalizeHTTPHost lowercases and strips port from host.
+func NormalizeHTTPHost(host string) string {
 	host = strings.TrimSpace(strings.ToLower(host))
 	if h, _, err := net.SplitHostPort(host); err == nil && h != "" {
 		return strings.ToLower(h)
@@ -133,17 +119,19 @@ func normalizeHTTPHost(host string) string {
 	return host
 }
 
-func ignorePathsForHost(host string, downstreams []config.SiphonDownstream) []string {
-	host = normalizeHTTPHost(host)
+// IgnorePathsForHost returns ignore_paths for a matching downstream host.
+func IgnorePathsForHost(host string, downstreams []config.Downstream) []string {
+	host = NormalizeHTTPHost(host)
 	for _, d := range downstreams {
-		if normalizeHTTPHost(d.Host) == host {
+		if NormalizeHTTPHost(d.Host) == host {
 			return d.IgnorePaths
 		}
 	}
 	return nil
 }
 
-func jsonRawBody(body []byte) json.RawMessage {
+// JSONRawBody normalizes a request body for JSON encoding.
+func JSONRawBody(body []byte) json.RawMessage {
 	if len(body) == 0 {
 		return json.RawMessage("null")
 	}

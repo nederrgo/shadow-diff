@@ -3,16 +3,20 @@ package egress
 import (
 	"fmt"
 	"io"
+	"net"
 	"sync"
 
 	"github.com/google/gopacket/tcpassembly"
 	"github.com/shadow-diff/siphon/internal/config"
+	"github.com/shadow-diff/siphon/internal/forward"
 )
 
 // pipeStream implements tcpassembly.Stream without blocking the assembler.
-// Bytes are written to an io.Pipe; the parser reads from the other end via bufio.
 type pipeStream struct {
-	pw *io.PipeWriter
+	pw        *io.PipeWriter
+	store     *SessionStore
+	flowKey   string
+	isRequest bool
 }
 
 func (p *pipeStream) Reassembled(reassemblies []tcpassembly.Reassembly) {
@@ -26,6 +30,9 @@ func (p *pipeStream) Reassembled(reassemblies []tcpassembly.Reassembly) {
 
 func (p *pipeStream) ReassemblyComplete() {
 	_ = p.pw.Close()
+	if p.store != nil {
+		p.store.onLegComplete(p.flowKey, p.isRequest)
+	}
 }
 
 // ClosePipeWriter closes the pipe writer for a pipeStream returned by GetOrCreate.
@@ -38,37 +45,41 @@ func ClosePipeWriter(s tcpassembly.Stream) {
 type SessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
-	forward  *Forwarder
+	poolMgr  *forward.PoolManager
 }
 
 type Session struct {
-	reqR io.ReadCloser
-	resR io.ReadCloser
-	reqS *pipeStream
-	resS *pipeStream
-	// parserStarted guards the single parser goroutine per TCP connection.
-	parserStarted bool
-	Target        *config.SiphonTarget
+	flowKey      string
+	reqR         io.ReadCloser
+	resR         io.ReadCloser
+	reqS         *pipeStream
+	resS         *pipeStream
+	relayStarted bool
+	reqComplete  bool
+	resComplete  bool
+	Target       *config.SiphonTarget
+	conn         net.Conn
 }
 
-func NewSessionStore(forward *Forwarder) *SessionStore {
+func (s *Session) setConn(c net.Conn) {
+	s.conn = c
+}
+
+func NewSessionStore(poolMgr *forward.PoolManager) *SessionStore {
 	return &SessionStore{
 		sessions: make(map[string]*Session),
-		forward:  forward,
+		poolMgr:  poolMgr,
 	}
 }
 
-// GetOrCreate returns a tcpassembly.Stream for the given flow direction.
-// A parser goroutine starts on the first leg so Reassembled never blocks waiting
-// for a tcpreader consumer (which previously deadlocked the assembler).
-func (s *SessionStore) GetOrCreate(flowKey string, isRequest bool, target *config.SiphonTarget) tcpassembly.Stream {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (st *SessionStore) GetOrCreate(flowKey string, isRequest bool, target *config.SiphonTarget) tcpassembly.Stream {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 
-	sess, ok := s.sessions[flowKey]
+	sess, ok := st.sessions[flowKey]
 	if !ok {
-		sess = &Session{Target: target}
-		s.sessions[flowKey] = sess
+		sess = &Session{flowKey: flowKey, Target: target}
+		st.sessions[flowKey] = sess
 	}
 
 	var stream tcpassembly.Stream
@@ -76,30 +87,56 @@ func (s *SessionStore) GetOrCreate(flowKey string, isRequest bool, target *confi
 		if sess.reqS == nil {
 			pr, pw := io.Pipe()
 			sess.reqR = pr
-			sess.reqS = &pipeStream{pw: pw}
+			sess.reqS = &pipeStream{pw: pw, store: st, flowKey: flowKey, isRequest: true}
 		}
 		stream = sess.reqS
 	} else {
 		if sess.resS == nil {
 			pr, pw := io.Pipe()
 			sess.resR = pr
-			sess.resS = &pipeStream{pw: pw}
+			sess.resS = &pipeStream{pw: pw, store: st, flowKey: flowKey, isRequest: false}
 		}
 		stream = sess.resS
 	}
 
-	if !sess.parserStarted {
-		sess.parserStarted = true
-		go ParseBidirectionalStream(sess, s.forward)
+	if !sess.relayStarted {
+		sess.relayStarted = true
+		go runRelay(sess, st.poolMgr)
 	}
 
 	return stream
 }
 
-func (s *SessionStore) Remove(flowKey string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sessions, flowKey)
+func (st *SessionStore) Remove(flowKey string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	sess, ok := st.sessions[flowKey]
+	if !ok {
+		return
+	}
+	delete(st.sessions, flowKey)
+	if sess.conn != nil {
+		_ = sess.conn.Close()
+	}
+}
+
+func (st *SessionStore) onLegComplete(flowKey string, isRequest bool) {
+	st.mu.Lock()
+	sess, ok := st.sessions[flowKey]
+	if !ok {
+		st.mu.Unlock()
+		return
+	}
+	if isRequest {
+		sess.reqComplete = true
+	} else {
+		sess.resComplete = true
+	}
+	done := sess.reqComplete && sess.resComplete
+	st.mu.Unlock()
+	if done {
+		st.Remove(flowKey)
+	}
 }
 
 func FlowKey(prodIP string, prodPort int, remoteIP string, remotePort int) string {

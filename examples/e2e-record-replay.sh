@@ -142,7 +142,7 @@ PROD_POD=$(kubectl get pod -n "$PROD_NS" -l app=my-prod-app \
 
 echo "    prodPod=$PROD_POD shadowPod=$SHADOW_POD downstream=$EGRESS_HOST"
 
-echo "==> Wait for Siphon recorder config (targets + downstreams + beru_http)"
+echo "==> Wait for Siphon recorder config (targets + downstreams + recorder_host)"
 wait_siphon_configured 1
 
 echo "==> Record phase: prod direct egress to ${EGRESS_HOST}${EGRESS_PATH}"

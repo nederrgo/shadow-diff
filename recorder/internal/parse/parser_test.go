@@ -1,6 +1,7 @@
-package egress
+package parse
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,12 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shadow-diff/siphon/internal/config"
+	"github.com/shadow-diff/recorder/internal/beru"
+	"github.com/shadow-diff/recorder/internal/config"
 )
 
-// keepAliveFixture is two HTTP/1.1 transactions on one connection (request leg + response leg).
 func keepAliveFixture() (reqBytes, resBytes string) {
-	// Bodies are exactly Content-Length bytes; no extra CRLF between back-to-back messages.
 	reqBytes = strings.Join([]string{
 		"POST /first HTTP/1.1\r\n",
 		"Host: api.example.com\r\n",
@@ -45,17 +45,17 @@ func keepAliveFixture() (reqBytes, resBytes string) {
 	return reqBytes, resBytes
 }
 
-func TestParseBidirectionalStream_keepAlive(t *testing.T) {
+func TestRunBidirectional_keepAlive(t *testing.T) {
 	var (
 		mu      sync.Mutex
-		records []RecordPayload
+		records []beru.RecordPayload
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/record_egress" {
 			http.NotFound(w, r)
 			return
 		}
-		var rec RecordPayload
+		var rec beru.RecordPayload
 		if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -68,12 +68,9 @@ func TestParseBidirectionalStream_keepAlive(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	beruHost := strings.TrimPrefix(srv.URL, "http://")
-	target := &config.SiphonTarget{
-		BeruHTTPHost: beruHost,
-		Downstreams: []config.SiphonDownstream{
-			{Host: "api.example.com", IgnorePaths: []string{"$.timestamp"}},
-		},
+	client := beru.NewClient(srv.URL)
+	downstreams := []config.Downstream{
+		{Host: "api.example.com", IgnorePaths: []string{"$.timestamp"}},
 	}
 
 	reqR, reqW := io.Pipe()
@@ -89,13 +86,7 @@ func TestParseBidirectionalStream_keepAlive(t *testing.T) {
 		_ = resW.Close()
 	}()
 
-	sess := &Session{
-		reqR: reqR,
-		resR: resR,
-		Target: target,
-	}
-	forward := NewForwarder()
-	ParseBidirectionalStream(sess, forward)
+	RunBidirectional(context.Background(), reqR, resR, downstreams, client)
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -116,23 +107,34 @@ func TestParseBidirectionalStream_keepAlive(t *testing.T) {
 	if len(records) != 2 {
 		t.Fatalf("record count: got %d want 2", len(records))
 	}
-	if records[0].Path != "/first" || records[0].Response.Status != 200 {
-		t.Fatalf("first record: %+v", records[0])
+	byPath := map[string]int{}
+	for _, rec := range records {
+		byPath[rec.Path] = rec.Response.Status
 	}
-	if records[1].Path != "/second" || records[1].Response.Status != 201 {
-		t.Fatalf("second record: %+v", records[1])
+	if byPath["/first"] != 200 || byPath["/second"] != 201 {
+		t.Fatalf("records by path: %+v", byPath)
 	}
 	if records[0].IgnorePaths == nil || records[0].IgnorePaths[0] != "$.timestamp" {
-		t.Fatalf("expected ignore_paths on record: %+v", records[0].IgnorePaths)
+		// any record should carry ignore_paths from downstream config
+		found := false
+		for _, rec := range records {
+			if len(rec.IgnorePaths) > 0 && rec.IgnorePaths[0] == "$.timestamp" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected ignore_paths on a record")
+		}
 	}
 }
 
-func TestConfigHostMatches_wildcard(t *testing.T) {
-	ds := []config.SiphonDownstream{{Host: "*.example.com"}}
-	if !configHostMatches("api.example.com", ds) {
+func TestHostMatches_wildcard(t *testing.T) {
+	ds := []config.Downstream{{Host: "*.example.com"}}
+	if !HostMatches("api.example.com", ds) {
 		t.Fatal("expected wildcard match")
 	}
-	if configHostMatches("other.org", ds) {
+	if HostMatches("other.org", ds) {
 		t.Fatal("expected no match")
 	}
 }

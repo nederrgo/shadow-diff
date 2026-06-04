@@ -64,8 +64,7 @@ func main() {
 
 	var requestsForwarded uint64
 	poolMgr := forward.NewPoolManager(maxConns, 2*time.Second)
-	forwarder := egress.NewForwarder()
-	egressStore := egress.NewSessionStore(forwarder)
+	egressStore := egress.NewSessionStore(poolMgr)
 	factory := assembly.NewStreamFactory(cfgMgr, poolMgr, egressStore, &requestsForwarded)
 	capMgr := capture.NewCaptureManager(cfgMgr, sessionMap, factory)
 

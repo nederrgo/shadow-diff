@@ -17,8 +17,8 @@
 #   ./scripts/e2e-reset-kind.sh --skip-build       # assume images already built/loaded
 #   ./scripts/e2e-reset-kind.sh --no-reset         # deploy/upgrade only (no deletes)
 #
-# Monarch owns the Siphon DaemonSet and POSTs /v1/config (targets, downstreams, beru_http_host)
-# from ShadowTest spec. Set SIPHON_IMG / IGRIS_IMG so spec matches built images (default :dev).
+# Monarch owns the Siphon DaemonSet and POSTs /v1/config (targets, downstreams, recorder_host)
+# from ShadowTest spec. Set SIPHON_IMG / IGRIS_IMG / RECORDER_IMG so images match builds (default :dev).
 #
 set -euo pipefail
 
@@ -32,6 +32,7 @@ MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
 BERU_IMG="${BERU_IMG:-beru:dev}"
 IGRIS_IMG="${IGRIS_IMG:-igris:dev}"
 SIPHON_IMG="${SIPHON_IMG:-siphon:dev}"
+RECORDER_IMG="${RECORDER_IMG:-recorder:dev}"
 
 SHADOWTEST="${SHADOWTEST:-my-app-shadow}"
 SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
@@ -136,7 +137,7 @@ EOF
 }
 
 echo "==> Monarch E2E reset (cluster=${KIND_CLUSTER:-local})"
-echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG igris=$IGRIS_IMG siphon=$SIPHON_IMG"
+echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG igris=$IGRIS_IMG siphon=$SIPHON_IMG recorder=$RECORDER_IMG"
 if [[ "$SKIP_BUILD" -eq 1 ]]; then
   echo "WARN: --skip-build reuses existing local images; Monarch/Beru/Igris/Siphon code changes are NOT included until you rebuild"
 fi
@@ -147,6 +148,7 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   make beru-docker-build BERU_IMG="$BERU_IMG"
   make igris-docker-build IGRIS_IMG="$IGRIS_IMG"
   make siphon-docker-build SIPHON_IMG="$SIPHON_IMG"
+  make recorder-docker-build RECORDER_IMG="$RECORDER_IMG"
 fi
 
 if [[ "$SKIP_LOAD" -eq 0 ]]; then
@@ -156,6 +158,7 @@ if [[ "$SKIP_LOAD" -eq 0 ]]; then
   kind load docker-image "$BERU_IMG" --name "$KIND_CLUSTER"
   kind load docker-image "$IGRIS_IMG" --name "$KIND_CLUSTER"
   kind load docker-image "$SIPHON_IMG" --name "$KIND_CLUSTER"
+  kind load docker-image "$RECORDER_IMG" --name "$KIND_CLUSTER"
 fi
 
 echo "==> Monarch CRDs"
@@ -221,7 +224,17 @@ if [[ "$siphon_phase" == "Degraded" ]]; then
   echo "WARN: siphonPhase=Degraded — Monarch could not POST /v1/config; check monarch logs and Siphon hostIP reachability"
 fi
 
-echo "==> Verify Monarch pushed Siphon config (targets + downstreams + beru_http)"
+echo "==> Patch Recorder deployment image (Monarch default tag; E2E uses RECORDER_IMG)"
+if [[ -n "${SHADOW_NS:-}" ]]; then
+  kubectl set image "deployment/${SHADOWTEST}-recorder" recorder="$RECORDER_IMG" -n "$SHADOW_NS" 2>/dev/null || true
+  kubectl rollout status "deployment/${SHADOWTEST}-recorder" -n "$SHADOW_NS" --timeout=120s 2>/dev/null || true
+fi
+
+echo "==> Nudge Monarch to re-push Siphon config (recorder_host after Recorder is up)"
+nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
+sleep 3
+
+echo "==> Verify Monarch pushed Siphon config (targets + downstreams + recorder_host)"
 kubectl rollout status daemonset/siphon-agent -n siphon-system --timeout=120s 2>/dev/null || true
 wait_siphon_configured 1
 
