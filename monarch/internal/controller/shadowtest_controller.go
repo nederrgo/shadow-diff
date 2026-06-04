@@ -49,14 +49,19 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	if !controllerutil.ContainsFinalizer(&shadowTest, finalizerName) {
+		base := shadowTest.DeepCopy()
 		controllerutil.AddFinalizer(&shadowTest, finalizerName)
-		if err := r.Update(ctx, &shadowTest); err != nil {
+		if err := r.Patch(ctx, &shadowTest, client.MergeFrom(base)); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
 
 	if err := validateInputs(&shadowTest); err != nil {
+		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+		return ctrl.Result{}, nil
+	}
+	if err := validateDependencies(&shadowTest); err != nil {
 		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
 		return ctrl.Result{}, nil
 	}
@@ -74,6 +79,11 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	if err := r.ensureShadowNamespace(ctx, &shadowTest, shadowNS); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileShadowDependencies(ctx, &shadowTest, shadowNS); err != nil {
+		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
 		return ctrl.Result{}, err
 	}
 
@@ -112,6 +122,17 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err := r.reconcileIgrisService(ctx, &shadowTest, shadowNS); err != nil {
 		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
 		return ctrl.Result{}, err
+	}
+
+	if len(shadowTest.Spec.Dependencies) > 0 {
+		depsReady, err := r.shadowDependenciesReady(ctx, &shadowTest, shadowNS)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !depsReady {
+			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for shadow dependencies", shadowNS)
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
 	}
 
 	shadowsReady, err := r.shadowDeploymentsReady(ctx, &shadowTest, shadowNS)

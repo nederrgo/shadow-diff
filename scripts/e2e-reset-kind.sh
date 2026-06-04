@@ -13,6 +13,7 @@
 #   ./scripts/e2e-reset-kind.sh --run-test         # above, then ./examples/e2e-pipeline-test.sh
 #   ./scripts/e2e-reset-kind.sh --run-egress-test  # above, then ./examples/e2e-egress-test.sh
 #   ./scripts/e2e-reset-kind.sh --run-record-replay  # above, then ./examples/e2e-record-replay.sh
+#   ./scripts/e2e-reset-kind.sh --run-dependency-test  # above, then ./examples/e2e-dependency-test.sh
 #   ./scripts/e2e-reset-kind.sh --skip-build       # assume images already built/loaded
 #   ./scripts/e2e-reset-kind.sh --no-reset         # deploy/upgrade only (no deletes)
 #
@@ -41,10 +42,11 @@ NO_RESET=0
 RUN_TEST=0
 RUN_EGRESS_TEST=0
 RUN_RECORD_REPLAY=0
+RUN_DEPENDENCY_TEST=0
 
 usage() {
-  sed -n '2,15p' "$0"
-  echo "Flags: --skip-build --skip-load --no-reset --run-test --run-egress-test --run-record-replay -h"
+  sed -n '2,16p' "$0"
+  echo "Flags: --skip-build --skip-load --no-reset --run-test --run-egress-test --run-record-replay --run-dependency-test -h"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -55,6 +57,7 @@ while [[ $# -gt 0 ]]; do
     --run-test)   RUN_TEST=1 ;;
     --run-egress-test) RUN_EGRESS_TEST=1 ;;
     --run-record-replay) RUN_RECORD_REPLAY=1 ;;
+    --run-dependency-test) RUN_DEPENDENCY_TEST=1 ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "Unknown flag: $1" >&2; usage; exit 1 ;;
   esac
@@ -240,6 +243,7 @@ echo ""
 echo "Run ingress test:  ./examples/e2e-pipeline-test.sh"
 echo "Run egress test:   ./examples/e2e-egress-test.sh"
 echo "Run record-replay: ./examples/e2e-record-replay.sh"
+echo "Run dependency E2E: ./examples/e2e-dependency-test.sh"
 echo "Run k6 stress:     tests/k6/run-stress-test.sh  (or see tests/k6/README.md)"
 
 if [[ "$RUN_TEST" -eq 1 ]]; then
@@ -256,4 +260,10 @@ if [[ "$RUN_RECORD_REPLAY" -eq 1 ]]; then
   echo ""
   chmod +x examples/e2e-record-replay.sh
   ./examples/e2e-record-replay.sh
+fi
+
+if [[ "$RUN_DEPENDENCY_TEST" -eq 1 ]]; then
+  echo ""
+  chmod +x examples/e2e-dependency-test.sh
+  ./examples/e2e-dependency-test.sh
 fi

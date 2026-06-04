@@ -56,6 +56,39 @@ spec:
               beruGRPCTimeout:
                 description: BeruGRPCTimeout is the ext_proc gRPC timeout (e.g. "2s").
                 type: string
+              dependencies:
+                description: Dependencies lists ephemeral backing services (e.g. Redis)
+                  provisioned once per shadow role.
+                items:
+                  description: DependencySpec declares an ephemeral backing service
+                    provisioned per shadow role.
+                  properties:
+                    envVarInjection:
+                      description: |-
+                        EnvVarInjection is the app container env var name set to the role-specific dependency
+                        endpoint as host:port (e.g. redis-control-a.<shadow-ns>.svc.cluster.local:6379).
+                      type: string
+                    image:
+                      description: Image is the container image (e.g. redis:7-alpine).
+                      type: string
+                    name:
+                      description: Name is the logical dependency id; used in resource
+                        names and DNS labels.
+                      type: string
+                    port:
+                      description: Port is the TCP port exposed by the dependency
+                        container and Service.
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                  required:
+                  - envVarInjection
+                  - image
+                  - name
+                  - port
+                  type: object
+                type: array
               downstreams:
                 description: Downstreams lists outbound hosts trapped by the egress
                   proxy for strict replay.

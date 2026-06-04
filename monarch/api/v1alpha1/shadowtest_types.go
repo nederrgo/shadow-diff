@@ -64,6 +64,24 @@ type DownstreamSpec struct {
 	IgnoreRequestPaths []string `json:"ignoreRequestPaths,omitempty"`
 }
 
+// DependencySpec declares an ephemeral backing service provisioned per shadow role.
+type DependencySpec struct {
+	// Name is the logical dependency id; used in resource names and DNS labels.
+	Name string `json:"name"`
+
+	// Image is the container image (e.g. redis:7-alpine).
+	Image string `json:"image"`
+
+	// Port is the TCP port exposed by the dependency container and Service.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// EnvVarInjection is the app container env var name set to the role-specific dependency
+	// endpoint as host:port (e.g. redis-control-a.<shadow-ns>.svc.cluster.local:6379).
+	EnvVarInjection string `json:"envVarInjection"`
+}
+
 // IgrisSpec overrides the always-deployed Igris workload.
 type IgrisSpec struct {
 	// Image overrides the default Igris container image.
@@ -130,6 +148,10 @@ type ShadowTestSpec struct {
 	// Downstreams lists outbound hosts trapped by the egress proxy for strict replay.
 	// +optional
 	Downstreams []DownstreamSpec `json:"downstreams,omitempty"`
+
+	// Dependencies lists ephemeral backing services (e.g. Redis) provisioned once per shadow role.
+	// +optional
+	Dependencies []DependencySpec `json:"dependencies,omitempty"`
 }
 
 // ShadowTestStatus defines the observed state of ShadowTest.

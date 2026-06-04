@@ -34,8 +34,8 @@ type siphonConfigPayload struct {
 }
 
 type siphonDownstream struct {
-	Host         string   `json:"host"`
-	IgnorePaths  []string `json:"ignore_paths,omitempty"`
+	Host        string   `json:"host"`
+	IgnorePaths []string `json:"ignore_paths,omitempty"`
 }
 
 type siphonTarget struct {
@@ -132,7 +132,7 @@ func (r *ShadowTestReconciler) listTargetPodIPs(ctx context.Context, dep *appsv1
 		return nil, err
 	}
 	var pods corev1.PodList
-	if err := r.List(ctx, &pods, client.InNamespace(dep.Namespace), client.MatchingLabelsSelector{selector}); err != nil {
+	if err := r.List(ctx, &pods, client.InNamespace(dep.Namespace), client.MatchingLabelsSelector{Selector: selector}); err != nil {
 		return nil, err
 	}
 	var ips []string

@@ -20,3 +20,10 @@ spec:
   #     addon: http
   # igris:
   #   image: igris:latest
+  # Ephemeral dependencies: one isolated instance per shadow role (control-a, control-b, candidate).
+  # Monarch injects envVarInjection as host:port, e.g. redis-control-a.<shadow-ns>.svc.cluster.local:6379
+  # dependencies:
+  #   - name: redis
+  #     image: redis:7-alpine
+  #     port: 6379
+  #     envVarInjection: REDIS_ADDR
