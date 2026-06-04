@@ -240,6 +240,7 @@ echo ""
 echo "Run ingress test:  ./examples/e2e-pipeline-test.sh"
 echo "Run egress test:   ./examples/e2e-egress-test.sh"
 echo "Run record-replay: ./examples/e2e-record-replay.sh"
+echo "Run k6 stress:     tests/k6/run-stress-test.sh  (or see tests/k6/README.md)"
 
 if [[ "$RUN_TEST" -eq 1 ]]; then
   echo ""

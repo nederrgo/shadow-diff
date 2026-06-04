@@ -1,6 +1,6 @@
 # k6 stress test (Phase 4b.2)
 
-Parallel load test for the shadow stack: steady JSON traffic, noisy payloads (Beru noise-filter stress), oversized bodies (Igris 413 guard), single-role orphan traces (Beru TTL timeouts), and continuous Beru `/healthz` probes with a **100% success threshold** for CI.
+Parallel load test for the shadow stack: steady JSON traffic, noisy payloads (Beru noise-filter stress), **max-size** and **oversized** bodies (Igris body limit), single-role orphan traces (Beru TTL timeouts), and continuous Beru `/healthz` probes with a **100% success threshold** for CI.
 
 ## Install k6
 
@@ -16,7 +16,15 @@ Parallel load test for the shadow stack: steady JSON traffic, noisy payloads (Be
    ./scripts/e2e-reset-kind.sh
    ```
 
-2. Rebuild/load **Beru** with `GET /healthz` after pulling this branch. **Building alone does not update the running pod:**
+2. Rebuild/load **Igris** with the **512KiB** default (`IGRIS_MAX_BODY_SIZE=524288`) and **Beru** with `GET /healthz`. **Building alone does not update running pods:**
+
+   ```bash
+   make igris-docker-build IGRIS_IMG=igris:dev
+   kind load docker-image igris:dev --name "$(kind get clusters | head -1)"
+   # restart my-app-shadow-igris — see Redeploy Igris below
+   ```
+
+3. Rebuild/load **Beru** with `GET /healthz` after pulling this branch. **Building alone does not update the running pod:**
 
    ```bash
    make beru-docker-build BERU_IMG=beru:dev
@@ -90,17 +98,59 @@ k6 run -e DURATION=30s \
 | `BERU_HEALTH_URL` | `http://127.0.0.1:8080/healthz` | Beru liveness probe |
 | `TEST_PATH` | `/post` | HTTP path (JSON echo) |
 | `DURATION` | `2m` | All scenario durations |
-| `LARGE_PAYLOAD_MB` | `5` | Body size for `large_payload` (expect 413; Igris default max 2MB) |
+| `LIMIT_PAYLOAD_KB` | `450` | Body size for `limit_payload` (under Envoy ~1MiB buffered echo response) |
+| `LARGE_PAYLOAD_MB` | `1` | Body size for `large_payload` (expect **413** from Igris; over 512KiB default) |
+| `IGRIS_MAX_BODY_BYTES` | `524288` (512 KiB) | Documented Igris default; must match cluster after rebuild |
+| `SCENARIOS` | *(all)* | Comma-separated subset, e.g. `limit_payload,beru_health` |
 
 ### Scenarios (parallel)
 
-| Scenario | VUs | Purpose |
-|----------|-----|---------|
-| `steady_state` | 10 | Stable JSON `{"user":"alice","price":10}` |
-| `noise_generator` | 5 | Random `timestamp` / `uuid` per request |
-| `large_payload` | 1 | 5MB body built **once in init context** (avoids k6 OOM) |
-| `orphaned_traces` | 5 | Hits control-a only with `x-shadow-trace-id: k6-orphan-...` |
+| Scenario | VUs / rate | Purpose |
+|----------|------------|---------|
+| `steady_state` | 10 VUs | Stable JSON `{"user":"alice","price":10}` |
+| `noise_generator` | 5 VUs | Random `timestamp` / `uuid` per request |
+| `large_payload` | 1 VU | **1MB** body — Igris returns **413** (over 512KiB ingress limit) |
+| `limit_payload` | 1 req / 10s | **450KB** body — Igris **202**; shadows **200**; Beru (`k6-limit-...`) |
+| `orphaned_traces` | 5 VUs | Hits control-a only with `x-shadow-trace-id: k6-orphan-...` |
 | `beru_health` | 1 req / 5s | `GET /healthz`; metric `beru_health_success` must stay **100%** |
+
+### Body limit boundary test only
+
+Run just the max-size scenario (plus health probe). The wrapper translates `--scenario` to `SCENARIOS` (works on older k6 without native `--scenario`):
+
+```bash
+./run-stress-test.sh --scenario limit_payload --scenario beru_health -e DURATION=30s
+```
+
+Equivalent:
+
+```bash
+SCENARIOS=limit_payload,beru_health ./run-stress-test.sh -e DURATION=30s
+```
+
+Or pass `SCENARIOS` directly to k6:
+
+```bash
+k6 run -e SCENARIOS=limit_payload,beru_health \
+  -e DURATION=30s \
+  -e TARGET_URL=http://127.0.0.1:8888 \
+  -e BERU_HEALTH_URL=http://127.0.0.1:8080/healthz \
+  stress-test.js
+```
+
+After a successful run, Beru should log `No regression for Trace k6-limit-...` (450KB stays under Envoy’s ~1MiB buffered response limit).
+
+Pair with `large_payload` (1MB → 413 at Igris) to validate the ingress cap — oversized bodies never reach Envoy.
+
+### Redeploy Igris after changing the 512KiB default
+
+```bash
+make igris-docker-build IGRIS_IMG=igris:dev
+kind load docker-image igris:dev --name "$(kind get clusters | head -1)"
+export SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
+kubectl set image deployment/my-app-shadow-igris igris=igris:dev -n "$SHADOW_NS"
+kubectl rollout status deployment/my-app-shadow-igris -n "$SHADOW_NS"
+```
 
 ## CI / exit codes
 
@@ -151,8 +201,11 @@ With identical echo images (`examples/e2e-shadowtest.yaml`), control-a/b/candida
 
 | Symptom | Likely cause | Fix |
 |---------|----------------|-----|
+| `connection refused` on `:8080` after Beru restart | Stale `kubectl port-forward` | Re-run `./run-stress-test.sh` (now kills stale forwards); or `pkill -f 'port-forward.*:8080'` |
 | `connection refused` on `:8888` / `:8889` / `:8080` | Port-forwards not running | Use `./run-stress-test.sh` or start the three `kubectl port-forward` commands |
 | `beru_health_success` 0% | Beru not forwarded or old image without `/healthz` | `./run-stress-test.sh` preflights health; if **404**, run `kind load` + `kubectl rollout restart deployment/beru -n beru-system` |
-| 200 on 5MB POST | Old Igris without 2MB limit | Rebuild Igris (`IGRIS_MAX_BODY_SIZE` default 2MB) |
+| 200 on 1MB POST to Igris | Old Igris without 512KiB limit | Rebuild/redeploy Igris (`IGRIS_MAX_BODY_SIZE` default 524288) |
+| `limit_payload` gets 413 | Payload too large or old Igris | Default `LIMIT_PAYLOAD_KB=450`; cluster must use 512KiB limit |
+| Igris `status_code 500` on limit | Request too large for Envoy buffered response | Lower `LIMIT_PAYLOAD_KB` (default 450); raise Envoy buffer in Monarch if needed |
 | No `k6-orphan-` in logs | Wrong `ORPHAN_TARGET_URL` (hitting Igris/multicast) | Forward **control-a** service to 8889, not Igris |
 | k6 OOM | Large body built per iteration | Confirm `largePayloadBody` is init-scoped in `stress-test.js` |

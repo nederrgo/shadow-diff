@@ -14,7 +14,8 @@ import (
 const (
 	defaultListenersFile   = "/etc/igris/listeners.json"
 	defaultMaxTCPConns     = 1024
-	defaultMaxBodySize     = 2 << 20 // 2MB
+	// 512KiB ingress cap — echo shadows buffer ~2× body in JSON responses; Envoy ext_proc default is 1MiB.
+	defaultMaxBodySize = 512 * 1024
 	defaultTCPDialTimeout  = 5 * time.Second
 	defaultTCPIdleTimeout  = 5 * time.Minute
 )

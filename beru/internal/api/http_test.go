@@ -11,6 +11,33 @@ import (
 	"github.com/shadow-diff/beru/internal/replay"
 )
 
+func TestHealthz(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	handleHealthz(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "ok" {
+		t.Fatalf("expected status ok, got %q", out.Status)
+	}
+}
+
+func TestHealthz_methodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	handleHealthz(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status %d, want 405", rec.Code)
+	}
+}
+
 func TestSeedMock_roundTrip(t *testing.T) {
 	mocks := replay.NewMockStore()
 	s := &Server{Log: slog.Default(), Mocks: mocks}

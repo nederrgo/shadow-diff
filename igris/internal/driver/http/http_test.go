@@ -16,7 +16,7 @@ import (
 	"github.com/shadow-diff/igris/internal/payload"
 )
 
-const testMaxBodySize = 2 << 20
+const testMaxBodySize = 512 * 1024
 
 func testConfig(targets ...*httptest.Server) config.Config {
 	return config.Config{

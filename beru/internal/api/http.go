@@ -32,10 +32,20 @@ type seedMockResponse struct {
 
 func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", handleHealthz)
 	mux.HandleFunc("/v1/seed_mock", s.handleSeedMock)
 	mux.HandleFunc("/v1/record_egress", s.handleRecordEgress)
 	s.Log.Info("Beru HTTP API listening", "addr", addr)
 	return http.ListenAndServe(addr, mux)
+}
+
+func handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleSeedMock(w http.ResponseWriter, r *http.Request) {
