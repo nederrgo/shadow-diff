@@ -25,6 +25,7 @@ func TestRenderEnvoyYAML(t *testing.T) {
 		t.Fatal(err)
 	}
 	checks := []string{
+		"traceparent is not mutated",
 		"generate_request_id: true",
 		"x-shadow-trace-id",
 		"ADD_IF_ABSENT",
@@ -67,6 +68,7 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	checks := []string{
+		"traceparent pass-through on egress",
 		"name: egress_proxy",
 		"port_value: 15001",
 		"x-shadow-mode",

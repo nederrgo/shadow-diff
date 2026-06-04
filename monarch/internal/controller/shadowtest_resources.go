@@ -28,6 +28,12 @@ func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.Nam
 		return ctrl.Result{}, nil
 	}
 
+	if hasRabbitMQInput(&shadowTest) {
+		if err := r.deleteProdShadowQueue(ctx, &shadowTest); err != nil {
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+		}
+	}
+
 	var ns corev1.Namespace
 	err := r.Get(ctx, types.NamespacedName{Name: shadowNS}, &ns)
 	if apierrors.IsNotFound(err) {
@@ -108,6 +114,12 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 		deploy.Spec.Replicas = &replicas
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: podLabels}
 		deploy.Spec.Template.ObjectMeta.Labels = podLabels
+		if otelInjectionEnabled(st) {
+			deploy.Spec.Template.ObjectMeta.Annotations = mergeAnnotations(
+				deploy.Spec.Template.ObjectMeta.Annotations,
+				otelPodAnnotations(st, image),
+			)
+		}
 		cmName := envoyConfigMapName(st, role)
 		deploy.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
@@ -121,6 +133,9 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 		}
 		beruAddr := beruGRPCAddressFor(st)
 		baseEnv := append(append([]corev1.EnvVar{}, env...), dependencyEnvVarsForRole(st, shadowNS, role)...)
+		if otelInjectionEnabled(st) {
+			baseEnv = append(baseEnv, otelEnvVars(st, role)...)
+		}
 		appEnv := appEnvWithEgressProxy(st, baseEnv)
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{
 			{
@@ -150,7 +165,15 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 }
 
 func (r *ShadowTestReconciler) patchStatus(ctx context.Context, st *enginev1alpha1.ShadowTest, phase, message, shadowNS string) error {
-	return r.patchStatusFull(ctx, st, phase, message, shadowNS, nil, "", "")
+	return r.patchStatusFull(ctx, st, phase, message, shadowNS, nil, "", "", "")
+}
+
+func (r *ShadowTestReconciler) patchStatusIgrisRabbitMQ(
+	ctx context.Context,
+	st *enginev1alpha1.ShadowTest,
+	phase, message, shadowNS, igrisRMQPhase string,
+) error {
+	return r.patchStatusFull(ctx, st, phase, message, shadowNS, nil, "", "", igrisRMQPhase)
 }
 
 func (r *ShadowTestReconciler) patchStatusFull(
@@ -158,7 +181,7 @@ func (r *ShadowTestReconciler) patchStatusFull(
 	st *enginev1alpha1.ShadowTest,
 	phase, message, shadowNS string,
 	captureTargets []string,
-	siphonPhase, igrisEndpoint string,
+	siphonPhase, igrisEndpoint, igrisRabbitMQPhase string,
 ) error {
 	base := st.DeepCopy()
 	st.Status.Phase = phase
@@ -172,6 +195,9 @@ func (r *ShadowTestReconciler) patchStatusFull(
 	}
 	if igrisEndpoint != "" {
 		st.Status.IgrisEndpoint = igrisEndpoint
+	}
+	if igrisRabbitMQPhase != "" {
+		st.Status.IgrisRabbitMQPhase = igrisRabbitMQPhase
 	}
 	return r.Status().Patch(ctx, st, client.MergeFrom(base))
 }

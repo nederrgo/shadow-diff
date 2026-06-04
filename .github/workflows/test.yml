@@ -30,3 +30,4 @@ jobs:
           cd ../igris && go mod tidy && make test
           cd ../siphon && go mod tidy && make test
           cd ../recorder && go mod tidy && make test
+          cd ../igris-rabbitmq && go mod tidy && make test

@@ -18,6 +18,11 @@ kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o custom-columns=PHASE
 
 SHADOW_NS=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.shadowNamespace}')
 
+echo "==> Verify OTel auto-instrumentation on shadow app pods (before traffic)"
+kubectl wait -n "$SHADOW_NS" --for=condition=Ready pod -l shadow-diff.io/role=control-a --timeout=180s
+# Set OTEL_INJECTION_OPTIONAL=1 if the cluster has no OTel Operator / Instrumentation CR.
+"$REPO/scripts/assert-otel-injected.sh" "$SHADOW_NS" control-a
+
 # Optional one-time setup: set Siphon interface without rolling during the test.
 if [[ "${SIPHON_SETUP:-}" == "1" ]]; then
   echo "==> One-time Siphon setup (SIPHON_SETUP=1)"

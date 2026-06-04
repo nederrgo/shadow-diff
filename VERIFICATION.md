@@ -250,7 +250,7 @@ make test-all          # Monarch + Beru + Igris
 
 ## 8. Phase 3a — Igris modular traffic engine
 
-Igris uses a **core engine** plus **HTTP add-on** (MVP). It returns **202 Accepted** immediately, clones requests to three shadow targets, injects **`x-shadow-trace-id`** on all outbound calls, and logs `multicast complete` for Beru correlation.
+Igris uses a **core engine** plus **HTTP add-on** (MVP). It returns **202 Accepted** immediately, clones requests to three shadow targets, injects W3C **`traceparent`** and **`x-shadow-trace-id`** on all outbound calls, and logs `multicast complete` for Beru correlation.
 
 **Monarch always deploys Igris** in the shadow namespace. Optional `spec.inputs` defines listener ports (default: `servicePort` → `http`). `ShadowTest` stays **`Progressing`** until Igris `AvailableReplicas > 0`.
 
@@ -294,7 +294,7 @@ curl -i -X POST http://localhost:8080/orders?q=1 \
 
 Expected:
 
-- HTTP **202** with `x-shadow-trace-id: trace-igris-1` in the response.
+- HTTP **202** with `x-shadow-trace-id: trace-igris-1` and `traceparent: 00-...` in the response.
 - Igris logs include `multicast complete` with `trace_id`, `method`, `path`, and per-target `status_code` (or `error`).
 - Mock servers receive POST `/orders?q=1` **without** `Authorization` (redacted).
 
@@ -668,6 +668,104 @@ Covers: BPF ingress+egress clauses, `FlushOlderThan` goroutine lifecycle, keep-a
 
 ---
 
+## Phase 5b: RabbitMQ shadow ingress
+
+AMQP-only ShadowTests use **`igris-rabbitmq`** (not HTTP Igris or Siphon ingress). Monarch declares the prod queue once; see [`tests/rabbitmq-e2e/README.md`](tests/rabbitmq-e2e/README.md).
+
+**W3C parity (with Phase 5_OTel):** `igris-rabbitmq` injects **`traceparent`** and **`x-shadow-trace-id`** on multicast when missing. Resolution: shadow header → parse `traceparent` → generate 32-char hex trace id. E2E publishes both legacy (`x-shadow-trace-id`) and **traceparent-only** messages; `rmq-test-worker` forwards both headers on HTTP ingress/egress. OTel operator on shadow pods may additionally propagate context when AMQP/HTTP are instrumented; set `RMQ_WORKER_MANUAL_TRACE=0` to rely on the agent only.
+
+```bash
+make igris-rabbitmq-docker-build IGRIS_RABBITMQ_IMG=igris-rabbitmq:dev
+make -C examples/rmq-test-worker docker-build RMQ_TEST_WORKER_IMG=rmq-test-worker:dev
+./scripts/e2e-reset-kind.sh --no-reset
+./examples/e2e-rabbitmq-test.sh
+```
+
+Verify:
+
+- `kubectl get shadowtest rmq-test-shadow -o jsonpath='{.status.amqpQueueName}'` is non-empty
+- Prod broker lists queue `shadow-diff-<uid>`
+- Beru log contains `No regression for Trace <trace-id>`
+
+---
+
+## Phase 5_OTel: W3C traceparent and OpenTelemetry auto-instrumentation
+
+### Prerequisites
+
+1. **[OpenTelemetry Operator](https://github.com/open-telemetry/opentelemetry-operator)** installed (mutating admission webhook).
+2. At least one **`Instrumentation` CR** in the **shadow namespace** (or operator-wide default). Without it, Monarch’s `instrumentation.opentelemetry.io/inject-*` annotations are **ignored** and pods stay uninstrumented.
+
+Example (adjust exporter settings for your cluster; MVP uses propagation-only env from Monarch):
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: shadow-default
+  namespace: <shadow-namespace-from-ShadowTest.status>
+spec:
+  exporter:
+    endpoint: http://otel-collector.observability.svc:4317
+  propagators:
+    - tracecontext
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"
+```
+
+3. **Webhook fail-open:** If the OTel webhook is slow or down, pods can be `Running` without `otel-init` / agent containers. E2E scripts call [`scripts/assert-otel-injected.sh`](scripts/assert-otel-injected.sh) before traffic. Set `OTEL_INJECTION_OPTIONAL=1` to skip the hard fail on clusters without the operator.
+
+### Monarch behavior
+
+- `spec.otelInjection.enabled` defaults to **true** (set `false` to opt out).
+- `spec.otelInjection.language` overrides image heuristic (`java`, `python`, `nodejs`, `dotnet`, `go`).
+- Shadow app pods get `inject-sdk: "true"` plus `inject-<language>` when detected from image.
+- App env: `OTEL_TRACES_EXPORTER=none`, `OTEL_PROPAGATORS=tracecontext`, etc. (no span export in MVP).
+
+### Verify injection (before traffic)
+
+```bash
+SHADOW_NS=$(kubectl get shadowtest my-app-shadow -o jsonpath='{.status.shadowNamespace}')
+kubectl wait -n "$SHADOW_NS" --for=condition=Ready pod -l shadow-diff.io/role=control-a --timeout=180s
+./scripts/assert-otel-injected.sh "$SHADOW_NS" control-a
+```
+
+### Verify W3C headers (Igris / Beru)
+
+```bash
+# traceparent-only ingress (Beru extracts 32-char trace id from middle segment)
+TRACE_HEX="$(openssl rand -hex 16)"
+curl -i -X POST "http://<igris-host>:8080/" \
+  -H "traceparent: 00-${TRACE_HEX}-$(openssl rand -hex 8)-01" \
+  -d '{}'
+# Expect 202 with both traceparent and x-shadow-trace-id echoing TRACE_HEX
+```
+
+Beru ingress ext_proc order: `x-shadow-trace-id` → `traceparent` → `x-request-id`.
+
+### Async context (expected limitation)
+
+Apps that spawn **untracked** goroutines or thread pools without `context.Context` may emit outbound HTTP **without** `traceparent`. Use Beru **sequence-based diffing** when trace correlation is incomplete.
+
+### Unit tests
+
+```bash
+make -C igris test
+go test ./internal/trace/... -C beru
+cd monarch && go test ./internal/controller/ -run 'TestOtel|TestRenderEnvoy'
+```
+
+### Checklist
+
+- [ ] OTel Operator + `Instrumentation` CR in shadow namespace
+- [ ] `assert-otel-injected.sh` passes for shadow app pods (not only Pod Ready)
+- [ ] Igris 202 includes `traceparent` and `x-shadow-trace-id`
+- [ ] Beru correlates ingress when only `traceparent` is sent
+- [ ] `spec.otelInjection.enabled: false` removes inject annotations from shadow Deployments
+
+---
+
 ## End-to-end checklist
 
 - [ ] `kubectl cluster-info` succeeds
@@ -680,8 +778,11 @@ Covers: BPF ingress+egress clauses, `FlushOlderThan` goroutine lifecycle, keep-a
 - [ ] `grpcurl ReportTraffic` returns `{}` and log shows received report
 - [ ] `make -C igris test` passes
 - [ ] Igris returns 202 and multicasts to three targets (local smoke or cluster port-forwards)
-- [ ] `x-shadow-trace-id` present on Igris response and shadow/Beru correlation (Phase 2b)
+- [ ] `x-shadow-trace-id` and `traceparent` on Igris response; Beru correlation (Phase 2b / 5_OTel)
+- [ ] OTel injection verified on shadow pods before E2E traffic (Phase 5_OTel — `assert-otel-injected.sh`)
 - [ ] Egress mock seeded via `POST /v1/seed_mock` and proxied curl returns mock (Phase 4a.1)
 - [ ] Unseeded egress returns HTTP 599 and Beru logs `Egress Regression` (Phase 4a.1)
 - [ ] Prod egress auto-recorded by Siphon and shadow replay returns 200 without `seed_mock` (Phase 4a.2 — `./examples/e2e-record-replay.sh`)
 - [ ] `make -C siphon test` passes (BPF egress, FlushOlderThan, keep-alive parser)
+- [ ] RabbitMQ E2E: `./examples/e2e-rabbitmq-test.sh` (Phase 5b — prod queue + igris-rabbitmq multicast)
+- [ ] `make -C igris-rabbitmq test` passes

@@ -112,7 +112,7 @@ spec:
                 type: array
               igris:
                 description: Igris overrides image, replicas, or resources for the
-                  Igris traffic hub (always deployed).
+                  Igris traffic hub (HTTP/TCP ingress).
                 properties:
                   image:
                     description: Image overrides the default Igris container image.
@@ -181,34 +181,140 @@ spec:
                         type: object
                     type: object
                 type: object
+              igrisRabbitmq:
+                description: IgrisRabbitMQ overrides the igris-rabbitmq workload when
+                  inputs use rabbitmq_message.
+                properties:
+                  image:
+                    description: Image overrides the default igris-rabbitmq container
+                      image.
+                    type: string
+                  replicas:
+                    description: Replicas defaults to 1.
+                    format: int32
+                    type: integer
+                  resources:
+                    description: Resources for the igris-rabbitmq container.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                type: object
               inputs:
                 description: |-
                   Inputs defines Igris listener ports and drivers. When empty, Monarch defaults to
                   a single HTTP listener on servicePort.
                 items:
-                  description: InputSpec declares an Igris listener port and input
-                    driver.
+                  description: 'InputSpec declares an ingress driver: HTTP/TCP listeners
+                    or RabbitMQ message capture.'
                   properties:
                     addon:
                       description: Addon is deprecated; use driver. Legacy value "http"
                         maps to http_request.
                       type: string
+                    amqp:
+                      description: AMQP holds broker settings when driver is rabbitmq_message.
+                      properties:
+                        exchange:
+                          description: Exchange is the production exchange to bind
+                            the shadow queue to.
+                          type: string
+                        exchangeType:
+                          description: ExchangeType is the AMQP exchange type (topic,
+                            direct, fanout, headers). Defaults to topic.
+                          enum:
+                          - topic
+                          - direct
+                          - fanout
+                          - headers
+                          type: string
+                        prodUrl:
+                          description: ProdURL is the production broker URL (e.g.
+                            amqp://prod-rabbitmq.default.svc:5672).
+                          type: string
+                        routingKey:
+                          description: RoutingKey is the binding routing key (e.g.
+                            "#" or "orders.*").
+                          type: string
+                        targetDependency:
+                          description: TargetDependency is the name of a spec.dependencies
+                            entry (shadow brokers per role).
+                          type: string
+                      required:
+                      - exchange
+                      - prodUrl
+                      - routingKey
+                      - targetDependency
+                      type: object
                     driver:
                       description: |-
-                        Driver selects how Igris handles traffic on this port (http_request or tcp_stream).
-                        When empty, Monarch infers from the port (servicePort and 80/443/8080 → http_request).
+                        Driver selects the ingress path (http_request, tcp_stream, or rabbitmq_message).
+                        When empty on a port-based input, Monarch infers from the port.
                       enum:
                       - http_request
                       - tcp_stream
+                      - rabbitmq_message
                       type: string
                     port:
-                      description: Port is the TCP port Igris binds for this input.
+                      description: Port is the TCP port Igris binds for HTTP/TCP inputs.
+                        Omit for rabbitmq_message.
                       format: int32
                       maximum: 65535
                       minimum: 1
                       type: integer
-                  required:
-                  - port
                   type: object
                 type: array
               newImage:
@@ -218,6 +324,33 @@ spec:
                 description: OldImage is the container image for Control-A and Control-B
                   pods.
                 type: string
+              otelInjection:
+                description: OtelInjection enables OpenTelemetry Operator SDK/agent
+                  injection on shadow app pods (default on).
+                properties:
+                  enabled:
+                    description: Enabled defaults to true when nil. Set false to skip
+                      OTel injection annotations and env.
+                    type: boolean
+                  language:
+                    description: Language overrides image-based detection (java, python,
+                      nodejs, dotnet, go).
+                    enum:
+                    - java
+                    - python
+                    - nodejs
+                    - dotnet
+                    - go
+                    type: string
+                type: object
+              recorder:
+                description: Recorder overrides the Recorder image when spec.downstreams
+                  enables egress recording.
+                properties:
+                  image:
+                    description: Image overrides the default Recorder container image.
+                    type: string
+                type: object
               servicePort:
                 description: ServicePort is the TCP port the Envoy ingress listener
                   binds on in shadow pods.
@@ -259,6 +392,10 @@ spec:
           status:
             description: status defines the observed state of ShadowTest
             properties:
+              amqpQueueName:
+                description: AmqpQueueName is the production broker queue Monarch
+                  declared (shadow-diff-<uid>).
+                type: string
               captureTargets:
                 description: CaptureTargets lists production pod IPs pushed to Siphon
                   agents.
@@ -268,6 +405,10 @@ spec:
               igrisEndpoint:
                 description: IgrisEndpoint is the DNS host:port Monarch configured
                   for capture forwarding.
+                type: string
+              igrisRabbitMQPhase:
+                description: IgrisRabbitMQPhase summarizes igris-rabbitmq deployment
+                  readiness.
                 type: string
               message:
                 description: Message carries human-readable detail, including MVP

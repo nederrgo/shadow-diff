@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -244,12 +245,28 @@ func (r *ShadowTestReconciler) shadowDependenciesReady(
 	return true, nil
 }
 
+func dependencyEnvValue(shadowNS string, dep enginev1alpha1.DependencySpec, role string) string {
+	if usesAMQPURLInjection(dep.EnvVarInjection) {
+		return shadowAMQPURL(shadowNS, dep.Name, role, dep.Port)
+	}
+	return dependencyEndpoint(shadowNS, dep.Name, role, dep.Port)
+}
+
+func usesAMQPURLInjection(envName string) bool {
+	switch strings.ToUpper(strings.TrimSpace(envName)) {
+	case "AMQP_URL", "RABBITMQ_URL", "RABBITMQ_AMQP_URL":
+		return true
+	default:
+		return false
+	}
+}
+
 func dependencyEnvVarsForRole(st *enginev1alpha1.ShadowTest, shadowNS, role string) []corev1.EnvVar {
 	var out []corev1.EnvVar
 	for _, dep := range st.Spec.Dependencies {
 		out = append(out, corev1.EnvVar{
 			Name:  dep.EnvVarInjection,
-			Value: dependencyEndpoint(shadowNS, dep.Name, role, dep.Port),
+			Value: dependencyEnvValue(shadowNS, dep, role),
 		})
 	}
 	return out

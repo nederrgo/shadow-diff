@@ -103,7 +103,7 @@ sequenceDiagram
   participant B as Beru
 
   C->>I: HTTP request
-  I->>C: 202 Accepted + x-shadow-trace-id
+  I->>C: 202 Accepted + traceparent + x-shadow-trace-id
   par multicast
     I->>S: clone to control-a
     I->>S: clone to control-b
@@ -114,7 +114,11 @@ sequenceDiagram
   B->>B: diff-of-diffs when A, B, C complete
 ```
 
-**Correlation header:** `x-shadow-trace-id` is set by Igris (or upstream), propagated through Envoy (`generate_request_id` / header mutation in Monarch-rendered config), and used by Beru to match the three ingress responses.
+**Correlation headers:** Igris sets W3C **`traceparent`** (`00-{32-hex-trace-id}-{16-hex-span-id}-01`) and **`x-shadow-trace-id`** (same 32-char trace id, backward compatible). Beru prefers `x-shadow-trace-id`, then parses `traceparent`, then falls back to Envoy `x-request-id`. Envoy ingress/egress **pass through** `traceparent` without stripping.
+
+**OpenTelemetry (shadow pods):** Monarch annotates shadow app pods for the [OpenTelemetry Operator](https://github.com/open-telemetry/opentelemetry-operator) (`inject-sdk` + language-specific `inject-*` from image heuristic). The auto-instrumentation agent propagates W3C context on outbound HTTP and supported database clients. Opt out via `spec.otelInjection.enabled: false`.
+
+**Async context limitation:** Untracked goroutines or custom thread pools may drop trace context on outbound calls (no `traceparent`). That is expected; Beru can fall back to **sequence-based diffing** when trace correlation is incomplete.
 
 ---
 
@@ -126,7 +130,8 @@ Monarch is a **Kubebuilder / controller-runtime** operator. It runs as a manager
 
 - Reads an existing **target Deployment** (`spec.targetDeployment`, `spec.targetNamespace`).
 - Creates a **shadow namespace** and three **Deployments**: `<name>-control-a`, `<name>-control-b`, `<name>-candidate`.
-- Injects an **Envoy sidecar** per pod with config that includes `ext_proc` to Beru, request ID / `x-shadow-trace-id` handling, and ingress on `spec.applicationPort`.
+- Injects an **Envoy sidecar** per pod with config that includes `ext_proc` to Beru, request ID / `x-shadow-trace-id` handling, **W3C traceparent pass-through**, and ingress on `spec.applicationPort`.
+- Enables **OTel Operator auto-instrumentation** on shadow app pods by default (`spec.otelInjection`, annotations + `OTEL_*` env for propagation-only MVP).
 - Copies **literal `env` from the target’s first container only** (MVP); surfaces limitations in status.
 - Ensures **Siphon** DaemonSet in `siphon-system` (image from `spec.siphon.image`), lists production pod IPs, and pushes merged capture config (`POST /v1/config`) using node **hostIP** when Siphon runs with `hostNetwork`.
 - When **`spec.downstreams`** is set: injects `HTTP_PROXY=http://127.0.0.1:15001` into shadow app containers and renders Envoy **egress_proxy** listener with `ext_proc` to Beru (strict replay).
@@ -166,7 +171,9 @@ sequenceDiagram
 | Ports | `servicePort`, `applicationPort` |
 | Beru | `beruGRPCAddress` (Envoy `ext_proc` cluster) |
 | Igris listeners | `inputs[]` (`port`, `driver`); default `[{port: servicePort, driver: http_request}]` |
+| RabbitMQ ingress | `inputs[]` with `driver: rabbitmq_message` + `amqp` (AMQP-only; no HTTP Igris / no Siphon ingress ports) |
 | Igris overrides | `igris.image`, `igris.replicas`, `igris.resources` |
+| igris-rabbitmq | `igrisRabbitmq.image` — separate Deployment when `rabbitmq_message` inputs are used |
 | Siphon | `siphon.enabled`, `siphon.image`, `siphon.sampleRate` |
 | Egress hosts | `downstreams[]` (`host`, `ignoreRequestPaths`) — shadow proxy trap + Siphon egress record filter |
 
@@ -175,6 +182,21 @@ sequenceDiagram
 **Siphon reconcile:** Monarch merges config for all Ready ShadowTests, calls `ensureSiphonDaemonSet(ctx, siphonImageFor(st))`, then `POST`s JSON to each agent’s hostIP. Status fields: `captureTargets`, `siphonPhase` (`Ready` / `Degraded` / `Disabled`), `igrisEndpoint`.
 
 **Details:** [monarch/REPO_OVERVIEW.md](monarch/REPO_OVERVIEW.md), [monarch/DEPLOYMENT.md](monarch/DEPLOYMENT.md), [`scripts/lib/siphon-config.sh`](scripts/lib/siphon-config.sh) (E2E wait helpers).
+
+### RabbitMQ ingress (Phase 5b)
+
+For **AMQP-only** ShadowTests, Monarch declares a **production broker queue** once (`shadow-diff-<uid>` with `x-max-length`, `x-overflow: drop-head`, `x-expires`), stores the name in **`status.amqpQueueName`**, and deploys **`igris-rabbitmq`** in the shadow namespace. **Siphon is not used for ingress** (optional egress-only capture if `spec.downstreams` and Siphon are enabled).
+
+```mermaid
+flowchart LR
+  ProdEx[Prod exchange] --> ShadowQ[shadow-diff queue]
+  ShadowQ --> IgrisRMQ[igris-rabbitmq]
+  IgrisRMQ --> RMQ_A[Shadow broker A]
+  IgrisRMQ --> RMQ_B[Shadow broker B]
+  IgrisRMQ --> RMQ_C[Shadow broker C]
+```
+
+`igris-rabbitmq` consumes the prod queue, injects W3C **`traceparent`** and **`x-shadow-trace-id`** on multicast (same resolution order as HTTP Igris), runs **`ExchangeDeclare`** on each shadow broker, and publishes clones to all three role-specific RabbitMQ dependencies (`spec.dependencies`). Shadow workers propagate both headers on outbound HTTP to Envoy for Beru correlation and OTel context.
 
 ---
 

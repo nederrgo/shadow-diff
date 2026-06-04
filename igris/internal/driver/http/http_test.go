@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/shadow-diff/igris/internal/config"
 	"github.com/shadow-diff/igris/internal/core"
 	"github.com/shadow-diff/igris/internal/payload"
+	"github.com/shadow-diff/igris/internal/trace"
 )
 
 const testMaxBodySize = 512 * 1024
@@ -30,6 +32,58 @@ func testConfig(targets ...*httptest.Server) config.Config {
 		MaxTCPConns:    16,
 		TCPDialTimeout: time.Second,
 		TCPIdleTimeout: time.Minute,
+	}
+}
+
+func TestTransformInjectsTraceparent(t *testing.T) {
+	t.Parallel()
+	d := New(testMaxBodySize)
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	sess := &Session{Request: req, Body: nil}
+	meta, err := d.ParseMetadata(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta.TraceID) != 32 {
+		t.Fatalf("trace id len %d, want 32 hex", len(meta.TraceID))
+	}
+	msg, err := d.Transform(sess, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hm := msg.(*message)
+	tp := hm.headers.Get(trace.HeaderTraceparent)
+	if tp == "" {
+		t.Fatal("missing traceparent")
+	}
+	parsed, ok := trace.ParseTraceparent(tp)
+	if !ok || parsed != meta.TraceID {
+		t.Fatalf("traceparent trace=%q meta=%q", parsed, meta.TraceID)
+	}
+	if !strings.HasPrefix(tp, "00-") || !strings.HasSuffix(tp, "-01") {
+		t.Fatalf("traceparent format: %q", tp)
+	}
+}
+
+func TestParseMetadataFromTraceparentOnly(t *testing.T) {
+	t.Parallel()
+	d := New(testMaxBodySize)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(trace.HeaderTraceparent, "01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
+	meta, err := d.ParseMetadata(&Session{Request: req})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.TraceID != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("trace id = %q", meta.TraceID)
+	}
+	msg, err := d.Transform(&Session{Request: req}, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hm := msg.(*message)
+	if got := hm.headers.Get(HeaderShadowTraceID); got != meta.TraceID {
+		t.Fatalf("x-shadow-trace-id = %q", got)
 	}
 }
 
@@ -194,6 +248,9 @@ func TestHandlerReturns202WithTrace(t *testing.T) {
 	respTrace := resp.Header.Get(HeaderShadowTraceID)
 	if respTrace == "" {
 		t.Fatal("missing trace on 202")
+	}
+	if resp.Header.Get(trace.HeaderTraceparent) == "" {
+		t.Fatal("missing traceparent on 202")
 	}
 	hub.WaitPendingAtomic()
 	for i := 0; i < 3; i++ {

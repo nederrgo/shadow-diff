@@ -50,13 +50,13 @@ Our core philosophy is **Pragmatic Isolation**: we leverage native protocols, pr
 
 ---
 
-### Phase 5b: Message Broker Ingress (The RabbitMQ Trigger)
-**Goal:** Prove the multi-protocol capability of Igris by supporting asynchronous, message-driven shadow triggers natively, avoiding packet-sniffing bottlenecks for brokers.
+### Phase 5b: Message Broker Ingress (The RabbitMQ Trigger) — Done
+**Goal:** Support asynchronous, message-driven shadow triggers natively (Siphon bypassed for ingress).
 
-*   [ ] **Igris AMQP Driver (`igris/internal/driver/rabbitmq/`):**
-    *   Implement the `InputDriver` interface.
-    *   Connect to the production exchange natively, create a temporary queue, inject the `x-shadow-trace-id` into the AMQP headers, and multicast the messages to the shadow pods.
-*   [ ] **Dynamic Listener Configuration:** Update Monarch to automatically map ports to the `rabbitmq_message` driver in Igris’s `listeners.json` ConfigMap based on `spec.inputs`.
+*   [x] **`igris-rabbitmq` module:** Consumes Monarch’s prod shadow queue, injects `x-shadow-trace-id`, `ExchangeDeclare` on shadow brokers, multicasts to three role-specific brokers.
+*   [x] **Monarch queue orchestration:** One-time `QueueDeclare` with `x-max-length` / `x-overflow` / `x-expires`; `status.amqpQueueName` gate; delete on ShadowTest removal.
+*   [x] **CRD:** `spec.inputs[].driver: rabbitmq_message` + `amqp` block; `spec.igrisRabbitmq`; AMQP-only ShadowTests (no HTTP Igris / no Siphon ingress).
+*   [x] **E2E:** `./examples/e2e-rabbitmq-test.sh` (manifests under `tests/rabbitmq-e2e/`).
 
 ---
 

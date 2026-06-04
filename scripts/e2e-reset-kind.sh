@@ -26,6 +26,8 @@ REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$REPO"
 # shellcheck source=scripts/lib/siphon-config.sh
 source "$REPO/scripts/lib/siphon-config.sh"
+# shellcheck source=scripts/lib/e2e-helpers.sh
+source "$REPO/scripts/lib/e2e-helpers.sh"
 
 KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
 MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
@@ -44,10 +46,11 @@ RUN_TEST=0
 RUN_EGRESS_TEST=0
 RUN_RECORD_REPLAY=0
 RUN_DEPENDENCY_TEST=0
+RUN_RABBITMQ_TEST=0
 
 usage() {
   sed -n '2,16p' "$0"
-  echo "Flags: --skip-build --skip-load --no-reset --run-test --run-egress-test --run-record-replay --run-dependency-test -h"
+  echo "Flags: --skip-build --skip-load --no-reset --run-test --run-egress-test --run-record-replay --run-dependency-test --run-rabbitmq-test -h"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -59,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --run-egress-test) RUN_EGRESS_TEST=1 ;;
     --run-record-replay) RUN_RECORD_REPLAY=1 ;;
     --run-dependency-test) RUN_DEPENDENCY_TEST=1 ;;
+    --run-rabbitmq-test) RUN_RABBITMQ_TEST=1 ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "Unknown flag: $1" >&2; usage; exit 1 ;;
   esac
@@ -123,13 +127,18 @@ ensure_kind_cluster_ready() {
 }
 
 patch_shadowtest_images() {
+  if ! kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" >/dev/null 2>&1; then
+    echo "ERROR: ShadowTest $SHADOWTEST_NS/$SHADOWTEST not found — cannot patch images" >&2
+    return 1
+  fi
   echo "==> Patch ShadowTest images (Monarch reconciles Siphon DaemonSet from spec.siphon.image)"
-  echo "    spec.siphon.image=$SIPHON_IMG spec.igris.image=$IGRIS_IMG"
+  echo "    siphon=$SIPHON_IMG igris=$IGRIS_IMG recorder=$RECORDER_IMG"
   kubectl patch shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --type=merge -p "$(cat <<EOF
 {
   "spec": {
     "siphon": {"enabled": true, "image": "${SIPHON_IMG}", "sampleRate": 100},
-    "igris": {"image": "${IGRIS_IMG}", "replicas": 1}
+    "igris": {"image": "${IGRIS_IMG}", "replicas": 1},
+    "recorder": {"image": "${RECORDER_IMG}"}
   }
 }
 EOF
@@ -168,8 +177,7 @@ if [[ "$NO_RESET" -eq 0 ]]; then
   echo "==> Delete prior E2E resources (if any)"
   kubectl delete shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --ignore-not-found --wait=false
   kubectl delete deployment,service my-prod-app -n default --ignore-not-found --wait=false
-  # Allow Monarch to tear down shadow namespace
-  sleep 5
+  wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
 fi
 
 echo "==> Monarch operator"
@@ -190,7 +198,13 @@ kubectl rollout status deployment/my-prod-app -n default --timeout=120s
 kubectl wait -n default --for=condition=Ready pod -l app=my-prod-app --timeout=120s
 
 echo "==> ShadowTest (servicePort=8888, applicationPort=80, Igris :80/:8888, downstreams for egress recorder)"
+# A Terminating CR from a prior run causes apply/patch races ("currently being deleted").
+wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
 kubectl apply -f examples/e2e-shadowtest.yaml
+if ! kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" >/dev/null 2>&1; then
+  echo "ERROR: ShadowTest $SHADOWTEST_NS/$SHADOWTEST missing after apply" >&2
+  exit 1
+fi
 patch_shadowtest_images
 nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
 
@@ -198,13 +212,15 @@ echo "==> Wait for ShadowTest Ready (Monarch deploys Siphon DaemonSet + POSTs /v
 for i in $(seq 1 36); do
   phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)
   siphon=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.siphonPhase}' 2>/dev/null || true)
+  message=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.message}' 2>/dev/null || true)
+  shadow_ns=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.shadowNamespace}' 2>/dev/null || true)
   if [[ "$phase" == "Ready" && "$siphon" == "Ready" ]]; then
     break
   fi
   if [[ "$phase" == "Ready" && "$i" -ge 6 ]]; then
     nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
   fi
-  echo "    phase=$phase siphon=$siphon (${i}/36)"
+  echo "    phase=$phase siphon=$siphon msg=${message:-<none>} (${i}/36)"
   sleep 5
 done
 
@@ -224,10 +240,9 @@ if [[ "$siphon_phase" == "Degraded" ]]; then
   echo "WARN: siphonPhase=Degraded — Monarch could not POST /v1/config; check monarch logs and Siphon hostIP reachability"
 fi
 
-echo "==> Patch Recorder deployment image (Monarch default tag; E2E uses RECORDER_IMG)"
+echo "==> Wait for Recorder rollout (spec.recorder.image=$RECORDER_IMG; avoids stale RS hang)"
 if [[ -n "${SHADOW_NS:-}" ]]; then
-  kubectl set image "deployment/${SHADOWTEST}-recorder" recorder="$RECORDER_IMG" -n "$SHADOW_NS" 2>/dev/null || true
-  kubectl rollout status "deployment/${SHADOWTEST}-recorder" -n "$SHADOW_NS" --timeout=120s 2>/dev/null || true
+  wait_recorder_rollout "$SHADOWTEST" "$SHADOWTEST_NS" "$SHADOW_NS" "$RECORDER_IMG" 120s
 fi
 
 echo "==> Nudge Monarch to re-push Siphon config (recorder_host after Recorder is up)"
@@ -257,6 +272,7 @@ echo "Run ingress test:  ./examples/e2e-pipeline-test.sh"
 echo "Run egress test:   ./examples/e2e-egress-test.sh"
 echo "Run record-replay: ./examples/e2e-record-replay.sh"
 echo "Run dependency E2E: ./examples/e2e-dependency-test.sh"
+echo "Run RabbitMQ E2E:  ./examples/e2e-rabbitmq-test.sh"
 echo "Run k6 stress:     tests/k6/run-stress-test.sh  (or see tests/k6/README.md)"
 
 if [[ "$RUN_TEST" -eq 1 ]]; then
@@ -279,4 +295,10 @@ if [[ "$RUN_DEPENDENCY_TEST" -eq 1 ]]; then
   echo ""
   chmod +x examples/e2e-dependency-test.sh
   ./examples/e2e-dependency-test.sh
+fi
+
+if [[ "$RUN_RABBITMQ_TEST" -eq 1 ]]; then
+  echo ""
+  chmod +x examples/e2e-rabbitmq-test.sh
+  ./examples/e2e-rabbitmq-test.sh
 fi

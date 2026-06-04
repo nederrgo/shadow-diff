@@ -11,6 +11,7 @@ import (
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
 	"github.com/shadow-diff/beru/internal/ingest"
 	"github.com/shadow-diff/beru/internal/replay"
+	"github.com/shadow-diff/beru/internal/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -109,10 +110,7 @@ func (s *Server) captureRequestHeaders(state *streamState, headers *corev3.Heade
 	if headers == nil {
 		return
 	}
-	state.traceID = headerValue(headers, headerShadowTraceID)
-	if state.traceID == "" {
-		state.traceID = headerValue(headers, headerRequestID)
-	}
+	state.traceID = trace.ShadowTraceIDFromMap(headers, headerValue)
 	if r := headerValue(headers, headerShadowRole); r != "" {
 		state.role = r
 	} else if state.role == "" {

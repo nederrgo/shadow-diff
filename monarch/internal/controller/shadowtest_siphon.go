@@ -147,19 +147,23 @@ func (r *ShadowTestReconciler) listTargetPodIPs(ctx context.Context, dep *appsv1
 }
 
 func buildSiphonTarget(st *enginev1alpha1.ShadowTest, shadowNS string, podIPs []string, excludeIPs []string) siphonTarget {
-	inputs := resolvedInputs(st)
 	var ports []int
 	var listeners []siphonListener
-	seen := map[int32]bool{}
-	for _, in := range inputs {
-		if seen[in.Port] {
-			continue
+	var host string
+
+	if !isAMQPOnlyShadowTest(st) {
+		inputs := resolvedInputs(st)
+		seen := map[int32]bool{}
+		for _, in := range inputs {
+			if seen[in.Port] {
+				continue
+			}
+			seen[in.Port] = true
+			ports = append(ports, int(in.Port))
+			listeners = append(listeners, siphonListener{Port: int(in.Port), Driver: in.Driver})
 		}
-		seen[in.Port] = true
-		ports = append(ports, int(in.Port))
-		listeners = append(listeners, siphonListener{Port: int(in.Port), Driver: in.Driver})
+		host = shadowServiceHost(shadowNS, igrisServiceName(st))
 	}
-	host := shadowServiceHost(shadowNS, igrisServiceName(st))
 	var downstreams []siphonDownstream
 	for _, d := range st.Spec.Downstreams {
 		downstreams = append(downstreams, siphonDownstream{

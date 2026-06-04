@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -101,6 +100,9 @@ func (r *ShadowTestReconciler) reconcileIgrisConfigMap(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) error {
+	if isAMQPOnlyShadowTest(st) {
+		return nil
+	}
 	listeners, err := igrisListenersJSON(st)
 	if err != nil {
 		return err
@@ -131,6 +133,9 @@ func (r *ShadowTestReconciler) reconcileIgrisDeployment(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) error {
+	if isAMQPOnlyShadowTest(st) {
+		return nil
+	}
 	name := igrisDeploymentName(st)
 	labels := map[string]string{
 		labelManagedBy:           valueManagedBy,
@@ -218,6 +223,9 @@ func (r *ShadowTestReconciler) reconcileIgrisService(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) error {
+	if isAMQPOnlyShadowTest(st) {
+		return nil
+	}
 	name := igrisServiceName(st)
 	labels := map[string]string{
 		labelManagedBy:           valueManagedBy,
@@ -284,13 +292,4 @@ func igrisControlURLs(st *enginev1alpha1.ShadowTest, shadowNS string) (string, s
 	return shadowServiceURL(shadowNS, shadowDeploymentName(st, roleControlA), st.Spec.ServicePort),
 		shadowServiceURL(shadowNS, shadowDeploymentName(st, roleControlB), st.Spec.ServicePort),
 		shadowServiceURL(shadowNS, shadowDeploymentName(st, roleCandidate), st.Spec.ServicePort)
-}
-
-// listenersSummary returns a short human-readable listener description.
-func listenersSummary(st *enginev1alpha1.ShadowTest) string {
-	var parts []string
-	for _, in := range resolvedInputs(st) {
-		parts = append(parts, fmt.Sprintf("%d:%s", in.Port, in.Driver))
-	}
-	return strings.Join(parts, ",")
 }

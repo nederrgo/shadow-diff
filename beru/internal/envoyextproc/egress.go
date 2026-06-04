@@ -9,6 +9,7 @@ import (
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"github.com/shadow-diff/beru/internal/replay"
+	"github.com/shadow-diff/beru/internal/trace"
 )
 
 const (
@@ -27,6 +28,7 @@ type DownstreamConfig struct {
 
 type egressState struct {
 	role               string
+	traceID            string
 	method             string
 	host               string
 	path               string
@@ -62,6 +64,7 @@ func (s *Server) captureEgressRequestHeaders(state *egressState, hdrs *extprocv3
 	}
 	state.endOfStreamHeaders = hdrs.GetEndOfStream()
 	headers := hdrs.GetHeaders()
+	state.traceID = trace.ShadowTraceIDFromMap(headers, headerValue)
 	state.method = headerValue(headers, ":method")
 	state.host = headerValue(headers, ":authority")
 	if state.host == "" {
@@ -88,7 +91,7 @@ func (s *Server) egressImmediateFromState(state *egressState) *extprocv3.Process
 		return immediateResponse(mock.StatusCode, mock.Headers, mock.Body, "egress mock hit")
 	}
 
-	s.Log.Info("Egress Regression", "hash", hash, "method", state.method, "host", hostKey, "path", state.path)
+	s.Log.Info("Egress Regression", "trace_id", state.traceID, "hash", hash, "method", state.method, "host", hostKey, "path", state.path)
 	return immediateResponse(egressMissStatus, nil, []byte(egressRegressionBody), "egress regression")
 }
 

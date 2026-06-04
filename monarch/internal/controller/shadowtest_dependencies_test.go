@@ -45,6 +45,19 @@ var _ = Describe("shadow dependencies", func() {
 		Expect(env[0].Value).To(Equal("redis-control-a.shadow-default-mytest.svc.cluster.local:6379"))
 	})
 
+	It("injects full amqp URL for AMQP_URL env", func() {
+		rmq := &enginev1alpha1.ShadowTest{
+			Spec: enginev1alpha1.ShadowTestSpec{
+				Dependencies: []enginev1alpha1.DependencySpec{{
+					Name: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
+				}},
+			},
+		}
+		env := dependencyEnvVarsForRole(rmq, shadowNS, roleControlA)
+		Expect(env[0].Value).To(HavePrefix("amqp://guest:guest@"))
+		Expect(env[0].Value).To(ContainSubstring("rabbitmq-control-a.shadow-default-mytest.svc.cluster.local:5672"))
+	})
+
 	It("validates dependencies", func() {
 		Expect(validateDependencies(st)).To(Succeed())
 		Expect(validateDependencies(&enginev1alpha1.ShadowTest{

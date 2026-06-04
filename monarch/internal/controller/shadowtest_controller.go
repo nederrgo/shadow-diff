@@ -89,6 +89,54 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	env, warnMsg := envFromTarget(&target)
 
+	amqpOnly := isAMQPOnlyShadowTest(&shadowTest)
+
+	if len(shadowTest.Spec.Dependencies) > 0 {
+		depsReady, err := r.shadowDependenciesReady(ctx, &shadowTest, shadowNS)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !depsReady {
+			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for shadow dependencies", shadowNS)
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+	}
+
+	if amqpOnly {
+		if _, err := r.ensureProdShadowQueue(ctx, &shadowTest); err != nil {
+			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+			return ctrl.Result{}, err
+		}
+		if err := r.refreshShadowTest(ctx, req.NamespacedName, &shadowTest); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.reconcileIgrisRabbitMQStack(ctx, &shadowTest, shadowNS); err != nil {
+			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+			return ctrl.Result{}, err
+		}
+		igrisRMQReady, err := r.igrisRabbitMQDeploymentReady(ctx, &shadowTest, shadowNS)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !igrisRMQReady {
+			_ = r.patchStatusIgrisRabbitMQ(ctx, &shadowTest, "Progressing", "waiting for igris-rabbitmq", shadowNS, "Progressing")
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+	} else {
+		if err := r.reconcileIgrisConfigMap(ctx, &shadowTest, shadowNS); err != nil {
+			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+			return ctrl.Result{}, err
+		}
+		if err := r.reconcileIgrisDeployment(ctx, &shadowTest, shadowNS); err != nil {
+			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+			return ctrl.Result{}, err
+		}
+		if err := r.reconcileIgrisService(ctx, &shadowTest, shadowNS); err != nil {
+			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+			return ctrl.Result{}, err
+		}
+	}
+
 	for _, step := range []struct {
 		role  string
 		image string
@@ -111,30 +159,6 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 	}
 
-	if err := r.reconcileIgrisConfigMap(ctx, &shadowTest, shadowNS); err != nil {
-		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-		return ctrl.Result{}, err
-	}
-	if err := r.reconcileIgrisDeployment(ctx, &shadowTest, shadowNS); err != nil {
-		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-		return ctrl.Result{}, err
-	}
-	if err := r.reconcileIgrisService(ctx, &shadowTest, shadowNS); err != nil {
-		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-		return ctrl.Result{}, err
-	}
-
-	if len(shadowTest.Spec.Dependencies) > 0 {
-		depsReady, err := r.shadowDependenciesReady(ctx, &shadowTest, shadowNS)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if !depsReady {
-			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for shadow dependencies", shadowNS)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-	}
-
 	shadowsReady, err := r.shadowDeploymentsReady(ctx, &shadowTest, shadowNS)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -144,13 +168,15 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	igrisReady, err := r.igrisDeploymentReady(ctx, &shadowTest, shadowNS)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if !igrisReady {
-		_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Igris", shadowNS)
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	if !amqpOnly {
+		igrisReady, err := r.igrisDeploymentReady(ctx, &shadowTest, shadowNS)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !igrisReady {
+			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Igris", shadowNS)
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
 	}
 
 	if egressRecordingEnabled(&shadowTest) {
@@ -174,20 +200,29 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		siphonPhase = "Degraded"
 	}
 
-	igrisHost := shadowServiceHost(shadowNS, igrisServiceName(&shadowTest))
-	igrisEndpoint := fmt.Sprintf("%s:%d", igrisHost, shadowTest.Spec.ServicePort)
+	var igrisEndpoint string
+	igrisRMQPhase := ""
+	if amqpOnly {
+		igrisRMQPhase = "Ready"
+		igrisEndpoint = fmt.Sprintf("amqp queue %s; igris-rabbitmq %s",
+			shadowTest.Status.AmqpQueueName,
+			shadowServiceHost(shadowNS, igrisRabbitMQServiceName(&shadowTest)))
+	} else {
+		igrisHost := shadowServiceHost(shadowNS, igrisServiceName(&shadowTest))
+		igrisEndpoint = fmt.Sprintf("%s:%d", igrisHost, shadowTest.Spec.ServicePort)
+	}
 
 	msg := warnMsg
 	if msg == "" {
-		msg = fmt.Sprintf("shadow environment ready with Igris listeners [%s]", listenersSummary(&shadowTest))
+		msg = fmt.Sprintf("shadow environment ready with ingress [%s]", listenersSummary(&shadowTest))
 	} else {
-		msg = fmt.Sprintf("%s; Igris listeners [%s]", msg, listenersSummary(&shadowTest))
+		msg = fmt.Sprintf("%s; ingress [%s]", msg, listenersSummary(&shadowTest))
 	}
 	if siphonPhase != "" && siphonPhase != "Disabled" {
 		msg = fmt.Sprintf("%s; Siphon %s", msg, siphonPhase)
 	}
 
-	if err := r.patchStatusFull(ctx, &shadowTest, "Ready", msg, shadowNS, captureIPs, siphonPhase, igrisEndpoint); err != nil {
+	if err := r.patchStatusFull(ctx, &shadowTest, "Ready", msg, shadowNS, captureIPs, siphonPhase, igrisEndpoint, igrisRMQPhase); err != nil {
 		return ctrl.Result{}, err
 	}
 

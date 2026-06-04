@@ -141,6 +141,7 @@ func buildEgressProxyListenerYAML(role, beruTimeout string, domains []string, do
 	b.WriteString("                  status: 403\n")
 	b.WriteString("                  body:\n")
 	b.WriteString("                    inline_string: \"egress host not configured\"\n")
+	b.WriteString("          # traceparent pass-through on egress (OTel agent outbound HTTP).\n")
 	b.WriteString("          http_filters:\n")
 	b.WriteString("          - name: envoy.filters.http.ext_proc\n")
 	b.WriteString("            typed_config:\n")
@@ -197,6 +198,8 @@ const egressStubListenerYAML = `  - name: egress_stub
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 `
 
+// Ingress and egress HCM forward traceparent by default (no header removal on traceparent).
+// Igris synthesizes traceparent on multicast; Envoy preserves it through ingress and egress ext_proc.
 const envoyYAMLTemplate = `admin:
   address:
     socket_address:
@@ -226,6 +229,7 @@ static_resources:
                   prefix: "/"
                 route:
                   cluster: local_app
+          # traceparent is not mutated here; pass-through for W3C context from Igris/OTel agent.
           http_filters:
           - name: envoy.filters.http.header_mutation
             typed_config:

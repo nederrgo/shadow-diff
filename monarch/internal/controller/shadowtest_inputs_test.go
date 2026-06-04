@@ -84,3 +84,73 @@ func TestShadowServicePorts(t *testing.T) {
 		t.Fatalf("names %v", names)
 	}
 }
+
+func TestValidateInputsAMQPOnly(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
+			}},
+			Inputs: []enginev1alpha1.InputSpec{{
+				Driver: "rabbitmq_message",
+				AMQP: &enginev1alpha1.AMQPInputSpec{
+					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "order.created",
+					TargetDependency: "rabbitmq",
+				},
+			}},
+		},
+	}
+	if err := validateInputs(st); err != nil {
+		t.Fatalf("validateInputs: %v", err)
+	}
+	if !isAMQPOnlyShadowTest(st) {
+		t.Fatal("expected AMQP-only")
+	}
+}
+
+func TestValidateInputsMixedDriversRejected(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		Spec: enginev1alpha1.ShadowTestSpec{
+			ServicePort: 80,
+			Inputs: []enginev1alpha1.InputSpec{
+				{Driver: "rabbitmq_message", AMQP: &enginev1alpha1.AMQPInputSpec{
+					ProdURL: "amqp://x", Exchange: "e", RoutingKey: "k", TargetDependency: "rabbitmq",
+				}},
+				{Port: 80, Driver: "http_request"},
+			},
+		},
+	}
+	if err := validateInputs(st); err == nil {
+		t.Fatal("expected error for mixed drivers")
+	}
+}
+
+func TestBuildSiphonTargetAMQPOnlyNoIngressPorts(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Inputs: []enginev1alpha1.InputSpec{{
+				Driver: "rabbitmq_message",
+				AMQP: &enginev1alpha1.AMQPInputSpec{
+					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
+					TargetDependency: "rabbitmq",
+				},
+			}},
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
+			}},
+		},
+	}
+	tgt := buildSiphonTarget(st, "shadow-ns", []string{"10.0.0.1"}, nil)
+	if len(tgt.TargetPorts) != 0 || len(tgt.Listeners) != 0 {
+		t.Fatalf("expected no ingress ports, got ports=%v listeners=%v", tgt.TargetPorts, tgt.Listeners)
+	}
+	if tgt.IgrisHost != "" {
+		t.Fatalf("expected empty igris_host, got %q", tgt.IgrisHost)
+	}
+	if len(tgt.TargetIPs) != 1 {
+		t.Fatalf("expected prod IPs preserved, got %v", tgt.TargetIPs)
+	}
+}

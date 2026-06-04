@@ -21,18 +21,43 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// InputSpec declares an Igris listener port and input driver.
+// AMQPInputSpec configures native RabbitMQ shadow ingress (Phase 5b).
+type AMQPInputSpec struct {
+	// ProdURL is the production broker URL (e.g. amqp://prod-rabbitmq.default.svc:5672).
+	ProdURL string `json:"prodUrl"`
+
+	// Exchange is the production exchange to bind the shadow queue to.
+	Exchange string `json:"exchange"`
+
+	// ExchangeType is the AMQP exchange type (topic, direct, fanout, headers). Defaults to topic.
+	// +kubebuilder:validation:Enum=topic;direct;fanout;headers
+	// +optional
+	ExchangeType string `json:"exchangeType,omitempty"`
+
+	// RoutingKey is the binding routing key (e.g. "#" or "orders.*").
+	RoutingKey string `json:"routingKey"`
+
+	// TargetDependency is the name of a spec.dependencies entry (shadow brokers per role).
+	TargetDependency string `json:"targetDependency"`
+}
+
+// InputSpec declares an ingress driver: HTTP/TCP listeners or RabbitMQ message capture.
 type InputSpec struct {
-	// Port is the TCP port Igris binds for this input.
+	// Port is the TCP port Igris binds for HTTP/TCP inputs. Omit for rabbitmq_message.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
-	Port int32 `json:"port"`
+	// +optional
+	Port int32 `json:"port,omitempty"`
 
-	// Driver selects how Igris handles traffic on this port (http_request or tcp_stream).
-	// When empty, Monarch infers from the port (servicePort and 80/443/8080 → http_request).
-	// +kubebuilder:validation:Enum=http_request;tcp_stream
+	// Driver selects the ingress path (http_request, tcp_stream, or rabbitmq_message).
+	// When empty on a port-based input, Monarch infers from the port.
+	// +kubebuilder:validation:Enum=http_request;tcp_stream;rabbitmq_message
 	// +optional
 	Driver string `json:"driver,omitempty"`
+
+	// AMQP holds broker settings when driver is rabbitmq_message.
+	// +optional
+	AMQP *AMQPInputSpec `json:"amqp,omitempty"`
 
 	// Addon is deprecated; use driver. Legacy value "http" maps to http_request.
 	// +optional
@@ -80,6 +105,40 @@ type DependencySpec struct {
 	// EnvVarInjection is the app container env var name set to the role-specific dependency
 	// endpoint as host:port (e.g. redis-control-a.<shadow-ns>.svc.cluster.local:6379).
 	EnvVarInjection string `json:"envVarInjection"`
+}
+
+// RecorderSpec overrides the Recorder egress parser workload.
+type RecorderSpec struct {
+	// Image overrides the default Recorder container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+}
+
+// IgrisRabbitMQSpec overrides the igris-rabbitmq workload for AMQP-only ShadowTests.
+type IgrisRabbitMQSpec struct {
+	// Image overrides the default igris-rabbitmq container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// Replicas defaults to 1.
+	// +optional
+	Replicas *int32 `json:"replicas,omitempty"`
+
+	// Resources for the igris-rabbitmq container.
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// OtelInjectionSpec configures OpenTelemetry Operator auto-instrumentation on shadow app pods.
+type OtelInjectionSpec struct {
+	// Enabled defaults to true when nil. Set false to skip OTel injection annotations and env.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Language overrides image-based detection (java, python, nodejs, dotnet, go).
+	// +kubebuilder:validation:Enum=java;python;nodejs;dotnet;go
+	// +optional
+	Language string `json:"language,omitempty"`
 }
 
 // IgrisSpec overrides the always-deployed Igris workload.
@@ -137,13 +196,21 @@ type ShadowTestSpec struct {
 	// +optional
 	Inputs []InputSpec `json:"inputs,omitempty"`
 
-	// Igris overrides image, replicas, or resources for the Igris traffic hub (always deployed).
+	// Igris overrides image, replicas, or resources for the Igris traffic hub (HTTP/TCP ingress).
 	// +optional
 	Igris *IgrisSpec `json:"igris,omitempty"`
+
+	// IgrisRabbitMQ overrides the igris-rabbitmq workload when inputs use rabbitmq_message.
+	// +optional
+	IgrisRabbitMQ *IgrisRabbitMQSpec `json:"igrisRabbitmq,omitempty"`
 
 	// Siphon configures kernel-level traffic capture to Igris.
 	// +optional
 	Siphon *SiphonSpec `json:"siphon,omitempty"`
+
+	// Recorder overrides the Recorder image when spec.downstreams enables egress recording.
+	// +optional
+	Recorder *RecorderSpec `json:"recorder,omitempty"`
 
 	// Downstreams lists outbound hosts trapped by the egress proxy for strict replay.
 	// +optional
@@ -152,6 +219,10 @@ type ShadowTestSpec struct {
 	// Dependencies lists ephemeral backing services (e.g. Redis) provisioned once per shadow role.
 	// +optional
 	Dependencies []DependencySpec `json:"dependencies,omitempty"`
+
+	// OtelInjection enables OpenTelemetry Operator SDK/agent injection on shadow app pods (default on).
+	// +optional
+	OtelInjection *OtelInjectionSpec `json:"otelInjection,omitempty"`
 }
 
 // ShadowTestStatus defines the observed state of ShadowTest.
@@ -179,6 +250,14 @@ type ShadowTestStatus struct {
 	// IgrisEndpoint is the DNS host:port Monarch configured for capture forwarding.
 	// +optional
 	IgrisEndpoint string `json:"igrisEndpoint,omitempty"`
+
+	// AmqpQueueName is the production broker queue Monarch declared (shadow-diff-<uid>).
+	// +optional
+	AmqpQueueName string `json:"amqpQueueName,omitempty"`
+
+	// IgrisRabbitMQPhase summarizes igris-rabbitmq deployment readiness.
+	// +optional
+	IgrisRabbitMQPhase string `json:"igrisRabbitMQPhase,omitempty"`
 }
 
 // +kubebuilder:object:root=true

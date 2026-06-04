@@ -15,6 +15,7 @@ Monorepo for **differential testing on Kubernetes**: replay traffic across three
 | [`igris/`](igris/) | **Igris** | Traffic hub — HTTP/TCP drivers, multicasts to control-a, control-b, candidate | **MVP** — HTTP + TCP drivers |
 | [`beru/`](beru/) | **Beru** | Differ + egress mock store — gRPC ingress diff-of-diffs, HTTP egress replay/recording | **MVP** — `ext_proc`, `seed_mock`, `record_egress` |
 | [`recorder/`](recorder/) | **Recorder** | Egress HTTP parser — framed TCP from Siphon, `POST` Beru `/v1/record_egress` | **MVP** — Phase 4a.2 |
+| [`igris-rabbitmq/`](igris-rabbitmq/) | **igris-rabbitmq** | AMQP ingress multicaster — prod shadow queue → three shadow brokers | **MVP** — Phase 5b |
 | [`siphon/`](siphon/) | **Siphon** | Node capture agent — classic BPF, TCP reassembly, ingress forward to Igris, egress relay to Recorder | **MVP** — ingress capture + egress auto-record (Phase 4a.2) |
 | [`project-files/`](project-files/) | Docs | Early design notes (partially superseded by ARCHITECTURE.md) | Reference |
 

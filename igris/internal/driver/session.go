@@ -5,6 +5,7 @@ import "fmt"
 // Metadata is protocol-neutral request metadata for logging and early responses.
 type Metadata struct {
 	TraceID string
+	SpanID  string
 	Fields  map[string]string
 }
 

@@ -53,6 +53,9 @@ func recorderDownstreamsJSON(st *enginev1alpha1.ShadowTest) (string, error) {
 }
 
 func recorderImageFor(st *enginev1alpha1.ShadowTest) string {
+	if st.Spec.Recorder != nil && st.Spec.Recorder.Image != "" {
+		return st.Spec.Recorder.Image
+	}
 	return defaultRecorderImage
 }
 
