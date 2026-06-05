@@ -6,13 +6,16 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/shadow-diff/beru/internal/egressdiff"
 	"github.com/shadow-diff/beru/internal/replay"
+	"github.com/shadow-diff/beru/internal/roles"
 )
 
 // Server exposes temporary HTTP endpoints for egress replay testing.
 type Server struct {
-	Log   *slog.Logger
-	Mocks *replay.MockStore
+	Log        *slog.Logger
+	Mocks      *replay.MockStore
+	EgressDiff *egressdiff.Store
 }
 
 type seedMockRequest struct {
@@ -30,11 +33,19 @@ type seedMockResponse struct {
 	Body    string            `json:"body"`
 }
 
+type egressDiffRequest struct {
+	TraceID  string          `json:"trace_id"`
+	Workload string          `json:"workload"`
+	Protocol string          `json:"protocol"`
+	Payload  json.RawMessage `json:"payload"`
+}
+
 func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleHealthz)
 	mux.HandleFunc("/v1/seed_mock", s.handleSeedMock)
 	mux.HandleFunc("/v1/record_egress", s.handleRecordEgress)
+	mux.HandleFunc("/api/v1/egress/diff", s.handleEgressDiff)
 	s.Log.Info("Beru HTTP API listening", "addr", addr)
 	return http.ListenAndServe(addr, mux)
 }
@@ -62,6 +73,50 @@ func (s *Server) handleRecordEgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.putMockFromRequest(w, r)
+}
+
+func (s *Server) handleEgressDiff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.EgressDiff == nil {
+		http.Error(w, "Egress diff not configured", http.StatusServiceUnavailable)
+		return
+	}
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	var req egressDiffRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	if req.TraceID == "" || req.Workload == "" || req.Protocol == "" {
+		http.Error(w, "trace_id, workload, and protocol are required", http.StatusBadRequest)
+		return
+	}
+	if !roles.IsValid(req.Workload) {
+		http.Error(w, "workload is invalid", http.StatusBadRequest)
+		return
+	}
+	if len(req.Payload) == 0 || !json.Valid(req.Payload) {
+		http.Error(w, "payload must be valid JSON", http.StatusBadRequest)
+		return
+	}
+
+	s.EgressDiff.Handle(egressdiff.Report{
+		TraceID:  req.TraceID,
+		Workload: req.Workload,
+		Protocol: req.Protocol,
+		Payload:  append([]byte(nil), req.Payload...),
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]struct{}{})
 }
 
 func (s *Server) putMockFromRequest(w http.ResponseWriter, r *http.Request) {

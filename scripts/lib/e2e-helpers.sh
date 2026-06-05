@@ -16,6 +16,48 @@ require_cmd() {
   }
 }
 
+# ensure_go_path puts the Go toolchain and GOPATH/bin on PATH for non-login shells
+# (e.g. ./scripts/e2e-reset-kind.sh) where ~/.bashrc may return early.
+ensure_go_path() {
+  if [[ -d /usr/local/go/bin ]] && ! command -v go >/dev/null 2>&1; then
+    export PATH="/usr/local/go/bin:$PATH"
+  fi
+  if command -v go >/dev/null 2>&1; then
+    local gopath
+    gopath="$(go env GOPATH 2>/dev/null || echo "${HOME}/go")"
+    export PATH="${gopath}/bin:${PATH}"
+  fi
+  if ! command -v go >/dev/null 2>&1; then
+    log_fail "Go is not installed or not on PATH (expected /usr/local/go/bin/go)"
+    echo "       Install Go or: export PATH=\"/usr/local/go/bin:\$PATH\"" >&2
+    exit 1
+  fi
+}
+
+# require_docker ensures the Docker daemon is reachable (Kind image builds/loads need it).
+# Uses `docker ps` with a timeout — on WSL, `docker info` often hangs while `docker ps` still works.
+require_docker() {
+  require_cmd docker
+  if ! timeout 15 docker ps >/dev/null 2>&1; then
+    log_fail "Docker daemon is not reachable (docker ps failed or timed out after 15s)"
+    echo "       On WSL: start Docker Desktop on Windows and wait until 'docker ps' succeeds." >&2
+    echo "       If Docker Desktop is running, try: wsl --shutdown (from PowerShell), then reopen WSL." >&2
+    echo "       Low memory can stall Docker — close other apps or raise WSL memory in ~/.wslconfig." >&2
+    exit 1
+  fi
+}
+
+# require_kubectl_cluster ensures kubeconfig points at a live API server.
+require_kubectl_cluster() {
+  require_cmd kubectl
+  if ! kubectl cluster-info >/dev/null 2>&1; then
+    log_fail "kubectl cannot reach the Kubernetes API (connection refused or stale kubeconfig)"
+    echo "       Recreate the Kind stack: ./scripts/e2e-reset-kind.sh" >&2
+    echo "       Or point kubeconfig at a running cluster: export KUBECONFIG=..." >&2
+    exit 1
+  fi
+}
+
 # wait_shadowtest_gone blocks until the ShadowTest CR is fully removed.
 # No-op when the CR does not exist, or exists without a deletionTimestamp (live object).
 wait_shadowtest_gone() {

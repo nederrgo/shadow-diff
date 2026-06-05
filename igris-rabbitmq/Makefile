@@ -1,4 +1,4 @@
-IGRIS_RABBITMQ_IMG ?= igris-rabbitmq:latest
+IGRIS_RABBITMQ_IMG ?= igris-rabbitmq:dev
 CONTAINER_TOOL ?= docker
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 

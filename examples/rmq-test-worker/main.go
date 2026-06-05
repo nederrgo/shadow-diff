@@ -32,7 +32,10 @@ func main() {
 	routingKey := envOr("AMQP_BINDING_KEY", "order.created")
 	egressHost := envOr("EGRESS_HOST", "httpbin.org")
 	egressPath := envOr("EGRESS_PATH", "/get")
+	egressExchange := strings.TrimSpace(os.Getenv("RMQ_EGRESS_EXCHANGE"))
+	egressRoutingKey := envOr("RMQ_EGRESS_ROUTING_KEY", "order.egress")
 	manualTrace := envOr("RMQ_WORKER_MANUAL_TRACE", "1") != "0"
+	egressTraceparentOnly := envOr("RMQ_EGRESS_TRACEPARENT_ONLY", "0") != "0"
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -45,19 +48,19 @@ func main() {
 	})
 
 	go func() {
-		if err := runConsumer(amqpURL, exchange, queue, routingKey, servicePort, egressHost, egressPath, manualTrace); err != nil {
+		if err := runConsumer(amqpURL, exchange, queue, routingKey, servicePort, egressHost, egressPath, egressExchange, egressRoutingKey, manualTrace, egressTraceparentOnly); err != nil {
 			log.Fatalf("consumer: %v", err)
 		}
 	}()
 
-	log.Printf("rmq-test-worker listen=%s amqp=%s exchange=%s queue=%s manual_trace=%v",
-		listen, amqpURL, exchange, queue, manualTrace)
+	log.Printf("rmq-test-worker listen=%s amqp=%s exchange=%s queue=%s egress_exchange=%s manual_trace=%v egress_traceparent_only=%v",
+		listen, amqpURL, exchange, queue, egressExchange, manualTrace, egressTraceparentOnly)
 	if err := http.ListenAndServe(listen, mux); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func runConsumer(amqpURL, exchange, queue, bindingKey, servicePort, egressHost, egressPath string, manualTrace bool) error {
+func runConsumer(amqpURL, exchange, queue, bindingKey, servicePort, egressHost, egressPath, egressExchange, egressRoutingKey string, manualTrace, egressTraceparentOnly bool) error {
 	conn, err := amqp.Dial(amqpURL)
 	if err != nil {
 		return err
@@ -126,18 +129,58 @@ func runConsumer(amqpURL, exchange, queue, bindingKey, servicePort, egressHost, 
 			log.Printf("ingress report status=%d trace=%s", resp.StatusCode, traceID)
 		}
 
-		egressURL := fmt.Sprintf("http://%s%s", egressHost, egressPath)
-		ereq, _ := http.NewRequest(http.MethodGet, egressURL, nil)
-		setTraceHTTPHeaders(ereq)
-		if eresp, err := egressClient.Do(ereq); err != nil {
-			log.Printf("egress failed: %v", err)
-		} else {
-			_, _ = io.Copy(io.Discard, eresp.Body)
-			eresp.Body.Close()
-			log.Printf("egress status=%d trace=%s", eresp.StatusCode, traceID)
+		if egressExchange != "" {
+			tpOut := tp
+			if tpOut == "" {
+				tpOut = formatTraceparent(traceID, randomSpanID())
+			}
+			if err := publishRabbitMQEgress(ch, egressExchange, egressRoutingKey, traceID, tpOut, egressTraceparentOnly); err != nil {
+				log.Printf("rmq egress publish failed: %v trace=%s", err, traceID)
+			} else if egressTraceparentOnly {
+				log.Printf("rmq egress published exchange=%s routing_key=%s trace=%s traceparent_only=true", egressExchange, egressRoutingKey, traceID)
+			} else {
+				log.Printf("rmq egress published exchange=%s routing_key=%s trace=%s", egressExchange, egressRoutingKey, traceID)
+			}
+		} else if egressHost != "" {
+			egressURL := fmt.Sprintf("http://%s%s", egressHost, egressPath)
+			ereq, _ := http.NewRequest(http.MethodGet, egressURL, nil)
+			setTraceHTTPHeaders(ereq)
+			if eresp, err := egressClient.Do(ereq); err != nil {
+				log.Printf("egress failed: %v", err)
+			} else {
+				_, _ = io.Copy(io.Discard, eresp.Body)
+				eresp.Body.Close()
+				log.Printf("egress status=%d trace=%s", eresp.StatusCode, traceID)
+			}
 		}
 	}
 	return nil
+}
+
+func publishRabbitMQEgress(ch *amqp.Channel, exchange, routingKey, traceID, traceparent string, traceparentOnly bool) error {
+	if err := ch.ExchangeDeclare(exchange, "topic", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("egress exchange declare: %w", err)
+	}
+	body, err := json.Marshal(map[string]string{
+		"event":  "egress",
+		"source": "rmq-test-worker",
+	})
+	if err != nil {
+		return err
+	}
+	headers := amqp.Table{}
+	if traceparentOnly {
+		headers[headerTraceparent] = traceparent
+	} else {
+		headers[headerShadowTraceID] = traceID
+		headers[headerTraceparent] = traceparent
+	}
+	return ch.Publish(exchange, routingKey, false, false, amqp.Publishing{
+		ContentType:  "application/json",
+		Headers:      headers,
+		Body:         body,
+		DeliveryMode: amqp.Persistent,
+	})
 }
 
 func shadowTraceFromAMQP(h amqp.Table) (traceID, traceparent string) {

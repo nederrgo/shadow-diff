@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/shadow-diff/beru/internal/egressdiff"
 	"github.com/shadow-diff/beru/internal/replay"
 )
 
@@ -108,5 +109,43 @@ func TestRecordEgress_roundTrip(t *testing.T) {
 	}
 	if _, ok := mocks.Get(out.Hash); !ok {
 		t.Fatal("mock not stored")
+	}
+}
+
+func TestEgressDiff_acceptsReport(t *testing.T) {
+	store := egressdiff.NewStore(slog.Default(), egressdiff.ConfigFromEnv())
+	s := &Server{Log: slog.Default(), EgressDiff: store}
+
+	payload := map[string]any{
+		"trace_id": "abc123",
+		"workload": "control-a",
+		"protocol": "rabbitmq",
+		"payload":  map[string]any{"order": 1},
+	}
+	raw, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/egress/diff", bytes.NewReader(raw))
+	rec := httptest.NewRecorder()
+	s.handleEgressDiff(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEgressDiff_rejectsInvalidWorkload(t *testing.T) {
+	store := egressdiff.NewStore(slog.Default(), egressdiff.ConfigFromEnv())
+	s := &Server{Log: slog.Default(), EgressDiff: store}
+
+	payload := map[string]any{
+		"trace_id": "abc123",
+		"workload": "unknown",
+		"protocol": "rabbitmq",
+		"payload":  map[string]any{"order": 1},
+	}
+	raw, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/egress/diff", bytes.NewReader(raw))
+	rec := httptest.NewRecorder()
+	s.handleEgressDiff(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}
 }

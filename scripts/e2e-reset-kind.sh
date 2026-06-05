@@ -28,6 +28,7 @@ cd "$REPO"
 source "$REPO/scripts/lib/siphon-config.sh"
 # shellcheck source=scripts/lib/e2e-helpers.sh
 source "$REPO/scripts/lib/e2e-helpers.sh"
+ensure_go_path
 
 KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
 MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
@@ -263,8 +264,10 @@ done
 echo ""
 echo "E2E stack is up."
 echo "  Shadow namespace: $SHADOW_NS"
-echo "  Prod IP:          $(kubectl get pods -n default -l app=my-prod-app -o jsonpath='{.items[0].status.podIP}')"
-echo "  Siphon API:       http://$(kubectl get pods -n siphon-system -l app.kubernetes.io/name=siphon-agent -o jsonpath='{.items[0].status.hostIP}'):8080"
+prod_ip=$(kubectl get pods -n default -l app=my-prod-app -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2>/dev/null | head -1)
+siphon_host=$(kubectl get pods -n siphon-system -l app.kubernetes.io/name=siphon-agent -o jsonpath='{range .items[*]}{.status.hostIP}{"\n"}{end}' 2>/dev/null | head -1)
+echo "  Prod IP:          ${prod_ip:-<pending>}"
+echo "  Siphon API:       http://${siphon_host:-<pending>}:8080"
 echo "  Siphon image:     $(kubectl get ds siphon-agent -n siphon-system -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo '<pending>')"
 echo "  (host curl to Kind node IP often hangs from WSL; use in-cluster curl instead — see e2e-pipeline-test.sh)"
 echo ""

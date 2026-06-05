@@ -16,6 +16,15 @@ func TestAnalyzeMongoEgress_noRegression(t *testing.T) {
 	}
 }
 
+func TestAnalyzeEgress_rabbitmq(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	AnalyzeEgress(log, "t-rmq", "rabbitmq", []byte(`{"v":1}`), []byte(`{"v":1}`), []byte(`{"v":2}`))
+	if !strings.Contains(buf.String(), "Egress regression for Trace t-rmq (rabbitmq)") {
+		t.Fatalf("got: %s", buf.String())
+	}
+}
+
 func TestAnalyzeMongoEgress_regression(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, nil))

@@ -68,6 +68,9 @@ func validateDependencies(st *enginev1alpha1.ShadowTest) error {
 			if resName == shadowDeploymentName(st, role) || resName == igrisDeploymentName(st) {
 				return fmt.Errorf("dependency %q collides with shadow workload name %q", dep.Name, resName)
 			}
+			if hasRabbitMQInput(st) && resName == egressRelayRabbitMQDeploymentName(st) {
+				return fmt.Errorf("dependency %q collides with egress-relay-rabbitmq name %q", dep.Name, resName)
+			}
 		}
 	}
 	return nil
@@ -78,6 +81,9 @@ func (r *ShadowTestReconciler) reconcileShadowDependencies(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) error {
+	if err := r.reconcileRabbitMQBrokerConfigMaps(ctx, st, shadowNS); err != nil {
+		return err
+	}
 	desired := map[string]struct{}{}
 	for _, dep := range st.Spec.Dependencies {
 		for _, role := range []string{roleControlA, roleControlB, roleCandidate} {
@@ -121,33 +127,37 @@ func (r *ShadowTestReconciler) reconcileDependencyDeployment(
 		deploy.Spec.Replicas = &replicas
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: podLabels}
 		deploy.Spec.Template.ObjectMeta.Labels = podLabels
-		deploy.Spec.Template.Spec.Containers = []corev1.Container{{
-			Name:            "dependency",
-			Image:           dep.Image,
-			ImagePullPolicy: corev1.PullIfNotPresent,
-			Ports: []corev1.ContainerPort{{
-				Name:          "tcp",
-				ContainerPort: dep.Port,
-				Protocol:      corev1.ProtocolTCP,
-			}},
-			ReadinessProbe: &corev1.Probe{
-				ProbeHandler: corev1.ProbeHandler{
-					TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(dep.Port)},
+		if isRabbitMQBrokerDependency(dep) {
+			deploy.Spec.Template.Spec = rabbitMQBrokerPodSpec(dep)
+		} else {
+			deploy.Spec.Template.Spec.Containers = []corev1.Container{{
+				Name:            "dependency",
+				Image:           dep.Image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Ports: []corev1.ContainerPort{{
+					Name:          "tcp",
+					ContainerPort: dep.Port,
+					Protocol:      corev1.ProtocolTCP,
+				}},
+				ReadinessProbe: &corev1.Probe{
+					ProbeHandler: corev1.ProbeHandler{
+						TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(dep.Port)},
+					},
+					InitialDelaySeconds: 2,
+					PeriodSeconds:       5,
 				},
-				InitialDelaySeconds: 2,
-				PeriodSeconds:       5,
-			},
-			Resources: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("50m"),
-					corev1.ResourceMemory: resource.MustParse("64Mi"),
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("50m"),
+						corev1.ResourceMemory: resource.MustParse("64Mi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("200m"),
+						corev1.ResourceMemory: resource.MustParse("256Mi"),
+					},
 				},
-				Limits: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("200m"),
-					corev1.ResourceMemory: resource.MustParse("256Mi"),
-				},
-			},
-		}}
+			}}
+		}
 		return nil
 	})
 	return err

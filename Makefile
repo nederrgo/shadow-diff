@@ -5,8 +5,10 @@ IGRIS_DIR := igris
 SIPHON_DIR := siphon
 RECORDER_DIR := recorder
 IGRIS_RABBITMQ_DIR := igris-rabbitmq
+EGRESS_RELAY_RABBITMQ_DIR := egress-relay-rabbitmq
 RECORDER_IMG ?= recorder:latest
 IGRIS_RABBITMQ_IMG ?= igris-rabbitmq:latest
+EGRESS_RELAY_RABBITMQ_IMG ?= egress-relay-rabbitmq:latest
 SIPHON_IMG ?= siphon:latest
 IGRIS_IMG ?= igris:latest
 BERU_IMG ?= beru:latest
@@ -24,7 +26,8 @@ $(MONARCH_TARGETS):
 .PHONY: beru-test beru-build igris-test igris-build igris-docker-build \
 	siphon-test siphon-build siphon-docker-build \
 	recorder-test recorder-build recorder-docker-build \
-	igris-rabbitmq-test igris-rabbitmq-build igris-rabbitmq-docker-build
+	igris-rabbitmq-test igris-rabbitmq-build igris-rabbitmq-docker-build \
+	egress-relay-rabbitmq-test egress-relay-rabbitmq-build egress-relay-rabbitmq-docker-build
 beru-test: ## Run Beru unit tests.
 	@$(MAKE) -C $(BERU_DIR) test
 
@@ -67,10 +70,20 @@ igris-rabbitmq-build: ## Build igris-rabbitmq binary.
 igris-rabbitmq-docker-build: ## Build igris-rabbitmq container image.
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) docker-build IGRIS_RABBITMQ_IMG=$(IGRIS_RABBITMQ_IMG)
 
-test-all: ## Run Monarch, Beru, Igris, Siphon, Recorder, and igris-rabbitmq tests.
+egress-relay-rabbitmq-test: ## Run egress-relay-rabbitmq unit tests.
+	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
+
+egress-relay-rabbitmq-build: ## Build egress-relay-rabbitmq binary.
+	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) build
+
+egress-relay-rabbitmq-docker-build: ## Build egress-relay-rabbitmq container image.
+	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) docker-build EGRESS_RELAY_RABBITMQ_IMG=$(EGRESS_RELAY_RABBITMQ_IMG)
+
+test-all: ## Run Monarch, Beru, Igris, Siphon, Recorder, igris-rabbitmq, and egress-relay-rabbitmq tests.
 	@$(MAKE) -C $(MONARCH_DIR) test
 	@$(MAKE) -C $(BERU_DIR) test
 	@$(MAKE) -C $(IGRIS_DIR) test
 	@$(MAKE) -C $(SIPHON_DIR) test
 	@$(MAKE) -C $(RECORDER_DIR) test
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
+	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test

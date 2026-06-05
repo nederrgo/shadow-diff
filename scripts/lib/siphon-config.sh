@@ -3,7 +3,7 @@
 
 siphon_api_host() {
   kubectl get pods -n siphon-system -l app.kubernetes.io/name=siphon-agent \
-    -o jsonpath='{.items[0].status.hostIP}'
+    -o jsonpath='{range .items[*]}{.status.hostIP}{"\n"}{end}' 2>/dev/null | head -1
 }
 
 nudge_siphon_config() {
@@ -77,7 +77,7 @@ push_siphon_recorder_config() {
   local egress_host="${5:-${EGRESS_HOST:-}}"
 
   local prod_ip shadow_ns igris_host recorder_host
-  prod_ip=$(kubectl get pod -n "$prod_ns" -l app=my-prod-app -o jsonpath='{.items[0].status.podIP}')
+  prod_ip=$(kubectl get pod -n "$prod_ns" -l app=my-prod-app -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2>/dev/null | head -1)
   shadow_ns=$(kubectl get shadowtest "$shadowtest" -n "$shadowtest_ns" -o jsonpath='{.status.shadowNamespace}')
   if [[ -z "$prod_ip" || -z "$shadow_ns" ]]; then
     echo "    ERROR: fallback needs prod pod IP and status.shadowNamespace" >&2

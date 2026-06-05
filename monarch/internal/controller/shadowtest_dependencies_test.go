@@ -3,6 +3,7 @@ package controller
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
@@ -58,6 +59,36 @@ var _ = Describe("shadow dependencies", func() {
 		Expect(env[0].Value).To(Equal(shadowMongoProxyURL))
 		Expect(env[0].Value).NotTo(ContainSubstring("tls"))
 		Expect(env[0].Value).NotTo(ContainSubstring("mongodb+srv"))
+	})
+
+	It("detects rabbitmq broker dependencies by env var injection", func() {
+		Expect(isRabbitMQBrokerDependency(enginev1alpha1.DependencySpec{
+			Name: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
+		})).To(BeTrue())
+		Expect(isRabbitMQBrokerDependency(enginev1alpha1.DependencySpec{
+			Name: "redis", Image: "redis:7", Port: 6379, EnvVarInjection: "REDIS_ADDR",
+		})).To(BeFalse())
+	})
+
+	It("configures rabbitmq broker container with plugin file and firehose readiness", func() {
+		dep := enginev1alpha1.DependencySpec{
+			Name: "rabbitmq", Image: "rabbitmq:3-management-alpine", Port: 5672, EnvVarInjection: "AMQP_URL",
+		}
+		c := rabbitMQBrokerContainer(dep)
+		Expect(c.Env).To(ContainElement(corev1.EnvVar{
+			Name: envRabbitMQEnabledPluginsFile, Value: rabbitmqPluginsMountPath,
+		}))
+		Expect(c.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+			Name: volumeNameRabbitMQPlugins, MountPath: rabbitmqPluginsMountPath,
+			SubPath: rabbitmqPluginsConfigKey, ReadOnly: true,
+		}))
+		Expect(c.Lifecycle).To(BeNil())
+		Expect(c.StartupProbe.Exec.Command).To(ContainElement(ContainSubstring("trace_on")))
+		Expect(c.StartupProbe.Exec.Command).To(ContainElement(ContainSubstring("/tmp/.firehose_ready")))
+		Expect(c.StartupProbe.TimeoutSeconds).To(Equal(int32(30)))
+		Expect(c.ReadinessProbe.TCPSocket).NotTo(BeNil())
+		Expect(c.ReadinessProbe.TCPSocket.Port.IntValue()).To(Equal(5672))
+		Expect(c.ReadinessProbe.Exec).To(BeNil())
 	})
 
 	It("injects full amqp URL for AMQP_URL env", func() {

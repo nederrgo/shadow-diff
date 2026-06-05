@@ -122,6 +122,18 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			_ = r.patchStatusIgrisRabbitMQ(ctx, &shadowTest, "Progressing", "waiting for igris-rabbitmq", shadowNS, "Progressing")
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
+		if err := r.reconcileEgressRelayRabbitMQStack(ctx, &shadowTest, shadowNS); err != nil {
+			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+			return ctrl.Result{}, err
+		}
+		egressRelayReady, err := r.egressRelayRabbitMQDeploymentReady(ctx, &shadowTest, shadowNS)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !egressRelayReady {
+			_ = r.patchStatusIgrisRabbitMQ(ctx, &shadowTest, "Progressing", "waiting for egress-relay-rabbitmq", shadowNS, "Progressing")
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
 	} else {
 		if err := r.reconcileIgrisConfigMap(ctx, &shadowTest, shadowNS); err != nil {
 			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)

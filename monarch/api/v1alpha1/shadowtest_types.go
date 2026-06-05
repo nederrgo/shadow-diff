@@ -114,6 +114,21 @@ type RecorderSpec struct {
 	Image string `json:"image,omitempty"`
 }
 
+// EgressRelayRabbitMQSpec overrides the egress-relay-rabbitmq workload for AMQP-only ShadowTests.
+type EgressRelayRabbitMQSpec struct {
+	// Image overrides the default egress-relay-rabbitmq container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// Replicas defaults to 1.
+	// +optional
+	Replicas *int32 `json:"replicas,omitempty"`
+
+	// Resources for the egress-relay-rabbitmq container.
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
 // IgrisRabbitMQSpec overrides the igris-rabbitmq workload for AMQP-only ShadowTests.
 type IgrisRabbitMQSpec struct {
 	// Image overrides the default igris-rabbitmq container image.
@@ -203,6 +218,10 @@ type ShadowTestSpec struct {
 	// IgrisRabbitMQ overrides the igris-rabbitmq workload when inputs use rabbitmq_message.
 	// +optional
 	IgrisRabbitMQ *IgrisRabbitMQSpec `json:"igrisRabbitmq,omitempty"`
+
+	// EgressRelayRabbitMQ overrides the egress-relay-rabbitmq Firehose translator when inputs use rabbitmq_message.
+	// +optional
+	EgressRelayRabbitMQ *EgressRelayRabbitMQSpec `json:"egressRelayRabbitmq,omitempty"`
 
 	// Siphon configures kernel-level traffic capture to Igris.
 	// +optional

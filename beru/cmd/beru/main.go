@@ -15,6 +15,7 @@ import (
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
 	"github.com/shadow-diff/beru/internal/als"
 	"github.com/shadow-diff/beru/internal/api"
+	"github.com/shadow-diff/beru/internal/egressdiff"
 	"github.com/shadow-diff/beru/internal/envoyextproc"
 	"github.com/shadow-diff/beru/internal/ingest"
 	"github.com/shadow-diff/beru/internal/replay"
@@ -39,12 +40,13 @@ func main() {
 	store := ingest.NewStore(log, cfg)
 	store.OnIngressComplete = alsStore.NotifyIngressComplete
 	mocks := replay.NewMockStore()
+	egressStore := egressdiff.NewStore(log, egressdiff.ConfigFromEnv())
 
 	httpAddr := os.Getenv("BERU_HTTP_ADDR")
 	if httpAddr == "" {
 		httpAddr = ":8080"
 	}
-	httpSrv := &api.Server{Log: log, Mocks: mocks}
+	httpSrv := &api.Server{Log: log, Mocks: mocks, EgressDiff: egressStore}
 	go func() {
 		if err := httpSrv.Start(httpAddr); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server stopped", "err", err)
