@@ -37,7 +37,7 @@ func TestAnalyze_logsRegression(t *testing.T) {
 	bodyA := []byte(`{"price":10.0,"timestamp":"t1"}`)
 	bodyB := []byte(`{"price":10.0,"timestamp":"t2"}`)
 	bodyC := []byte(`{"price":12.0,"timestamp":"t1"}`)
-	Analyze(log, "123", bodyA, bodyB, bodyC, nil)
+	Analyze(log, "123", ProtocolIngress, bodyA, bodyB, bodyC, nil)
 	out := buf.String()
 	if !bytes.Contains([]byte(out), []byte("Regression found in Trace 123")) {
 		t.Fatalf("missing regression log: %s", out)

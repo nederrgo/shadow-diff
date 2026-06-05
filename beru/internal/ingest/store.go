@@ -15,6 +15,7 @@ import (
 	"github.com/shadow-diff/beru/internal/diff"
 	"github.com/shadow-diff/beru/internal/payload"
 	"github.com/shadow-diff/beru/internal/roles"
+	"github.com/shadow-diff/beru/internal/storage"
 )
 
 // Config controls the pending-trace store.
@@ -57,6 +58,7 @@ type Store struct {
 	order             []string
 	mu                sync.Mutex
 	OnIngressComplete func(traceID string)
+	Storage           *storage.DB
 }
 
 func NewStore(log *slog.Logger, cfg Config) *Store {
@@ -149,7 +151,24 @@ func (s *Store) runDiff(reports map[string]*beruv1.TrafficReport) {
 		s.log.Info("Could not diff trace: payload not JSON", "traceID", traceID, "role", roles.Candidate, "err", err)
 		return
 	}
-	diff.Analyze(s.log, traceID, bodyA, bodyB, bodyC, nil)
+
+	shadowName := storage.ShadowTestNameFromMetadata(a.Payload.GetMetadata(), "")
+	var userNoise map[string]struct{}
+	if s.Storage != nil {
+		shadowName = storage.ShadowTestNameFromMetadata(a.Payload.GetMetadata(), s.Storage.DefaultShadowTestName())
+		var nerr error
+		userNoise, nerr = s.Storage.NoisePathsForTest(context.Background(), shadowName)
+		if nerr != nil {
+			s.log.Error("Could not load noise filters", "traceID", traceID, "err", nerr)
+		}
+	}
+
+	res := diff.Analyze(s.log, traceID, diff.ProtocolIngress, bodyA, bodyB, bodyC, userNoise)
+	if s.Storage != nil && res.Err == nil {
+		if err := s.Storage.SaveDiffResult(context.Background(), shadowName, res); err != nil {
+			s.log.Error("Could not persist diff result", "traceID", traceID, "err", err)
+		}
+	}
 	if cb := s.OnIngressComplete; cb != nil {
 		cb(traceID)
 	}

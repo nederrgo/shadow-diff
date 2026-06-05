@@ -14,6 +14,7 @@ import (
 
 	"github.com/shadow-diff/beru/internal/diff"
 	"github.com/shadow-diff/beru/internal/roles"
+	"github.com/shadow-diff/beru/internal/storage"
 )
 
 // Config controls the egress diff pending store.
@@ -52,18 +53,20 @@ func ConfigFromEnv() Config {
 
 // Report is one workload egress payload for diff correlation.
 type Report struct {
-	TraceID  string
-	Workload string
-	Protocol string
-	Payload  []byte
+	TraceID         string
+	Workload        string
+	Protocol        string
+	Payload         []byte
+	ShadowTestName  string
 }
 
 type pendingEgress struct {
-	deadline time.Time
-	reports  map[string][]byte
-	protocol string
-	diffDone bool
-	timer    *time.Timer
+	deadline         time.Time
+	reports          map[string][]byte
+	protocol         string
+	diffDone         bool
+	timer            *time.Timer
+	shadowTestName   string
 }
 
 // Store correlates egress payloads by trace ID.
@@ -73,6 +76,7 @@ type Store struct {
 	pending map[string]*pendingEgress
 	order   []string
 	mu      sync.Mutex
+	Storage *storage.DB
 }
 
 // NewStore creates an egress diff store with background eviction.
@@ -123,6 +127,9 @@ func (s *Store) Handle(report Report) {
 	}
 	if pt.protocol == "" {
 		pt.protocol = report.Protocol
+	}
+	if report.ShadowTestName != "" {
+		pt.shadowTestName = report.ShadowTestName
 	}
 	pt.reports[report.Workload] = append([]byte(nil), report.Payload...)
 
@@ -180,6 +187,7 @@ func (s *Store) tryDiff(traceID string) {
 		pt.timer = nil
 	}
 	protocol := pt.protocol
+	shadowName := pt.shadowTestName
 	bodyA := copyBytes(pt.reports[roles.ControlA])
 	bodyB := copyBytes(pt.reports[roles.ControlB])
 	bodyC := copyBytes(pt.reports[roles.Candidate])
@@ -187,15 +195,32 @@ func (s *Store) tryDiff(traceID string) {
 	s.removeFromOrderLocked(traceID)
 	s.mu.Unlock()
 
-	go s.runDiff(traceID, protocol, bodyA, bodyB, bodyC)
+	go s.runDiff(traceID, protocol, shadowName, bodyA, bodyB, bodyC)
 }
 
-func (s *Store) runDiff(traceID, protocol string, bodyA, bodyB, bodyC []byte) {
+func (s *Store) runDiff(traceID, protocol, shadowTestName string, bodyA, bodyB, bodyC []byte) {
 	if bodyA == nil {
 		s.log.Info("Skipping egress diff without control-a payload", "traceID", traceID, "protocol", protocol)
 		return
 	}
-	diff.AnalyzeEgress(s.log, traceID, protocol, bodyA, bodyB, bodyC)
+	var userNoise map[string]struct{}
+	shadowName := shadowTestName
+	if s.Storage != nil {
+		if shadowName == "" {
+			shadowName = s.Storage.DefaultShadowTestName()
+		}
+		var err error
+		userNoise, err = s.Storage.NoisePathsForTest(context.Background(), shadowName)
+		if err != nil {
+			s.log.Error("Could not load noise filters", "traceID", traceID, "err", err)
+		}
+	}
+	res := diff.AnalyzeEgress(s.log, traceID, protocol, bodyA, bodyB, bodyC, userNoise)
+	if s.Storage != nil && res.Err == nil {
+		if err := s.Storage.SaveDiffResult(context.Background(), shadowName, res); err != nil {
+			s.log.Error("Could not persist diff result", "traceID", traceID, "err", err)
+		}
+	}
 }
 
 func copyBytes(in []byte) []byte {

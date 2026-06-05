@@ -15,11 +15,13 @@ import (
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
 	"github.com/shadow-diff/beru/internal/als"
 	"github.com/shadow-diff/beru/internal/api"
+	"github.com/shadow-diff/beru/internal/dashboard"
 	"github.com/shadow-diff/beru/internal/egressdiff"
 	"github.com/shadow-diff/beru/internal/envoyextproc"
 	"github.com/shadow-diff/beru/internal/ingest"
 	"github.com/shadow-diff/beru/internal/replay"
 	"github.com/shadow-diff/beru/internal/server"
+	"github.com/shadow-diff/beru/internal/storage"
 )
 
 func main() {
@@ -35,18 +37,35 @@ func main() {
 	}
 
 	log := slog.Default()
+
+	db, err := storage.Open(log)
+	if err != nil {
+		slog.Error("Failed to open storage", "err", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
 	cfg := ingest.ConfigFromEnv()
 	alsStore := als.NewStore(log, cfg)
+	alsStore.Storage = db
 	store := ingest.NewStore(log, cfg)
+	store.Storage = db
 	store.OnIngressComplete = alsStore.NotifyIngressComplete
 	mocks := replay.NewMockStore()
 	egressStore := egressdiff.NewStore(log, egressdiff.ConfigFromEnv())
+	egressStore.Storage = db
+
+	dash, err := dashboard.NewHandler(db, log)
+	if err != nil {
+		slog.Error("Failed to init dashboard", "err", err)
+		os.Exit(1)
+	}
 
 	httpAddr := os.Getenv("BERU_HTTP_ADDR")
 	if httpAddr == "" {
 		httpAddr = ":8080"
 	}
-	httpSrv := &api.Server{Log: log, Mocks: mocks, EgressDiff: egressStore}
+	httpSrv := &api.Server{Log: log, Mocks: mocks, EgressDiff: egressStore, DB: db, Dashboard: dash}
 	go func() {
 		if err := httpSrv.Start(httpAddr); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server stopped", "err", err)

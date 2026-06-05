@@ -6,16 +6,20 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/shadow-diff/beru/internal/dashboard"
 	"github.com/shadow-diff/beru/internal/egressdiff"
 	"github.com/shadow-diff/beru/internal/replay"
 	"github.com/shadow-diff/beru/internal/roles"
+	"github.com/shadow-diff/beru/internal/storage"
 )
 
-// Server exposes temporary HTTP endpoints for egress replay testing.
+// Server exposes HTTP endpoints for egress replay testing and the dashboard.
 type Server struct {
 	Log        *slog.Logger
 	Mocks      *replay.MockStore
 	EgressDiff *egressdiff.Store
+	DB         *storage.DB
+	Dashboard  *dashboard.Handler
 }
 
 type seedMockRequest struct {
@@ -34,10 +38,11 @@ type seedMockResponse struct {
 }
 
 type egressDiffRequest struct {
-	TraceID  string          `json:"trace_id"`
-	Workload string          `json:"workload"`
-	Protocol string          `json:"protocol"`
-	Payload  json.RawMessage `json:"payload"`
+	TraceID        string          `json:"trace_id"`
+	Workload       string          `json:"workload"`
+	Protocol       string          `json:"protocol"`
+	Payload        json.RawMessage `json:"payload"`
+	ShadowTestName string          `json:"shadow_test_name"`
 }
 
 func (s *Server) Start(addr string) error {
@@ -46,6 +51,16 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("/v1/seed_mock", s.handleSeedMock)
 	mux.HandleFunc("/v1/record_egress", s.handleRecordEgress)
 	mux.HandleFunc("/api/v1/egress/diff", s.handleEgressDiff)
+	if s.Dashboard != nil {
+		s.Dashboard.Register(mux)
+	}
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "/dashboard/", http.StatusTemporaryRedirect)
+	})
 	s.Log.Info("Beru HTTP API listening", "addr", addr)
 	return http.ListenAndServe(addr, mux)
 }
@@ -108,10 +123,11 @@ func (s *Server) handleEgressDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.EgressDiff.Handle(egressdiff.Report{
-		TraceID:  req.TraceID,
-		Workload: req.Workload,
-		Protocol: req.Protocol,
-		Payload:  append([]byte(nil), req.Payload...),
+		TraceID:        req.TraceID,
+		Workload:       req.Workload,
+		Protocol:       req.Protocol,
+		Payload:        append([]byte(nil), req.Payload...),
+		ShadowTestName: req.ShadowTestName,
 	})
 
 	w.Header().Set("Content-Type", "application/json")

@@ -1,0 +1,71 @@
+{{define "content"}}
+<div class="space-y-6">
+  <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="bg-white rounded-lg border border-slate-200 p-4">
+      <p class="text-sm text-slate-500">Total traces</p>
+      <p class="text-2xl font-semibold">{{.TotalTraces}}</p>
+    </div>
+    <div class="bg-white rounded-lg border border-slate-200 p-4">
+      <p class="text-sm text-slate-500">Match rate</p>
+      <p class="text-2xl font-semibold">{{printf "%.1f" .MatchRate}}%</p>
+    </div>
+    <div class="bg-white rounded-lg border border-slate-200 p-4">
+      <p class="text-sm text-slate-500">Mismatches</p>
+      <p class="text-2xl font-semibold text-red-600">{{.MismatchCount}}</p>
+    </div>
+  </section>
+
+  <section class="bg-white rounded-lg border border-slate-200 p-4">
+    <div class="flex flex-wrap items-center gap-4 mb-4">
+      <label class="text-sm font-medium text-slate-700" for="run-select">Shadow test run</label>
+      <select id="run-select" class="border border-slate-300 rounded px-3 py-2 text-sm" data-selected="{{.SelectedRunID}}">
+        {{range .Runs}}
+        <option value="{{.ID}}" {{if eq .ID $.SelectedRunID}}selected{{end}}>{{.Name}} — {{.StartTime}}</option>
+        {{end}}
+      </select>
+      <div class="flex gap-2" id="filter-tabs">
+        <button type="button" data-filter="all" class="filter-tab px-3 py-1 rounded text-sm bg-slate-800 text-white">All</button>
+        <button type="button" data-filter="match" class="filter-tab px-3 py-1 rounded text-sm bg-slate-100">Matches</button>
+        <button type="button" data-filter="mismatch" class="filter-tab px-3 py-1 rounded text-sm bg-slate-100">Mismatches</button>
+      </div>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead>
+          <tr class="border-b border-slate-200 text-left text-slate-500">
+            <th class="py-2 pr-4">Timestamp</th>
+            <th class="py-2 pr-4">Trace ID</th>
+            <th class="py-2 pr-4">Protocol</th>
+            <th class="py-2 pr-4">Status</th>
+            <th class="py-2 pr-4"></th>
+          </tr>
+        </thead>
+        <tbody id="trace-table">
+          {{range .Traces}}
+          <tr class="border-b border-slate-100 hover:bg-slate-50">
+            <td class="py-2 pr-4 font-mono text-xs">{{.Timestamp}}</td>
+            <td class="py-2 pr-4 font-mono text-xs">{{.TraceID}}</td>
+            <td class="py-2 pr-4">{{.Protocol}}</td>
+            <td class="py-2 pr-4">
+              {{if eq .Status "MISMATCH"}}
+              <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">MISMATCH</span>
+              {{else}}
+              <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">MATCH</span>
+              {{end}}
+            </td>
+            <td class="py-2 pr-4">
+              {{if eq .Status "MISMATCH"}}
+              <a class="text-blue-600 hover:underline" href="/dashboard/traces/{{.ID}}">View diff</a>
+              {{end}}
+            </td>
+          </tr>
+          {{else}}
+          <tr><td colspan="5" class="py-6 text-center text-slate-500">No traces recorded yet.</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{{end}}

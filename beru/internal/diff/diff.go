@@ -144,35 +144,52 @@ func Regressions(bodyA, bodyC []byte, noise map[string]struct{}) ([]PathDiff, er
 	return out, nil
 }
 
-// Analyze runs diff-of-diffs and logs results.
-func Analyze(log *slog.Logger, traceID string, bodyA, bodyB, bodyC []byte, noiseFields []string) {
+// Analyze runs diff-of-diffs, logs results, and returns a structured result.
+func Analyze(log *slog.Logger, traceID, protocol string, bodyA, bodyB, bodyC []byte, userNoise map[string]struct{}) Result {
 	if log == nil {
 		log = slog.Default()
 	}
+	if protocol == "" {
+		protocol = ProtocolIngress
+	}
+	res := Result{
+		TraceID:  traceID,
+		Protocol: protocol,
+		BodyA:    append([]byte(nil), bodyA...),
+		BodyC:    append([]byte(nil), bodyC...),
+	}
+
 	noise, err := NoisePaths(bodyA, bodyB)
 	if err != nil {
 		log.Error("Could not compare control pods for noise", "traceID", traceID, "err", err)
-		return
+		res.Err = err
+		return res
 	}
 	if len(noise) == 0 {
 		log.Info("No noise fields identified for trace", "traceID", traceID)
 	}
-	regs, err := Regressions(bodyA, bodyC, noise)
+	merged := MergeNoise(noise, userNoise)
+	regs, err := Regressions(bodyA, bodyC, merged)
 	if err != nil {
 		log.Error("Could not compare control-a and candidate", "traceID", traceID, "err", err)
-		return
+		res.Err = err
+		return res
 	}
+	res.Regressions = regs
 	if len(regs) == 0 {
+		res.Status = StatusMatch
 		log.Info(fmt.Sprintf("No regression for Trace %s", traceID))
-		return
+		return res
 	}
-	ignored := formatIgnoredNoise(noise)
+	res.Status = StatusMismatch
+	ignored := formatIgnoredNoise(merged)
 	for _, r := range regs {
 		log.Info(fmt.Sprintf(
 			"Regression found in Trace %s: Field '%s' expected %s but got %s.%s",
 			traceID, r.Path, r.Expected, r.Actual, ignored,
 		))
 	}
+	return res
 }
 
 func formatIgnoredNoise(noise map[string]struct{}) string {

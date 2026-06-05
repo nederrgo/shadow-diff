@@ -21,10 +21,15 @@ spec:
       labels:
         app.kubernetes.io/name: beru
     spec:
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: beru
           image: beru:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
           ports:
             - name: grpc
               containerPort: 50051
@@ -37,6 +42,16 @@ spec:
               value: ":50051"
             - name: BERU_HTTP_ADDR
               value: ":8080"
+            - name: BERU_DB_PATH
+              value: /var/lib/beru/shadow_diff.db
+            - name: BERU_DB_RETENTION_DAYS
+              value: "7"
+          volumeMounts:
+            - name: beru-data
+              mountPath: /var/lib/beru
+      volumes:
+        - name: beru-data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

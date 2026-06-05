@@ -15,6 +15,7 @@ import (
 	"github.com/shadow-diff/beru/internal/diff"
 	"github.com/shadow-diff/beru/internal/ingest"
 	"github.com/shadow-diff/beru/internal/roles"
+	"github.com/shadow-diff/beru/internal/storage"
 )
 
 type queryEntry struct {
@@ -37,6 +38,7 @@ type Store struct {
 	order        []string
 	unattributed map[string][]queryEntry
 	mu           sync.Mutex
+	Storage      *storage.DB
 }
 
 func NewStore(log *slog.Logger, cfg ingest.Config) *Store {
@@ -188,7 +190,23 @@ func (s *Store) runDiff(traceID string, queries map[string][]queryEntry) {
 		s.log.Info("Could not diff mongo egress for candidate", "traceID", traceID, "err", err)
 		return
 	}
-	diff.AnalyzeMongoEgress(s.log, traceID, bodyA, bodyB, bodyC)
+
+	var userNoise map[string]struct{}
+	shadowName := ""
+	if s.Storage != nil {
+		shadowName = s.Storage.DefaultShadowTestName()
+		var nerr error
+		userNoise, nerr = s.Storage.NoisePathsForTest(context.Background(), shadowName)
+		if nerr != nil {
+			s.log.Error("Could not load noise filters", "traceID", traceID, "err", nerr)
+		}
+	}
+	res := diff.AnalyzeMongoEgress(s.log, traceID, bodyA, bodyB, bodyC, userNoise)
+	if s.Storage != nil && res.Err == nil {
+		if err := s.Storage.SaveDiffResult(context.Background(), shadowName, res); err != nil {
+			s.log.Error("Could not persist diff result", "traceID", traceID, "err", err)
+		}
+	}
 }
 
 func concatQueryPayloads(entries []queryEntry) ([]byte, error) {
