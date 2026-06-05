@@ -4,11 +4,15 @@
 *.dll
 *.so
 *.dylib
-bin/*
-monarch/bin/*
-beru/bin/*
-igris/bin/*
-siphon/bin/*
+bin/
+**/bin/
+pipeline/**/bin/
+testing/**/bin/
+# Pre-reorg paths (keep for safety)
+monarch/bin/
+beru/bin/
+igris/bin/
+siphon/bin/
 Dockerfile.cross
 
 # Test binary, built with `go test -c`
