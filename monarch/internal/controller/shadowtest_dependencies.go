@@ -35,6 +35,7 @@ func dependencyPodLabels(st *enginev1alpha1.ShadowTest, dep enginev1alpha1.Depen
 
 func validateDependencies(st *enginev1alpha1.ShadowTest) error {
 	seen := map[string]struct{}{}
+	var mongoCount int
 	for i, dep := range st.Spec.Dependencies {
 		if dep.Name == "" {
 			return fmt.Errorf("dependencies[%d]: name is required", i)
@@ -56,6 +57,11 @@ func validateDependencies(st *enginev1alpha1.ShadowTest) error {
 			return fmt.Errorf("duplicate dependency name %q after sanitization", dep.Name)
 		}
 		seen[sanitized] = struct{}{}
+		if dep.Port == mongoProxyPort {
+			if mongoCount++; mongoCount > 1 {
+				return fmt.Errorf("only one dependency on port %d (MongoDB) is supported", mongoProxyPort)
+			}
+		}
 
 		for _, role := range []string{roleControlA, roleControlB, roleCandidate} {
 			resName := dependencyResourceName(dep.Name, role)
@@ -246,10 +252,17 @@ func (r *ShadowTestReconciler) shadowDependenciesReady(
 }
 
 func dependencyEnvValue(shadowNS string, dep enginev1alpha1.DependencySpec, role string) string {
+	if usesMongoProxyInjection(dep) {
+		return shadowMongoProxyURL
+	}
 	if usesAMQPURLInjection(dep.EnvVarInjection) {
 		return shadowAMQPURL(shadowNS, dep.Name, role, dep.Port)
 	}
 	return dependencyEndpoint(shadowNS, dep.Name, role, dep.Port)
+}
+
+func usesMongoProxyInjection(dep enginev1alpha1.DependencySpec) bool {
+	return dep.Port == mongoProxyPort
 }
 
 func usesAMQPURLInjection(envName string) bool {

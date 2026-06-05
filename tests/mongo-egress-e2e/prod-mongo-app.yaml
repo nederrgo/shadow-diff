@@ -1,0 +1,49 @@
+# Production target for Mongo egress E2E (MONGO_URL injected on shadow pods only).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo-test-prod
+  namespace: default
+  labels:
+    app: mongo-test-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo-test-prod
+  template:
+    metadata:
+      labels:
+        app: mongo-test-prod
+    spec:
+      containers:
+        - name: app
+          image: mongo-test-app:dev
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-test-prod
+  namespace: default
+spec:
+  selector:
+    app: mongo-test-prod
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

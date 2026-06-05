@@ -20,7 +20,7 @@ func TestRenderEnvoyYAML(t *testing.T) {
 			BeruGRPCTimeout: "2s",
 		},
 	}
-	yaml, err := renderEnvoyYAML(st, roleControlA)
+	yaml, err := renderEnvoyYAML(st, "shadow-default-test", roleControlA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 			},
 		},
 	}
-	yaml, err := renderEnvoyYAML(st, roleControlA)
+	yaml, err := renderEnvoyYAML(st, "shadow-default-test", roleControlA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,5 +146,48 @@ func TestAppEnvWithEgressProxy(t *testing.T) {
 	empty := appEnvWithEgressProxy(&enginev1alpha1.ShadowTest{}, []corev1.EnvVar{{Name: "FOO", Value: "bar"}})
 	if len(empty) != 1 {
 		t.Fatalf("expected no proxy env without downstreams, got %d", len(empty))
+	}
+}
+
+func TestRenderEnvoyYAML_mongoEgress(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			ServicePort:     8888,
+			ApplicationPort: 8080,
+			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
+			BeruGRPCTimeout: "2s",
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "mongo", Image: "mongo:7", Port: 27017, EnvVarInjection: "MONGO_URL",
+			}},
+		},
+	}
+	yaml, err := renderEnvoyYAML(st, "shadow-default-test", roleControlA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := []string{
+		"name: mongo_egress",
+		"envoy.filters.network.mongo_proxy",
+		"emit_dynamic_metadata: true",
+		"port_value: 27017",
+		"envoy.access_loggers.tcp_grpc",
+		"envoy.extensions.access_loggers.grpc.v3.TcpGrpcAccessLogConfig",
+		"transport_api_version: V3",
+		"cluster_name: beru_als",
+		"name: beru_als",
+		"mongo_upstream",
+		"log_name: mongo_egress_control-a",
+		"tag: x-shadow-role",
+		"literal:",
+		"mongo-control-a.shadow-default-test.svc.cluster.local",
+	}
+	for _, c := range checks {
+		if !strings.Contains(yaml, c) {
+			t.Fatalf("expected %q in envoy yaml:\n%s", c, yaml)
+		}
+	}
+	if strings.Contains(yaml, "transport_socket") {
+		t.Fatal("mongo upstream must be cleartext TCP without transport_socket TLS")
 	}
 }

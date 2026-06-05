@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -17,7 +18,25 @@ func envoyConfigMapName(st *enginev1alpha1.ShadowTest, role string) string {
 	return sanitizeForDNS(fmt.Sprintf("%s-%s-envoy", st.Name, role))
 }
 
-func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, role string) (string, error) {
+func hasMongoDependency(st *enginev1alpha1.ShadowTest) bool {
+	for _, dep := range st.Spec.Dependencies {
+		if dep.Port == mongoProxyPort {
+			return true
+		}
+	}
+	return false
+}
+
+func mongoDependency(st *enginev1alpha1.ShadowTest) (enginev1alpha1.DependencySpec, bool) {
+	for _, dep := range st.Spec.Dependencies {
+		if dep.Port == mongoProxyPort {
+			return dep, true
+		}
+	}
+	return enginev1alpha1.DependencySpec{}, false
+}
+
+func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (string, error) {
 	beruAddr := beruGRPCAddressFor(st)
 	beruHost, beruPort, err := parseBeruHostPort(beruAddr)
 	if err != nil {
@@ -32,16 +51,105 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, role string) (string, error)
 		return "", err
 	}
 
+	extraListeners := egressListener
+	extraClusters := ""
+	if hasMongoDependency(st) {
+		dep, ok := mongoDependency(st)
+		if !ok {
+			return "", fmt.Errorf("mongo dependency expected but not found")
+		}
+		extraListeners += buildMongoEgressListenerYAML(role, beruTimeout)
+		extraClusters = buildMongoEgressClustersYAML(shadowNS, dep, role, beruHost, beruPort)
+	}
+
 	return fmt.Sprintf(envoyYAMLTemplate,
 		ingressPort,
 		role,
 		beruTimeout,
 		role,
-		egressListener,
+		extraListeners,
 		appPort,
 		beruHost,
 		beruPort,
+		extraClusters,
 	), nil
+}
+
+func buildMongoEgressListenerYAML(role, beruTimeout string) string {
+	var b strings.Builder
+	b.WriteString("  - name: mongo_egress\n")
+	b.WriteString("    address:\n")
+	b.WriteString("      socket_address:\n")
+	b.WriteString("        address: 127.0.0.1\n")
+	fmt.Fprintf(&b, "        port_value: %d\n", mongoProxyPort)
+	b.WriteString("    filter_chains:\n")
+	b.WriteString("    - filters:\n")
+	b.WriteString("      - name: envoy.filters.network.mongo_proxy\n")
+	b.WriteString("        typed_config:\n")
+	b.WriteString("          \"@type\": type.googleapis.com/envoy.extensions.filters.network.mongo_proxy.v3.MongoProxy\n")
+	b.WriteString("          stat_prefix: mongo_egress\n")
+	b.WriteString("          emit_dynamic_metadata: true\n")
+	b.WriteString("      - name: envoy.filters.network.tcp_proxy\n")
+	b.WriteString("        typed_config:\n")
+	b.WriteString("          \"@type\": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy\n")
+	b.WriteString("          stat_prefix: mongo_egress\n")
+	fmt.Fprintf(&b, "          cluster: %s\n", mongoUpstreamCluster)
+	b.WriteString("          access_log:\n")
+	b.WriteString("          - name: envoy.access_loggers.tcp_grpc\n")
+	b.WriteString("            typed_config:\n")
+	b.WriteString("              \"@type\": type.googleapis.com/envoy.extensions.access_loggers.grpc.v3.TcpGrpcAccessLogConfig\n")
+	b.WriteString("              common_config:\n")
+	b.WriteString("                log_name: mongo_egress_")
+	fmt.Fprintf(&b, "%s\n", role)
+	b.WriteString("                transport_api_version: V3\n")
+	b.WriteString("                grpc_service:\n")
+	b.WriteString("                  envoy_grpc:\n")
+	fmt.Fprintf(&b, "                    cluster_name: %s\n", clusterBeruALS)
+	fmt.Fprintf(&b, "                  timeout: %s\n", beruTimeout)
+	b.WriteString("                custom_tags:\n")
+	b.WriteString("                - tag: x-shadow-role\n")
+	b.WriteString("                  literal:\n")
+	b.WriteString("                    value: ")
+	fmt.Fprintf(&b, "%q\n", role)
+	return b.String()
+}
+
+func buildMongoEgressClustersYAML(shadowNS string, dep enginev1alpha1.DependencySpec, role, beruHost string, beruPort int32) string {
+	upstreamHost := dependencyEndpoint(shadowNS, dep.Name, role, dep.Port)
+	var host string
+	var port int32 = dep.Port
+	if h, p, err := parseHostPort(upstreamHost); err == nil {
+		host, port = h, p
+	} else {
+		host = upstreamHost
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "  - name: %s\n", mongoUpstreamCluster)
+	b.WriteString("    type: STRICT_DNS\n")
+	b.WriteString("    connect_timeout: 5s\n")
+	fmt.Fprintf(&b, "    load_assignment:\n      cluster_name: %s\n", mongoUpstreamCluster)
+	b.WriteString("      endpoints:\n      - lb_endpoints:\n        - endpoint:\n            address:\n              socket_address:\n")
+	fmt.Fprintf(&b, "                address: %s\n                port_value: %d\n", host, port)
+	fmt.Fprintf(&b, "  - name: %s\n", clusterBeruALS)
+	b.WriteString("    type: STRICT_DNS\n")
+	b.WriteString("    connect_timeout: 5s\n")
+	b.WriteString("    http2_protocol_options: {}\n")
+	fmt.Fprintf(&b, "    load_assignment:\n      cluster_name: %s\n", clusterBeruALS)
+	b.WriteString("      endpoints:\n      - lb_endpoints:\n        - endpoint:\n            address:\n              socket_address:\n")
+	fmt.Fprintf(&b, "                address: %s\n                port_value: %d\n", beruHost, beruPort)
+	return b.String()
+}
+
+func parseHostPort(endpoint string) (host string, port int32, err error) {
+	h, p, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return "", 0, err
+	}
+	var portNum int
+	if _, err := fmt.Sscanf(p, "%d", &portNum); err != nil {
+		return "", 0, err
+	}
+	return h, int32(portNum), nil
 }
 
 // egressVirtualHostDomains returns Envoy virtual_host domains for downstream hosts.
@@ -303,6 +411,7 @@ static_resources:
               socket_address:
                 address: %s
                 port_value: %d
+%s
 `
 
 func (r *ShadowTestReconciler) reconcileEnvoyConfigMap(
@@ -313,7 +422,7 @@ func (r *ShadowTestReconciler) reconcileEnvoyConfigMap(
 	cmName := envoyConfigMapName(st, role)
 	podLabels := deploymentPodLabels(st, role)
 
-	yaml, err := renderEnvoyYAML(st, role)
+	yaml, err := renderEnvoyYAML(st, shadowNS, role)
 	if err != nil {
 		return err
 	}

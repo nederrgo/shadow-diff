@@ -88,6 +88,11 @@ func envoyContainerPorts(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort {
 			Name: "egress", ContainerPort: egressProxyPort, Protocol: corev1.ProtocolTCP,
 		})
 	}
+	if hasMongoDependency(st) {
+		ports = append(ports, corev1.ContainerPort{
+			Name: "mongo-egress", ContainerPort: mongoProxyPort, Protocol: corev1.ProtocolTCP,
+		})
+	}
 	return ports
 }
 

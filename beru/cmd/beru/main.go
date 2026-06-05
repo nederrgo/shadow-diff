@@ -8,10 +8,12 @@ import (
 	"os/signal"
 	"syscall"
 
+	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"google.golang.org/grpc"
 
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
+	"github.com/shadow-diff/beru/internal/als"
 	"github.com/shadow-diff/beru/internal/api"
 	"github.com/shadow-diff/beru/internal/envoyextproc"
 	"github.com/shadow-diff/beru/internal/ingest"
@@ -32,7 +34,10 @@ func main() {
 	}
 
 	log := slog.Default()
-	store := ingest.NewStore(log, ingest.ConfigFromEnv())
+	cfg := ingest.ConfigFromEnv()
+	alsStore := als.NewStore(log, cfg)
+	store := ingest.NewStore(log, cfg)
+	store.OnIngressComplete = alsStore.NotifyIngressComplete
 	mocks := replay.NewMockStore()
 
 	httpAddr := os.Getenv("BERU_HTTP_ADDR")
@@ -55,6 +60,7 @@ func main() {
 		Mocks: mocks,
 		Role:  envoyextproc.RoleFromEnv(),
 	})
+	accesslogv3.RegisterAccessLogServiceServer(srv, &als.Server{Log: log, Store: alsStore})
 
 	go func() {
 		slog.Info("Beru gRPC server listening", "addr", addr)

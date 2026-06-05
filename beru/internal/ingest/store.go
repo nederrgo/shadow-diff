@@ -50,12 +50,13 @@ type pendingTrace struct {
 
 // Store correlates INGRESS reports by trace ID.
 type Store struct {
-	cfg      Config
-	log      *slog.Logger
-	codec    *payload.Registry
-	pending  map[string]*pendingTrace
-	order    []string
-	mu       sync.Mutex
+	cfg               Config
+	log               *slog.Logger
+	codec             *payload.Registry
+	pending           map[string]*pendingTrace
+	order             []string
+	mu                sync.Mutex
+	OnIngressComplete func(traceID string)
 }
 
 func NewStore(log *slog.Logger, cfg Config) *Store {
@@ -149,6 +150,9 @@ func (s *Store) runDiff(reports map[string]*beruv1.TrafficReport) {
 		return
 	}
 	diff.Analyze(s.log, traceID, bodyA, bodyB, bodyC, nil)
+	if cb := s.OnIngressComplete; cb != nil {
+		cb(traceID)
+	}
 }
 
 func (s *Store) normalizeBody(r *beruv1.TrafficReport) ([]byte, error) {

@@ -45,6 +45,21 @@ var _ = Describe("shadow dependencies", func() {
 		Expect(env[0].Value).To(Equal("redis-control-a.shadow-default-mytest.svc.cluster.local:6379"))
 	})
 
+	It("injects cleartext MONGO_URL for port 27017", func() {
+		mongo := &enginev1alpha1.ShadowTest{
+			Spec: enginev1alpha1.ShadowTestSpec{
+				Dependencies: []enginev1alpha1.DependencySpec{{
+					Name: "mongo", Image: "mongo:7", Port: 27017, EnvVarInjection: "MONGO_URL",
+				}},
+			},
+		}
+		env := dependencyEnvVarsForRole(mongo, shadowNS, roleControlA)
+		Expect(env[0].Name).To(Equal("MONGO_URL"))
+		Expect(env[0].Value).To(Equal(shadowMongoProxyURL))
+		Expect(env[0].Value).NotTo(ContainSubstring("tls"))
+		Expect(env[0].Value).NotTo(ContainSubstring("mongodb+srv"))
+	})
+
 	It("injects full amqp URL for AMQP_URL env", func() {
 		rmq := &enginev1alpha1.ShadowTest{
 			Spec: enginev1alpha1.ShadowTestSpec{
