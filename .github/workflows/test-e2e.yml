@@ -21,7 +21,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version-file: monarch/go.mod
+          go-version-file: pipeline/monarch/go.mod
 
       - name: Install the latest version of kind
         run: |
@@ -33,7 +33,7 @@ jobs:
         run: kind version
 
       - name: Running Test e2e
-        working-directory: monarch
+        working-directory: pipeline/monarch
         run: |
           go mod tidy
           make test-e2e

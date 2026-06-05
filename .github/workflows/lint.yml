@@ -21,11 +21,11 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version-file: monarch/go.mod
+          go-version-file: pipeline/monarch/go.mod
 
       - name: Check linter configuration
-        working-directory: monarch
+        working-directory: pipeline/monarch
         run: make lint-config
       - name: Run linter
-        working-directory: monarch
+        working-directory: pipeline/monarch
         run: make lint

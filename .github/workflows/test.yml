@@ -21,13 +21,13 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version-file: monarch/go.mod
+          go-version-file: pipeline/monarch/go.mod
 
       - name: Running Tests
         run: |
-          cd monarch && go mod tidy && make test
+          cd pipeline/monarch && go mod tidy && make test
           cd ../beru && go mod tidy && make test
-          cd ../igris && go mod tidy && make test
-          cd ../siphon && go mod tidy && make test
+          cd ../igrises/igris-http && go mod tidy && make test
+          cd ../../siphon && go mod tidy && make test
           cd ../recorder && go mod tidy && make test
-          cd ../igris-rabbitmq && go mod tidy && make test
+          cd ../igrises/igris-rabbitmq && go mod tidy && make test

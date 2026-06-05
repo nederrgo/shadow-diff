@@ -1,0 +1,14 @@
+go 1.25.7
+
+use (
+	./pipeline/beru
+	./pipeline/monarch
+	./pipeline/recorder
+	./pipeline/siphon
+	./pipeline/igrises/igris-http
+	./pipeline/igrises/igris-rabbitmq
+	./pipeline/egress-relay-rabbitmq
+	./testing/example-apps/db-test-app
+	./testing/example-apps/mongo-test-app
+	./testing/example-apps/rmq-test-worker
+)

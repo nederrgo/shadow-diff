@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Full E2E: prod -> Siphon -> Igris -> shadow Envoy -> Beru
+set -euo pipefail
+
+REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
+# shellcheck source=testing/scripts/lib/siphon-config.sh
+source "$REPO/testing/scripts/lib/siphon-config.sh"
+SHADOWTEST="${SHADOWTEST:-my-app-shadow}"
+SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
+TRACE_ID="${TRACE_ID:-e2e-$(date +%s)}"
+PROD_PORT="${PROD_PORT:-80}"
+IGRIS_LISTEN_PORT="${IGRIS_LISTEN_PORT:-80}"   # must match prod port for Siphon forward
+# Kind: use "any" so Siphon picks cni0/br-*/eth0/veth* as available on the node.
+SIPHON_IFACE="${SIPHON_IFACE:-any}"
+
+echo "==> Prerequisites"
+kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o custom-columns=PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTURE:.status.captureTargets
+
+SHADOW_NS=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.shadowNamespace}')
+
+echo "==> Verify OTel auto-instrumentation on shadow app pods (before traffic)"
+kubectl wait -n "$SHADOW_NS" --for=condition=Ready pod -l shadow-diff.io/role=control-a --timeout=180s
+# Set OTEL_INJECTION_OPTIONAL=1 if the cluster has no OTel Operator / Instrumentation CR.
+"$REPO/testing/scripts/assert-otel-injected.sh" "$SHADOW_NS" control-a
+
+# Optional one-time setup: set Siphon interface without rolling during the test.
+if [[ "${SIPHON_SETUP:-}" == "1" ]]; then
+  echo "==> One-time Siphon setup (SIPHON_SETUP=1)"
+  kubectl set env daemonset/siphon-agent -n siphon-system \
+    SIPHON_INTERFACE="${SIPHON_IFACE}" --containers=agent
+  kubectl rollout status daemonset/siphon-agent -n siphon-system --timeout=120s
+fi
+
+echo "==> Wait for Siphon agent (hostNetwork — use hostIP for API)"
+kubectl wait -n siphon-system --for=condition=Ready pod \
+  -l app.kubernetes.io/name=siphon-agent --timeout=120s
+
+# hostIP is the node address where hostNetwork :8080 is reachable from cluster pods.
+SIPHON_IP=$(kubectl get pods -n siphon-system -l app.kubernetes.io/name=siphon-agent \
+  -o jsonpath='{.items[0].status.hostIP}')
+if [[ -z "${SIPHON_IP}" ]]; then
+  echo "ERROR: could not resolve Siphon hostIP" >&2
+  exit 1
+fi
+echo "Siphon API: http://${SIPHON_IP}:8080 (hostIP)"
+
+# Fresh prod IP every run (pod restarts change IP; must match BPF target_ips).
+kubectl wait -n default --for=condition=Ready pod -l app=my-prod-app --timeout=120s
+PROD_IP=$(kubectl get pods -n default -l app=my-prod-app -o jsonpath='{.items[0].status.podIP}')
+if [[ -z "${PROD_IP}" ]]; then
+  echo "ERROR: prod pod has no IP (is my-prod-app Running?)" >&2
+  exit 1
+fi
+echo "Prod target: ${PROD_IP}:${PROD_PORT}"
+
+echo "==> Wait for Monarch Siphon config (targets from ShadowTest reconcile)"
+wait_siphon_configured 0
+
+SIPHON_IP=$(siphon_api_host)
+status_json=$(siphon_status_json "$SIPHON_IP")
+if echo "$status_json" | grep -q '"targets_count":0'; then
+  echo "ERROR: Siphon still has targets_count=0 after Monarch reconcile" >&2
+  exit 1
+fi
+
+echo "==> Siphon /v1/status (before traffic — want targets_count>=1, interfaces non-null)"
+kubectl run curl-siphon-status --rm -i --restart=Never --image=curlimages/curl:latest -- \
+  curl -sf "http://${SIPHON_IP}:8080/v1/status" || true
+
+echo "==> Hit production IN-CLUSTER (pod IP ${PROD_IP}:${PROD_PORT}, trace ${TRACE_ID})"
+echo "    Do NOT use kubectl port-forward to prod."
+kubectl run "e2e-prod-${TRACE_ID}" --rm -i --restart=Never -n default --image=curlimages/curl:latest -- \
+  curl -sf -o /dev/null -w "prod_http=%{http_code}\n" \
+  -H "x-shadow-trace-id: ${TRACE_ID}" \
+  "http://${PROD_IP}:${PROD_PORT}/"
+
+echo "==> Wait for Siphon -> Igris -> Beru"
+sleep 8
+
+# Siphon may have restarted; re-check config from Monarch if needed.
+kubectl wait -n siphon-system --for=condition=Ready pod \
+  -l app.kubernetes.io/name=siphon-agent --timeout=120s
+SIPHON_IP=$(siphon_api_host)
+after_cfg=$(siphon_status_json "$SIPHON_IP")
+if echo "$after_cfg" | grep -q '"targets_count":0'; then
+  echo "==> Siphon lost config (pod restart?) — nudge Monarch reconcile"
+  nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
+  sleep 5
+  wait_siphon_configured 0
+  kubectl run "e2e-prod-retry-${TRACE_ID}" --rm -i --restart=Never -n default --image=curlimages/curl:latest -- \
+    curl -sf -o /dev/null -w "prod_http_retry=%{http_code}\n" \
+    -H "x-shadow-trace-id: ${TRACE_ID}-retry" \
+    "http://${PROD_IP}:${PROD_PORT}/"
+  sleep 8
+fi
+
+echo "==> Siphon /v1/status (after traffic — want frames_read, packets, requests_forwarded > 0)"
+kubectl run curl-siphon-status2 --rm -i --restart=Never --image=curlimages/curl:latest -- \
+  curl -sf "http://${SIPHON_IP}:8080/v1/status" || true
+
+echo "==> Siphon logs"
+kubectl logs -n siphon-system daemonset/siphon-agent --tail=50 | grep -E 'BPF filter|Received configuration|Capture started|Reassembled|Error opening' \
+  || kubectl logs -n siphon-system daemonset/siphon-agent --tail=20
+
+echo "==> Igris logs (trace ${TRACE_ID})"
+kubectl logs -n "$SHADOW_NS" deploy/my-app-shadow-igris --tail=40 | grep -E "${TRACE_ID}|multicast complete" || true
+
+echo "==> Beru logs (trace ${TRACE_ID})"
+kubectl logs -n beru-system deploy/beru --tail=40 | grep -E "${TRACE_ID}|Regression|No regression|Timed out" || true
+
+echo ""
+echo "Success checklist for trace ${TRACE_ID}:"
+echo "  1. Siphon status: targets_count>=1; packets > 0; requests_forwarded > 0"
+echo "  2. Siphon log:    BPF filter applied; Capture started; Reassembled HTTP request"
+echo "  3. Igris log:     multicast complete trace_id=${TRACE_ID}"
+echo "  4. Beru log:      No regression OR Regression found for Trace ${TRACE_ID}"

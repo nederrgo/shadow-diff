@@ -1,11 +1,11 @@
-# Shadow-Diff monorepo: delegate Monarch (operator) targets to monarch/, Beru to beru/.
-MONARCH_DIR := monarch
-BERU_DIR := beru
-IGRIS_DIR := igris
-SIPHON_DIR := siphon
-RECORDER_DIR := recorder
-IGRIS_RABBITMQ_DIR := igris-rabbitmq
-EGRESS_RELAY_RABBITMQ_DIR := egress-relay-rabbitmq
+# Shadow-Diff monorepo: delegate Monarch (operator) targets to pipeline/monarch/, Beru to pipeline/beru/.
+MONARCH_DIR := pipeline/monarch
+BERU_DIR := pipeline/beru
+IGRIS_DIR := pipeline/igrises/igris-http
+SIPHON_DIR := pipeline/siphon
+RECORDER_DIR := pipeline/recorder
+IGRIS_RABBITMQ_DIR := pipeline/igrises/igris-rabbitmq
+EGRESS_RELAY_RABBITMQ_DIR := pipeline/egress-relay-rabbitmq
 RECORDER_IMG ?= recorder:latest
 IGRIS_RABBITMQ_IMG ?= igris-rabbitmq:latest
 EGRESS_RELAY_RABBITMQ_IMG ?= egress-relay-rabbitmq:latest
