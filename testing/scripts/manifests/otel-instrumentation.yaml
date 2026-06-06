@@ -1,0 +1,26 @@
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: shadow-otel-instrumentation
+spec:
+  exporter:
+    endpoint: http://127.0.0.1:4317
+  propagators:
+    - tracecontext
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"
+  nodejs:
+    env:
+      - name: OTEL_TRACES_EXPORTER
+        value: none
+      - name: OTEL_METRICS_EXPORTER
+        value: none
+      - name: OTEL_LOGS_EXPORTER
+        value: none
+      - name: OTEL_NODE_ENABLED_INSTRUMENTATIONS
+        value: amqplib,http
+  java:
+    env:
+      - name: OTEL_TRACES_EXPORTER
+        value: none

@@ -3,13 +3,18 @@
 # Pod Phase Running is not sufficient — the mutating webhook can fail-open.
 set -euo pipefail
 
-SHADOW_NS="${1:?usage: assert-otel-injected.sh <shadow-namespace> [role-label]}"
+SHADOW_NS="${1:?usage: assert-otel-injected.sh <shadow-namespace> [role-label] [shadowtest-name]}"
 ROLE="${2:-}"
+SHADOWTEST="${3:-}"
 
-label_args=()
+label_selector="shadow-diff.io/resource-kind!=dependency"
 if [[ -n "$ROLE" ]]; then
-  label_args=(-l "shadow-diff.io/role=${ROLE}")
+  label_selector="shadow-diff.io/role=${ROLE},${label_selector}"
 fi
+if [[ -n "$SHADOWTEST" ]]; then
+  label_selector="shadow-diff.io/shadowtest-name=${SHADOWTEST},${label_selector}"
+fi
+label_args=(-l "$label_selector")
 
 pods=$(kubectl get pods -n "$SHADOW_NS" "${label_args[@]}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
 if [[ -z "$pods" ]]; then

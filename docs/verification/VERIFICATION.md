@@ -748,6 +748,20 @@ Beru ingress ext_proc order: `x-shadow-trace-id` → `traceparent` → `x-reques
 
 Apps that spawn **untracked** goroutines or thread pools without `context.Context` may emit outbound HTTP **without** `traceparent`. Use Beru **sequence-based diffing** when trace correlation is incomplete.
 
+### OTel RabbitMQ egress E2E (zero-touch trace propagation)
+
+Proves W3C `traceparent` propagates across AMQP consume/publish when shadow workers use OpenTelemetry auto-instrumentation (no app-level header copying).
+
+```bash
+./testing/scripts/e2e-reset-kind.sh --run-otel-rabbitmq-test
+# or after reset:
+./testing/scripts/e2e-otel-rabbitmq-test.sh
+```
+
+See [`testing/scripts/manifests/rabbitmq-otel-e2e/README.md`](../../testing/scripts/manifests/rabbitmq-otel-e2e/README.md). Expect Beru log: `No egress regression for Trace <hex> (rabbitmq)`.
+
+Use `--skip-otel-bootstrap` on `e2e-reset-kind.sh` when cert-manager and the OpenTelemetry Operator are already installed.
+
 ### Unit tests
 
 ```bash
@@ -785,4 +799,5 @@ cd monarch && go test ./internal/controller/ -run 'TestOtel|TestRenderEnvoy'
 - [ ] Prod egress auto-recorded by Siphon and shadow replay returns 200 without `seed_mock` (Phase 4a.2 — `./testing/scripts/e2e-record-replay.sh`)
 - [ ] `make -C siphon test` passes (BPF egress, FlushOlderThan, keep-alive parser)
 - [ ] RabbitMQ E2E: `./testing/scripts/e2e-rabbitmq-test.sh` (Phase 5b — prod queue + igris-rabbitmq multicast)
+- [ ] OTel RabbitMQ E2E: `./testing/scripts/e2e-otel-rabbitmq-test.sh` (Phase 5_OTel — W3C traceparent via OTel amqplib injection)
 - [ ] `make -C igris-rabbitmq test` passes

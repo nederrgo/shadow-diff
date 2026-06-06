@@ -14,6 +14,9 @@
 #   ./testing/scripts/e2e-reset-kind.sh --run-egress-test  # above, then ./testing/scripts/e2e-egress-test.sh
 #   ./testing/scripts/e2e-reset-kind.sh --run-record-replay  # above, then ./testing/scripts/e2e-record-replay.sh
 #   ./testing/scripts/e2e-reset-kind.sh --run-dependency-test  # above, then ./testing/scripts/e2e-dependency-test.sh
+#   ./testing/scripts/e2e-reset-kind.sh --run-rabbitmq-test   # above, then ./testing/scripts/e2e-rabbitmq-test.sh
+#   ./testing/scripts/e2e-reset-kind.sh --run-otel-rabbitmq-test  # above, then ./testing/scripts/e2e-otel-rabbitmq-test.sh
+#   ./testing/scripts/e2e-reset-kind.sh --skip-otel-bootstrap  # skip cert-manager + OTel Operator install
 #   ./testing/scripts/e2e-reset-kind.sh --skip-build       # assume images already built/loaded
 #   ./testing/scripts/e2e-reset-kind.sh --no-reset         # deploy/upgrade only (no deletes)
 #
@@ -28,6 +31,8 @@ cd "$REPO"
 source "$REPO/testing/scripts/lib/siphon-config.sh"
 # shellcheck source=testing/scripts/lib/e2e-helpers.sh
 source "$REPO/testing/scripts/lib/e2e-helpers.sh"
+# shellcheck source=testing/scripts/lib/otel-bootstrap.sh
+source "$REPO/testing/scripts/lib/otel-bootstrap.sh"
 ensure_go_path
 
 KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
@@ -48,10 +53,12 @@ RUN_EGRESS_TEST=0
 RUN_RECORD_REPLAY=0
 RUN_DEPENDENCY_TEST=0
 RUN_RABBITMQ_TEST=0
+RUN_OTEL_RABBITMQ_TEST=0
+SKIP_OTEL_BOOTSTRAP=0
 
 usage() {
   sed -n '2,16p' "$0"
-  echo "Flags: --skip-build --skip-load --no-reset --run-test --run-egress-test --run-record-replay --run-dependency-test --run-rabbitmq-test -h"
+  echo "Flags: --skip-build --skip-load --no-reset --skip-otel-bootstrap --run-test --run-egress-test --run-record-replay --run-dependency-test --run-rabbitmq-test --run-otel-rabbitmq-test -h"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -64,6 +71,8 @@ while [[ $# -gt 0 ]]; do
     --run-record-replay) RUN_RECORD_REPLAY=1 ;;
     --run-dependency-test) RUN_DEPENDENCY_TEST=1 ;;
     --run-rabbitmq-test) RUN_RABBITMQ_TEST=1 ;;
+    --run-otel-rabbitmq-test) RUN_OTEL_RABBITMQ_TEST=1 ;;
+    --skip-otel-bootstrap) SKIP_OTEL_BOOTSTRAP=1 ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "Unknown flag: $1" >&2; usage; exit 1 ;;
   esac
@@ -163,6 +172,11 @@ fi
 
 if [[ "$SKIP_LOAD" -eq 0 ]]; then
   ensure_kind_cluster_ready
+  if [[ "$SKIP_OTEL_BOOTSTRAP" -eq 0 ]]; then
+    install_otel_stack
+  else
+    echo "==> Skipping cert-manager + OpenTelemetry Operator (--skip-otel-bootstrap)"
+  fi
   echo "==> Load images into Kind ($KIND_CLUSTER)"
   kind load docker-image "$MONARCH_IMG" --name "$KIND_CLUSTER"
   kind load docker-image "$BERU_IMG" --name "$KIND_CLUSTER"
@@ -276,6 +290,7 @@ echo "Run egress test:   ./testing/scripts/e2e-egress-test.sh"
 echo "Run record-replay: ./testing/scripts/e2e-record-replay.sh"
 echo "Run dependency E2E: ./testing/scripts/e2e-dependency-test.sh"
 echo "Run RabbitMQ E2E:  ./testing/scripts/e2e-rabbitmq-test.sh"
+echo "Run OTel RabbitMQ E2E: ./testing/scripts/e2e-otel-rabbitmq-test.sh"
 echo "Run k6 stress:     testing/example-apps/k6/run-stress-test.sh  (or see testing/example-apps/k6/README.md)"
 
 if [[ "$RUN_TEST" -eq 1 ]]; then
@@ -304,4 +319,10 @@ if [[ "$RUN_RABBITMQ_TEST" -eq 1 ]]; then
   echo ""
   chmod +x testing/scripts/e2e-rabbitmq-test.sh
   ./testing/scripts/e2e-rabbitmq-test.sh
+fi
+
+if [[ "$RUN_OTEL_RABBITMQ_TEST" -eq 1 ]]; then
+  echo ""
+  chmod +x testing/scripts/e2e-otel-rabbitmq-test.sh
+  ./testing/scripts/e2e-otel-rabbitmq-test.sh
 fi

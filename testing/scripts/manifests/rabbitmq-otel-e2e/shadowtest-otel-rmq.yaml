@@ -1,0 +1,42 @@
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: otel-rmq-test-shadow
+  namespace: default
+spec:
+  targetDeployment: rmq-prod-target
+  targetNamespace: default
+
+  oldImage: nodejs-test-worker:dev
+  newImage: nodejs-test-worker:dev
+
+  servicePort: 8888
+  applicationPort: 8080
+
+  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
+
+  inputs:
+    - driver: rabbitmq_message
+      amqp:
+        prodUrl: amqp://guest:guest@rmq-prod-broker.default.svc.cluster.local:5672/
+        exchange: orders
+        routingKey: order.created
+        targetDependency: rabbitmq
+
+  igrisRabbitmq:
+    image: igris-rabbitmq:dev
+
+  egressRelayRabbitmq:
+    image: egress-relay-rabbitmq:dev
+
+  siphon:
+    enabled: false
+
+  otelInjection:
+    language: nodejs
+
+  dependencies:
+    - name: rabbitmq
+      image: rabbitmq:3-management-alpine
+      port: 5672
+      envVarInjection: AMQP_URL

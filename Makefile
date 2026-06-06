@@ -27,6 +27,7 @@ $(MONARCH_TARGETS):
 	siphon-test siphon-build siphon-docker-build \
 	recorder-test recorder-build recorder-docker-build \
 	igris-rabbitmq-test igris-rabbitmq-build igris-rabbitmq-docker-build \
+	nodejs-test-worker-docker-build \
 	egress-relay-rabbitmq-test egress-relay-rabbitmq-build egress-relay-rabbitmq-docker-build
 beru-test: ## Run Beru unit tests.
 	@$(MAKE) -C $(BERU_DIR) test
@@ -69,6 +70,11 @@ igris-rabbitmq-build: ## Build igris-rabbitmq binary.
 
 igris-rabbitmq-docker-build: ## Build igris-rabbitmq container image.
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) docker-build IGRIS_RABBITMQ_IMG=$(IGRIS_RABBITMQ_IMG)
+
+NODEJS_TEST_WORKER_DIR := testing/example-apps/nodejs-test-worker
+
+nodejs-test-worker-docker-build: ## Build nodejs-test-worker container image.
+	@$(MAKE) -C $(NODEJS_TEST_WORKER_DIR) docker-build NODEJS_TEST_WORKER_IMG=$(NODEJS_TEST_WORKER_IMG)
 
 egress-relay-rabbitmq-test: ## Run egress-relay-rabbitmq unit tests.
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test

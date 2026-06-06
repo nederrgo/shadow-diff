@@ -1,135 +1,148 @@
-# monarch
-// TODO(user): Add simple overview of use/purpose
+# Monarch
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+**Monarch** is the **control plane** for Shadow-Diff — it orchestrates **L0 through L5** from a single **`ShadowTest`** custom resource. The Kubebuilder operator reads your production target Deployment, provisions an isolated shadow namespace with three roles (control-a, control-b, candidate), and wires ingress capture, Igris, Siphon, Recorder, AMQP relays, Envoy sidecars, and dependencies.
 
-## Getting Started
+Monarch does **not** run diffing or store traces (**Beru**, L5) and does **not** install the OpenTelemetry Operator (optional for `spec.otelInjection`). You deploy those separately; Monarch only annotates shadow pods and pushes config to cluster-wide agents.
 
-### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) for layer definitions and data flow.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+---
 
-```sh
-make docker-build docker-push IMG=<some-registry>/monarch:tag
+## Role in the pipeline
+
+```
+                    ┌─────────────────────────────┐
+                    │  ShadowTest CR (any ns)      │
+                    └──────────────┬──────────────┘
+                                   │
+                    ┌──────────────▼──────────────┐
+                    │  Monarch reconciler          │
+                    │  monarch-system              │
+                    └──┬───┬───┬───┬───┬───┬───┬──┘
+         L1 Siphon ◄──┘   │   │   │   │   │   └──► L2 igris-rabbitmq
+         L4b Recorder ◄────┘   │   │   │   └──────► L4a egress-relay-rabbitmq
+                               │   │   └──────────► L2 igris-http
+                               │   └──────────────► L3 shadow Deployments + Envoy
+                               └──────────────────► prod AMQP queue bind (L1)
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+| Layer | What Monarch provisions or configures |
+| ----- | ------------------------------------- |
+| **L1 Capture** | Siphon DaemonSet config (`/v1/config`); prod RabbitMQ shadow queue + bind |
+| **L2 Ingress** | Igris Deployment (HTTP/TCP) **or** igris-rabbitmq (AMQP) |
+| **L3 Shadow stack** | Three app Deployments + Envoy sidecars + Services; ephemeral **dependencies** per role |
+| **L4a Analysis ingest** | Envoy ConfigMaps → Beru gRPC; egress-relay-rabbitmq for AMQP tests |
+| **L4b Egress record/replay** | Recorder + downstreams ConfigMap; `HTTP_PROXY` on shadow apps when `spec.downstreams` set |
+| **L5 Beru** | Not deployed — `spec.beruGRPCAddress` only |
 
-**Install the CRDs into the cluster:**
+Shadow namespace name is deterministic: **`shadow-<crNamespace>-<crName>`** (see `shadowtest_helpers.go`).
 
-```sh
-make install
+---
+
+## ShadowTest CR (overview)
+
+One namespaced **`ShadowTest`** (`engine.shadow-diff.io/v1alpha1`) drives the full stack:
+
+| Field | Purpose |
+| ----- | ------- |
+| `targetDeployment` / `targetNamespace` | Prod Deployment to mirror (env copied from first container) |
+| `oldImage` / `newImage` | control-a & control-b vs candidate container images |
+| `servicePort` / `applicationPort` | Igris → Envoy ingress (:8888 typical) → app (:80/:8080) |
+| `beruGRPCAddress` | Beru gRPC for Envoy `ext_proc` |
+| `inputs[]` | Ingress drivers: `http_request`, `tcp_stream`, `rabbitmq_message` |
+| `dependencies[]` | Ephemeral Redis, RabbitMQ, etc. per role + env injection |
+| `downstreams[]` | HTTP egress hosts → Recorder + Envoy egress proxy |
+| `siphon` | Cluster-wide capture agent image, sample rate, enable/disable |
+| `igris` / `igrisRabbitmq` / `recorder` / `egressRelayRabbitmq` | Component image overrides |
+| `otelInjection` | OpenTelemetry Operator annotations on shadow app pods |
+
+**Status:** `phase` (Ready / Progressing / Failed), `shadowNamespace`, `captureTargets`, `amqpQueueName`, `siphonPhase`, `igrisRabbitMQPhase`, `message`.
+
+Field-level reference and examples: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
+---
+
+## Reconcile flow (summary)
+
+1. Validate inputs and dependencies; ensure target Deployment exists.
+2. Create shadow namespace + finalizer.
+3. Reconcile **dependencies** (wait until Ready).
+4. **AMQP path:** declare prod shadow queue → igris-rabbitmq → egress-relay-rabbitmq.
+5. **HTTP/TCP path:** Igris ConfigMap + Deployment + Service.
+6. For each role: Envoy ConfigMap + shadow Deployment (app + sidecar) + Service.
+7. Optional **Recorder** when `spec.downstreams` is non-empty.
+8. Push merged **Siphon** config to node agents; update `captureTargets`.
+9. Patch status **Ready** when all gates pass.
+
+Deletion removes shadow namespace resources, prod AMQP queue (if applicable), and Siphon target entries.
+
+---
+
+## Layout
+
+```
+monarch/
+  api/v1alpha1/              ShadowTest CRD types
+  cmd/main.go                Operator entrypoint
+  config/
+    crd/                     ShadowTest CRD manifest
+    manager/                 Deployment kustomize
+    rbac/                    ClusterRole for reconciler
+    samples/                 Example ShadowTest YAML
+  internal/controller/       Reconciler (Envoy, Igris, Siphon, RabbitMQ, OTel, …)
+  DEPLOYMENT.md              Install guide + CRD field reference
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+---
+
+## Build and deploy
+
+From the repo root:
 
 ```sh
-make deploy IMG=<some-registry>/monarch:tag
+make -C pipeline/monarch install          # CRDs
+make -C pipeline/monarch docker-build IMG=monarch:dev
+make -C pipeline/monarch deploy IMG=monarch:dev
+make -C pipeline/monarch test
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
+Local development:
 
 ```sh
-kubectl apply -k config/samples/
+make -C pipeline/monarch install
+make -C pipeline/monarch run              # controller on ~/.kube/config
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+Verify:
 
 ```sh
-kubectl delete -k config/samples/
+kubectl get pods -n monarch-system
+kubectl get crd shadowtests.engine.shadow-diff.io
+kubectl api-resources | grep shadowtest   # short name: st
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
+**Kind E2E** (full stack):
 
 ```sh
-make uninstall
+./testing/scripts/e2e-reset-kind.sh
 ```
 
-**UnDeploy the controller from the cluster:**
+---
 
-```sh
-make undeploy
-```
+## Prerequisites Monarch expects
 
-## Project Distribution
+| Component | Who installs | Monarch's role |
+| --------- | ------------ | -------------- |
+| **Beru** | You (`pipeline/beru/deploy/`) | Wire `beruGRPCAddress`; Recorder/relay use Beru HTTP |
+| **Siphon RBAC** | Once per cluster (`pipeline/siphon/deploy/rbac.yaml`) | Own DaemonSet image + POST `/v1/config` |
+| **OpenTelemetry Operator** | You (optional) | Set pod annotations; E2E may pre-apply `Instrumentation` CR |
+| **Production target** | You | Read-only mirror source |
 
-Following the options to release and provide this solution to the users.
+---
 
-### By providing a bundle with all YAML files
+## Related reading
 
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/monarch:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/monarch/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
-
-## License
-
-Copyright 2026 Shadow-Diff.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+- [DEPLOYMENT.md](DEPLOYMENT.md) — step-by-step install, ShadowTest examples, troubleshooting
+- [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — layer stack and diagrams
+- [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) — E2E verification
+- Per-service READMEs: [Beru](../beru/README.md), [Igris](../igrises/README.md), [Siphon](../siphon/README.md), [Recorder](../recorder/README.md), [egress-relay-rabbitmq](../egress-relay-rabbitmq/README.md)

@@ -209,6 +209,13 @@ flowchart TB
   Rec --> BeruHTTP
 ```
 
+**Note on Envoy:** `ExtProc` and `EgrEnv :15001` in the diagram are **not separate components** — they are two listeners on the **same Envoy sidecar** in each L3 pod (control-a, control-b, candidate). L4a/L4b label *what that sidecar does*, not additional deployables.
+
+| Listener | Port | Role |
+|----------|------|------|
+| **Ingress** | Shadow Service port (e.g. `:8888`) | Igris sends cloned traffic here → Envoy forwards to the app → **`ext_proc` sends the response to Beru** for ingress diff-of-diffs |
+| **Egress** (optional) | `127.0.0.1:15001` | Shadow app sets `HTTP_PROXY` → outbound HTTP hits this listener → **`ext_proc` asks Beru** for a mock by request hash; Beru returns the recorded response or **599** on miss. Envoy never calls the real downstream. |
+
 ---
 
 ## The three-pod strategy
