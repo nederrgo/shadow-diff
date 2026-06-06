@@ -19,8 +19,8 @@ Parallel load test for the shadow stack: steady JSON traffic, noisy payloads (Be
 2. Rebuild/load **Igris** with the **512KiB** default (`IGRIS_MAX_BODY_SIZE=524288`) and **Beru** with `GET /healthz`. **Building alone does not update running pods:**
 
    ```bash
-   make igris-docker-build IGRIS_IMG=igris:dev
-   kind load docker-image igris:dev --name "$(kind get clusters | head -1)"
+   make igris-docker-build IGRIS_IMG=igris-http:dev
+   kind load docker-image igris-http:dev --name "$(kind get clusters | head -1)"
    # restart my-app-shadow-igris — see Redeploy Igris below
    ```
 
@@ -145,10 +145,10 @@ Pair with `large_payload` (1MB → 413 at Igris) to validate the ingress cap —
 ### Redeploy Igris after changing the 512KiB default
 
 ```bash
-make igris-docker-build IGRIS_IMG=igris:dev
-kind load docker-image igris:dev --name "$(kind get clusters | head -1)"
+make igris-docker-build IGRIS_IMG=igris-http:dev
+kind load docker-image igris-http:dev --name "$(kind get clusters | head -1)"
 export SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
-kubectl set image deployment/my-app-shadow-igris igris=igris:dev -n "$SHADOW_NS"
+kubectl set image deployment/my-app-shadow-igris igris=igris-http:dev -n "$SHADOW_NS"
 kubectl rollout status deployment/my-app-shadow-igris -n "$SHADOW_NS"
 ```
 

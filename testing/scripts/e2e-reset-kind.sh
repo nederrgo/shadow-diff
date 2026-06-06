@@ -19,9 +19,10 @@
 #   ./testing/scripts/e2e-reset-kind.sh --skip-otel-bootstrap  # skip cert-manager + OTel Operator install
 #   ./testing/scripts/e2e-reset-kind.sh --skip-build       # assume images already built/loaded
 #   ./testing/scripts/e2e-reset-kind.sh --no-reset         # deploy/upgrade only (no deletes)
+#   MONARCH_NO_CACHE=1 ./testing/scripts/e2e-reset-kind.sh # force fresh monarch:dev build (avoids stale Docker cache)
 #
 # Monarch owns the Siphon DaemonSet and POSTs /v1/config (targets, downstreams, recorder_host)
-# from ShadowTest spec. Set SIPHON_IMG / IGRIS_IMG / RECORDER_IMG so images match builds (default :dev).
+# from ShadowTest spec. Set MONARCH_MODE=dev on the operator so helper images resolve to :dev tags.
 #
 set -euo pipefail
 
@@ -38,7 +39,7 @@ ensure_go_path
 KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
 MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
 BERU_IMG="${BERU_IMG:-beru:dev}"
-IGRIS_IMG="${IGRIS_IMG:-igris:dev}"
+IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
 SIPHON_IMG="${SIPHON_IMG:-siphon:dev}"
 RECORDER_IMG="${RECORDER_IMG:-recorder:dev}"
 
@@ -136,25 +137,6 @@ ensure_kind_cluster_ready() {
   exit 1
 }
 
-patch_shadowtest_images() {
-  if ! kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" >/dev/null 2>&1; then
-    echo "ERROR: ShadowTest $SHADOWTEST_NS/$SHADOWTEST not found — cannot patch images" >&2
-    return 1
-  fi
-  echo "==> Patch ShadowTest images (Monarch reconciles Siphon DaemonSet from spec.siphon.image)"
-  echo "    siphon=$SIPHON_IMG igris=$IGRIS_IMG recorder=$RECORDER_IMG"
-  kubectl patch shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --type=merge -p "$(cat <<EOF
-{
-  "spec": {
-    "siphon": {"enabled": true, "image": "${SIPHON_IMG}", "sampleRate": 100},
-    "igris": {"image": "${IGRIS_IMG}", "replicas": 1},
-    "recorder": {"image": "${RECORDER_IMG}"}
-  }
-}
-EOF
-)"
-}
-
 echo "==> Monarch E2E reset (cluster=${KIND_CLUSTER:-local})"
 echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG igris=$IGRIS_IMG siphon=$SIPHON_IMG recorder=$RECORDER_IMG"
 if [[ "$SKIP_BUILD" -eq 1 ]]; then
@@ -163,7 +145,11 @@ fi
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   echo "==> Build container images"
-  make -C pipeline/monarch docker-build IMG="$MONARCH_IMG"
+  if [[ "${MONARCH_NO_CACHE:-0}" == "1" ]]; then
+    bash "$REPO/testing/scripts/lib/docker.sh" build --no-cache -t "$MONARCH_IMG" "$REPO/pipeline/monarch"
+  else
+    make -C pipeline/monarch docker-build IMG="$MONARCH_IMG"
+  fi
   make beru-docker-build BERU_IMG="$BERU_IMG"
   make igris-docker-build IGRIS_IMG="$IGRIS_IMG"
   make siphon-docker-build SIPHON_IMG="$SIPHON_IMG"
@@ -197,6 +183,13 @@ fi
 
 echo "==> Monarch operator"
 make -C pipeline/monarch deploy IMG="$MONARCH_IMG"
+kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev
+# Same tag (monarch:dev) does not change the Deployment spec after kind load;
+# restart pods so the node picks up newly loaded image layers.
+if [[ "$SKIP_LOAD" -eq 0 ]]; then
+  echo "==> Restart Monarch manager (pick up re-loaded ${MONARCH_IMG})"
+  kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
+fi
 kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
 
 echo "==> Beru"
@@ -220,7 +213,6 @@ if ! kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" >/dev/null 2>&1; t
   echo "ERROR: ShadowTest $SHADOWTEST_NS/$SHADOWTEST missing after apply" >&2
   exit 1
 fi
-patch_shadowtest_images
 nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
 
 echo "==> Wait for ShadowTest Ready (Monarch deploys Siphon DaemonSet + POSTs /v1/config)"
@@ -255,7 +247,7 @@ if [[ "$siphon_phase" == "Degraded" ]]; then
   echo "WARN: siphonPhase=Degraded — Monarch could not POST /v1/config; check monarch logs and Siphon hostIP reachability"
 fi
 
-echo "==> Wait for Recorder rollout (spec.recorder.image=$RECORDER_IMG; avoids stale RS hang)"
+echo "==> Wait for Recorder rollout (Monarch resolves recorder:dev via MONARCH_MODE=dev)"
 if [[ -n "${SHADOW_NS:-}" ]]; then
   wait_recorder_rollout "$SHADOWTEST" "$SHADOWTEST_NS" "$SHADOW_NS" "$RECORDER_IMG" 120s
 fi

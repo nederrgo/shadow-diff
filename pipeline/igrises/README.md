@@ -111,7 +111,7 @@ From the repo root:
 ```sh
 make igris-build              # → pipeline/igrises/igris-http/bin/igris
 make igris-test
-make igris-docker-build IGRIS_IMG=igris:dev
+make igris-docker-build IGRIS_IMG=igris-http:dev
 
 make igris-rabbitmq-build     # → pipeline/igrises/igris-rabbitmq/bin/igris-rabbitmq
 make igris-rabbitmq-test

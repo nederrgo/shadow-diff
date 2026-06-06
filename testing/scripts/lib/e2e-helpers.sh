@@ -112,11 +112,6 @@ wait_recorder_rollout() {
   if ! kubectl get deploy "$deploy" -n "$shadow_ns" >/dev/null 2>&1; then
     return 0
   fi
-  kubectl patch shadowtest "$shadowtest" -n "$shadowtest_ns" --type=merge -p "$(cat <<EOF
-{"spec":{"recorder":{"image":"${want_image}"}}}
-EOF
-)" >/dev/null 2>&1 || true
-  sleep 2
   scale_down_recorder_replicasets_not_matching "$shadow_ns" "$deploy" "$want_image"
   kubectl rollout status "deployment/${deploy}" -n "$shadow_ns" --timeout="$timeout" 2>/dev/null || true
 }

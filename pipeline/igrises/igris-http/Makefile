@@ -1,4 +1,4 @@
-IGRIS_IMG ?= igris:latest
+IGRIS_IMG ?= igris-http:latest
 CONTAINER_TOOL ?= docker
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../../..)
 

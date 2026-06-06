@@ -126,12 +126,34 @@ var _ = Describe("ShadowTest Controller", func() {
 				Scheme: clientgoscheme.Scheme,
 			}
 
-			for i := 0; i < 6; i++ {
-				_, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
-				Expect(err).NotTo(HaveOccurred())
+			st := &enginev1alpha1.ShadowTest{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, st)).To(Succeed())
+			shadowNS := shadowNamespaceForCR(st)
+
+			markDeploymentAvailable := func(name string) {
+				var deploy appsv1.Deployment
+				if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: shadowNS, Name: name}, &deploy); err != nil {
+					return
+				}
+				if deploy.Status.AvailableReplicas >= 1 {
+					return
+				}
+				deploy.Status.AvailableReplicas = 1
+				deploy.Status.ReadyReplicas = 1
+				deploy.Status.Replicas = 1
+				Expect(k8sClient.Status().Update(ctx, &deploy)).To(Succeed())
 			}
 
-			shadowNS := shadowNamespaceForCR(&enginev1alpha1.ShadowTest{
+			for i := 0; i < 12; i++ {
+				_, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				Expect(err).NotTo(HaveOccurred())
+				markDeploymentAvailable(igrisDeploymentName(st))
+				for _, role := range []string{roleControlA, roleControlB, roleCandidate} {
+					markDeploymentAvailable(shadowDeploymentName(st, role))
+				}
+			}
+
+			shadowNS = shadowNamespaceForCR(&enginev1alpha1.ShadowTest{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
 			})
 
@@ -152,9 +174,7 @@ var _ = Describe("ShadowTest Controller", func() {
 			Expect(roles).To(HaveKey(roleCandidate))
 			Expect(shadowDeps).To(HaveLen(3))
 
-			st := &enginev1alpha1.ShadowTest{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
-			}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, st)).To(Succeed())
 			var igrisDeploy appsv1.Deployment
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Namespace: shadowNS,

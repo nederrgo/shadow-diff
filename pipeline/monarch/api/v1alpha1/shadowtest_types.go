@@ -187,9 +187,11 @@ type ShadowTestSpec struct {
 	NewImage string `json:"newImage"`
 
 	// ServicePort is the TCP port the Envoy ingress listener binds on in shadow pods.
+	// Defaults to 8888 when unset.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
-	ServicePort int32 `json:"servicePort"`
+	// +optional
+	ServicePort int32 `json:"servicePort,omitempty"`
 
 	// ApplicationPort is the TCP port the app container listens on (Envoy forwards here).
 	// Must differ from ServicePort when Envoy fronts ingress. Defaults to servicePort+1 if unset.

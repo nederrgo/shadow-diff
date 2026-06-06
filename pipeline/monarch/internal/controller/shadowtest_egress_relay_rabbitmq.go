@@ -14,20 +14,10 @@ import (
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
-const (
-	containerEgressRelayRabbitMQ    = "egress-relay-rabbitmq"
-	defaultEgressRelayRabbitMQImage = "egress-relay-rabbitmq:latest"
-)
+const containerEgressRelayRabbitMQ = "egress-relay-rabbitmq"
 
 func egressRelayRabbitMQDeploymentName(st *enginev1alpha1.ShadowTest) string {
 	return sanitizeForDNS(fmt.Sprintf("%s-egress-relay-rabbitmq", st.Name))
-}
-
-func egressRelayRabbitMQImageFor(st *enginev1alpha1.ShadowTest) string {
-	if st.Spec.EgressRelayRabbitMQ != nil && st.Spec.EgressRelayRabbitMQ.Image != "" {
-		return st.Spec.EgressRelayRabbitMQ.Image
-	}
-	return defaultEgressRelayRabbitMQImage
 }
 
 func egressRelayRabbitMQReplicasFor(st *enginev1alpha1.ShadowTest) int32 {

@@ -17,7 +17,6 @@ import (
 
 const (
 	containerIgrisRabbitMQ       = "igris-rabbitmq"
-	defaultIgrisRabbitMQImage    = "igris-rabbitmq:latest"
 	envProdURL                   = "PROD_URL"
 	envShadowQueueName           = "SHADOW_QUEUE_NAME"
 	envShadowPublishExchange     = "SHADOW_PUBLISH_EXCHANGE"
@@ -35,13 +34,6 @@ func igrisRabbitMQDeploymentName(st *enginev1alpha1.ShadowTest) string {
 
 func igrisRabbitMQServiceName(st *enginev1alpha1.ShadowTest) string {
 	return igrisRabbitMQDeploymentName(st)
-}
-
-func igrisRabbitMQImageFor(st *enginev1alpha1.ShadowTest) string {
-	if st.Spec.IgrisRabbitMQ != nil && st.Spec.IgrisRabbitMQ.Image != "" {
-		return st.Spec.IgrisRabbitMQ.Image
-	}
-	return defaultIgrisRabbitMQImage
 }
 
 func igrisRabbitMQReplicasFor(st *enginev1alpha1.ShadowTest) int32 {

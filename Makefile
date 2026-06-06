@@ -10,7 +10,7 @@ RECORDER_IMG ?= recorder:latest
 IGRIS_RABBITMQ_IMG ?= igris-rabbitmq:latest
 EGRESS_RELAY_RABBITMQ_IMG ?= egress-relay-rabbitmq:latest
 SIPHON_IMG ?= siphon:latest
-IGRIS_IMG ?= igris:latest
+IGRIS_IMG ?= igris-http:latest
 BERU_IMG ?= beru:latest
 IMG ?= controller:latest
 

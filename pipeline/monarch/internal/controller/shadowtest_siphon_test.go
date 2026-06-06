@@ -3,6 +3,7 @@ package controller
 import (
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
@@ -49,5 +50,69 @@ func TestBuildSiphonTarget(t *testing.T) {
 	}
 	if len(target.Downstreams) != 1 || target.Downstreams[0].Host != "httpbin.org" {
 		t.Fatalf("downstreams %v", target.Downstreams)
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }
+
+func TestSiphonEnabled(t *testing.T) {
+	dep := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Ports: []corev1.ContainerPort{{ContainerPort: 80}},
+					}},
+				},
+			},
+		},
+	}
+
+	st := &enginev1alpha1.ShadowTest{}
+	if siphonEnabled(st, dep) {
+		t.Fatal("expected disabled with no inputs, downstreams, or explicit enable")
+	}
+
+	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)}
+	if siphonEnabled(st, dep) {
+		t.Fatal("explicit false should disable")
+	}
+
+	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{Enabled: boolPtr(true)}
+	if !siphonEnabled(st, dep) {
+		t.Fatal("explicit true should enable")
+	}
+
+	st = &enginev1alpha1.ShadowTest{
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Downstreams: []enginev1alpha1.DownstreamSpec{{Host: "example.com"}},
+		},
+	}
+	if !siphonEnabled(st, dep) {
+		t.Fatal("downstreams should enable siphon")
+	}
+
+	st = &enginev1alpha1.ShadowTest{
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Inputs: []enginev1alpha1.InputSpec{{Port: 80, Driver: "http_request"}},
+		},
+	}
+	if !siphonEnabled(st, dep) {
+		t.Fatal("matching ingress port should enable siphon")
+	}
+
+	st.Spec.Inputs = []enginev1alpha1.InputSpec{{Port: 9999, Driver: "http_request"}}
+	if siphonEnabled(st, dep) {
+		t.Fatal("non-matching port should not enable siphon")
+	}
+
+	st = &enginev1alpha1.ShadowTest{
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Downstreams: []enginev1alpha1.DownstreamSpec{{Host: "example.com"}},
+			Siphon:      &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)},
+		},
+	}
+	if siphonEnabled(st, dep) {
+		t.Fatal("explicit false should override downstreams")
 	}
 }

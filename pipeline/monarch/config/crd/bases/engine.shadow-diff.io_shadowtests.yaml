@@ -424,8 +424,9 @@ spec:
                     type: string
                 type: object
               servicePort:
-                description: ServicePort is the TCP port the Envoy ingress listener
-                  binds on in shadow pods.
+                description: |-
+                  ServicePort is the TCP port the Envoy ingress listener binds on in shadow pods.
+                  Defaults to 8888 when unset.
                 format: int32
                 maximum: 65535
                 minimum: 1
@@ -457,7 +458,6 @@ spec:
             required:
             - newImage
             - oldImage
-            - servicePort
             - targetDeployment
             - targetNamespace
             type: object

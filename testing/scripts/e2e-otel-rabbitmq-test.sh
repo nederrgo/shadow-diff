@@ -87,7 +87,7 @@ if [[ "$SKIP_LOAD" != "1" ]]; then
   kind load docker-image "$IGRIS_RABBITMQ_IMG" --name "$KIND_CLUSTER"
   kind load docker-image "$EGRESS_RELAY_RABBITMQ_IMG" --name "$KIND_CLUSTER"
   kind load docker-image "$BERU_IMG" --name "$KIND_CLUSTER"
-  docker pull rabbitmq:3-management-alpine 2>/dev/null || true
+  docker pull rabbitmq:3-management-alpine 2>/dev/null || bash "$REPO/testing/scripts/lib/docker.sh" pull rabbitmq:3-management-alpine 2>/dev/null || true
   kind load docker-image rabbitmq:3-management-alpine --name "$KIND_CLUSTER" 2>/dev/null || true
 fi
 
@@ -105,7 +105,9 @@ fi
 
 if [[ "$SKIP_MONARCH_DEPLOY" != "1" ]]; then
   make -C "$REPO/pipeline/monarch" deploy IMG="$MONARCH_IMG"
+  kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev
   if [[ "$SKIP_LOAD" != "1" ]]; then
+    echo "==> Restart Monarch manager (pick up re-loaded ${MONARCH_IMG})"
     kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
   fi
   kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
@@ -127,10 +129,6 @@ kubectl delete shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --ignore-not-found -
 wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
 
 kubectl apply -f "$REPO/testing/scripts/manifests/rabbitmq-otel-e2e/shadowtest-otel-rmq.yaml"
-kubectl patch shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --type=merge -p "$(cat <<EOF
-{"spec":{"oldImage":"${NODEJS_TEST_WORKER_IMG}","newImage":"${NODEJS_TEST_WORKER_IMG}","igrisRabbitmq":{"image":"${IGRIS_RABBITMQ_IMG}"},"egressRelayRabbitmq":{"image":"${EGRESS_RELAY_RABBITMQ_IMG}"}}}
-EOF
-)" >/dev/null
 
 kubectl wait --for=condition=Available deployment/rmq-prod-broker -n default --timeout=180s
 kubectl wait --for=condition=Available deployment/rmq-prod-target -n default --timeout=120s

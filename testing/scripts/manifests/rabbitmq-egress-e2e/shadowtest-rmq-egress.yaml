@@ -23,12 +23,6 @@ spec:
         routingKey: order.created
         targetDependency: rabbitmq
 
-  igrisRabbitmq:
-    image: igris-rabbitmq:dev
-
-  egressRelayRabbitmq:
-    image: egress-relay-rabbitmq:dev
-
   siphon:
     enabled: false
 

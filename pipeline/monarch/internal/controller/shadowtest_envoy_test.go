@@ -114,8 +114,19 @@ func TestApplicationPortFor_defaultOffset(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{ServicePort: 80},
 	}
-	if got := applicationPortFor(st); got != 81 {
-		t.Fatalf("expected 81, got %d", got)
+	if got := applicationPortFor(st); got != 8080 {
+		t.Fatalf("expected 8080, got %d", got)
+	}
+}
+
+func TestServicePortFor_default8888(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{}
+	if got := servicePortFor(st); got != 8888 {
+		t.Fatalf("expected 8888, got %d", got)
+	}
+	st.Spec.ServicePort = 3000
+	if got := servicePortFor(st); got != 3000 {
+		t.Fatalf("expected 3000, got %d", got)
 	}
 }
 

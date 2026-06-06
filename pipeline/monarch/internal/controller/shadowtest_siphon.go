@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -26,7 +27,6 @@ const (
 	siphonSystemNamespace = "siphon-system"
 	siphonDaemonSetName   = "siphon-agent"
 	siphonAPIPort         = 8080
-	defaultSiphonImage    = "siphon:latest"
 )
 
 type siphonConfigPayload struct {
@@ -55,18 +55,51 @@ type siphonListener struct {
 	Driver string `json:"driver"`
 }
 
-func siphonEnabled(st *enginev1alpha1.ShadowTest) bool {
-	if st.Spec.Siphon == nil || st.Spec.Siphon.Enabled == nil {
-		return true
+func targetPrimaryContainerPorts(target *appsv1.Deployment) map[int32]bool {
+	ports := map[int32]bool{}
+	if target == nil || len(target.Spec.Template.Spec.Containers) == 0 {
+		return ports
 	}
-	return *st.Spec.Siphon.Enabled
+	for _, p := range target.Spec.Template.Spec.Containers[0].Ports {
+		ports[p.ContainerPort] = true
+	}
+	return ports
 }
 
-func siphonImageFor(st *enginev1alpha1.ShadowTest) string {
-	if st.Spec.Siphon != nil && st.Spec.Siphon.Image != "" {
-		return st.Spec.Siphon.Image
+func siphonIngressCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) bool {
+	if isAMQPOnlyShadowTest(st) {
+		return false
 	}
-	return defaultSiphonImage
+	targetPorts := targetPrimaryContainerPorts(target)
+	if len(targetPorts) == 0 {
+		return false
+	}
+	for _, in := range resolvedInputs(st) {
+		d := strings.TrimSpace(strings.ToLower(in.Driver))
+		if d != "http_request" && d != "tcp_stream" {
+			continue
+		}
+		if targetPorts[in.Port] {
+			return true
+		}
+	}
+	return false
+}
+
+func siphonEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) bool {
+	if st.Spec.Siphon != nil && st.Spec.Siphon.Enabled != nil && !*st.Spec.Siphon.Enabled {
+		return false
+	}
+	if st.Spec.Siphon != nil && st.Spec.Siphon.Enabled != nil && *st.Spec.Siphon.Enabled {
+		return true
+	}
+	if len(st.Spec.Downstreams) > 0 {
+		return true
+	}
+	if siphonIngressCaptureEnabled(st, target) {
+		return true
+	}
+	return false
 }
 
 func siphonSampleRate(st *enginev1alpha1.ShadowTest) int {
@@ -223,7 +256,7 @@ func (r *ShadowTestReconciler) pushGlobalSiphonConfig(ctx context.Context, pendi
 	seen := map[string]struct{}{}
 	for i := range list.Items {
 		st := &list.Items[i]
-		if st.Status.Phase != "Ready" || !siphonEnabled(st) {
+		if st.Status.Phase != "Ready" {
 			continue
 		}
 		if st.Status.ShadowNamespace == "" {
@@ -232,6 +265,9 @@ func (r *ShadowTestReconciler) pushGlobalSiphonConfig(ctx context.Context, pendi
 		var dep appsv1.Deployment
 		key := types.NamespacedName{Namespace: st.Spec.TargetNamespace, Name: st.Spec.TargetDeployment}
 		if err := r.Get(ctx, key, &dep); err != nil {
+			continue
+		}
+		if !siphonEnabled(st, &dep) {
 			continue
 		}
 		ips, err := r.listTargetPodIPs(ctx, &dep)
@@ -255,9 +291,9 @@ func (r *ShadowTestReconciler) pushGlobalSiphonConfig(ctx context.Context, pendi
 	}
 	payload.Targets = targets
 
-	img := defaultSiphonImage
+	img := defaultSiphonImage()
 	for i := range list.Items {
-		if siphonEnabled(&list.Items[i]) && list.Items[i].Status.Phase == "Ready" {
+		if siphonEnabled(&list.Items[i], nil) && list.Items[i].Status.Phase == "Ready" {
 			img = siphonImageFor(&list.Items[i])
 			break
 		}
@@ -333,7 +369,7 @@ func (r *ShadowTestReconciler) reconcileSiphonCapture(
 	shadowNS string,
 	target *appsv1.Deployment,
 ) (captureIPs []string, siphonPhase string, err error) {
-	if !siphonEnabled(st) {
+	if !siphonEnabled(st, target) {
 		return nil, "Disabled", nil
 	}
 	if err := r.ensureSiphonDaemonSet(ctx, siphonImageFor(st)); err != nil {

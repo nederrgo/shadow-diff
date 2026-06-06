@@ -17,7 +17,7 @@ var wellKnownHTTPPorts = map[int32]bool{
 }
 
 func inferDriver(st *enginev1alpha1.ShadowTest, port int32) string {
-	if port == st.Spec.ServicePort || wellKnownHTTPPorts[port] {
+	if port == servicePortFor(st) || wellKnownHTTPPorts[port] {
 		return "http_request"
 	}
 	return "tcp_stream"
@@ -99,7 +99,7 @@ func resolvedInputs(st *enginev1alpha1.ShadowTest) []enginev1alpha1.InputSpec {
 	}
 	if len(st.Spec.Inputs) == 0 {
 		return []enginev1alpha1.InputSpec{
-			{Port: st.Spec.ServicePort, Driver: "http_request"},
+			{Port: servicePortFor(st), Driver: "http_request"},
 		}
 	}
 	out := make([]enginev1alpha1.InputSpec, len(st.Spec.Inputs))
@@ -185,11 +185,20 @@ func shadowServiceHost(shadowNS, serviceName string) string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local", serviceName, shadowNS)
 }
 
+func needsAMQPIngress(st *enginev1alpha1.ShadowTest) bool {
+	return isAMQPOnlyShadowTest(st)
+}
+
+func needsHTTPTCPIngress(st *enginev1alpha1.ShadowTest) bool {
+	return !needsAMQPIngress(st)
+}
+
 func shadowServicePorts(st *enginev1alpha1.ShadowTest) []corev1.ServicePort {
 	if isAMQPOnlyShadowTest(st) {
+		sp := servicePortFor(st)
 		return []corev1.ServicePort{{
 			Name:       "ingress",
-			Port:       st.Spec.ServicePort,
+			Port:       sp,
 			TargetPort: intstr.FromString("ingress"),
 			Protocol:   corev1.ProtocolTCP,
 		}}
@@ -198,15 +207,16 @@ func shadowServicePorts(st *enginev1alpha1.ShadowTest) []corev1.ServicePort {
 	inputs := resolvedInputs(st)
 	seen := map[int32]bool{}
 	var ports []corev1.ServicePort
+	sp := servicePortFor(st)
 
-	if !seen[st.Spec.ServicePort] {
+	if !seen[sp] {
 		ports = append(ports, corev1.ServicePort{
 			Name:       "ingress",
-			Port:       st.Spec.ServicePort,
+			Port:       sp,
 			TargetPort: intstr.FromString("ingress"),
 			Protocol:   corev1.ProtocolTCP,
 		})
-		seen[st.Spec.ServicePort] = true
+		seen[sp] = true
 	}
 
 	for _, in := range inputs {
@@ -215,7 +225,7 @@ func shadowServicePorts(st *enginev1alpha1.ShadowTest) []corev1.ServicePort {
 		}
 		seen[in.Port] = true
 		tp := intstr.FromInt32(in.Port)
-		if in.Port == st.Spec.ServicePort {
+		if in.Port == sp {
 			tp = intstr.FromString("ingress")
 		}
 		ports = append(ports, corev1.ServicePort{
@@ -240,8 +250,9 @@ func appContainerPortsFor(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort 
 	}
 
 	seen := map[int32]bool{appPort: true}
+	sp := servicePortFor(st)
 	for _, in := range resolvedInputs(st) {
-		if in.Port == st.Spec.ServicePort {
+		if in.Port == sp {
 			continue
 		}
 		if seen[in.Port] {

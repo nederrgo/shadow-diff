@@ -5,7 +5,8 @@ Verifies Monarch prod shadow queue provisioning, `igris-rabbitmq` multicast (W3C
 ## Prerequisites
 
 - Kind cluster with Beru and Monarch (`./testing/scripts/e2e-reset-kind.sh`)
-- Images: `monarch:dev`, `igris-rabbitmq:dev`, `egress-relay-rabbitmq:dev`, `rmq-test-worker:dev`, `recorder:dev` (required when `spec.downstreams` is set)
+- Images built/loaded: `monarch:dev`, `igris-rabbitmq:dev`, `egress-relay-rabbitmq:dev`, `rmq-test-worker:dev`, `recorder:dev` (when `spec.downstreams` is set)
+- Monarch operator with **`MONARCH_MODE=dev`** (set by `e2e-reset-kind.sh` and `e2e-rabbitmq-test.sh`) so helper images resolve to `:dev` tags without CR image overrides
 - Monarch **must** include Phase 5b controller code. If status says `unsupported Igris driver "rabbitmq_message"`, rebuild and restart:
 
 ```bash
@@ -34,7 +35,7 @@ Or:
 |------|---------|
 | `prod-rabbitmq.yaml` | Production RabbitMQ broker |
 | `prod-target.yaml` | Stub target Deployment for ShadowTest |
-| `shadowtest-rmq.yaml` | AMQP-only ShadowTest |
+| `shadowtest-rmq.yaml` | AMQP-only ShadowTest (no image overrides — Monarch resolves helpers) |
 
 ## Verify
 

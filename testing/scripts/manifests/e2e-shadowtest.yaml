@@ -33,21 +33,6 @@ spec:
     - port: 8888
       driver: http_request
 
-  igris:
-    # Image patched by ./testing/scripts/e2e-reset-kind.sh from $IGRIS_IMG.
-    image: igris:dev
-    replicas: 1
-
-  siphon:
-    enabled: true
-    # Image patched by ./testing/scripts/e2e-reset-kind.sh from $SIPHON_IMG (Monarch owns the DaemonSet).
-    image: siphon:dev
-    sampleRate: 100
-
-  # Egress recorder (Sprint 4a.2): Monarch deploys Recorder + pushes recorder_host to Siphon /v1/config.
-  recorder:
-    image: recorder:dev
-
   # Egress replay (Sprint 4a.1): trap outbound HTTP via HTTP_PROXY -> Envoy :15001 ->  Beru
   downstreams:
     - host: httpbin.org

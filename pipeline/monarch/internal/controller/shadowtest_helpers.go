@@ -81,7 +81,7 @@ func appEnvWithEgressProxy(st *enginev1alpha1.ShadowTest, base []corev1.EnvVar) 
 
 func envoyContainerPorts(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort {
 	ports := []corev1.ContainerPort{
-		{Name: "ingress", ContainerPort: st.Spec.ServicePort, Protocol: corev1.ProtocolTCP},
+		{Name: "ingress", ContainerPort: servicePortFor(st), Protocol: corev1.ProtocolTCP},
 	}
 	if len(st.Spec.Downstreams) > 0 {
 		ports = append(ports, corev1.ContainerPort{
@@ -96,14 +96,28 @@ func envoyContainerPorts(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort {
 	return ports
 }
 
+const defaultServicePort int32 = 8888
+const defaultApplicationPort int32 = 8080
+
+func servicePortFor(st *enginev1alpha1.ShadowTest) int32 {
+	if st.Spec.ServicePort > 0 {
+		return st.Spec.ServicePort
+	}
+	return defaultServicePort
+}
+
 func applicationPortFor(st *enginev1alpha1.ShadowTest) int32 {
 	if st.Spec.ApplicationPort > 0 {
 		return st.Spec.ApplicationPort
 	}
-	if st.Spec.ServicePort < 65535 {
-		return st.Spec.ServicePort + 1
+	if isAMQPOnlyShadowTest(st) {
+		sp := servicePortFor(st)
+		if sp < 65535 {
+			return sp + 1
+		}
+		return sp - 1
 	}
-	return st.Spec.ServicePort - 1
+	return defaultApplicationPort
 }
 
 func beruGRPCAddressFor(st *enginev1alpha1.ShadowTest) string {

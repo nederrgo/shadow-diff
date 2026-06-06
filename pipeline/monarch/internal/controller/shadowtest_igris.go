@@ -54,13 +54,6 @@ func shadowServiceURL(shadowNS, serviceName string, port int32) string {
 	return fmt.Sprintf("http://%s:%d", host, port)
 }
 
-func igrisImageFor(st *enginev1alpha1.ShadowTest) string {
-	if st.Spec.Igris != nil && st.Spec.Igris.Image != "" {
-		return st.Spec.Igris.Image
-	}
-	return defaultIgrisImage
-}
-
 func igrisReplicasFor(st *enginev1alpha1.ShadowTest) int32 {
 	if st.Spec.Igris != nil && st.Spec.Igris.Replicas != nil && *st.Spec.Igris.Replicas > 0 {
 		return *st.Spec.Igris.Replicas
@@ -100,7 +93,7 @@ func (r *ShadowTestReconciler) reconcileIgrisConfigMap(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) error {
-	if isAMQPOnlyShadowTest(st) {
+	if !needsHTTPTCPIngress(st) {
 		return nil
 	}
 	listeners, err := igrisListenersJSON(st)
@@ -133,7 +126,7 @@ func (r *ShadowTestReconciler) reconcileIgrisDeployment(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) error {
-	if isAMQPOnlyShadowTest(st) {
+	if !needsHTTPTCPIngress(st) {
 		return nil
 	}
 	name := igrisDeploymentName(st)
@@ -174,7 +167,7 @@ func (r *ShadowTestReconciler) reconcileIgrisDeployment(
 
 		container := corev1.Container{
 			Name:            containerIgris,
-			Image:           igrisImageFor(st),
+			Image:           igrisHTTPImageFor(st),
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			Ports:           containerPorts,
 			Env: []corev1.EnvVar{
@@ -223,7 +216,7 @@ func (r *ShadowTestReconciler) reconcileIgrisService(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) error {
-	if isAMQPOnlyShadowTest(st) {
+	if !needsHTTPTCPIngress(st) {
 		return nil
 	}
 	name := igrisServiceName(st)
@@ -289,7 +282,8 @@ func (r *ShadowTestReconciler) igrisDeploymentReady(
 }
 
 func igrisControlURLs(st *enginev1alpha1.ShadowTest, shadowNS string) (string, string, string) {
-	return shadowServiceURL(shadowNS, shadowDeploymentName(st, roleControlA), st.Spec.ServicePort),
-		shadowServiceURL(shadowNS, shadowDeploymentName(st, roleControlB), st.Spec.ServicePort),
-		shadowServiceURL(shadowNS, shadowDeploymentName(st, roleCandidate), st.Spec.ServicePort)
+	sp := servicePortFor(st)
+	return shadowServiceURL(shadowNS, shadowDeploymentName(st, roleControlA), sp),
+		shadowServiceURL(shadowNS, shadowDeploymentName(st, roleControlB), sp),
+		shadowServiceURL(shadowNS, shadowDeploymentName(st, roleCandidate), sp)
 }

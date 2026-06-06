@@ -2,6 +2,8 @@
 
 ShadowTest and prod manifests for Firehose → egress-relay-rabbitmq → Beru egress diffing.
 
+Helper images (`igris-rabbitmq`, `egress-relay-rabbitmq`) are resolved by Monarch when **`MONARCH_MODE=dev`** is set on the operator — no `spec.igrisRabbitmq` / `spec.egressRelayRabbitmq` blocks in the manifest.
+
 ## Full E2E (Kind)
 
 From repo root (requires Beru + Monarch from `testing/scripts/e2e-reset-kind.sh`):

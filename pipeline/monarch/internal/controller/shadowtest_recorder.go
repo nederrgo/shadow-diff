@@ -52,13 +52,6 @@ func recorderDownstreamsJSON(st *enginev1alpha1.ShadowTest) (string, error) {
 	return string(b), nil
 }
 
-func recorderImageFor(st *enginev1alpha1.ShadowTest) string {
-	if st.Spec.Recorder != nil && st.Spec.Recorder.Image != "" {
-		return st.Spec.Recorder.Image
-	}
-	return defaultRecorderImage
-}
-
 func recorderReplicasFor(st *enginev1alpha1.ShadowTest) int32 {
 	return 1
 }

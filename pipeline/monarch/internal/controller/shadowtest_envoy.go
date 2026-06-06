@@ -43,7 +43,7 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (stri
 		return "", fmt.Errorf("invalid beruGRPCAddress %q: %w", beruAddr, err)
 	}
 	appPort := applicationPortFor(st)
-	ingressPort := st.Spec.ServicePort
+	ingressPort := servicePortFor(st)
 	beruTimeout := beruGRPCTimeoutFor(st)
 
 	egressListener, err := renderEgressListenerYAML(st, role, beruTimeout)

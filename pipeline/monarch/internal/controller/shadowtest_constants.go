@@ -48,7 +48,6 @@ const (
 	defaultNoProxyValue  string = "127.0.0.1,localhost,.cluster.local,.svc"
 
 	containerIgris               = "igris"
-	defaultIgrisImage            = "igris:latest"
 	configMapKeyListenersJSON    = "listeners.json"
 	volumeNameIgrisConfig        = "igris-config"
 	envControlAURL               = "CONTROL_A_URL"
@@ -62,7 +61,6 @@ const (
 	igrisTerminationGraceSeconds = int64(35)
 
 	containerRecorder              = "recorder"
-	defaultRecorderImage           = "recorder:latest"
 	configMapKeyDownstreamsJSON    = "downstreams.json"
 	volumeNameRecorderConfig       = "recorder-config"
 	envRecorderListenAddr          = "RECORDER_LISTEN_ADDR"

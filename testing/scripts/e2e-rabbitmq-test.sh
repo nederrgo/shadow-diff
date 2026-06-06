@@ -62,6 +62,7 @@ upgrade_crd
 
 if [[ "$SKIP_MONARCH_DEPLOY" -eq 0 ]]; then
   make -C "$REPO/pipeline/monarch" deploy IMG="$MONARCH_IMG"
+  kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev
   if [[ "$SKIP_LOAD" -eq 0 ]]; then
     echo "==> Restart Monarch manager (pick up re-loaded ${MONARCH_IMG})"
     kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
@@ -82,10 +83,6 @@ wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
 kubectl delete shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --ignore-not-found --wait=true 2>/dev/null || true
 wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
 kubectl apply -f "$REPO/testing/scripts/manifests/rabbitmq-e2e/shadowtest-rmq.yaml"
-kubectl patch shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --type=merge -p "$(cat <<EOF
-{"spec":{"recorder":{"image":"${RECORDER_IMG}"},"igrisRabbitmq":{"image":"${IGRIS_RABBITMQ_IMG}"},"egressRelayRabbitmq":{"image":"${EGRESS_RELAY_RABBITMQ_IMG}"}}}
-EOF
-)" >/dev/null
 
 echo "==> Wait for ShadowTest Ready"
 for i in $(seq 1 60); do

@@ -10,7 +10,6 @@ SHADOWTEST="${SHADOWTEST:-mongo-test-shadow}"
 SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
 MONGO_TEST_IMG="${MONGO_TEST_IMG:-mongo-test-app:dev}"
 MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
-IGRIS_IMG="${IGRIS_IMG:-igris:dev}"
 BERU_IMG="${BERU_IMG:-beru:dev}"
 KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
 TRACE_ID="${TRACE_ID:-mongo-e2e-$(date +%s)}"
@@ -78,7 +77,7 @@ if [[ "$SKIP_LOAD" != "1" ]]; then
   [[ -n "${KIND_CLUSTER}" ]] || { log_fail "no Kind cluster; set KIND_CLUSTER"; exit 1; }
   kind load docker-image "$MONGO_TEST_IMG" --name "$KIND_CLUSTER"
   kind load docker-image "$BERU_IMG" --name "$KIND_CLUSTER"
-  docker pull "$MONGO_IMAGE" 2>/dev/null || true
+  docker pull "$MONGO_IMAGE" 2>/dev/null || bash "$REPO/testing/scripts/lib/docker.sh" pull "$MONGO_IMAGE" 2>/dev/null || true
   kind load docker-image "$MONGO_IMAGE" --name "$KIND_CLUSTER" 2>/dev/null || true
 fi
 
@@ -101,7 +100,9 @@ fi
 
 if [[ "$SKIP_MONARCH_DEPLOY" != "1" ]]; then
   make -C "$REPO/pipeline/monarch" deploy IMG="$MONARCH_IMG"
+  kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev
   if [[ "$SKIP_LOAD" != "1" ]]; then
+    echo "==> Restart Monarch manager (pick up re-loaded ${MONARCH_IMG})"
     kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
   fi
   kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
@@ -115,13 +116,6 @@ kubectl wait --for=condition=Established crd/shadowtests.engine.shadow-diff.io -
 
 kubectl apply -f "$REPO/testing/scripts/manifests/mongo-egress-e2e/prod-mongo-app.yaml"
 kubectl apply -f "$REPO/testing/scripts/manifests/mongo-egress-e2e/shadowtest-mongo.yaml"
-
-if [[ -n "$IGRIS_IMG" ]]; then
-  kubectl patch shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --type=merge -p "$(cat <<EOF
-{"spec":{"igris":{"image":"${IGRIS_IMG}","replicas":1}}}
-EOF
-)" >/dev/null 2>&1 || true
-fi
 
 kubectl rollout status deployment/mongo-test-prod -n default --timeout=180s
 

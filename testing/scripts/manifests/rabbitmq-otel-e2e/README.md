@@ -5,6 +5,7 @@ End-to-end test for **zero-touch W3C trace propagation** across RabbitMQ consume
 ## Prerequisites
 
 - Kind cluster with Monarch + Beru (`./testing/scripts/e2e-reset-kind.sh`)
+- Monarch operator with **`MONARCH_MODE=dev`** (set by reset and test scripts)
 - **cert-manager** and **OpenTelemetry Operator** installed (`e2e-reset-kind.sh` runs `testing/scripts/lib/otel-bootstrap.sh` by default; use `--skip-otel-bootstrap` only if already installed)
 - `Instrumentation` CR pre-applied in shadow namespace before ShadowTest creates pods (handled by `e2e-otel-rabbitmq-test.sh`)
 
@@ -50,6 +51,6 @@ No egress regression for Trace <32-hex-trace-id> (rabbitmq)
 | File | Purpose |
 |------|---------|
 | `prod-target-nodejs.yaml` | Prod deployment env for egress exchange/routing (no manual trace flag) |
-| `shadowtest-otel-rmq.yaml` | ShadowTest with `rabbitmq_message` input, `otelInjection.language: nodejs`, egress relay |
+| `shadowtest-otel-rmq.yaml` | ShadowTest with `rabbitmq_message` input, `otelInjection.language: nodejs` (helper images resolved by Monarch) |
 
 Shadow namespace (deterministic): `shadow-default-otel-rmq-test-shadow`

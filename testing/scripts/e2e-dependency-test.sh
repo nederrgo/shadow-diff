@@ -15,7 +15,6 @@ SHADOWTEST="${SHADOWTEST:-db-test-shadow}"
 SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
 DB_TEST_IMG="${DB_TEST_IMG:-db-test-app:dev}"
 MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
-IGRIS_IMG="${IGRIS_IMG:-igris:dev}"
 KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
 TRACE_ID="${TRACE_ID:-dep-e2e-$(date +%s)}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
@@ -185,8 +184,12 @@ if [[ "$SKIP_LOAD" != "1" ]]; then
   echo "==> Load ${DB_TEST_IMG} into Kind (${KIND_CLUSTER})"
   kind load docker-image "$DB_TEST_IMG" --name "$KIND_CLUSTER"
   echo "==> Pre-load ${REDIS_IMAGE} for ephemeral Redis (avoids ImagePullBackOff on Kind)"
-  docker pull "$REDIS_IMAGE"
-  kind load docker-image "$REDIS_IMAGE" --name "$KIND_CLUSTER"
+  bash "$REPO/testing/scripts/lib/docker.sh" pull "$REDIS_IMAGE" 2>/dev/null || true
+  if docker image inspect "$REDIS_IMAGE" >/dev/null 2>&1; then
+    kind load docker-image "$REDIS_IMAGE" --name "$KIND_CLUSTER"
+  else
+    echo "    WARN: ${REDIS_IMAGE} not loaded into Kind — Redis pods will pull at schedule time if the cluster has network"
+  fi
 fi
 
 echo "==> Verify Beru (and Monarch namespace)"
@@ -212,6 +215,7 @@ fi
 if [[ "$SKIP_MONARCH_DEPLOY" != "1" ]]; then
   echo "==> Deploy Monarch operator"
   make -C "$REPO/pipeline/monarch" deploy IMG="$MONARCH_IMG"
+  kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev
   # Same image tag (monarch:dev) does not change the Deployment spec after kind load;
   # restart pods so the node picks up the newly loaded image layers.
   if [[ "$SKIP_LOAD" != "1" ]]; then
@@ -277,13 +281,6 @@ if [[ -n "$SHADOW_NS" ]] && ! kubectl get deploy redis-control-a -n "$SHADOW_NS"
     echo "    Then delete/re-apply ShadowTest or re-run this script." >&2
     exit 1
   fi
-fi
-
-if [[ -n "$IGRIS_IMG" ]]; then
-  kubectl patch shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --type=merge -p "$(cat <<EOF
-{"spec":{"igris":{"image":"${IGRIS_IMG}","replicas":1}}}
-EOF
-)" 2>/dev/null || true
 fi
 
 kubectl rollout status deployment/db-test-prod -n default --timeout=180s

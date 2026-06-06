@@ -28,7 +28,7 @@ Set paths for the rest of the session:
 export REPO=/home/projects/monarch   # adjust to your clone path
 export MONARCH_IMG=monarch:dev
 export BERU_IMG=beru:dev
-export IGRIS_IMG=igris:dev
+export IGRIS_IMG=igris-http:dev
 cd "$REPO"
 ```
 
@@ -71,6 +71,7 @@ make docker-build IMG=$MONARCH_IMG
 
 make install
 make deploy IMG=$MONARCH_IMG
+kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev
 ```
 
 Verify the operator:
@@ -313,17 +314,15 @@ make igris-docker-build IGRIS_IMG=$IGRIS_IMG
 # kind load docker-image $IGRIS_IMG
 ```
 
-Ensure `ShadowTest` spec includes Beru address and optional inputs:
+Ensure `ShadowTest` spec includes Beru address and optional inputs (helper images resolve via `MONARCH_MODE=dev` — no `spec.igris` required):
 
 ```yaml
 spec:
-  servicePort: 80
-  applicationPort: 8081
+  servicePort: 8888
+  applicationPort: 8080
   inputs:
-    - port: 80
-      addon: http
-  igris:
-    image: igris:dev
+    - port: 8888
+      driver: http_request
 ```
 
 After `status.phase: Ready` (Igris + shadows available):

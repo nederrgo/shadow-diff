@@ -52,8 +52,8 @@ One namespaced **`ShadowTest`** (`engine.shadow-diff.io/v1alpha1`) drives the fu
 | `inputs[]` | Ingress drivers: `http_request`, `tcp_stream`, `rabbitmq_message` |
 | `dependencies[]` | Ephemeral Redis, RabbitMQ, etc. per role + env injection |
 | `downstreams[]` | HTTP egress hosts → Recorder + Envoy egress proxy |
-| `siphon` | Cluster-wide capture agent image, sample rate, enable/disable |
-| `igris` / `igrisRabbitmq` / `recorder` / `egressRelayRabbitmq` | Component image overrides |
+| `siphon` | Cluster-wide capture agent; auto-enabled when downstreams or port match |
+| `igris` / `igrisRabbitmq` / `recorder` / `egressRelayRabbitmq` | Optional component image overrides (defaults via `MONARCH_MODE`) |
 | `otelInjection` | OpenTelemetry Operator annotations on shadow app pods |
 
 **Status:** `phase` (Ready / Progressing / Failed), `shadowNamespace`, `captureTargets`, `amqpQueueName`, `siphonPhase`, `igrisRabbitMQPhase`, `message`.
@@ -103,6 +103,7 @@ From the repo root:
 make -C pipeline/monarch install          # CRDs
 make -C pipeline/monarch docker-build IMG=monarch:dev
 make -C pipeline/monarch deploy IMG=monarch:dev
+kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev  # Kind E2E: resolve :dev helper images
 make -C pipeline/monarch test
 ```
 
