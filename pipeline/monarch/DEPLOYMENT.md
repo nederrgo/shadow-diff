@@ -1,33 +1,48 @@
 # Monarch — Deployment manual
 
-This guide explains how to run Monarch on a cluster and use it to provision **shadow Deployments** (and their Pods) from a `ShadowTest` custom resource.
+This guide explains how to install Monarch and use a **`ShadowTest`** custom resource to provision the shadow stack: three shadow Deployments (with Envoy sidecars), optional **Igris** / **igris-rabbitmq**, **Siphon** capture config, **Recorder** + egress proxy, and ephemeral **dependencies**.
 
-Monarch does **not** replace your production Deployment. You keep an existing **target** Deployment; Monarch reads it and creates three **shadow** Deployments in a dedicated namespace.
+Monarch does **not** replace your production Deployment. You keep an existing **target** Deployment; Monarch reads it and creates isolated shadow workloads in a dedicated namespace.
+
+**Beru** (diff engine) is deployed separately — Monarch only wires shadow Envoy `ext_proc` to the Beru gRPC address you configure.
+
+---
 
 ## What Monarch creates
 
-For each `ShadowTest`:
+For each `ShadowTest`, Monarch reconciles resources in two places:
 
-| Resource | Description |
-|----------|-------------|
-| **Shadow namespace** | `shadow-<cr-namespace>-<cr-name>` (DNS-sanitized) |
-| **`<name>-control-a`** Deployment | `spec.oldImage`, 1 replica |
-| **`<name>-control-b`** Deployment | `spec.oldImage`, 1 replica |
-| **`<name>-candidate`** Deployment | `spec.newImage`, 1 replica |
+| Location | Resources |
+|----------|-----------|
+| **Shadow namespace** `shadow-<cr-namespace>-<cr-name>` | `<name>-control-a`, `-control-b`, `-candidate` Deployments + Services (Envoy sidecar + app) |
+| Same shadow namespace | **Igris** Deployment + Service (HTTP/TCP ingress) *or* **igris-rabbitmq** (AMQP ingress) |
+| Same shadow namespace | **Recorder** Deployment + ConfigMap (when `spec.downstreams` is set) |
+| Same shadow namespace | **egress-relay-rabbitmq** Deployment (AMQP-only ShadowTests with `downstreams`) |
+| Same shadow namespace | Per-role **dependency** Deployments + Services (Redis, RabbitMQ, etc.) |
+| **`siphon-system`** (cluster-wide) | **Siphon** DaemonSet (shared; image from `spec.siphon.image`) |
+| **Production broker** (AMQP only) | Prod shadow queue `shadow-diff-<uid>` bound to your exchange |
 
-Pods are created by the Kubernetes **Deployment** controller from those specs. Monarch only creates/updates the Deployments and namespace.
+Each shadow app pod (when egress is enabled) gets `HTTP_PROXY` / `HTTPS_PROXY` → Envoy egress listener **:15001** → Beru strict replay.
 
 ---
 
 ## Prerequisites
 
 1. **Kubernetes cluster** (v1.24+ recommended) and `kubectl` configured.
-2. **Target Deployment** already running in the cluster (the app you want to shadow-test).
-3. **Container images** for shadow pods:
-   - `oldImage` — used for control-a and control-b
-   - `newImage` — used for candidate  
-   Images must be pullable from the cluster (registry credentials if private).
-4. **Monarch operator** installed (see below) with permission to create namespaces and Deployments.
+2. **Target Deployment** in the cluster (`spec.targetDeployment` / `spec.targetNamespace`).
+3. **Container images** pullable by the cluster:
+   - Shadow apps: `oldImage`, `newImage`
+   - Optional: `spec.igris.image`, `spec.siphon.image`, `spec.recorder.image`, `spec.igrisRabbitmq.image`, `spec.egressRelayRabbitmq.image`
+4. **Beru** deployed (e.g. `kubectl apply -f pipeline/beru/deploy/`) in `beru-system`.
+5. **Siphon RBAC bootstrap** (once per cluster, before first ShadowTest with Siphon enabled):
+
+   ```bash
+   kubectl apply -f pipeline/siphon/deploy/rbac.yaml
+   ```
+
+   Monarch owns the DaemonSet image and pushes `/v1/config` to agents; do not `kubectl set image` on `siphon-agent` manually — patch `spec.siphon.image` on the ShadowTest.
+
+6. **OpenTelemetry Operator** (optional): required only if you rely on default OTel SDK injection on shadow app pods. Set `spec.otelInjection.enabled: false` to skip.
 
 ---
 
@@ -36,193 +51,299 @@ Pods are created by the Kubernetes **Deployment** controller from those specs. M
 ### Option A — Build and deploy from source
 
 ```bash
-cd /path/to/repo/monarch
+cd /path/to/repo/pipeline/monarch
 
-# Build and push the manager image (use your registry)
 export IMG=<registry>/monarch:<tag>
 make docker-build docker-push IMG=$IMG
 
-# Install CRD + RBAC + controller Deployment
-make install
+make install    # CRDs
 make deploy IMG=$IMG
 ```
 
-The controller runs in namespace **`monarch-system`** as `deployment/monarch-controller-manager` (see `config/default/kustomization.yaml` — `namespace: monarch-system`, `namePrefix: monarch-`).
+The controller runs in **`monarch-system`** as `deployment/monarch-controller-manager`.
 
-### Option B — Local development (no in-cluster operator)
+From the **repo root** you can also run:
 
 ```bash
-make install          # CRDs only
-make run              # controller on your machine using ~/.kube/config
+make -C pipeline/monarch install
+make -C pipeline/monarch deploy IMG=$IMG
 ```
 
-Use this only for dev; production should use Option A.
+### Option B — Local development
 
-### Verify the operator
+```bash
+make -C pipeline/monarch install
+make -C pipeline/monarch run    # uses ~/.kube/config
+```
+
+### Verify
 
 ```bash
 kubectl get pods -n monarch-system
 kubectl get crd shadowtests.engine.shadow-diff.io
+kubectl api-resources | grep shadowtest   # short name: st
 ```
 
 ---
 
-## Step 2 — Prepare the target Deployment
+## Step 2 — Deploy Beru
 
-Monarch **requires** a real Deployment to exist before reconciliation succeeds.
-
-1. Deploy your application as usual, e.g.:
+Monarch does not install Beru. Apply the Beru manifest and ensure `spec.beruGRPCAddress` on the ShadowTest matches the Service DNS name:
 
 ```bash
-kubectl create deployment my-prod-app --image=ghcr.io/org/app:v1 -n default
-# or apply your own manifest
+kubectl apply -f pipeline/beru/deploy/
+kubectl rollout status deployment/beru -n beru-system
 ```
 
-2. Note:
-   - **Namespace** → `spec.targetNamespace`
-   - **Deployment name** → `spec.targetDeployment`
-   - **First container** in the pod template → source for **literal `env` vars** only (MVP)
-   - **Container port** → set `spec.servicePort` to the port your app listens on
-
-If the target is missing, `ShadowTest` status becomes **`Failed`** and the controller retries.
+Default gRPC address: `beru.beru-system.svc.cluster.local:50051`.
 
 ---
 
-## Step 3 — Create a ShadowTest
+## Step 3 — Prepare the target Deployment
 
-Apply a `ShadowTest` in the **same or any** namespace (the CR is namespaced; shadow workloads go in a separate shadow namespace).
+1. Deploy your application (production) as usual.
+2. Note for the ShadowTest spec:
+   - **Namespace** → `targetNamespace`
+   - **Deployment name** → `targetDeployment`
+   - **First container** → source for **inline `env` vars** only (MVP)
+   - **Listen port** → `applicationPort` (and/or prod port for Siphon capture)
 
-### Minimal example
+If the target is missing, `status.phase` becomes **`Failed`**.
 
-Save as `my-shadowtest.yaml` and adjust values:
+---
+
+## Step 4 — Create a ShadowTest
+
+Apply a namespaced `ShadowTest` CR. Shadow workloads land in **`status.shadowNamespace`**, not the CR’s namespace.
+
+### Minimal HTTP ingress example
 
 ```yaml
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest
 metadata:
   name: my-app-shadow
-  namespace: default          # namespace where the ShadowTest CR lives
+  namespace: default
 spec:
   targetDeployment: my-prod-app
-  targetNamespace: default    # where the production Deployment lives
+  targetNamespace: default
   oldImage: ghcr.io/org/app:v1
   newImage: ghcr.io/org/app:v2
-  servicePort: 8080         # Envoy ingress listener port
-  applicationPort: 8081     # App container port (must differ from servicePort)
+  servicePort: 8888          # Envoy ingress listener in shadow pods
+  applicationPort: 8080      # App container port (Envoy forwards here)
   beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
 ```
 
+### Full HTTP + Siphon + egress example
+
+See `testing/scripts/manifests/e2e-shadowtest.yaml` in the repo — includes `inputs`, `igris`, `siphon`, `recorder`, and `downstreams`.
+
 ```bash
-kubectl apply -f my-shadowtest.yaml
+kubectl apply -f testing/scripts/manifests/e2e-shadowtest.yaml
 ```
 
-### Field reference
+### RabbitMQ (AMQP-only) example
 
-| Field | Required | Meaning |
-|-------|----------|---------|
-| `targetDeployment` | yes | Name of the existing Deployment to mirror (env copy) |
+When `inputs[].driver` is `rabbitmq_message`, Monarch skips HTTP Igris and deploys **igris-rabbitmq** + **egress-relay-rabbitmq** (if `downstreams` is set). See `testing/scripts/manifests/rabbitmq-e2e/shadowtest-rmq.yaml`.
+
+---
+
+## ShadowTest spec reference
+
+### Core (required for all modes)
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `targetDeployment` | yes | Production Deployment to mirror (env copy source) |
 | `targetNamespace` | yes | Namespace of that Deployment |
 | `oldImage` | yes | Image for **control-a** and **control-b** |
 | `newImage` | yes | Image for **candidate** |
-| `servicePort` | yes | Envoy ingress listener port (1–65535) |
+| `servicePort` | yes | TCP port for Envoy **ingress** listener on shadow pods (1–65535) |
 | `applicationPort` | no | App listen port; defaults to `servicePort+1` if unset |
 | `beruGRPCAddress` | no | Beru ext_proc gRPC `host:port`; default `beru.beru-system.svc.cluster.local:50051` |
 | `beruGRPCTimeout` | no | ext_proc timeout (e.g. `2s`) |
 
-### Sample in the repo
+### Ingress — `inputs`, `igris`
 
-```bash
-# Edit config/samples/engine_v1alpha1_shadowtest.yaml first (images, target name)
-kubectl apply -k config/samples/
-```
+| Field | Description |
+|-------|-------------|
+| `inputs[]` | Igris listener ports and drivers. Empty → single HTTP listener on `servicePort`. |
+| `inputs[].port` | TCP port Igris binds (omit for `rabbitmq_message`) |
+| `inputs[].driver` | `http_request`, `tcp_stream`, or `rabbitmq_message` |
+| `inputs[].amqp` | Required for `rabbitmq_message`: `prodUrl`, `exchange`, `routingKey`, `targetDependency` |
+| `inputs[].amqp.exchangeType` | `topic` (default), `direct`, `fanout`, `headers` |
+| `inputs[].addon` | Deprecated; use `driver` (`http` → `http_request`) |
+| `igris` | Override **Igris** image, replicas, resources (HTTP/TCP path) |
+| `igris.image` | Container image (default `igris:latest`) |
+| `igris.replicas` | Default `1` |
+| `igris.resources` | CPU/memory requests and limits |
+
+### AMQP ingress — `igrisRabbitmq`, `egressRelayRabbitmq`
+
+Used when any input has `driver: rabbitmq_message`.
+
+| Field | Description |
+|-------|-------------|
+| `igrisRabbitmq` | Override **igris-rabbitmq** Deployment (prod queue → three shadow brokers) |
+| `igrisRabbitmq.image` | Default `igris-rabbitmq:latest` |
+| `egressRelayRabbitmq` | Override **egress-relay-rabbitmq** (Firehose → Beru egress API) |
+| `egressRelayRabbitmq.image` | Default `egress-relay-rabbitmq:latest` |
+| `egressRelayRabbitmq.replicas` | Default `1` |
+
+Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`** and sets `status.amqpQueueName`.
+
+### Capture — `siphon`
+
+| Field | Description |
+|-------|-------------|
+| `siphon.enabled` | `false` disables config push; default **enabled** when field omitted |
+| `siphon.image` | DaemonSet image (default `siphon:latest`) |
+| `siphon.sampleRate` | Percentage of new TCP flows to sample (0–100; default `100`) |
+
+Monarch POSTs merged config to each Siphon agent (`targets`, `downstreams`, `recorder_host`, prod pod IPs). **`status.siphonPhase`**: `Ready`, `Degraded`, or `Disabled`.
+
+### Egress — `downstreams`, `recorder`
+
+| Field | Description |
+|-------|-------------|
+| `downstreams[]` | Outbound hosts trapped by shadow egress Envoy → Beru replay |
+| `downstreams[].host` | Hostname (`:authority` / `Host`) |
+| `downstreams[].ignoreRequestPaths` | JSONPath fields stripped before egress hash (e.g. `$.timestamp`) |
+| `recorder` | Override **Recorder** image when `downstreams` is non-empty |
+| `recorder.image` | Default `recorder:latest` |
+
+When `downstreams` is set, Monarch deploys Recorder in the shadow namespace and configures Siphon to relay prod egress bytes to it.
+
+### Ephemeral dependencies — `dependencies`
+
+| Field | Description |
+|-------|-------------|
+| `dependencies[].name` | Logical id (DNS-safe); used in resource names |
+| `dependencies[].image` | Container image (e.g. `redis:7-alpine`) |
+| `dependencies[].port` | Service port |
+| `dependencies[].envVarInjection` | Env var name injected on each shadow app pod with role-specific `host:port` |
+
+Monarch creates **three** isolated instances per dependency: `<name>-control-a`, `-control-b`, `-candidate`.
+
+For RabbitMQ ingress, one dependency entry (e.g. `rabbitmq`) backs shadow brokers; `inputs[].amqp.targetDependency` must match `dependencies[].name`.
+
+### OpenTelemetry — `otelInjection`
+
+| Field | Description |
+|-------|-------------|
+| `otelInjection.enabled` | Default **true** when omitted; set `false` to skip OTel annotations/env |
+| `otelInjection.language` | Override auto-detect: `java`, `python`, `nodejs`, `dotnet`, `go` |
 
 ---
 
-## Step 4 — Verify shadow Deployments and Pods
+## ShadowTest status reference
 
-1. **Status** on the CR:
+| Field | Meaning |
+|-------|---------|
+| `phase` | `Ready`, `Progressing`, or `Failed` |
+| `message` | Human-readable detail (skipped env, ingress summary, Siphon phase) |
+| `shadowNamespace` | e.g. `shadow-default-my-app-shadow` |
+| `captureTargets` | Production pod IPs pushed to Siphon |
+| `siphonPhase` | `Ready`, `Degraded`, or `Disabled` |
+| `igrisEndpoint` | Igris DNS:port or AMQP queue summary |
+| `amqpQueueName` | Prod broker queue (RabbitMQ ShadowTests) |
+| `igrisRabbitMQPhase` | `igris-rabbitmq` readiness (AMQP path) |
 
 ```bash
-kubectl get shadowtest my-app-shadow -n default -o wide
-kubectl describe shadowtest my-app-shadow -n default
+kubectl get shadowtest my-app-shadow -n default -o yaml
+kubectl get st -n default -o wide    # short name
 ```
 
-When healthy, expect:
+While progressing, common `status.message` values include:
 
-- `status.phase`: `Ready`
-- `status.shadowNamespace`: e.g. `shadow-default-my-app-shadow`
+- `waiting for shadow dependencies`
+- `waiting for igris-rabbitmq` / `waiting for egress-relay-rabbitmq`
+- `waiting for shadow Deployments` / `waiting for Igris` / `waiting for Recorder`
 
-2. **Shadow namespace and workloads**:
+---
+
+## Step 5 — Verify shadow workloads
 
 ```bash
 SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
 
-kubectl get ns "$SHADOW_NS"
-kubectl get deploy,pods -n "$SHADOW_NS"
-```
-
-You should see three Deployments:
-
-- `my-app-shadow-control-a`
-- `my-app-shadow-control-b`
-- `my-app-shadow-candidate`
-
-3. **Operator logs** (if something fails):
-
-```bash
+kubectl get deploy,pods,svc -n "$SHADOW_NS"
+kubectl get ds -n siphon-system    # when Siphon enabled
 kubectl logs -n monarch-system deployment/monarch-controller-manager -c manager -f
 ```
 
+Expected Deployments in the shadow namespace (varies by spec):
+
+| Deployment | When |
+|------------|------|
+| `<name>-control-a`, `-control-b`, `-candidate` | Always |
+| `<name>-igris` | HTTP/TCP `inputs` (not AMQP-only) |
+| `<name>-igris-rabbitmq` | `rabbitmq_message` input |
+| `<name>-recorder` | `spec.downstreams` non-empty |
+| `<name>-egress-relay-rabbitmq` | AMQP input + `downstreams` |
+| `<dep>-control-a`, etc. | Each `spec.dependencies` entry |
+
 ---
 
-## Step 5 — Change images or settings
+## Step 6 — Change or remove a ShadowTest
 
-Edit the `ShadowTest` and re-apply:
+**Update:** edit the CR and re-apply; Monarch patches owned resources.
 
 ```bash
 kubectl apply -f my-shadowtest.yaml
 ```
 
-Monarch **patches** the shadow Deployments via `CreateOrPatch`; you do not create shadow Deployments manually.
-
-To point at a different production Deployment, update `targetDeployment` / `targetNamespace` and ensure the new target exists.
-
----
-
-## Step 6 — Remove a shadow test
-
-Delete the CR; the finalizer removes the shadow namespace (and owned resources):
+**Delete:** finalizer removes the shadow namespace and owned resources; AMQP mode also deletes the prod shadow queue.
 
 ```bash
 kubectl delete shadowtest my-app-shadow -n default
 ```
 
-To uninstall Monarch entirely:
+**Uninstall Monarch:**
 
 ```bash
-kubectl delete -k config/samples/   # if you used samples
-make undeploy
-make uninstall
+make -C pipeline/monarch undeploy
+make -C pipeline/monarch uninstall
 ```
+
+---
+
+## Port model (Kind E2E reference)
+
+Typical layout when prod listens on **:80** and Envoy ingress is **:8888**:
+
+| Component | Port |
+|-----------|------|
+| Production app | `:80` (Siphon BPF capture) |
+| Igris listener (replay) | `:80` |
+| Envoy ingress (shadow Service) | `:8888` |
+| Shadow app (echo) | `:80` (`applicationPort`) |
+| Envoy egress proxy | `:15001` (`HTTP_PROXY`) |
+
+See `testing/scripts/e2e-reset-kind.sh` and `testing/scripts/manifests/e2e-shadowtest.yaml`.
 
 ---
 
 ## End-to-end checklist
 
-- [ ] Cluster reachable with `kubectl`
-- [ ] Target Deployment exists in `targetNamespace`
-- [ ] `make install` + `make deploy IMG=...` (or `make run` for dev)
-- [ ] `ShadowTest` applied with correct images and `servicePort`
-- [ ] `kubectl get shadowtest` shows `Ready` and `shadowNamespace`
-- [ ] Three Deployments and Pods in the shadow namespace
+- [ ] Cluster reachable; target Deployment exists
+- [ ] Beru running in `beru-system`
+- [ ] `pipeline/siphon/deploy/rbac.yaml` applied (if using Siphon)
+- [ ] Monarch installed (`make -C pipeline/monarch deploy IMG=...`)
+- [ ] ShadowTest applied with correct images, ports, and `beruGRPCAddress`
+- [ ] `kubectl get st` shows `phase: Ready` and `shadowNamespace`
+- [ ] Three shadow Deployments (+ Igris/Recorder as configured) are Ready
+- [ ] `status.siphonPhase: Ready` when Siphon enabled (or `Disabled` when `siphon.enabled: false`)
 
 ---
 
-## MVP limitations (important)
+## Known limitations
 
-- **Env vars**: Only **inline `env`** from the target’s **first container** are copied. `envFrom`, `valueFrom`, and secrets/configMaps referenced that way are **not** fully mirrored; check `status.message` on the CR.
-- **Traffic**: Monarch provisions workloads; it does **not** automatically mirror production traffic to shadow Pods. Wire routing (Service, mesh, gateway) separately if needed.
-- **Replicas**: Shadow Deployments are fixed at **1** replica each in the current implementation.
+- **Env vars:** Only **inline `env`** from the target’s **first container** are copied. `envFrom`, `valueFrom`, and volume mounts are not fully mirrored — check `status.message`.
+- **Replicas:** Shadow app Deployments are fixed at **1** replica each.
+- **Siphon:** One shared DaemonSet; config is merged across all Ready ShadowTests.
+- **Traffic:** Monarch provisions capture/replay plumbing; you still need production traffic (or test scripts) hitting prod pods or AMQP exchanges.
+- **imagePullSecrets:** Not automatically copied to shadow Deployments.
 
 ---
 
@@ -231,15 +352,19 @@ make uninstall
 | Symptom | Likely cause | What to do |
 |---------|----------------|------------|
 | `phase: Failed`, target not found | Wrong `targetDeployment` / `targetNamespace` | Fix spec; ensure Deployment exists |
-| Pods `ImagePullBackOff` | Bad image name or missing pull secret | Fix `oldImage`/`newImage`; add `imagePullSecrets` to shadow Deployments (not automated today) |
-| No shadow namespace | Reconcile not run or operator down | Check `monarch-system` namespace pods; operator logs |
-| CR stuck deleting | Finalizer cleaning namespace | Wait; check namespace `shadow-...` is terminating |
+| `waiting for egress-relay-rabbitmq` | Image not loaded (Kind) | Build/load `egress-relay-rabbitmq:dev`; patch `spec.egressRelayRabbitmq.image` |
+| `siphonPhase: Degraded` | Agent unreachable or bad config | Check `siphon-system` pods; Monarch logs; node hostIP reachability |
+| Pods `ImagePullBackOff` | Missing image in cluster/registry | Fix image tags; `kind load docker-image ...` for local dev |
+| Shadow apps without OTel sidecar | Webhook fail-open or `otelInjection.enabled: false` | Install OTel operator or disable injection explicitly |
+| CR stuck deleting | Finalizer cleaning namespace / AMQP queue | Wait; `kubectl describe shadowtest` |
+| Unsupported driver errors | Old Monarch controller image | Rebuild/redeploy Monarch; restart manager Deployment |
 
 ---
 
 ## Related docs
 
-- [../VERIFICATION.md](../VERIFICATION.md) — step-by-step cluster verification (Monarch + Beru)
-- [ARCHITECTURE.md](../ARCHITECTURE.md) — Shadow-Diff system architecture (Monarch, Igris, Beru)
-- [REPO_OVERVIEW.md](./REPO_OVERVIEW.md) — repository layout
-- [config/samples/engine_v1alpha1_shadowtest.yaml](./config/samples/engine_v1alpha1_shadowtest.yaml) — example CR
+- [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) — step-by-step verification (Monarch + Beru + E2E scripts)
+- [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — system architecture
+- [README.md](./README.md) — operator development (Kubebuilder)
+- [config/samples/engine_v1alpha1_shadowtest.yaml](./config/samples/engine_v1alpha1_shadowtest.yaml) — sample CR
+- [testing/scripts/manifests/e2e-shadowtest.yaml](../../testing/scripts/manifests/e2e-shadowtest.yaml) — Kind E2E reference manifest
