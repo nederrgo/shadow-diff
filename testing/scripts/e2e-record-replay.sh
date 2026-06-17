@@ -29,15 +29,17 @@ need kubectl
 
 parse_egress_output() {
   local out="$1"
-  out=$(echo "$out" | grep -v '^Targeting container' | grep -v "^If you don't see" | grep -v '^Defaulting container')
+  out=$(echo "$out" | grep -v '^Targeting container' | grep -v "^If you don't see" | grep -v '^Defaulting container' | grep -v '^All commands and output from this session')
   local code_line
-  code_line=$(echo "$out" | grep -E '__CODE__[0-9]+$' | tail -1 || true)
+  code_line=$(echo "$out" | grep -E '__CODE__[1-9][0-9]{2}$' | tail -1 || true)
+  if [[ -z "$code_line" ]]; then
+    code_line=$(echo "$out" | grep -E '__CODE__[0-9]+$' | tail -1 || true)
+  fi
   if [[ -z "$code_line" ]]; then
     echo "ERROR: could not parse curl output:${out}" >&2
     exit 1
   fi
   EGRESS_LAST_CODE=$(echo "$code_line" | sed -E 's/.*__CODE__([0-9]+)$/\1/')
-  # curl -w appends __CODE__ on the same line or (with trailing echo) on its own line.
   local inline_body
   inline_body=$(echo "$code_line" | sed -E 's/__CODE__[0-9]+$//')
   if [[ -n "$inline_body" ]]; then
@@ -45,6 +47,42 @@ parse_egress_output() {
   else
     EGRESS_LAST_BODY=$(echo "$out" | awk '/__CODE__[0-9]+$/{exit} {print}')
   fi
+}
+
+# Ephemeral debug curl on the target pod network (prod/shadow app has no curl binary).
+curl_via_debug_container() {
+  local ns="$1"
+  local pod="$2"
+  local container="$3"
+  local curl_script="$4"
+  local dbg="e2e-curl-${RANDOM}"
+  local out=""
+
+  kubectl debug "$pod" -n "$ns" \
+    --image=curlimages/curl:latest \
+    --target="$container" \
+    --container="$dbg" \
+    -- sh -c "$curl_script" >/dev/null 2>&1 || true
+
+  local deadline=$((SECONDS + 45))
+  while [[ $SECONDS -lt $deadline ]]; do
+    local terminated
+    terminated=$(kubectl get pod "$pod" -n "$ns" -o jsonpath="{.status.ephemeralContainerStatuses[?(@.name=='${dbg}')].state.terminated.reason}" 2>/dev/null || true)
+    if [[ "$terminated" == "Completed" ]]; then
+      out=$(kubectl logs "$pod" -n "$ns" -c "$dbg" 2>/dev/null || true)
+      break
+    fi
+    if [[ -n "$terminated" && "$terminated" != "Completed" ]]; then
+      out=$(kubectl logs "$pod" -n "$ns" -c "$dbg" 2>/dev/null || true)
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ -z "$out" ]]; then
+    out=$(kubectl logs "$pod" -n "$ns" -c "$dbg" 2>/dev/null || true)
+  fi
+  echo "$out"
 }
 
 run_curl_in_pod() {
@@ -58,13 +96,7 @@ run_curl_in_pod() {
     out=$(kubectl exec -n "$ns" "$pod" -c "$container" -- sh -c "$curl_script")
   else
     echo "    (container has no curl — ephemeral debug container on pod network)"
-    local dbg="e2e-curl-${RANDOM}"
-    out=$(kubectl debug "$pod" -n "$ns" \
-      --image=curlimages/curl:latest \
-      --target="$container" \
-      --container="$dbg" \
-      --attach \
-      -- sh -c "$curl_script" 2>&1 || true)
+    out=$(curl_via_debug_container "$ns" "$pod" "$container" "$curl_script")
   fi
   parse_egress_output "$out"
 }

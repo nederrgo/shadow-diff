@@ -20,29 +20,22 @@ const (
 )
 
 // runRelay dials Recorder and copies both pipe legs as length-prefixed frames.
+// Both reqR and resR are allocated at session init; streamFrames block on the
+// pipe readers until the assembler delivers bytes.
 func runRelay(sess *Session, poolMgr *forward.PoolManager) {
+	defer sess.clearRelayRunning()
+
 	target := sess.Target
 	if target == nil || target.RecorderHost == "" {
 		log.Printf("egress relay: recorder_host not configured for flow %s", sess.flowKey)
 		return
 	}
 
-	deadline := time.After(2 * time.Minute)
-	for sess.reqR == nil {
-		select {
-		case <-deadline:
-			log.Printf("egress relay: timed out waiting for request stream %s", sess.flowKey)
-			return
-		case <-time.After(2 * time.Millisecond):
-		}
-	}
-	for sess.resR == nil {
-		select {
-		case <-deadline:
-			log.Printf("egress relay: timed out waiting for response stream %s", sess.flowKey)
-			return
-		case <-time.After(2 * time.Millisecond):
-		}
+	reqR := sess.reqR
+	resR := sess.resR
+	if reqR == nil || resR == nil {
+		log.Printf("egress relay: missing pipe legs for flow %s", sess.flowKey)
+		return
 	}
 
 	dest := target.RecorderHost
@@ -55,21 +48,20 @@ func runRelay(sess *Session, poolMgr *forward.PoolManager) {
 		log.Printf("egress relay: dial %s failed: %v", dest, err)
 		return
 	}
-	sess.setConn(conn)
+	defer func() { _ = conn.Close() }()
 
 	var wg sync.WaitGroup
 	var writeMu sync.Mutex
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		streamFrames(&writeMu, conn, sess.reqR, dirRequest)
+		streamFrames(&writeMu, conn, reqR, dirRequest)
 	}()
 	go func() {
 		defer wg.Done()
-		streamFrames(&writeMu, conn, sess.resR, dirResponse)
+		streamFrames(&writeMu, conn, resR, dirResponse)
 	}()
 	wg.Wait()
-	_ = conn.Close()
 }
 
 func streamFrames(writeMu *sync.Mutex, conn net.Conn, r io.ReadCloser, dir byte) {

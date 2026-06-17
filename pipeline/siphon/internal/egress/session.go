@@ -3,7 +3,6 @@ package egress
 import (
 	"fmt"
 	"io"
-	"net"
 	"sync"
 
 	"github.com/google/gopacket/tcpassembly"
@@ -12,10 +11,10 @@ import (
 )
 
 // pipeStream implements tcpassembly.Stream without blocking the assembler.
+// Bytes are written to an io.Pipe; runRelay reads from the other end.
 type pipeStream struct {
 	pw        *io.PipeWriter
-	store     *SessionStore
-	flowKey   string
+	sess      *Session
 	isRequest bool
 }
 
@@ -30,8 +29,8 @@ func (p *pipeStream) Reassembled(reassemblies []tcpassembly.Reassembly) {
 
 func (p *pipeStream) ReassemblyComplete() {
 	_ = p.pw.Close()
-	if p.store != nil {
-		p.store.onLegComplete(p.flowKey, p.isRequest)
+	if p.sess != nil {
+		p.sess.markLegClosed(p.isRequest)
 	}
 }
 
@@ -49,20 +48,14 @@ type SessionStore struct {
 }
 
 type Session struct {
+	mu           sync.Mutex
 	flowKey      string
 	reqR         io.ReadCloser
 	resR         io.ReadCloser
 	reqS         *pipeStream
 	resS         *pipeStream
-	relayStarted bool
-	reqComplete  bool
-	resComplete  bool
+	relayRunning bool
 	Target       *config.SiphonTarget
-	conn         net.Conn
-}
-
-func (s *Session) setConn(c net.Conn) {
-	s.conn = c
 }
 
 func NewSessionStore(poolMgr *forward.PoolManager) *SessionStore {
@@ -72,6 +65,44 @@ func NewSessionStore(poolMgr *forward.PoolManager) *SessionStore {
 	}
 }
 
+func allocBothPipes(sess *Session) {
+	reqR, reqW := io.Pipe()
+	resR, resW := io.Pipe()
+	sess.reqR = reqR
+	sess.resR = resR
+	sess.reqS = &pipeStream{pw: reqW, sess: sess, isRequest: true}
+	sess.resS = &pipeStream{pw: resW, sess: sess, isRequest: false}
+}
+
+func (s *Session) markLegClosed(isRequest bool) {
+	s.mu.Lock()
+	if isRequest {
+		s.reqS = nil
+		s.reqR = nil
+	} else {
+		s.resS = nil
+		s.resR = nil
+	}
+	s.mu.Unlock()
+}
+
+// tryStartRelay marks the session as relay-running. Caller must go runRelay when true.
+func (s *Session) tryStartRelay() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.relayRunning {
+		return false
+	}
+	s.relayRunning = true
+	return true
+}
+
+func (s *Session) clearRelayRunning() {
+	s.mu.Lock()
+	s.relayRunning = false
+	s.mu.Unlock()
+}
+
 func (st *SessionStore) GetOrCreate(flowKey string, isRequest bool, target *config.SiphonTarget) tcpassembly.Stream {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -79,28 +110,33 @@ func (st *SessionStore) GetOrCreate(flowKey string, isRequest bool, target *conf
 	sess, ok := st.sessions[flowKey]
 	if !ok {
 		sess = &Session{flowKey: flowKey, Target: target}
+		allocBothPipes(sess)
 		st.sessions[flowKey] = sess
+		if sess.tryStartRelay() {
+			go runRelay(sess, st.poolMgr)
+		}
 	}
 
 	var stream tcpassembly.Stream
+	var startRelay bool
 	if isRequest {
 		if sess.reqS == nil {
 			pr, pw := io.Pipe()
 			sess.reqR = pr
-			sess.reqS = &pipeStream{pw: pw, store: st, flowKey: flowKey, isRequest: true}
+			sess.reqS = &pipeStream{pw: pw, sess: sess, isRequest: true}
+			startRelay = sess.tryStartRelay()
 		}
 		stream = sess.reqS
 	} else {
 		if sess.resS == nil {
 			pr, pw := io.Pipe()
 			sess.resR = pr
-			sess.resS = &pipeStream{pw: pw, store: st, flowKey: flowKey, isRequest: false}
+			sess.resS = &pipeStream{pw: pw, sess: sess, isRequest: false}
 		}
 		stream = sess.resS
 	}
 
-	if !sess.relayStarted {
-		sess.relayStarted = true
+	if startRelay {
 		go runRelay(sess, st.poolMgr)
 	}
 
@@ -110,33 +146,7 @@ func (st *SessionStore) GetOrCreate(flowKey string, isRequest bool, target *conf
 func (st *SessionStore) Remove(flowKey string) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	sess, ok := st.sessions[flowKey]
-	if !ok {
-		return
-	}
 	delete(st.sessions, flowKey)
-	if sess.conn != nil {
-		_ = sess.conn.Close()
-	}
-}
-
-func (st *SessionStore) onLegComplete(flowKey string, isRequest bool) {
-	st.mu.Lock()
-	sess, ok := st.sessions[flowKey]
-	if !ok {
-		st.mu.Unlock()
-		return
-	}
-	if isRequest {
-		sess.reqComplete = true
-	} else {
-		sess.resComplete = true
-	}
-	done := sess.reqComplete && sess.resComplete
-	st.mu.Unlock()
-	if done {
-		st.Remove(flowKey)
-	}
 }
 
 func FlowKey(prodIP string, prodPort int, remoteIP string, remotePort int) string {
