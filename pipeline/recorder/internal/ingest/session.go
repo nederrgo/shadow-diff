@@ -35,6 +35,9 @@ type connSession struct {
 	resR         io.ReadCloser
 	reqW         *pipeWriter
 	resW         *pipeWriter
+	reqBuf       []byte // ponytail: buffer until response leg; io.Pipe Write blocks without reader
+	resBuf       []byte
+	paired       bool
 	hasReqBytes  bool
 	resAttached  bool
 	reqFirstAt   time.Time
@@ -133,35 +136,84 @@ func (s *SessionStore) WriteFrame(connID uint64, dir byte, payload []byte) error
 		return nil
 	}
 
-	var w *pipeWriter
 	if dir == DirRequest {
+		if !sess.paired {
+			if len(payload) > 0 {
+				sess.reqBuf = append(sess.reqBuf, payload...)
+				if !sess.hasReqBytes {
+					sess.hasReqBytes = true
+					sess.reqFirstAt = time.Now()
+				}
+			}
+			s.mu.Unlock()
+			return nil
+		}
 		if sess.reqW == nil {
 			pr, pw := io.Pipe()
 			sess.reqR = pr
 			sess.reqW = &pipeWriter{w: pw}
 		}
-		if !sess.hasReqBytes && len(payload) > 0 {
-			sess.hasReqBytes = true
-			sess.reqFirstAt = time.Now()
+		w := sess.reqW
+		s.mu.Unlock()
+		if _, err := w.write(payload); err != nil {
+			return err
 		}
-		w = sess.reqW
-	} else if dir == DirResponse {
+		s.maybeStartParser(connID)
+		return nil
+	}
+
+	if dir == DirResponse {
+		if !sess.paired {
+			sess.resBuf = append(sess.resBuf, payload...)
+			sess.resAttached = true
+			s.mu.Unlock()
+			return s.attachPipesAndParser(connID)
+		}
 		if sess.resW == nil {
 			pr, pw := io.Pipe()
 			sess.resR = pr
 			sess.resW = &pipeWriter{w: pw}
-			sess.resAttached = true
 		}
-		w = sess.resW
-	} else {
+		w := sess.resW
+		s.mu.Unlock()
+		if _, err := w.write(payload); err != nil {
+			return err
+		}
+		s.maybeStartParser(connID)
+		return nil
+	}
+
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *SessionStore) attachPipesAndParser(connID uint64) error {
+	s.mu.Lock()
+	sess, ok := s.sessions[connID]
+	if !ok || sess.paired {
 		s.mu.Unlock()
 		return nil
 	}
+	reqR, reqW := io.Pipe()
+	resR, resW := io.Pipe()
+	sess.reqR, sess.resR = reqR, resR
+	sess.reqW = &pipeWriter{w: reqW}
+	sess.resW = &pipeWriter{w: resW}
+	sess.paired = true
+	reqBuf := append([]byte(nil), sess.reqBuf...)
+	resBuf := append([]byte(nil), sess.resBuf...)
+	sess.reqBuf, sess.resBuf = nil, nil
 	s.mu.Unlock()
 
-	if _, err := w.write(payload); err != nil {
-		return err
-	}
+	go func() {
+		_, _ = reqW.Write(reqBuf)
+		_ = reqW.Close()
+	}()
+	go func() {
+		_, _ = resW.Write(resBuf)
+		// resW stays open for any follow-on S frames until FinishConn
+	}()
+
 	s.maybeStartParser(connID)
 	return nil
 }

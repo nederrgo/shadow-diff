@@ -66,6 +66,35 @@ func TestHandleConn_truncatedPayload_discards(t *testing.T) {
 	}
 }
 
+func TestHandleConn_bothLegs_parses(t *testing.T) {
+	client, server := net.Pipe()
+	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), []config.Downstream{{Host: "httpbin.org"}}, 30*time.Second, DefaultMaxFrame)
+	defer store.Stop()
+
+	connID := store.RegisterConn()
+	done := make(chan struct{})
+	go func() {
+		HandleConn(server, store, connID)
+		close(done)
+	}()
+
+	req := []byte("POST /post HTTP/1.1\r\nHost: httpbin.org\r\nContent-Length: 2\r\n\r\n{}")
+	res := []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+	if err := writeFrame(client, DirRequest, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFrame(client, DirResponse, res); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.Close()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleConn did not finish")
+	}
+}
+
 func TestHandleConn_requestOnlyThenClose(t *testing.T) {
 	client, server := net.Pipe()
 	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), []config.Downstream{{Host: "api.example.com"}}, 30*time.Second, DefaultMaxFrame)
