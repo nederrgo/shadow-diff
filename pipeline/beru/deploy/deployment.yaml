@@ -34,12 +34,17 @@ spec:
             - name: grpc
               containerPort: 50051
               protocol: TCP
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
             - name: BERU_GRPC_ADDR
               value: ":50051"
+            - name: BERU_OTLP_GRPC_ADDR
+              value: ":4317"
             - name: BERU_HTTP_ADDR
               value: ":8080"
             - name: BERU_DB_PATH
@@ -68,6 +73,10 @@ spec:
     - name: grpc
       port: 50051
       targetPort: grpc
+      protocol: TCP
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
       protocol: TCP
     - name: http
       port: 8080

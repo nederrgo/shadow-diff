@@ -9,6 +9,5 @@ use (
 	./pipeline/igrises/igris-rabbitmq
 	./pipeline/egress-relay-rabbitmq
 	./testing/example-apps/db-test-app
-	./testing/example-apps/mongo-test-app
 	./testing/example-apps/rmq-test-worker
 )

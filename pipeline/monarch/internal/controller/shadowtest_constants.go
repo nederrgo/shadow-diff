@@ -41,7 +41,6 @@ const (
 	mongoProxyPort       int32  = 27017
 	shadowMongoProxyURL  string = "mongodb://127.0.0.1:27017"
 	mongoUpstreamCluster        = "mongo_upstream"
-	clusterBeruALS       string = "beru_als"
 	envHTTPProxy         string = "HTTP_PROXY"
 	envHTTPSProxy        string = "HTTPS_PROXY"
 	envNoProxy           string = "NO_PROXY"

@@ -3,6 +3,9 @@ package controller
 import (
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
+
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
@@ -66,5 +69,53 @@ func TestOtelPodAnnotations_disabledNotAppliedInReconcile(t *testing.T) {
 	}
 	if otelInjectionEnabled(st) {
 		t.Fatal("expected false")
+	}
+}
+
+func envValue(envs []corev1.EnvVar, name string) string {
+	for _, e := range envs {
+		if e.Name == name {
+			return e.Value
+		}
+	}
+	return ""
+}
+
+func TestOtelEnvVars_mongoDependencyExportsOTLP(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "mongo-test-shadow"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			OtelInjection: &enginev1alpha1.OtelInjectionSpec{
+				Language: "nodejs",
+			},
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "mongo", Image: "mongo:4.4", Port: 27017, EnvVarInjection: "MONGO_URL",
+			}},
+		},
+	}
+	envs := otelEnvVars(st, roleControlA)
+	if got := envValue(envs, envOtelTracesExporter); got != "otlp" {
+		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want otlp", got)
+	}
+	if got := envValue(envs, envOtelExporterOTLPEndpoint); got != defaultBeruOTLPEndpoint {
+		t.Fatalf("OTEL_EXPORTER_OTLP_ENDPOINT = %q", got)
+	}
+	if got := envValue(envs, envOtelExporterOTLPProtocol); got != "grpc" {
+		t.Fatalf("OTEL_EXPORTER_OTLP_PROTOCOL = %q", got)
+	}
+	if got := envValue(envs, envOtelNodeEnabledInstrumentations); got != "mongodb,http" {
+		t.Fatalf("OTEL_NODE_ENABLED_INSTRUMENTATIONS = %q", got)
+	}
+	if got := envValue(envs, envOtelServiceName); got != "mongo-test-shadow-control-a" {
+		t.Fatalf("OTEL_SERVICE_NAME = %q", got)
+	}
+}
+
+func TestOtelEnvVars_noMongoUsesNoneExporter(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{ObjectMeta: metav1.ObjectMeta{Name: "http-shadow"}}
+	if got := envValue(otelEnvVars(st, roleControlA), envOtelTracesExporter); got != "none" {
+		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want none", got)
 	}
 }

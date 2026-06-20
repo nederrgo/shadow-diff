@@ -16,7 +16,9 @@ if [[ -n "$SHADOWTEST" ]]; then
 fi
 label_args=(-l "$label_selector")
 
-pods=$(kubectl get pods -n "$SHADOW_NS" "${label_args[@]}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+pods=$(kubectl get pods -n "$SHADOW_NS" "${label_args[@]}" \
+  --field-selector=status.phase=Running \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
 if [[ -z "$pods" ]]; then
   echo "ERROR: no pods in namespace ${SHADOW_NS}" >&2
   exit 1

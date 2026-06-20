@@ -12,11 +12,16 @@ const (
 	annotationOtelInjectPrefix = "instrumentation.opentelemetry.io/inject-"
 	annotationOtelInjectSDK    = annotationOtelInjectPrefix + "sdk"
 
-	envOtelTracesExporter  = "OTEL_TRACES_EXPORTER"
-	envOtelMetricsExporter = "OTEL_METRICS_EXPORTER"
-	envOtelLogsExporter    = "OTEL_LOGS_EXPORTER"
-	envOtelServiceName     = "OTEL_SERVICE_NAME"
-	envOtelPropagators     = "OTEL_PROPAGATORS"
+	envOtelTracesExporter           = "OTEL_TRACES_EXPORTER"
+	envOtelMetricsExporter          = "OTEL_METRICS_EXPORTER"
+	envOtelLogsExporter             = "OTEL_LOGS_EXPORTER"
+	envOtelServiceName              = "OTEL_SERVICE_NAME"
+	envOtelPropagators              = "OTEL_PROPAGATORS"
+	envOtelExporterOTLPEndpoint     = "OTEL_EXPORTER_OTLP_ENDPOINT"
+	envOtelExporterOTLPProtocol     = "OTEL_EXPORTER_OTLP_PROTOCOL"
+	envOtelNodeEnabledInstrumentations = "OTEL_NODE_ENABLED_INSTRUMENTATIONS"
+
+	defaultBeruOTLPEndpoint = "http://beru.beru-system.svc.cluster.local:4317"
 )
 
 func otelInjectionEnabled(st *enginev1alpha1.ShadowTest) bool {
@@ -68,6 +73,18 @@ func otelPodAnnotations(st *enginev1alpha1.ShadowTest, appImage string) map[stri
 
 func otelEnvVars(st *enginev1alpha1.ShadowTest, role string) []corev1.EnvVar {
 	name := st.Name + "-" + role
+	if otelInjectionEnabled(st) && hasMongoDependency(st) {
+		return []corev1.EnvVar{
+			{Name: envOtelTracesExporter, Value: "otlp"},
+			{Name: envOtelMetricsExporter, Value: "none"},
+			{Name: envOtelLogsExporter, Value: "none"},
+			{Name: envOtelServiceName, Value: name},
+			{Name: envOtelPropagators, Value: "tracecontext"},
+			{Name: envOtelExporterOTLPEndpoint, Value: defaultBeruOTLPEndpoint},
+			{Name: envOtelExporterOTLPProtocol, Value: "grpc"},
+			{Name: envOtelNodeEnabledInstrumentations, Value: "mongodb,http"},
+		}
+	}
 	return []corev1.EnvVar{
 		{Name: envOtelTracesExporter, Value: "none"},
 		{Name: envOtelMetricsExporter, Value: "none"},

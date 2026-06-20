@@ -179,27 +179,24 @@ func TestRenderEnvoyYAML_mongoEgress(t *testing.T) {
 	}
 	checks := []string{
 		"name: mongo_egress",
-		"envoy.filters.network.mongo_proxy",
-		"emit_dynamic_metadata: true",
+		"envoy.filters.network.tcp_proxy",
 		"port_value: 27017",
-		"envoy.access_loggers.tcp_grpc",
-		"envoy.extensions.access_loggers.grpc.v3.TcpGrpcAccessLogConfig",
-		"transport_api_version: V3",
-		"buffer_flush_interval: 1s",
-		"cluster_name: beru_als",
-		"name: beru_als",
-		"http2_protocol_options: {}",
 		"mongo_upstream",
-		"log_name: mongo_egress_control-a",
-		"access_log_options:",
-		"access_log_flush_interval: 1s",
-		"tag: x-shadow-role",
-		"literal:",
 		"mongo-control-a.shadow-default-test.svc.cluster.local",
 	}
 	for _, c := range checks {
 		if !strings.Contains(yaml, c) {
 			t.Fatalf("expected %q in envoy yaml:\n%s", c, yaml)
+		}
+	}
+	for _, forbidden := range []string{
+		"envoy.filters.network.mongo_proxy",
+		"beru_als",
+		"access_log",
+		"envoy.access_loggers.tcp_grpc",
+	} {
+		if strings.Contains(yaml, forbidden) {
+			t.Fatalf("mongo egress yaml must not contain %q:\n%s", forbidden, yaml)
 		}
 	}
 	if strings.Contains(yaml, "transport_socket") {

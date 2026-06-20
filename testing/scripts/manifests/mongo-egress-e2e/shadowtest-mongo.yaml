@@ -29,3 +29,7 @@ spec:
       image: mongo:4.4
       port: 27017
       envVarInjection: MONGO_URL
+
+  otelInjection:
+    enabled: true
+    language: nodejs

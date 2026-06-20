@@ -1,13 +1,11 @@
-FROM golang:1.22-alpine AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /mongo-test-app .
+FROM node:20-bookworm-slim
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
-COPY --from=build /mongo-test-app /mongo-test-app
-USER 65532:65532
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev
+
+COPY index.js ./
+
 EXPOSE 8080
-ENTRYPOINT ["/mongo-test-app"]
+CMD ["node", "index.js"]
