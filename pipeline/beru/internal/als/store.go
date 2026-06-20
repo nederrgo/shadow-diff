@@ -91,6 +91,9 @@ func (s *Store) Handle(streamRole string, traceID string, entry *accesslogv3.TCP
 	if entry == nil {
 		return
 	}
+	if common := entry.GetCommonProperties(); common != nil && common.GetIntermediateLogEntry() {
+		return // ponytail: periodic tcp_proxy flush; diff on connection-close entries only
+	}
 	parsed, err := parseTCPEntry(streamRole, entry)
 	if err != nil {
 		s.log.Debug("Skipping mongo ALS entry", "streamRole", streamRole, "traceID", traceID, "err", err)
@@ -107,18 +110,31 @@ func (s *Store) Handle(streamRole string, traceID string, entry *accesslogv3.TCP
 		traceID = s.activeTraceLocked()
 	}
 	if traceID == "" {
-		s.unattributed[parsed.role] = append(s.unattributed[parsed.role], qe)
+		s.unattributed[parsed.role] = upsertQueryEntry(s.unattributed[parsed.role], qe)
 		s.mu.Unlock()
 		return
 	}
 	pt := s.ensurePendingLocked(traceID)
-	pt.queries[parsed.role] = append(pt.queries[parsed.role], qe)
+	pt.queries[parsed.role] = upsertQueryEntry(pt.queries[parsed.role], qe)
 	ready := pt.ingressComplete && !pt.diffDone
 	s.mu.Unlock()
 
 	if ready {
 		s.tryDiff(traceID)
 	}
+}
+
+func upsertQueryEntry(entries []queryEntry, qe queryEntry) []queryEntry {
+	if qe.connectionID == "" {
+		return append(entries, qe)
+	}
+	for i := range entries {
+		if entries[i].connectionID == qe.connectionID {
+			entries[i] = qe
+			return entries
+		}
+	}
+	return append(entries, qe)
 }
 
 func (s *Store) activeTraceLocked() string {

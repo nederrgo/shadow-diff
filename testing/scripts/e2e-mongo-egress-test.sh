@@ -13,6 +13,7 @@ MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
 BERU_IMG="${BERU_IMG:-beru:dev}"
 KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
 TRACE_ID="${TRACE_ID:-mongo-e2e-$(date +%s)}"
+WAIT_SECS="${WAIT_SECS:-40}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 SKIP_LOAD="${SKIP_LOAD:-0}"
 SKIP_MONARCH_BUILD="${SKIP_MONARCH_BUILD:-0}"
@@ -192,8 +193,7 @@ if ! grep -q '__HTTP_CODE__202' <<<"$write_out"; then
 fi
 log_success "Igris accepted multicast (HTTP 202)"
 
-echo "==> Wait for shadow workers and Beru mongo egress diff"
-sleep 12
+echo "==> Wait for shadow workers and Beru mongo egress diff (up to ${WAIT_SECS}s)"
 
 for role in control-a control-b candidate; do
   dep="${SHADOWTEST}-${role}"
@@ -205,18 +205,34 @@ for role in control-a control-b candidate; do
   log_success "${role} processed trace=${TRACE_ID}"
 done
 
-echo "==> Verify Beru mongo egress diff"
-beru_pod=$(kubectl get pods -n beru-system --no-headers 2>/dev/null | awk '/^beru-/{print $1; exit}')
+beru_pod=$(kubectl get pods -n beru-system -l app.kubernetes.io/name=beru -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+if [[ -z "$beru_pod" ]]; then
+  beru_pod=$(kubectl get pods -n beru-system --no-headers 2>/dev/null | awk '/^beru-/{print $1; exit}')
+fi
 if [[ -z "$beru_pod" ]]; then
   log_fail "Beru pod not found in beru-system"
   exit 1
 fi
-if ! kubectl logs -n beru-system "$beru_pod" --tail=120 | grep -q "No egress regression for Trace ${TRACE_ID} (mongodb)"; then
-  log_fail "Beru logs missing 'No egress regression for Trace ${TRACE_ID} (mongodb)'"
-  kubectl logs -n beru-system "$beru_pod" --tail=80 >&2 || true
-  exit 1
-fi
-log_success "Beru reported no mongo egress regression for trace ${TRACE_ID}"
 
-trap - EXIT
-log_success "Mongo egress E2E passed (trace ${TRACE_ID})"
+success_msg="No egress regression for Trace ${TRACE_ID} (mongodb)"
+timeout_msg="Timed out waiting for Trace ${TRACE_ID} (mongodb egress)"
+
+for i in $(seq 1 "$WAIT_SECS"); do
+  logs=$(kubectl logs -n beru-system "$beru_pod" --tail=200 2>/dev/null || true)
+  if grep -qF "$success_msg" <<<"$logs"; then
+    log_success "Beru reported no mongo egress regression for trace ${TRACE_ID}"
+    trap - EXIT
+    log_success "Mongo egress E2E passed (trace ${TRACE_ID})"
+    exit 0
+  fi
+  if grep -qF "$timeout_msg" <<<"$logs"; then
+    log_fail "Beru timed out waiting for mongo ALS entries"
+    kubectl logs -n beru-system "$beru_pod" --tail=40 2>&1 | grep -E "${TRACE_ID}|mongodb|ALS" || kubectl logs -n beru-system "$beru_pod" --tail=20
+    exit 1
+  fi
+  sleep 1
+done
+
+log_fail "Beru logs missing '${success_msg}' after ${WAIT_SECS}s"
+kubectl logs -n beru-system "$beru_pod" --tail=80 2>&1 | grep -E "${TRACE_ID}|mongodb|ALS" || kubectl logs -n beru-system "$beru_pod" --tail=30
+exit 1

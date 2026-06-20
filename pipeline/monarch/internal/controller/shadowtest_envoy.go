@@ -75,6 +75,15 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (stri
 	), nil
 }
 
+func beruGRPCClusterProtocolOptionsYAML() string {
+	return `    typed_extension_protocol_options:
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        explicit_http_config:
+          http2_protocol_options: {}
+`
+}
+
 func buildMongoEgressListenerYAML(role, beruTimeout string) string {
 	var b strings.Builder
 	b.WriteString("  - name: mongo_egress\n")
@@ -94,7 +103,15 @@ func buildMongoEgressListenerYAML(role, beruTimeout string) string {
 	b.WriteString("          \"@type\": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy\n")
 	b.WriteString("          stat_prefix: mongo_egress\n")
 	fmt.Fprintf(&b, "          cluster: %s\n", mongoUpstreamCluster)
+	b.WriteString("          access_log_options:\n")
+	b.WriteString("            access_log_flush_interval: 1s\n")
 	b.WriteString("          access_log:\n")
+	b.WriteString(buildMongoEgressAccessLogYAML(role, beruTimeout))
+	return b.String()
+}
+
+func buildMongoEgressAccessLogYAML(role, beruTimeout string) string {
+	var b strings.Builder
 	b.WriteString("          - name: envoy.access_loggers.tcp_grpc\n")
 	b.WriteString("            typed_config:\n")
 	b.WriteString("              \"@type\": type.googleapis.com/envoy.extensions.access_loggers.grpc.v3.TcpGrpcAccessLogConfig\n")
@@ -102,6 +119,7 @@ func buildMongoEgressListenerYAML(role, beruTimeout string) string {
 	b.WriteString("                log_name: mongo_egress_")
 	fmt.Fprintf(&b, "%s\n", role)
 	b.WriteString("                transport_api_version: V3\n")
+	b.WriteString("                buffer_flush_interval: 1s\n")
 	b.WriteString("                grpc_service:\n")
 	b.WriteString("                  envoy_grpc:\n")
 	fmt.Fprintf(&b, "                    cluster_name: %s\n", clusterBeruALS)
@@ -401,7 +419,11 @@ static_resources:
   - name: beru_ext_proc
     type: STRICT_DNS
     connect_timeout: 5s
-    http2_protocol_options: {}
+    typed_extension_protocol_options:
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        explicit_http_config:
+          http2_protocol_options: {}
     load_assignment:
       cluster_name: beru_ext_proc
       endpoints:

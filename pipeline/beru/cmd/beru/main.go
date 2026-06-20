@@ -81,7 +81,9 @@ func main() {
 		Mocks: mocks,
 		Role:  envoyextproc.RoleFromEnv(),
 	})
-	accesslogv3.RegisterAccessLogServiceServer(srv, &als.Server{Log: log, Store: alsStore})
+	alsServer := &als.Server{Log: log, Store: alsStore}
+	accesslogv3.RegisterAccessLogServiceServer(srv, alsServer)
+	log.Info("Beru ALS gRPC registered", "service", "envoy.service.accesslog.v3.AccessLogService")
 
 	go func() {
 		slog.Info("Beru gRPC server listening", "addr", addr)
