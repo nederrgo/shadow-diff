@@ -85,9 +85,9 @@ func TestHostWithoutPort(t *testing.T) {
 	}
 }
 
-func TestParseDownstreamConfigs_monarchJSON(t *testing.T) {
+func TestParseRecordAndReplayConfigs_monarchJSON(t *testing.T) {
 	raw := `[{"host":"httpbin.org","ignoreRequestPaths":["$.nonce"]}]`
-	configs := parseDownstreamConfigs(raw)
+	configs := parseRecordAndReplayConfigs(raw)
 	if len(configs) != 1 {
 		t.Fatalf("configs: %v", configs)
 	}
@@ -97,7 +97,7 @@ func TestParseDownstreamConfigs_monarchJSON(t *testing.T) {
 }
 
 func TestIgnorePathsForHost(t *testing.T) {
-	configs := []DownstreamConfig{
+	configs := []RecordAndReplayHostConfig{
 		{Host: "api.example.com", IgnoreRequestPaths: []string{"$.timestamp"}},
 	}
 	paths := ignorePathsForHost(configs, "api.example.com")
@@ -124,10 +124,10 @@ func TestHandleEgressRequest_ignorePathsVariedBody(t *testing.T) {
 		Body:       []byte(`{"mock":true}`),
 	})
 
-	configs := []DownstreamConfig{
+	configs := []RecordAndReplayHostConfig{
 		{Host: host, IgnoreRequestPaths: []string{"$.nonce"}},
 	}
-	state := &egressState{role: "control-a", downstreamConfigs: configs}
+	state := &egressState{role: "control-a", recordAndReplayConfigs: configs}
 	s.handleEgressRequest(state, &extprocv3.ProcessingRequest{
 		Request: &extprocv3.ProcessingRequest_RequestHeaders{
 			RequestHeaders: &extprocv3.HttpHeaders{
@@ -158,7 +158,7 @@ func TestHandleEgressRequest_ignorePathsVariedBody(t *testing.T) {
 	}
 
 	// Without ignore paths the varied body must miss.
-	missState := &egressState{role: "control-a", downstreamConfigs: nil}
+	missState := &egressState{role: "control-a", recordAndReplayConfigs: nil}
 	s.handleEgressRequest(missState, &extprocv3.ProcessingRequest{
 		Request: &extprocv3.ProcessingRequest_RequestHeaders{
 			RequestHeaders: &extprocv3.HttpHeaders{

@@ -68,7 +68,7 @@ func TestHandleConn_truncatedPayload_discards(t *testing.T) {
 
 func TestHandleConn_bothLegs_parses(t *testing.T) {
 	client, server := net.Pipe()
-	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), []config.Downstream{{Host: "httpbin.org"}}, 30*time.Second, DefaultMaxFrame)
+	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), []config.RecordAndReplayHost{{Host: "httpbin.org"}}, 30*time.Second, DefaultMaxFrame)
 	defer store.Stop()
 
 	connID := store.RegisterConn()
@@ -97,7 +97,7 @@ func TestHandleConn_bothLegs_parses(t *testing.T) {
 
 func TestHandleConn_requestOnlyThenClose(t *testing.T) {
 	client, server := net.Pipe()
-	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), []config.Downstream{{Host: "api.example.com"}}, 30*time.Second, DefaultMaxFrame)
+	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), []config.RecordAndReplayHost{{Host: "api.example.com"}}, 30*time.Second, DefaultMaxFrame)
 	defer store.Stop()
 
 	connID := store.RegisterConn()

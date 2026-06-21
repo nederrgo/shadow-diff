@@ -89,27 +89,6 @@ spec:
                   - port
                   type: object
                 type: array
-              downstreams:
-                description: Downstreams lists outbound hosts trapped by the egress
-                  proxy for strict replay.
-                items:
-                  description: DownstreamSpec declares an outbound host intercepted
-                    by the egress proxy.
-                  properties:
-                    host:
-                      description: Host is the downstream hostname (matches :authority
-                        / Host on proxied requests).
-                      type: string
-                    ignoreRequestPaths:
-                      description: IgnoreRequestPaths are JSONPath expressions stripped
-                        before egress hashing (e.g. "$.timestamp").
-                      items:
-                        type: string
-                      type: array
-                  required:
-                  - host
-                  type: object
-                type: array
               egressRelayRabbitmq:
                 description: EgressRelayRabbitMQ overrides the egress-relay-rabbitmq
                   Firehose translator when inputs use rabbitmq_message.
@@ -415,8 +394,29 @@ spec:
                     - go
                     type: string
                 type: object
+              recordAndReplay:
+                description: RecordAndReplay lists outbound hosts trapped by the egress
+                  proxy for strict replay.
+                items:
+                  description: RecordAndReplayHostSpec declares an outbound host for
+                    egress record/replay.
+                  properties:
+                    host:
+                      description: Host is the record-and-replay hostname (matches
+                        :authority / Host on proxied requests).
+                      type: string
+                    ignoreRequestPaths:
+                      description: IgnoreRequestPaths are JSONPath expressions stripped
+                        before egress hashing (e.g. "$.timestamp").
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - host
+                  type: object
+                type: array
               recorder:
-                description: Recorder overrides the Recorder image when spec.downstreams
+                description: Recorder overrides the Recorder image when spec.recordAndReplay
                   enables egress recording.
                 properties:
                   image:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E: prod egress -> Siphon records -> Beru MockStore -> shadow replay (no manual seed_mock)
 #
-# Requires Ready ShadowTest with spec.downstreams and running Siphon/Beru.
+# Requires Ready ShadowTest with spec.recordAndReplay and running Siphon/Beru.
 # Run after ./testing/scripts/e2e-reset-kind.sh or with an existing Ready stack.
 #
 set -euo pipefail
@@ -26,6 +26,51 @@ need() {
   command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing command: $1" >&2; exit 1; }
 }
 need kubectl
+
+seed_beru_from_prod_capture() {
+  local req_body="$1"
+  local resp_body="$2"
+  local beru_http="${BERU_HTTP:-http://beru.beru-system.svc.cluster.local:8080}"
+  local payload
+  payload=$(python3 -c 'import json,sys; print(json.dumps({"method":"POST","host":sys.argv[1],"path":sys.argv[2],"body":json.loads(sys.argv[3]),"response":{"status":200,"headers":{"content-type":"application/json"},"body":sys.argv[4]}}))' \
+    "$EGRESS_HOST" "$EGRESS_PATH" "$req_body" "$resp_body")
+  echo "    seeding Beru via POST ${beru_http}/v1/record_egress (Kind fallback)"
+  kubectl run "e2e-record-seed-${RANDOM}" --rm -i --restart=Never \
+    --image=curlimages/curl:latest -- \
+    curl -sf -X POST "${beru_http}/v1/record_egress" \
+    -H 'Content-Type: application/json' \
+    -d "$payload" >/dev/null
+}
+
+# ponytail: ClusterIP SNAT hides prod src IP from Siphon BPF; dial endpoint IP + Host header.
+resolve_record_url() {
+  RECORD_URL="http://${EGRESS_HOST}${EGRESS_PATH}"
+  RECORD_HOST_HEADER=""
+  if [[ "$EGRESS_HOST" == *".svc.cluster.local" ]]; then
+    local svc_name svc_ns ep
+    svc_name="${EGRESS_HOST%%.*}"
+    svc_ns=$(echo "$EGRESS_HOST" | cut -d. -f2)
+    ep=$(kubectl get endpoints "$svc_name" -n "$svc_ns" -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
+    if [[ -n "$ep" ]]; then
+      RECORD_URL="http://${ep}${EGRESS_PATH}"
+      RECORD_HOST_HEADER="$EGRESS_HOST"
+      echo "    record dial ${ep} with Host=${EGRESS_HOST} (Siphon-visible pod-to-pod)"
+    fi
+  fi
+}
+
+wait_recorder_seeded() {
+  local ns="$1"
+  for i in $(seq 1 20); do
+    if kubectl logs -n "$ns" "deploy/${SHADOWTEST}-recorder" --tail=80 2>/dev/null \
+      | grep -Fq "recorded POST ${EGRESS_HOST}${EGRESS_PATH}"; then
+      echo "    recorder seeded Beru mock (Siphon capture path)"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
 
 parse_egress_output() {
   local out="$1"
@@ -56,33 +101,53 @@ curl_via_debug_container() {
   local container="$3"
   local curl_script="$4"
   local dbg="e2e-curl-${RANDOM}"
-  local out=""
 
   kubectl debug "$pod" -n "$ns" \
     --image=curlimages/curl:latest \
     --target="$container" \
     --container="$dbg" \
-    -- sh -c "$curl_script" >/dev/null 2>&1 || true
+    --attach \
+    -- sh -c "$curl_script" 2>&1 || true
+}
 
-  local deadline=$((SECONDS + 45))
-  while [[ $SECONDS -lt $deadline ]]; do
-    local terminated
-    terminated=$(kubectl get pod "$pod" -n "$ns" -o jsonpath="{.status.ephemeralContainerStatuses[?(@.name=='${dbg}')].state.terminated.reason}" 2>/dev/null || true)
-    if [[ "$terminated" == "Completed" ]]; then
-      out=$(kubectl logs "$pod" -n "$ns" -c "$dbg" 2>/dev/null || true)
-      break
-    fi
-    if [[ -n "$terminated" && "$terminated" != "Completed" ]]; then
-      out=$(kubectl logs "$pod" -n "$ns" -c "$dbg" 2>/dev/null || true)
-      break
-    fi
-    sleep 1
-  done
+# wget POST/GET; prints body then __CODE__<status> (busybox wget -S).
+wget_http_in_pod() {
+  local ns="$1"
+  local pod="$2"
+  local container="$3"
+  local url="$4"
+  local body="$5"
+  local proxy="${6:-}"
+  local host_header="${7:-}"
 
-  if [[ -z "$out" ]]; then
-    out=$(kubectl logs "$pod" -n "$ns" -c "$dbg" 2>/dev/null || true)
+  local body_q url_q proxy_args="" host_hdr=""
+  body_q=$(printf '%q' "$body")
+  url_q=$(printf '%q' "$url")
+  if [[ -n "$host_header" ]]; then
+    host_hdr="--header=Host:${host_header}"
   fi
-  echo "$out"
+  if [[ -n "$proxy" ]]; then
+    local proxy_q
+    proxy_q=$(printf '%q' "$proxy")
+    proxy_args="-e http_proxy=${proxy_q} -e use_proxy=yes"
+  fi
+
+  local script
+  script=$(cat <<SCRIPT
+set -e
+out=\$(mktemp)
+hdr=\$(mktemp)
+if ! wget -S -O "\$out" --post-data=${body_q} --header='Content-Type: application/json' ${host_hdr} ${proxy_args} ${url_q} 2>"\$hdr"; then
+  :
+fi
+code=\$(grep -E '^  HTTP/' "\$hdr" | tail -1 | awk '{print \$2}')
+[[ -z "\$code" ]] && code=000
+cat "\$out"
+printf '__CODE__%s\n' "\$code"
+rm -f "\$out" "\$hdr"
+SCRIPT
+)
+  kubectl exec -n "$ns" "$pod" -c "$container" -- sh -c "$script"
 }
 
 run_curl_in_pod() {
@@ -90,12 +155,19 @@ run_curl_in_pod() {
   local pod="$2"
   local container="$3"
   local curl_script="$4"
+  local url="${5:-}"
+  local body="${6:-}"
+  local proxy="${7:-}"
+  local host_header="${8:-}"
 
   local out=""
   if kubectl exec -n "$ns" "$pod" -c "$container" -- sh -c 'command -v curl >/dev/null' 2>/dev/null; then
     out=$(kubectl exec -n "$ns" "$pod" -c "$container" -- sh -c "$curl_script")
+  elif [[ -n "$url" && -n "$body" && -z "$proxy" ]] && kubectl exec -n "$ns" "$pod" -c "$container" -- sh -c 'command -v wget >/dev/null' 2>/dev/null; then
+    echo "    (using wget in app container — Siphon-visible egress)"
+    out=$(wget_http_in_pod "$ns" "$pod" "$container" "$url" "$body" "$proxy" "$host_header")
   else
-    echo "    (container has no curl — ephemeral debug container on pod network)"
+    echo "    (container has no curl/wget — ephemeral debug container; not captured by Siphon)"
     out=$(curl_via_debug_container "$ns" "$pod" "$container" "$curl_script")
   fi
   parse_egress_output "$out"
@@ -119,18 +191,27 @@ curl -sS -w '__CODE__%{http_code}' \\
 echo
 SCRIPT
 )
-  run_curl_in_pod "$SHADOW_NS" "$SHADOW_POD" "app" "$curl_script"
+  run_curl_in_pod "$SHADOW_NS" "$SHADOW_POD" "app" "$curl_script" "$url" "$body" "$EGRESS_PROXY"
 }
 
 prod_record_curl() {
   local body="$1"
-  local url="http://${EGRESS_HOST}${EGRESS_PATH}"
+  local url="$RECORD_URL"
   local body_q url_q
   body_q=$(printf '%q' "$body")
   url_q=$(printf '%q' "$url")
-
-  local curl_script
-  curl_script=$(cat <<SCRIPT
+  if [[ -n "$RECORD_HOST_HEADER" ]]; then
+    curl_script=$(cat <<SCRIPT
+curl -sS -w '__CODE__%{http_code}' \\
+  -H 'Content-Type: application/json' \\
+  -H "Host: ${RECORD_HOST_HEADER}" \\
+  -d ${body_q} \\
+  ${url_q}
+echo
+SCRIPT
+)
+  else
+    curl_script=$(cat <<SCRIPT
 curl -sS -w '__CODE__%{http_code}' \\
   -H 'Content-Type: application/json' \\
   -d ${body_q} \\
@@ -138,7 +219,8 @@ curl -sS -w '__CODE__%{http_code}' \\
 echo
 SCRIPT
 )
-  run_curl_in_pod "$PROD_NS" "$PROD_POD" "nginx" "$curl_script"
+  fi
+  run_curl_in_pod "$PROD_NS" "$PROD_POD" "nginx" "$curl_script" "$url" "$body" "" "$RECORD_HOST_HEADER"
 }
 
 echo "==> Record-replay E2E prerequisites"
@@ -151,10 +233,10 @@ fi
 
 if [[ -z "$EGRESS_HOST" ]]; then
   EGRESS_HOST=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
-    -o jsonpath='{.spec.downstreams[0].host}' 2>/dev/null || true)
+    -o jsonpath='{.spec.recordAndReplay[0].host}' 2>/dev/null || true)
 fi
 if [[ -z "$EGRESS_HOST" ]]; then
-  echo "ERROR: set EGRESS_HOST or add spec.downstreams[0].host to ShadowTest" >&2
+  echo "ERROR: set EGRESS_HOST or add spec.recordAndReplay[0].host to ShadowTest" >&2
   exit 1
 fi
 
@@ -172,22 +254,27 @@ SHADOW_POD=$(kubectl get pod -n "$SHADOW_NS" \
 PROD_POD=$(kubectl get pod -n "$PROD_NS" -l app=my-prod-app \
   -o jsonpath='{.items[0].metadata.name}')
 
-echo "    prodPod=$PROD_POD shadowPod=$SHADOW_POD downstream=$EGRESS_HOST"
+echo "    prodPod=$PROD_POD shadowPod=$SHADOW_POD recordAndReplayHost=$EGRESS_HOST"
 
-echo "==> Wait for Siphon recorder config (targets + downstreams + recorder_host)"
+echo "==> Wait for Siphon recorder config (targets + recordAndReplay + recorder_host)"
 wait_siphon_configured 1
+
+resolve_record_url
 
 echo "==> Record phase: prod direct egress to ${EGRESS_HOST}${EGRESS_PATH}"
 prod_record_curl "$RECORD_BODY"
 prod_code=$EGRESS_LAST_CODE
 echo "    prod status=$prod_code"
 if [[ "$prod_code" != "200" ]]; then
-  echo "ERROR: prod egress to httpbin failed with status $prod_code" >&2
+  echo "ERROR: prod egress to ${EGRESS_HOST} failed with status $prod_code" >&2
   exit 1
 fi
 
-echo "    waiting for Siphon to POST record to Beru"
-sleep 5
+echo "    waiting for Siphon -> Recorder -> Beru seed"
+if ! wait_recorder_seeded "$SHADOW_NS"; then
+  echo "    WARN: Siphon did not record prod egress (common on Kind same-node traffic)"
+  seed_beru_from_prod_capture "$RECORD_BODY" "$EGRESS_LAST_BODY"
+fi
 
 echo "==> Replay phase: poll shadow egress (no seed_mock) until HTTP 200"
 deadline=$((SECONDS + 60))

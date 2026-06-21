@@ -61,9 +61,9 @@ For each Siphon TCP connection, `SessionStore`:
 3. Reads sequential HTTP request/response pairs from the pipes (supports keep-alive / multiple transactions on one connection).
 4. Evicts incomplete pairs after `RECORDER_PAIR_TIMEOUT` (default 30s).
 
-### 3. Downstream filtering
+### 3. Record-and-replay host filtering
 
-Only transactions whose `Host` matches `spec.downstreams` on the ShadowTest are recorded. Monarch writes the allowlist to `/etc/recorder/downstreams.json`:
+Only transactions whose `Host` matches `spec.recordAndReplay` on the ShadowTest are recorded. Monarch writes the allowlist to `/etc/recorder/recordAndReplay.json`:
 
 ```json
 [
@@ -94,7 +94,7 @@ recorder/
     ingest/               TCP server, framing, session pairing
     parse/                HTTP request/response parser, host filter
     beru/                 POST /v1/record_egress client
-    config/               env + downstreams.json loader
+    config/               env + recordAndReplay.json loader
 ```
 
 ---
@@ -125,36 +125,36 @@ make docker-build RECORDER_IMG=recorder:dev
 | -------- | -------- | ------- | ----------- |
 | `BERU_HTTP_URL` | Yes | — | Beru HTTP base URL (e.g. `http://beru.beru-system.svc.cluster.local:8080`) |
 | `RECORDER_LISTEN_ADDR` | No | `:8080` | TCP address for Siphon egress relay connections |
-| `RECORDER_DOWNSTREAMS_FILE` | No | `/etc/recorder/downstreams.json` | JSON allowlist of downstream hosts |
+| `RECORDER_RECORD_AND_REPLAY_FILE` | No | `/etc/recorder/recordAndReplay.json` | JSON allowlist of record-and-replay hosts |
 | `RECORDER_PAIR_TIMEOUT` | No | `30s` | Drop incomplete request/response pairs after this duration |
 | `RECORDER_MAX_FRAME_BYTES` | No | `5242880` (5 MiB) | Max single frame payload from Siphon |
 
-Monarch sets `BERU_HTTP_URL`, listen addr, and mounts the downstreams ConfigMap when `spec.downstreams` is non-empty. Siphon receives `recorder_host` (DNS:port of the Recorder Service) via Monarch's `/v1/config` POST.
+Monarch sets `BERU_HTTP_URL`, listen addr, and mounts the recordAndReplay ConfigMap when `spec.recordAndReplay` is non-empty. Siphon receives `recorder_host` (DNS:port of the Recorder Service) via Monarch's `/v1/config` POST.
 
 ---
 
 ## Monarch integration
 
-Recorder is deployed into the **shadow namespace** when a ShadowTest defines **`spec.downstreams`**:
+Recorder is deployed into the **shadow namespace** when a ShadowTest defines **`spec.recordAndReplay`**:
 
 | Resource | Name pattern | Purpose |
 | -------- | ------------ | ------- |
 | Deployment | `<shadowtest-name>-recorder` | Recorder pod |
 | Service | `<shadowtest-name>-recorder` | Siphon dials this on port 8080 |
-| ConfigMap | `<shadowtest-name>-recorder-config` | `downstreams.json` from `spec.downstreams` |
+| ConfigMap | `<shadowtest-name>-recorder-config` | `recordAndReplay.json` from `spec.recordAndReplay` |
 
 ShadowTest fields:
 
 | Field | Effect |
 | ----- | ------ |
-| `spec.downstreams[]` | Enables Recorder + Siphon egress relay + Envoy egress proxy on shadow apps |
-| `spec.downstreams[].host` | Hostname allowlist for recording |
-| `spec.downstreams[].ignoreRequestPaths` | JSON paths excluded from request hash (volatile fields) |
+| `spec.recordAndReplay[]` | Enables Recorder + Siphon egress relay + Envoy egress proxy on shadow apps |
+| `spec.recordAndReplay[].host` | Hostname allowlist for recording |
+| `spec.recordAndReplay[].ignoreRequestPaths` | JSON paths excluded from request hash (volatile fields) |
 | `spec.recorder.image` | Override container image (default `recorder:latest`) |
 
 Monarch waits for Recorder to be Available before marking the ShadowTest Ready and pushes `recorder_host` into Siphon config.
 
-Example ShadowTest with downstreams: [testing/scripts/manifests/e2e-shadowtest.yaml](../../testing/scripts/manifests/e2e-shadowtest.yaml).
+Example ShadowTest with recordAndReplay: [testing/scripts/manifests/e2e-shadowtest.yaml](../../testing/scripts/manifests/e2e-shadowtest.yaml).
 
 ---
 
@@ -177,5 +177,5 @@ Manual seeding (without Recorder) remains available via `POST /v1/seed_mock` —
 
 - [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — prod HTTP auto-record vs AMQP egress diff
 - [pipeline/siphon/](../siphon/) — BPF capture and egress relay to Recorder
-- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — `spec.downstreams`, `spec.recorder`
+- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — `spec.recordAndReplay`, `spec.recorder`
 - [pipeline/beru/README.md](../beru/README.md) — mock store, Envoy egress replay, `/v1/record_egress`

@@ -50,6 +50,7 @@ func (s *Server) Listen(ctx context.Context) error {
 			return err
 		}
 		connID := s.store.RegisterConn()
+		log.Printf("recorder debug: siphon conn=%d from %s", connID, conn.RemoteAddr())
 		s.wg.Add(1)
 		go func(c net.Conn, id uint64) {
 			defer s.wg.Done()

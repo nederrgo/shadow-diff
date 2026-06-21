@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/gopacket/tcpassembly"
 	"github.com/shadow-diff/siphon/internal/config"
 	"github.com/shadow-diff/siphon/internal/forward"
 )
@@ -34,7 +35,7 @@ func TestRemove_doesNotCloseRecorderConn(t *testing.T) {
 	defer cli.Close()
 
 	sess := &Session{flowKey: "test-flow"}
-	allocBothPipes(sess)
+	allocBothPipes(sess, st)
 	st.sessions["test-flow"] = sess
 
 	st.Remove("test-flow")
@@ -69,6 +70,7 @@ func TestSession_tryStartRelay_resetsForKeepAlive(t *testing.T) {
 }
 
 func TestGetOrCreate_recyclesRequestLegAndRespawnsRelay(t *testing.T) {
+	// Relay starts on first reassembled bytes, not at GetOrCreate.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -97,14 +99,15 @@ func TestGetOrCreate_recyclesRequestLegAndRespawnsRelay(t *testing.T) {
 	target := &config.SiphonTarget{RecorderHost: ln.Addr().String()}
 
 	flowKey := "10.0.0.1:1234-10.0.0.2:80"
-	_ = st.GetOrCreate(flowKey, true, target)
+	reqStream := st.GetOrCreate(flowKey, true, target).(*pipeStream)
+	reqStream.Reassembled([]tcpassembly.Reassembly{{Bytes: []byte("GET / HTTP/1.1\r\n\r\n")}})
 	time.Sleep(100 * time.Millisecond)
 
 	sess := st.sessions[flowKey]
 	sess.mu.Lock()
 	if !sess.relayRunning {
 		sess.mu.Unlock()
-		t.Fatal("relay should be running blocked on pipe read")
+		t.Fatal("relay should be running after request bytes")
 	}
 	sess.mu.Unlock()
 
@@ -126,8 +129,9 @@ func TestGetOrCreate_recyclesRequestLegAndRespawnsRelay(t *testing.T) {
 }
 
 func TestAllocBothPipes_bothLegsReady(t *testing.T) {
+	st := NewSessionStore(forward.NewPoolManager(8, time.Second))
 	sess := &Session{}
-	allocBothPipes(sess)
+	allocBothPipes(sess, st)
 	if sess.reqR == nil || sess.resR == nil || sess.reqS == nil || sess.resS == nil {
 		t.Fatal("allocBothPipes must create both legs immediately")
 	}

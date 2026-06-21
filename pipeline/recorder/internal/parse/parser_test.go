@@ -69,7 +69,7 @@ func TestRunBidirectional_keepAlive(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	client := beru.NewClient(srv.URL)
-	downstreams := []config.Downstream{
+	recordAndReplay := []config.RecordAndReplayHost{
 		{Host: "api.example.com", IgnorePaths: []string{"$.timestamp"}},
 	}
 
@@ -86,7 +86,7 @@ func TestRunBidirectional_keepAlive(t *testing.T) {
 		_ = resW.Close()
 	}()
 
-	RunBidirectional(context.Background(), reqR, resR, downstreams, client)
+	RunBidirectional(context.Background(), reqR, resR, recordAndReplay, client)
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -130,7 +130,7 @@ func TestRunBidirectional_keepAlive(t *testing.T) {
 }
 
 func TestHostMatches_wildcard(t *testing.T) {
-	ds := []config.Downstream{{Host: "*.example.com"}}
+	ds := []config.RecordAndReplayHost{{Host: "*.example.com"}}
 	if !HostMatches("api.example.com", ds) {
 		t.Fatal("expected wildcard match")
 	}

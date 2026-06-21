@@ -22,17 +22,22 @@ func TestSessionStore_pairTimeoutEviction(t *testing.T) {
 	}
 }
 
-func TestSessionStore_orphanResponseDiscarded(t *testing.T) {
+func TestSessionStore_orphanResponseBufferedUntilRequest(t *testing.T) {
 	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), nil, 30*time.Second, DefaultMaxFrame)
 	defer store.Stop()
 
 	connID := store.RegisterConn()
-	err := store.WriteFrame(connID, DirResponse, []byte("HTTP/1.1 200 OK\r\n\r\n"))
-	if err != nil {
+	resp := []byte("HTTP/1.1 200 OK\r\n\r\n")
+	if err := store.WriteFrame(connID, DirResponse, resp); err != nil {
 		t.Fatal(err)
 	}
-	// Session remains but no req bytes — no parser started
 	if store.SessionCount() != 1 {
 		t.Fatalf("session count: %d", store.SessionCount())
 	}
+	req := []byte("POST /v1/log HTTP/1.1\r\nHost: example.com\r\n\r\n{}")
+	if err := store.WriteFrame(connID, DirRequest, req); err != nil {
+		t.Fatal(err)
+	}
+	// ponytail: paired after R arrives; parser may fail on fake Beru URL — session lifecycle only
+	time.Sleep(50 * time.Millisecond)
 }

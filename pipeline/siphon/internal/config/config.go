@@ -12,20 +12,20 @@ type SiphonListener struct {
 	Driver string `json:"driver"`
 }
 
-type SiphonDownstream struct {
+type SiphonRecordAndReplayHost struct {
 	Host        string   `json:"host"`
 	IgnorePaths []string `json:"ignore_paths,omitempty"`
 }
 
 type SiphonTarget struct {
-	ShadowTest   string             `json:"shadowtest"`
-	TargetIPs    []string           `json:"target_ips"`
-	TargetPorts  []int              `json:"target_ports"`
-	IgrisHost    string             `json:"igris_host"`
-	Listeners    []SiphonListener   `json:"listeners"`
-	RecorderHost string             `json:"recorder_host"`
-	Downstreams  []SiphonDownstream `json:"downstreams,omitempty"`
-	ExcludeIPs   []string           `json:"exclude_ips,omitempty"`
+	ShadowTest      string                      `json:"shadowtest"`
+	TargetIPs       []string                    `json:"target_ips"`
+	TargetPorts     []int                       `json:"target_ports"`
+	IgrisHost       string                      `json:"igris_host"`
+	Listeners       []SiphonListener            `json:"listeners"`
+	RecorderHost    string                      `json:"recorder_host"`
+	RecordAndReplay []SiphonRecordAndReplayHost `json:"recordAndReplay,omitempty"`
+	ExcludeIPs      []string                    `json:"exclude_ips,omitempty"`
 }
 
 type SiphonConfig struct {
@@ -147,9 +147,9 @@ func normalizeHost(host string) string {
 	return host
 }
 
-func hostMatchesDownstream(host string, downstreams []SiphonDownstream) bool {
+func hostMatchesRecordAndReplay(host string, recordAndReplay []SiphonRecordAndReplayHost) bool {
 	host = normalizeHost(host)
-	for _, d := range downstreams {
+	for _, d := range recordAndReplay {
 		dh := normalizeHost(d.Host)
 		if dh == host {
 			return true
@@ -179,10 +179,10 @@ func (m *Manager) ShouldRecordEgress(srcIP, dstIP string, dstPort int, httpHost 
 		return false
 	}
 	t, ok := m.prodIPTarget[srcIP]
-	if !ok || len(t.Downstreams) == 0 {
+	if !ok || len(t.RecordAndReplay) == 0 {
 		return false
 	}
-	if httpHost != "" && !hostMatchesDownstream(httpHost, t.Downstreams) {
+	if httpHost != "" && !hostMatchesRecordAndReplay(httpHost, t.RecordAndReplay) {
 		return false
 	}
 	return true
@@ -203,7 +203,7 @@ func (m *Manager) ShouldRecordEgressResponse(srcIP, dstIP string, dstPort int) b
 		return false
 	}
 	t, ok := m.prodIPTarget[dstIP]
-	if !ok || len(t.Downstreams) == 0 {
+	if !ok || len(t.RecordAndReplay) == 0 {
 		return false
 	}
 	return true
@@ -214,7 +214,7 @@ func (m *Manager) IgnorePathsForHost(host string) []string {
 	defer m.mu.RUnlock()
 	host = normalizeHost(host)
 	for i := range m.cfg.Targets {
-		for _, d := range m.cfg.Targets[i].Downstreams {
+		for _, d := range m.cfg.Targets[i].RecordAndReplay {
 			if normalizeHost(d.Host) == host {
 				return d.IgnorePaths
 			}

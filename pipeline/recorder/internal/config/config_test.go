@@ -6,27 +6,27 @@ import (
 	"testing"
 )
 
-func TestLoadDownstreams_fromFile(t *testing.T) {
+func TestLoadRecordAndReplay_fromFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "downstreams.json")
+	path := filepath.Join(dir, "recordAndReplay.json")
 	if err := os.WriteFile(path, []byte(`[{"host":"api.example.com","ignore_paths":["$.ts"]}]`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ds, err := loadDownstreams(path)
+	hosts, err := loadRecordAndReplay(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ds) != 1 || ds[0].Host != "api.example.com" {
-		t.Fatalf("got %+v", ds)
+	if len(hosts) != 1 || hosts[0].Host != "api.example.com" {
+		t.Fatalf("hosts = %+v", hosts)
 	}
 }
 
-func TestLoadDownstreams_missingFile(t *testing.T) {
-	ds, err := loadDownstreams(filepath.Join(t.TempDir(), "missing.json"))
+func TestLoadRecordAndReplay_missingFile(t *testing.T) {
+	hosts, err := loadRecordAndReplay(filepath.Join(t.TempDir(), "missing.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ds) != 0 {
-		t.Fatalf("got %+v", ds)
+	if hosts != nil {
+		t.Fatalf("expected nil, got %+v", hosts)
 	}
 }

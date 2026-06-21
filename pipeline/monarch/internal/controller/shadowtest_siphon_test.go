@@ -29,7 +29,7 @@ func TestBuildSiphonTarget(t *testing.T) {
 	st.Name = "my-st"
 	st.Spec.ServicePort = 8080
 
-	st.Spec.Downstreams = []enginev1alpha1.DownstreamSpec{{Host: "httpbin.org"}}
+	st.Spec.RecordAndReplay = []enginev1alpha1.RecordAndReplayHostSpec{{Host: "httpbin.org"}}
 
 	target := buildSiphonTarget(st, "shadow-default-my-st", []string{"10.244.1.2"}, nil)
 	if target.ShadowTest != "default/my-st" {
@@ -48,8 +48,8 @@ func TestBuildSiphonTarget(t *testing.T) {
 	if target.RecorderHost != wantRecorder {
 		t.Fatalf("recorder host %q want %q", target.RecorderHost, wantRecorder)
 	}
-	if len(target.Downstreams) != 1 || target.Downstreams[0].Host != "httpbin.org" {
-		t.Fatalf("downstreams %v", target.Downstreams)
+	if len(target.RecordAndReplay) != 1 || target.RecordAndReplay[0].Host != "httpbin.org" {
+		t.Fatalf("recordAndReplay %v", target.RecordAndReplay)
 	}
 }
 
@@ -70,7 +70,7 @@ func TestSiphonEnabled(t *testing.T) {
 
 	st := &enginev1alpha1.ShadowTest{}
 	if siphonEnabled(st, dep) {
-		t.Fatal("expected disabled with no inputs, downstreams, or explicit enable")
+		t.Fatal("expected disabled with no inputs, recordAndReplay, or explicit enable")
 	}
 
 	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)}
@@ -85,11 +85,11 @@ func TestSiphonEnabled(t *testing.T) {
 
 	st = &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{
-			Downstreams: []enginev1alpha1.DownstreamSpec{{Host: "example.com"}},
+			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{{Host: "example.com"}},
 		},
 	}
 	if !siphonEnabled(st, dep) {
-		t.Fatal("downstreams should enable siphon")
+		t.Fatal("recordAndReplay should enable siphon")
 	}
 
 	st = &enginev1alpha1.ShadowTest{
@@ -108,11 +108,11 @@ func TestSiphonEnabled(t *testing.T) {
 
 	st = &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{
-			Downstreams: []enginev1alpha1.DownstreamSpec{{Host: "example.com"}},
-			Siphon:      &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)},
+			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{{Host: "example.com"}},
+			Siphon:          &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)},
 		},
 	}
 	if siphonEnabled(st, dep) {
-		t.Fatal("explicit false should override downstreams")
+		t.Fatal("explicit false should override recordAndReplay")
 	}
 }

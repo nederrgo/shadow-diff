@@ -25,7 +25,7 @@ func TestBuildBPFFilter(t *testing.T) {
 				},
 			},
 			expectMatch: []string{
-				"tcp and ( (host 10.0.0.1 and port 80) or (src host 10.0.0.1) )",
+				"tcp and ( (host 10.0.0.1 and port 80) or (src host 10.0.0.1) or (dst host 10.0.0.1) )",
 			},
 			expectError: false,
 		},
@@ -44,7 +44,7 @@ func TestBuildBPFFilter(t *testing.T) {
 				},
 			},
 			expectMatch: []string{
-				"tcp and ( (host 10.0.0.1 and port 80) or (host 10.0.0.1 and port 443) or (host 10.0.0.2 and port 80) or (host 10.0.0.2 and port 443) or (src host 10.0.0.1) or (src host 10.0.0.2) )",
+				"tcp and ( (host 10.0.0.1 and port 80) or (host 10.0.0.1 and port 443) or (host 10.0.0.2 and port 80) or (host 10.0.0.2 and port 443) or (src host 10.0.0.1) or (dst host 10.0.0.1) or (src host 10.0.0.2) or (dst host 10.0.0.2) )",
 			},
 			expectError: false,
 		},
@@ -59,7 +59,7 @@ func TestBuildBPFFilter(t *testing.T) {
 				},
 			},
 			expectMatch: []string{
-				"tcp and ( (host 10.0.0.1 and port 80) or (src host 10.0.0.1) )",
+				"tcp and ( (host 10.0.0.1 and port 80) or (src host 10.0.0.1) or (dst host 10.0.0.1) )",
 			},
 			expectError: false,
 		},

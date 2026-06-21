@@ -3,6 +3,7 @@ package egress
 import (
 	"fmt"
 	"io"
+	"log"
 	"sync"
 
 	"github.com/google/gopacket/tcpassembly"
@@ -15,14 +16,39 @@ import (
 type pipeStream struct {
 	pw        *io.PipeWriter
 	sess      *Session
+	store     *SessionStore
 	isRequest bool
+	logOnce   sync.Once
 }
 
 func (p *pipeStream) Reassembled(reassemblies []tcpassembly.Reassembly) {
+	var wrote bool
+	for _, r := range reassemblies {
+		if len(r.Bytes) > 0 {
+			wrote = true
+			break
+		}
+	}
+	// Start reader before Write: io.Pipe blocks until reqR/resR is read in runRelay.
+	if wrote && p.store != nil && p.sess != nil && p.sess.tryStartRelay() {
+		go runRelay(p.sess, p.store.poolMgr)
+	}
 	for _, r := range reassemblies {
 		if len(r.Bytes) == 0 {
 			continue
 		}
+		n := len(r.Bytes)
+		p.logOnce.Do(func() {
+			leg := "response"
+			if p.isRequest {
+				leg = "request"
+			}
+			flow := ""
+			if p.sess != nil {
+				flow = p.sess.flowKey
+			}
+			log.Printf("siphon debug: egress pipe flow=%s leg=%s first_write=%d bytes", flow, leg, n)
+		})
 		_, _ = p.pw.Write(r.Bytes)
 	}
 }
@@ -65,13 +91,13 @@ func NewSessionStore(poolMgr *forward.PoolManager) *SessionStore {
 	}
 }
 
-func allocBothPipes(sess *Session) {
+func allocBothPipes(sess *Session, store *SessionStore) {
 	reqR, reqW := io.Pipe()
 	resR, resW := io.Pipe()
 	sess.reqR = reqR
 	sess.resR = resR
-	sess.reqS = &pipeStream{pw: reqW, sess: sess, isRequest: true}
-	sess.resS = &pipeStream{pw: resW, sess: sess, isRequest: false}
+	sess.reqS = &pipeStream{pw: reqW, sess: sess, store: store, isRequest: true}
+	sess.resS = &pipeStream{pw: resW, sess: sess, store: store, isRequest: false}
 }
 
 func (s *Session) markLegClosed(isRequest bool) {
@@ -110,34 +136,25 @@ func (st *SessionStore) GetOrCreate(flowKey string, isRequest bool, target *conf
 	sess, ok := st.sessions[flowKey]
 	if !ok {
 		sess = &Session{flowKey: flowKey, Target: target}
-		allocBothPipes(sess)
+		allocBothPipes(sess, st)
 		st.sessions[flowKey] = sess
-		if sess.tryStartRelay() {
-			go runRelay(sess, st.poolMgr)
-		}
 	}
 
 	var stream tcpassembly.Stream
-	var startRelay bool
 	if isRequest {
 		if sess.reqS == nil {
 			pr, pw := io.Pipe()
 			sess.reqR = pr
-			sess.reqS = &pipeStream{pw: pw, sess: sess, isRequest: true}
-			startRelay = sess.tryStartRelay()
+			sess.reqS = &pipeStream{pw: pw, sess: sess, store: st, isRequest: true}
 		}
 		stream = sess.reqS
 	} else {
 		if sess.resS == nil {
 			pr, pw := io.Pipe()
 			sess.resR = pr
-			sess.resS = &pipeStream{pw: pw, sess: sess, isRequest: false}
+			sess.resS = &pipeStream{pw: pw, sess: sess, store: st, isRequest: false}
 		}
 		stream = sess.resS
-	}
-
-	if startRelay {
-		go runRelay(sess, st.poolMgr)
 	}
 
 	return stream

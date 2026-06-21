@@ -59,15 +59,15 @@ const (
 	defaultIgrisListenersPath    = "/etc/igris/listeners.json"
 	igrisTerminationGraceSeconds = int64(35)
 
-	containerRecorder              = "recorder"
-	configMapKeyDownstreamsJSON    = "downstreams.json"
-	volumeNameRecorderConfig       = "recorder-config"
-	envRecorderListenAddr          = "RECORDER_LISTEN_ADDR"
-	envRecorderDownstreamsFile     = "RECORDER_DOWNSTREAMS_FILE"
-	envBeruHTTPURL                 = "BERU_HTTP_URL"
-	defaultRecorderDownstreamsPath = "/etc/recorder/downstreams.json"
-	defaultBeruHTTPURL             = "http://beru.beru-system.svc.cluster.local:8080"
-	recorderServicePort            = int32(8080)
+	containerRecorder                  = "recorder"
+	configMapKeyRecordAndReplayJSON    = "recordAndReplay.json"
+	volumeNameRecorderConfig           = "recorder-config"
+	envRecorderListenAddr              = "RECORDER_LISTEN_ADDR"
+	envRecorderRecordAndReplayFile     = "RECORDER_RECORD_AND_REPLAY_FILE"
+	envBeruHTTPURL                     = "BERU_HTTP_URL"
+	defaultRecorderRecordAndReplayPath = "/etc/recorder/recordAndReplay.json"
+	defaultBeruHTTPURL                 = "http://beru.beru-system.svc.cluster.local:8080"
+	recorderServicePort                = int32(8080)
 )
 
 var envoyImagePullPolicy = corev1.PullIfNotPresent

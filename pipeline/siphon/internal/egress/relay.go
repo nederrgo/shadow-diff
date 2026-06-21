@@ -49,26 +49,35 @@ func runRelay(sess *Session, poolMgr *forward.PoolManager) {
 		return
 	}
 	defer func() { _ = conn.Close() }()
+	log.Printf("siphon debug: egress relay connected flow=%s dest=%s", sess.flowKey, dest)
 
 	var wg sync.WaitGroup
 	var writeMu sync.Mutex
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		streamFrames(&writeMu, conn, reqR, dirRequest)
+		streamFrames(&writeMu, conn, reqR, dirRequest, sess.flowKey)
 	}()
 	go func() {
 		defer wg.Done()
-		streamFrames(&writeMu, conn, resR, dirResponse)
+		streamFrames(&writeMu, conn, resR, dirResponse, sess.flowKey)
 	}()
 	wg.Wait()
 }
 
-func streamFrames(writeMu *sync.Mutex, conn net.Conn, r io.ReadCloser, dir byte) {
+func streamFrames(writeMu *sync.Mutex, conn net.Conn, r io.ReadCloser, dir byte, flowKey string) {
 	buf := make([]byte, 32*1024)
+	var logged sync.Once
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
+			logged.Do(func() {
+				dirName := "response"
+				if dir == dirRequest {
+					dirName = "request"
+				}
+				log.Printf("siphon debug: egress relay frame flow=%s dir=%s nbytes=%d", flowKey, dirName, n)
+			})
 			writeMu.Lock()
 			werr := writeFrame(conn, dir, buf[:n])
 			writeMu.Unlock()

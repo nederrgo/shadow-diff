@@ -127,6 +127,11 @@ upgrade_crd
 echo "==> Deploy prod stack"
 kubectl apply -f "$REPO/testing/scripts/manifests/rabbitmq-e2e/prod-rabbitmq.yaml"
 kubectl apply -f "$MANIFEST_DIR/prod-mongo.yaml"
+# Headless clusterIP cannot be patched from an assigned ClusterIP; recreate Service only.
+if kubectl get svc user-service -n prod -o jsonpath='{.spec.clusterIP}' 2>/dev/null | grep -qv '^None$'; then
+  echo "==> Recreate user-service as headless (delete ClusterIP Service, keep Deployment)"
+  kubectl delete svc user-service -n prod --ignore-not-found --wait=true
+fi
 kubectl apply -f "$MANIFEST_DIR/prod-user-service.yaml"
 kubectl apply -f "$MANIFEST_DIR/prod-python-worker.yaml"
 
@@ -197,12 +202,19 @@ for role in control-a control-b candidate; do
   "$REPO/testing/scripts/assert-otel-injected.sh" "$SHADOW_NS" "$role" "$SHADOWTEST"
 done
 
-echo "==> Verify Siphon recorder config for HTTP downstream"
+echo "==> Verify Siphon recorder config for HTTP recordAndReplay"
 wait_siphon_configured 1
 
 relay_deploy="${SHADOWTEST}-egress-relay-rabbitmq"
 kubectl rollout status "deployment/${relay_deploy}" -n "$SHADOW_NS" --timeout=180s
 kubectl rollout status "deployment/${SHADOWTEST}-igris-rabbitmq" -n "$SHADOW_NS" --timeout=120s
+
+# Gate 2: arm Siphon immediately before prod traffic (see testing/scripts/lib/siphon-config.sh).
+echo "==> Arm Siphon before prod traffic (config + BPF)"
+nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
+wait_siphon_configured 1
+echo "==> Warming up Siphon BPF filters..."
+sleep 5
 
 TRACE_HEX="$(openssl rand -hex 16)"
 SPAN_HEX="$(openssl rand -hex 8)"
@@ -218,7 +230,26 @@ kubectl exec -n default deploy/rmq-prod-broker -- sh -c "
 "
 log_success "published traceparent-only message order_id=${ORDER_ID}"
 
-echo "==> Wait for shadow workers to process message"
+echo "==> Wait for prod HTTP record (Siphon -> Recorder -> Beru)"
+RECORDER_NS="$SHADOW_NS"
+for i in $(seq 1 45); do
+  if kubectl logs -n "$RECORDER_NS" "deploy/${SHADOWTEST}-recorder" --tail=120 2>/dev/null \
+    | grep -Fq "recorded POST user-service.prod.internal/v1/log"; then
+    log_success "Recorder seeded Beru mock for user-service.prod.internal/v1/log"
+    break
+  fi
+  if [[ "$i" -eq 45 ]]; then
+    log_fail "Recorder did not log HTTP seed (strict replay requires prod capture)"
+    kubectl logs -n "$RECORDER_NS" "deploy/${SHADOWTEST}-recorder" --tail=40 >&2 || true
+    kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent --tail=80 2>/dev/null \
+      | grep -E 'siphon debug|egress outbound|egress inbound|egress relay' >&2 || true
+    exit 1
+  fi
+  echo "    waiting for recorder seed (${i}/45)"
+  sleep 2
+done
+
+echo "==> Wait for shadow workers to process message (HTTP via Envoy replay)"
 wait_for_worker() {
   local role="$1"
   local pod
@@ -247,12 +278,12 @@ for role in control-a control-b candidate; do
     log_fail "${role} logs contain trace hex (worker must be trace-unaware in body)"
     exit 1
   fi
-  if ! kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=120 2>/dev/null | grep -q "http egress status=200"; then
-    log_fail "${role} missing http egress status=200"
+  if ! kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=120 2>/dev/null | grep -q "http egress via=replay status=200"; then
+    log_fail "${role} missing http egress via=replay status=200 (NO_PROXY bypass or mock miss?)"
     kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=30 >&2 || true
     exit 1
   fi
-  log_success "${role} processed order + HTTP replay status=200"
+  log_success "${role} processed order + HTTP strict replay status=200"
 done
 
 echo "==> Wait for Beru dual count regressions (up to ${WAIT_SECS}s)"

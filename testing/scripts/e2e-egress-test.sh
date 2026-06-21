@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E: shadow app -> HTTP_PROXY / Envoy :15001 -> Beru ext_proc -> mock or 599
 #
-# Requires a deployed ShadowTest with spec.downstreams (see e2e-shadowtest.yaml).
+# Requires a deployed ShadowTest with spec.recordAndReplay (see e2e-shadowtest.yaml).
 # Run after ./testing/scripts/e2e-reset-kind.sh or with an existing Ready stack.
 #
 set -euo pipefail
@@ -88,13 +88,13 @@ fi
 
 if [[ -z "$EGRESS_HOST" ]]; then
   EGRESS_HOST=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
-    -o jsonpath='{.spec.downstreams[0].host}' 2>/dev/null || true)
+    -o jsonpath='{.spec.recordAndReplay[0].host}' 2>/dev/null || true)
 fi
 if [[ -z "$EGRESS_HOST" ]]; then
-  echo "ERROR: set EGRESS_HOST or add spec.downstreams[0].host to ShadowTest" >&2
+  echo "ERROR: set EGRESS_HOST or add spec.recordAndReplay[0].host to ShadowTest" >&2
   exit 1
 fi
-echo "    shadowNamespace=$SHADOW_NS downstream=$EGRESS_HOST deploy=$SHADOW_DEPLOY"
+echo "    shadowNamespace=$SHADOW_NS recordAndReplayHost=$EGRESS_HOST deploy=$SHADOW_DEPLOY"
 
 kubectl wait -n "$SHADOW_NS" --for=condition=Ready pod \
   -l "shadow-diff.io/shadowtest-name=${SHADOWTEST},shadow-diff.io/role=control-a" --timeout=120s

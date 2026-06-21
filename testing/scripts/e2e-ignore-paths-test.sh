@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E: ignoreRequestPaths / ignore_paths strip JSON fields before egress cache hash.
 #
-# 1. Patch ShadowTest spec.downstreams[0].ignoreRequestPaths (Monarch -> Envoy ext_proc metadata)
+# 1. Patch ShadowTest spec.recordAndReplay[0].ignoreRequestPaths (Monarch -> Envoy ext_proc metadata)
 # 2. seed_mock with ignore_paths — body includes a field that will differ on replay
 # 3. Proxied egress with different value for that field must still return the mock (200)
 #
@@ -99,8 +99,8 @@ fi
 echo "==> Patch ShadowTest ignoreRequestPaths=$IGNORE_PATH for host $EGRESS_HOST"
 kubectl patch shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --type=json -p "$(cat <<EOF
 [
-  {"op": "replace", "path": "/spec/downstreams/0/host", "value": "${EGRESS_HOST}"},
-  {"op": "replace", "path": "/spec/downstreams/0/ignoreRequestPaths", "value": ["${IGNORE_PATH}"]}
+  {"op": "replace", "path": "/spec/recordAndReplay/0/host", "value": "${EGRESS_HOST}"},
+  {"op": "replace", "path": "/spec/recordAndReplay/0/ignoreRequestPaths", "value": ["${IGNORE_PATH}"]}
 ]
 EOF
 )"
@@ -113,10 +113,10 @@ envoy_yaml=$(kubectl get cm -n "$SHADOW_NS" "${SHADOW_DEPLOY}-envoy" -o jsonpath
 if ! grep -q 'ignoreRequestPaths' <<<"$envoy_yaml" && ! grep -qF "$IGNORE_PATH" <<<"$envoy_yaml"; then
   echo "ERROR: Envoy config missing ignoreRequestPaths / $IGNORE_PATH" >&2
   echo "       Fragment:" >&2
-  grep -F 'x-shadow-downstreams-config' <<<"$envoy_yaml" | head -1 >&2 || true
+  grep -F 'x-shadow-record-and-replay-config' <<<"$envoy_yaml" | head -1 >&2 || true
   exit 1
 fi
-echo "    Envoy x-shadow-downstreams-config includes ignore paths"
+echo "    Envoy x-shadow-record-and-replay-config includes ignore paths"
 
 # ext_proc gRPC streams cache Beru metadata at connect time — restart app pods after config change.
 echo "    restart shadow app deployment so Envoy opens fresh ext_proc stream to Beru"

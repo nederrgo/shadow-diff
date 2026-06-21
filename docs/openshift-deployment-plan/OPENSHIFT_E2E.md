@@ -118,7 +118,7 @@ sed "s/namespace: default/namespace: ${OC_PROJECT}/" testing/scripts/manifests/e
 oc rollout status deployment/my-prod-app -n "$OC_PROJECT" --timeout=120s
 ```
 
-Apply a ShadowTest with **egress downstreams** and **Igris/Envoy** settings. For an **egress-only** first run (no Siphon SCC setup), disable Siphon:
+Apply a ShadowTest with **egress recordAndReplay** and **Igris/Envoy** settings. For an **egress-only** first run (no Siphon SCC setup), disable Siphon:
 
 ```bash
 cat <<EOF | oc apply -f -
@@ -145,7 +145,7 @@ spec:
     replicas: 1
   siphon:
     enabled: false
-  downstreams:
+  recordAndReplay:
     - host: httpbin.org
       ignoreRequestPaths: []
 EOF
@@ -182,7 +182,7 @@ The script is the same as Kind; point it at your OpenShift namespaces:
 ```bash
 export SHADOWTEST=my-app-shadow
 export SHADOWTEST_NS="$OC_PROJECT"
-export EGRESS_HOST=httpbin.org          # must match spec.downstreams[0].host
+export EGRESS_HOST=httpbin.org          # must match spec.recordAndReplay[0].host
 export BERU_HTTP=http://beru.beru-system.svc.cluster.local:8080
 
 chmod +x testing/scripts/e2e-egress-test.sh
@@ -201,7 +201,7 @@ chmod +x testing/scripts/e2e-egress-test.sh
 
 - The script uses `kubectl`; `oc` is a drop-in alias.
 - If the app image has no `curl`, the script uses `kubectl debug` with `curlimages/curl`. On OpenShift this requires permission to create ephemeral debug containers (`oc debug` may need `allowPrivilegeEscalation` on the node — if blocked, install curl in the shadow app image or run curl from a Job in the same namespace).
-- If external egress is blocked, replace `httpbin.org` with an in-cluster HTTP service and update `spec.downstreams[0].host` + `EGRESS_HOST`.
+- If external egress is blocked, replace `httpbin.org` with an in-cluster HTTP service and update `spec.recordAndReplay[0].host` + `EGRESS_HOST`.
 
 ---
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -82,6 +83,13 @@ func (f *StreamFactory) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream {
 			log.Printf("egress inbound stream %s", flowKey)
 			return newCappedStream(f.egressStore.GetOrCreate(flowKey, false, target), flowKey)
 		}
+	}
+
+	if (f.cfgMgr.IsProdPodIP(srcIP) || f.cfgMgr.IsProdPodIP(dstIP)) && (srcPort == 8080 || dstPort == 8080) {
+		log.Printf("siphon debug: tcp %s:%d -> %s:%d unclassified (egress_out=%v egress_in=%v)",
+			srcIP, srcPort, dstIP, dstPort,
+			f.cfgMgr.ShouldRecordEgress(srcIP, dstIP, dstPort, ""),
+			f.cfgMgr.ShouldRecordEgressResponse(srcIP, dstIP, dstPort))
 	}
 
 	return &discardStream{}
@@ -187,6 +195,9 @@ func (s *cappedStream) Reassembled(reassemblies []tcpassembly.Reassembly) {
 	for _, r := range reassemblies {
 		if len(r.Bytes) == 0 {
 			continue
+		}
+		if s.bytes == 0 && strings.Contains(s.flowKey, ":8080") {
+			log.Printf("siphon debug: egress reassembled flow=%s first_chunk=%d bytes", s.flowKey, len(r.Bytes))
 		}
 		s.bytes += len(r.Bytes)
 		if s.bytes > s.maxBytes {

@@ -56,8 +56,8 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 	s.cfgMgr.Update(payload)
 	for _, t := range payload.Targets {
-		log.Printf("Siphon target %q: prod_ips=%v downstreams=%d recorder_host=%q",
-			t.ShadowTest, t.TargetIPs, len(t.Downstreams), t.RecorderHost)
+		log.Printf("Siphon target %q: prod_ips=%v recordAndReplay=%d recorder_host=%q",
+			t.ShadowTest, t.TargetIPs, len(t.RecordAndReplay), t.RecorderHost)
 	}
 	log.Printf("Received configuration update: %d targets", len(payload.Targets))
 
@@ -102,10 +102,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	targetsCount := len(cfg.Targets)
 	sampleRate := cfg.SampleRate
 
-	downstreamsCount := 0
+	recordAndReplayCount := 0
 	recorderHostConfigured := false
 	for _, t := range cfg.Targets {
-		downstreamsCount += len(t.Downstreams)
+		recordAndReplayCount += len(t.RecordAndReplay)
 		if t.RecorderHost != "" {
 			recorderHostConfigured = true
 		}
@@ -119,7 +119,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"sample_rate":          sampleRate,
 		"active_sessions":      activeSessions,
 		"targets_count":        targetsCount,
-		"downstreams_count":    downstreamsCount,
+		"record_and_replay_count": recordAndReplayCount,
 		"recorder_host_configured": recorderHostConfigured,
 	}
 

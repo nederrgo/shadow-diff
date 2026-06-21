@@ -33,14 +33,14 @@ func recorderHostFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
 	return fmt.Sprintf("%s:%d", host, recorderServicePort)
 }
 
-func recorderDownstreamsJSON(st *enginev1alpha1.ShadowTest) (string, error) {
-	type downstream struct {
+func recorderRecordAndReplayJSON(st *enginev1alpha1.ShadowTest) (string, error) {
+	type hostEntry struct {
 		Host        string   `json:"host"`
 		IgnorePaths []string `json:"ignore_paths,omitempty"`
 	}
-	out := make([]downstream, len(st.Spec.Downstreams))
-	for i, d := range st.Spec.Downstreams {
-		out[i] = downstream{
+	out := make([]hostEntry, len(st.Spec.RecordAndReplay))
+	for i, d := range st.Spec.RecordAndReplay {
+		out[i] = hostEntry{
 			Host:        d.Host,
 			IgnorePaths: d.IgnoreRequestPaths,
 		}
@@ -57,7 +57,7 @@ func recorderReplicasFor(st *enginev1alpha1.ShadowTest) int32 {
 }
 
 func egressRecordingEnabled(st *enginev1alpha1.ShadowTest) bool {
-	return len(st.Spec.Downstreams) > 0
+	return len(st.Spec.RecordAndReplay) > 0
 }
 
 func (r *ShadowTestReconciler) reconcileRecorderConfigMap(
@@ -65,7 +65,7 @@ func (r *ShadowTestReconciler) reconcileRecorderConfigMap(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) error {
-	downstreams, err := recorderDownstreamsJSON(st)
+	recordAndReplay, err := recorderRecordAndReplayJSON(st)
 	if err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func (r *ShadowTestReconciler) reconcileRecorderConfigMap(
 		if cm.Data == nil {
 			cm.Data = map[string]string{}
 		}
-		cm.Data[configMapKeyDownstreamsJSON] = downstreams
+		cm.Data[configMapKeyRecordAndReplayJSON] = recordAndReplay
 		return nil
 	})
 	return err
@@ -129,7 +129,7 @@ func (r *ShadowTestReconciler) reconcileRecorderDeployment(
 			Env: []corev1.EnvVar{
 				{Name: envBeruHTTPURL, Value: defaultBeruHTTPURL},
 				{Name: envRecorderListenAddr, Value: ":8080"},
-				{Name: envRecorderDownstreamsFile, Value: defaultRecorderDownstreamsPath},
+				{Name: envRecorderRecordAndReplayFile, Value: defaultRecorderRecordAndReplayPath},
 			},
 			VolumeMounts: []corev1.VolumeMount{{
 				Name:      volumeNameRecorderConfig,

@@ -1,4 +1,4 @@
-# Shared helpers: Monarch -> Siphon config (targets, downstreams, recorder_host).
+# Shared helpers: Monarch -> Siphon config (targets, recordAndReplay, recorder_host).
 # Source from E2E scripts; do not execute directly.
 
 siphon_api_host() {
@@ -87,7 +87,7 @@ push_siphon_recorder_config() {
   recorder_host="${shadowtest}-recorder.${shadow_ns}.svc.cluster.local:8080"
   if [[ -z "$egress_host" ]]; then
     egress_host=$(kubectl get shadowtest "$shadowtest" -n "$shadowtest_ns" \
-      -o jsonpath='{.spec.downstreams[0].host}' 2>/dev/null || true)
+      -o jsonpath='{.spec.recordAndReplay[0].host}' 2>/dev/null || true)
   fi
 
   local payload
@@ -104,7 +104,7 @@ push_siphon_recorder_config() {
       {"port": 8888, "driver": "http_request"}
     ],
     "recorder_host": "${recorder_host}",
-    "downstreams": [{"host": "${egress_host}"}]
+    "recordAndReplay": [{"host": "${egress_host}"}]
   }]
 }
 EOF
@@ -120,12 +120,12 @@ EOF
   [[ "$ok" == "true" ]]
 }
 
-# Wait until Monarch has pushed ingress targets (and egress recorder fields when downstreams exist).
+# Wait until Monarch has pushed ingress targets (and egress recorder fields when recordAndReplay exist).
 wait_siphon_configured() {
   local require_recorder="${1:-0}"
   local shadowtest="${SHADOWTEST:-my-app-shadow}"
   local shadowtest_ns="${SHADOWTEST_NS:-default}"
-  local host status_json targets downstreams recorder_ok
+  local host status_json targets record_and_replay recorder_ok
   local fallback_pushed=0
 
   host=$(siphon_api_host)
@@ -142,24 +142,24 @@ wait_siphon_configured() {
     sleep 2
     status_json=$(siphon_status_json "$host")
     targets=$(parse_siphon_status_field "$status_json" "targets_count")
-    downstreams=$(parse_siphon_status_field "$status_json" "downstreams_count")
+    record_and_replay=$(parse_siphon_status_field "$status_json" "record_and_replay_count")
     recorder_ok=$(parse_siphon_status_field "$status_json" "recorder_host_configured")
 
     if [[ "$require_recorder" -eq 1 ]]; then
-      if [[ -n "$targets" && "$targets" -gt 0 && -n "$downstreams" && "$downstreams" -gt 0 && "$recorder_ok" == "true" ]]; then
-        echo "    Siphon targets=$targets downstreams=$downstreams recorder_host_configured=$recorder_ok"
+      if [[ -n "$targets" && "$targets" -gt 0 && -n "$record_and_replay" && "$record_and_replay" -gt 0 && "$recorder_ok" == "true" ]]; then
+        echo "    Siphon targets=$targets record_and_replay=$record_and_replay recorder_host_configured=$recorder_ok"
         return 0
       fi
-      if [[ -n "$targets" && "$targets" -gt 0 && ( -z "$downstreams" || "$downstreams" -eq 0 ) && "$fallback_pushed" -eq 0 ]]; then
-        echo "    WARN: Monarch pushed targets but downstreams=0 — applying recorder config fallback"
+      if [[ -n "$targets" && "$targets" -gt 0 && ( -z "$record_and_replay" || "$record_and_replay" -eq 0 ) && "$fallback_pushed" -eq 0 ]]; then
+        echo "    WARN: Monarch pushed targets but record_and_replay=0 — applying recorder config fallback"
         if push_siphon_recorder_config "$host" "$shadowtest" "$shadowtest_ns"; then
           fallback_pushed=1
         fi
         sleep 2
         continue
       fi
-      if [[ -n "$targets" && "$targets" -gt 0 && -n "$downstreams" && "$downstreams" -gt 0 && "$recorder_ok" != "true" && "$i" -ge 3 && "$fallback_pushed" -eq 0 ]]; then
-        echo "    WARN: downstreams present but recorder_host missing — applying fallback (rebuild monarch:dev for Monarch push)"
+      if [[ -n "$targets" && "$targets" -gt 0 && -n "$record_and_replay" && "$record_and_replay" -gt 0 && "$recorder_ok" != "true" && "$i" -ge 3 && "$fallback_pushed" -eq 0 ]]; then
+        echo "    WARN: recordAndReplay present but recorder_host missing — applying fallback (rebuild monarch:dev for Monarch push)"
         if push_siphon_recorder_config "$host" "$shadowtest" "$shadowtest_ns"; then
           fallback_pushed=1
         fi
@@ -169,7 +169,7 @@ wait_siphon_configured() {
       echo "    waiting for recorder config (${i}/30) status=${status_json:-<none>}"
     else
       if [[ -n "$targets" && "$targets" -gt 0 ]]; then
-        echo "    Siphon targets=$targets downstreams=${downstreams:-0} recorder_host_configured=${recorder_ok:-false}"
+        echo "    Siphon targets=$targets record_and_replay=${record_and_replay:-0} recorder_host_configured=${recorder_ok:-false}"
         return 0
       fi
       echo "    waiting for Siphon targets (${i}/30) status=${status_json:-<none>}"
@@ -177,7 +177,7 @@ wait_siphon_configured() {
   done
 
   if [[ "$require_recorder" -eq 1 ]]; then
-    echo "ERROR: Siphon missing recorder config (need targets_count>0, downstreams_count>0, recorder_host_configured=true)" >&2
+    echo "ERROR: Siphon missing recorder config (need targets_count>0, record_and_replay_count>0, recorder_host_configured=true)" >&2
   else
     echo "ERROR: Siphon missing targets (need targets_count>0)" >&2
   fi

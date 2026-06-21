@@ -13,10 +13,16 @@ import requests
 
 EGRESS_EXCHANGE = os.environ.get("RMQ_EGRESS_EXCHANGE", "egress-events")
 EGRESS_ROUTING_KEY = os.environ.get("RMQ_EGRESS_ROUTING_KEY", "order.shipped")
-HTTP_EGRESS_URL = os.environ.get(
-    "HTTP_EGRESS_URL",
+# recordAndReplay host (NOT *.svc.cluster.local — that bypasses HTTP_PROXY via NO_PROXY).
+HTTP_EGRESS_REPLAY_HOST = os.environ.get(
+    "HTTP_EGRESS_REPLAY_HOST", "user-service.prod.internal"
+)
+# Prod-only: dial real user-service; Host header is HTTP_EGRESS_REPLAY_HOST for Siphon/Beru hash.
+HTTP_EGRESS_CONNECT_URL = os.environ.get(
+    "HTTP_EGRESS_CONNECT_URL",
     "http://user-service.prod.svc.cluster.local:8080/v1/log",
 )
+HTTP_EGRESS_PATH = os.environ.get("HTTP_EGRESS_PATH", "/v1/log")
 
 
 def env_or(name: str, default: str) -> str:
@@ -101,11 +107,33 @@ def parse_order_id(body: bytes) -> str:
     return "unknown"
 
 
-def http_post(url: str, payload: dict, timeout: int = 30) -> requests.Response:
-    """POST via HTTP_PROXY; retry 599 while prod egress is being recorded for replay."""
+def uses_egress_proxy() -> bool:
+    return bool(os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy"))
+
+
+def http_egress_target() -> tuple[str, dict[str, str]]:
+    """Shadow: URL host must avoid NO_PROXY so traffic hits Envoy/Beru. Prod: direct + Host."""
+    if uses_egress_proxy():
+        port = "8080"
+        if "://" in HTTP_EGRESS_CONNECT_URL:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(HTTP_EGRESS_CONNECT_URL)
+            if parsed.port:
+                port = str(parsed.port)
+        url = f"http://{HTTP_EGRESS_REPLAY_HOST}:{port}{HTTP_EGRESS_PATH}"
+        return url, {}
+    return HTTP_EGRESS_CONNECT_URL, {"Host": HTTP_EGRESS_REPLAY_HOST}
+
+
+def http_post(
+    url: str, payload: dict, headers: dict | None = None, timeout: int = 30
+) -> requests.Response:
+    """POST via HTTP_PROXY on shadow; retry 599 while prod egress is recorded for replay."""
+    headers = headers or {}
     deadline = time.monotonic() + 60
     while True:
-        resp = requests.post(url, json=payload, timeout=timeout)
+        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
         if resp.status_code != 599 or time.monotonic() >= deadline:
             return resp
         time.sleep(2)
@@ -123,11 +151,14 @@ def handle_message(ch, method, properties, body, mongo_coll):
         print("mongo candidate n+1 insert ok", flush=True)
 
     try:
+        url, headers = http_egress_target()
+        via = "replay" if uses_egress_proxy() else "record"
         resp = http_post(
-            HTTP_EGRESS_URL,
+            url,
             {"status": "complete", "order_id": order_id},
+            headers=headers,
         )
-        print(f"http egress status={resp.status_code}", flush=True)
+        print(f"http egress via={via} status={resp.status_code}", flush=True)
         if resp.status_code != 200:
             ch.basic_nack(method.delivery_tag, requeue=True)
             return

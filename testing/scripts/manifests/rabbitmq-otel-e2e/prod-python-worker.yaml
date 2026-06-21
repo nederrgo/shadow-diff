@@ -30,3 +30,7 @@ spec:
               value: orders
             - name: AMQP_BINDING_KEY
               value: order.created
+            - name: HTTP_EGRESS_REPLAY_HOST
+              value: user-service.prod.internal
+            - name: HTTP_EGRESS_CONNECT_URL
+              value: http://user-service.prod.svc.cluster.local:8080/v1/log

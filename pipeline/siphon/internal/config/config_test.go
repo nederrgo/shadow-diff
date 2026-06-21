@@ -23,7 +23,7 @@ func TestConfigManager(t *testing.T) {
 					{Port: 80, Driver: "http_request"},
 					{Port: 8080, Driver: "tcp_stream"},
 				},
-				Downstreams: []SiphonDownstream{
+				RecordAndReplay: []SiphonRecordAndReplayHost{
 					{Host: "httpbin.org"},
 				},
 			},

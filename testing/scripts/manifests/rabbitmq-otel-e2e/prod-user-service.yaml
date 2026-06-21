@@ -56,6 +56,8 @@ metadata:
   name: user-service
   namespace: prod
 spec:
+  # ponytail: headless for Kind E2E — DNS → pod IP so Siphon pairs L4 egress R+S legs (no kube-proxy DNAT)
+  clusterIP: None
   selector:
     app: user-service
   ports:

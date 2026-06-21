@@ -79,9 +79,9 @@ type SiphonSpec struct {
 	SampleRate *int32 `json:"sampleRate,omitempty"`
 }
 
-// DownstreamSpec declares an outbound host intercepted by the egress proxy.
-type DownstreamSpec struct {
-	// Host is the downstream hostname (matches :authority / Host on proxied requests).
+// RecordAndReplayHostSpec declares an outbound host for egress record/replay.
+type RecordAndReplayHostSpec struct {
+	// Host is the record-and-replay hostname (matches :authority / Host on proxied requests).
 	Host string `json:"host"`
 
 	// IgnoreRequestPaths are JSONPath expressions stripped before egress hashing (e.g. "$.timestamp").
@@ -229,13 +229,13 @@ type ShadowTestSpec struct {
 	// +optional
 	Siphon *SiphonSpec `json:"siphon,omitempty"`
 
-	// Recorder overrides the Recorder image when spec.downstreams enables egress recording.
+	// Recorder overrides the Recorder image when spec.recordAndReplay enables egress recording.
 	// +optional
 	Recorder *RecorderSpec `json:"recorder,omitempty"`
 
-	// Downstreams lists outbound hosts trapped by the egress proxy for strict replay.
+	// RecordAndReplay lists outbound hosts trapped by the egress proxy for strict replay.
 	// +optional
-	Downstreams []DownstreamSpec `json:"downstreams,omitempty"`
+	RecordAndReplay []RecordAndReplayHostSpec `json:"recordAndReplay,omitempty"`
 
 	// Dependencies lists ephemeral backing services (e.g. Redis) provisioned once per shadow role.
 	// +optional

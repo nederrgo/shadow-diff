@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 )
 
 // HandleConn reads framed bytes from Siphon until EOF or error.
@@ -12,6 +13,7 @@ func HandleConn(conn net.Conn, store *SessionStore, connID uint64) {
 	defer func() { _ = conn.Close() }()
 
 	header := make([]byte, FrameHeaderSize)
+	var loggedFirst sync.Once
 	for {
 		_, err := io.ReadFull(conn, header)
 		if err != nil {
@@ -53,5 +55,12 @@ func HandleConn(conn net.Conn, store *SessionStore, connID uint64) {
 			store.DiscardConn(connID)
 			return
 		}
+		loggedFirst.Do(func() {
+			dirName := "response"
+			if dir == DirRequest {
+				dirName = "request"
+			}
+			log.Printf("recorder debug: conn=%d first frame dir=%s len=%d", connID, dirName, len(payload))
+		})
 	}
 }

@@ -32,5 +32,5 @@ spec:
       port: 5672
       envVarInjection: AMQP_URL
 
-  downstreams:
+  recordAndReplay:
     - host: httpbin.org

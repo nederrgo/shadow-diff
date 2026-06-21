@@ -14,27 +14,27 @@ import (
 
 const (
 	headerShadowMode            = "x-shadow-mode"
-	headerShadowDownstreamsConf = "x-shadow-downstreams-config"
+	headerShadowRecordAndReplayConf = "x-shadow-record-and-replay-config"
 	shadowModeEgress            = "egress"
 	egressRegressionBody        = "Egress Regression"
 	egressMissStatus            = 599
 )
 
-// DownstreamConfig mirrors Monarch DownstreamSpec for ext_proc metadata.
-type DownstreamConfig struct {
+// RecordAndReplayHostConfig mirrors Monarch RecordAndReplayHostSpec for ext_proc metadata.
+type RecordAndReplayHostConfig struct {
 	Host               string   `json:"host"`
 	IgnoreRequestPaths []string `json:"ignoreRequestPaths"`
 }
 
 type egressState struct {
-	role               string
-	traceID            string
-	method             string
-	host               string
-	path               string
-	body               []byte
-	downstreamConfigs  []DownstreamConfig
-	endOfStreamHeaders bool
+	role                    string
+	traceID                 string
+	method                  string
+	host                    string
+	path                    string
+	body                    []byte
+	recordAndReplayConfigs  []RecordAndReplayHostConfig
+	endOfStreamHeaders      bool
 }
 
 func (s *Server) handleEgressRequest(state *egressState, req *extprocv3.ProcessingRequest) *extprocv3.ProcessingResponse {
@@ -79,7 +79,7 @@ func (s *Server) egressImmediateFromState(state *egressState) *extprocv3.Process
 	}
 
 	hostKey := hostWithoutPort(state.host)
-	ignorePaths := ignorePathsForHost(state.downstreamConfigs, hostKey)
+	ignorePaths := ignorePathsForHost(state.recordAndReplayConfigs, hostKey)
 
 	hash, err := replay.HashRequest(state.method, hostKey, state.path, state.body, ignorePaths)
 	if err != nil {
@@ -105,7 +105,7 @@ func hostWithoutPort(host string) string {
 	return host
 }
 
-func ignorePathsForHost(configs []DownstreamConfig, host string) []string {
+func ignorePathsForHost(configs []RecordAndReplayHostConfig, host string) []string {
 	host = strings.ToLower(host)
 	for _, c := range configs {
 		if strings.EqualFold(c.Host, host) {
@@ -115,11 +115,11 @@ func ignorePathsForHost(configs []DownstreamConfig, host string) []string {
 	return nil
 }
 
-func parseDownstreamConfigs(raw string) []DownstreamConfig {
+func parseRecordAndReplayConfigs(raw string) []RecordAndReplayHostConfig {
 	if raw == "" {
 		return nil
 	}
-	var configs []DownstreamConfig
+	var configs []RecordAndReplayHostConfig
 	if err := json.Unmarshal([]byte(raw), &configs); err != nil {
 		return nil
 	}

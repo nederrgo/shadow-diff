@@ -58,7 +58,7 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 			ApplicationPort: 8080,
 			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			BeruGRPCTimeout: "2s",
-			Downstreams: []enginev1alpha1.DownstreamSpec{
+			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{
 				{Host: "api.stripe.com", IgnoreRequestPaths: []string{"$.timestamp"}},
 			},
 		},
@@ -73,7 +73,7 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 		"port_value: 15001",
 		"x-shadow-mode",
 		"value: \"egress\"",
-		"x-shadow-downstreams-config",
+		"x-shadow-record-and-replay-config",
 		"api.stripe.com",
 		"api.stripe.com:*",
 		"request_body_mode: BUFFERED",
@@ -133,7 +133,7 @@ func TestServicePortFor_default8888(t *testing.T) {
 func TestAppEnvWithEgressProxy(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{
-			Downstreams: []enginev1alpha1.DownstreamSpec{{Host: "api.example.com"}},
+			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{{Host: "api.example.com"}},
 		},
 	}
 	env := appEnvWithEgressProxy(st, []corev1.EnvVar{{Name: "FOO", Value: "bar"}})
@@ -156,7 +156,7 @@ func TestAppEnvWithEgressProxy(t *testing.T) {
 
 	empty := appEnvWithEgressProxy(&enginev1alpha1.ShadowTest{}, []corev1.EnvVar{{Name: "FOO", Value: "bar"}})
 	if len(empty) != 1 {
-		t.Fatalf("expected no proxy env without downstreams, got %d", len(empty))
+		t.Fatalf("expected no proxy env without recordAndReplay, got %d", len(empty))
 	}
 }
 

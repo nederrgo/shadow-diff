@@ -10,36 +10,36 @@ import (
 )
 
 const (
-	defaultDownstreamsFile = "/etc/recorder/downstreams.json"
-	defaultListenAddr      = ":8080"
-	defaultPairTimeout     = 30 * time.Second
-	defaultMaxFrameBytes   = 5 << 20 // 5MB
+	defaultRecordAndReplayFile = "/etc/recorder/recordAndReplay.json"
+	defaultListenAddr          = ":8080"
+	defaultPairTimeout         = 30 * time.Second
+	defaultMaxFrameBytes       = 5 << 20 // 5MB
 )
 
-// Downstream matches Monarch/Siphon downstream entries.
-type Downstream struct {
+// RecordAndReplayHost matches Monarch/Siphon record-and-replay entries.
+type RecordAndReplayHost struct {
 	Host        string   `json:"host"`
 	IgnorePaths []string `json:"ignore_paths,omitempty"`
 }
 
 // Config holds Recorder process configuration.
 type Config struct {
-	ListenAddr      string
-	BeruHTTPURL     string
-	Downstreams     []Downstream
-	DownstreamsFile string
-	PairTimeout     time.Duration
-	MaxFrameBytes   int
+	ListenAddr         string
+	BeruHTTPURL        string
+	RecordAndReplay    []RecordAndReplayHost
+	RecordAndReplayFile string
+	PairTimeout        time.Duration
+	MaxFrameBytes      int
 }
 
-// Load reads configuration from the environment and downstreams file.
+// Load reads configuration from the environment and recordAndReplay file.
 func Load() Config {
 	cfg := Config{
-		ListenAddr:      envOr("RECORDER_LISTEN_ADDR", defaultListenAddr),
-		BeruHTTPURL:     strings.TrimSpace(os.Getenv("BERU_HTTP_URL")),
-		DownstreamsFile: envOr("RECORDER_DOWNSTREAMS_FILE", defaultDownstreamsFile),
-		PairTimeout:     defaultPairTimeout,
-		MaxFrameBytes:   defaultMaxFrameBytes,
+		ListenAddr:          envOr("RECORDER_LISTEN_ADDR", defaultListenAddr),
+		BeruHTTPURL:         strings.TrimSpace(os.Getenv("BERU_HTTP_URL")),
+		RecordAndReplayFile: envOr("RECORDER_RECORD_AND_REPLAY_FILE", defaultRecordAndReplayFile),
+		PairTimeout:         defaultPairTimeout,
+		MaxFrameBytes:       defaultMaxFrameBytes,
 	}
 	if v := os.Getenv("RECORDER_PAIR_TIMEOUT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
@@ -53,12 +53,12 @@ func Load() Config {
 		}
 	}
 
-	ds, err := loadDownstreams(cfg.DownstreamsFile)
+	hosts, err := loadRecordAndReplay(cfg.RecordAndReplayFile)
 	if err != nil {
-		slog.Error("invalid downstreams configuration", "err", err, "file", cfg.DownstreamsFile)
+		slog.Error("invalid recordAndReplay configuration", "err", err, "file", cfg.RecordAndReplayFile)
 		os.Exit(1)
 	}
-	cfg.Downstreams = ds
+	cfg.RecordAndReplay = hosts
 
 	if cfg.BeruHTTPURL == "" {
 		slog.Error("BERU_HTTP_URL is required")
@@ -72,7 +72,7 @@ func Load() Config {
 	return cfg
 }
 
-func loadDownstreams(path string) ([]Downstream, error) {
+func loadRecordAndReplay(path string) ([]RecordAndReplayHost, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -84,7 +84,7 @@ func loadDownstreams(path string) ([]Downstream, error) {
 	if len(raw) == 0 || string(raw) == "[]" {
 		return nil, nil
 	}
-	var out []Downstream
+	var out []RecordAndReplayHost
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}

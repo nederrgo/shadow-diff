@@ -23,7 +23,7 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 | Path | Trigger | Destination | Purpose |
 | ---- | ------- | ----------- | ------- |
 | **Ingress replay** | TCP to prod pod IP:port (configured targets) | `igris_host:port` | Mirror captured request bytes to Igris for 3-way multicast |
-| **Egress record** | Outbound TCP from prod pod when `downstreams` + `recorder_host` set | Recorder Service | Framed `R`/`S` bytes → Beru mock store via Recorder |
+| **Egress record** | Outbound TCP from prod pod when `recordAndReplay` + `recorder_host` set | Recorder Service | Framed `R`/`S` bytes → Beru mock store via Recorder |
 
 Siphon is **L4-only on the capture path** — it does not parse HTTP. **Recorder** and **Igris** parse or relay raw TCP streams.
 
@@ -39,7 +39,7 @@ Monarch merges all Ready ShadowTests and **POSTs** JSON to each agent:
 POST http://<node-hostIP>:8080/v1/config
 ```
 
-Per-target fields include prod pod IPs, target ports, Igris host, listener drivers (`http_request` / `tcp_stream`), optional `downstreams`, and `recorder_host`. On first valid config, Siphon starts **afpacket** capture, compiles a **BPF filter** for target IPs/ports, and attaches it to node interfaces.
+Per-target fields include prod pod IPs, target ports, Igris host, listener drivers (`http_request` / `tcp_stream`), optional `recordAndReplay`, and `recorder_host`. On first valid config, Siphon starts **afpacket** capture, compiles a **BPF filter** for target IPs/ports, and attaches it to node interfaces.
 
 Global **`sample_rate`** (0–100) controls what fraction of **new TCP flows** are forwarded (sticky per 4-tuple).
 
@@ -57,17 +57,17 @@ Driver hint (`http_request` vs `tcp_stream`) comes from Monarch's listener confi
 
 ### 3. Egress capture (prod → Recorder)
 
-When `spec.downstreams` is set on a ShadowTest, Monarch configures **`recorder_host`** and downstream host allowlists. For outbound flows from a prod pod IP to a non-ingress destination:
+When `spec.recordAndReplay` is set on a ShadowTest, Monarch configures **`recorder_host`** and record-and-replay host allowlists. For outbound flows from a prod pod IP to a non-ingress destination:
 
 1. Request and response legs are piped separately.
 2. When both legs exist, Siphon dials Recorder and streams **length-prefixed frames** (`R` = request, `S` = response) — same wire format [Recorder](../recorder/README.md) expects.
-3. HTTP `Host` matching against downstream rules filters which flows are recorded.
+3. HTTP `Host` matching against recordAndReplay rules filters which flows are recorded.
 
 ### 4. Control API
 
 | Endpoint | Method | Purpose |
 | -------- | ------ | ------- |
-| `/v1/config` | POST | Apply targets, sample rate, downstreams, recorder host |
+| `/v1/config` | POST | Apply targets, sample rate, recordAndReplay, recorder host |
 | `/v1/status` | GET | Frames read, packets matched, active sessions, forward count |
 
 Agents use **hostNetwork**; reach them via the node's **hostIP** on port **8080** (not ClusterIP).
@@ -139,7 +139,7 @@ make docker-build SIPHON_IMG=siphon:dev
 | `targets[].igris_host` | Igris Service cluster DNS or IP |
 | `targets[].listeners` | Port → driver map (`http_request`, `tcp_stream`) |
 | `targets[].recorder_host` | Recorder Service host:port (egress record) |
-| `targets[].downstreams` | Host allowlist for egress recording |
+| `targets[].recordAndReplay` | Host allowlist for egress recording |
 | `targets[].exclude_ips` | IPs never recorded on egress |
 
 ---

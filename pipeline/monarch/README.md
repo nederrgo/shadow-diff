@@ -32,7 +32,7 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 | **L2 Ingress** | Igris Deployment (HTTP/TCP) **or** igris-rabbitmq (AMQP) |
 | **L3 Shadow stack** | Three app Deployments + Envoy sidecars + Services; ephemeral **dependencies** per role |
 | **L4a Analysis ingest** | Envoy ConfigMaps → Beru gRPC; egress-relay-rabbitmq for AMQP tests |
-| **L4b Egress record/replay** | Recorder + downstreams ConfigMap; `HTTP_PROXY` on shadow apps when `spec.downstreams` set |
+| **L4b Egress record/replay** | Recorder + recordAndReplay ConfigMap; `HTTP_PROXY` on shadow apps when `spec.recordAndReplay` set |
 | **L5 Beru** | Not deployed — `spec.beruGRPCAddress` only |
 
 Shadow namespace name is deterministic: **`shadow-<crNamespace>-<crName>`** (see `shadowtest_helpers.go`).
@@ -51,8 +51,8 @@ One namespaced **`ShadowTest`** (`engine.shadow-diff.io/v1alpha1`) drives the fu
 | `beruGRPCAddress` | Beru gRPC for Envoy `ext_proc` |
 | `inputs[]` | Ingress drivers: `http_request`, `tcp_stream`, `rabbitmq_message` |
 | `dependencies[]` | Ephemeral Redis, RabbitMQ, etc. per role + env injection |
-| `downstreams[]` | HTTP egress hosts → Recorder + Envoy egress proxy |
-| `siphon` | Cluster-wide capture agent; auto-enabled when downstreams or port match |
+| `recordAndReplay[]` | HTTP egress hosts → Recorder + Envoy egress proxy |
+| `siphon` | Cluster-wide capture agent; auto-enabled when recordAndReplay or port match |
 | `igris` / `igrisRabbitmq` / `recorder` / `egressRelayRabbitmq` | Optional component image overrides (defaults via `MONARCH_MODE`) |
 | `otelInjection` | OpenTelemetry Operator annotations on shadow app pods |
 
@@ -70,7 +70,7 @@ Field-level reference and examples: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 4. **AMQP path:** declare prod shadow queue → igris-rabbitmq → egress-relay-rabbitmq.
 5. **HTTP/TCP path:** Igris ConfigMap + Deployment + Service.
 6. For each role: Envoy ConfigMap + shadow Deployment (app + sidecar) + Service.
-7. Optional **Recorder** when `spec.downstreams` is non-empty.
+7. Optional **Recorder** when `spec.recordAndReplay` is non-empty.
 8. Push merged **Siphon** config to node agents; update `captureTargets`.
 9. Patch status **Ready** when all gates pass.
 

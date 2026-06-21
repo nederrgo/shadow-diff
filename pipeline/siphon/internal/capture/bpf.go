@@ -86,6 +86,8 @@ func BuildBPFFilter(cfg config.SiphonConfig) (string, error) {
 	var egressClauses []string
 	for _, ip := range prodIPs {
 		egressClauses = append(egressClauses, fmt.Sprintf("(src host %s)", ip))
+		// ponytail: response leg is dst=prod; ingress still routed by port in assembly.go
+		egressClauses = append(egressClauses, fmt.Sprintf("(dst host %s)", ip))
 	}
 
 	var groups []string

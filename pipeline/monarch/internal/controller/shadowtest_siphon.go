@@ -34,20 +34,20 @@ type siphonConfigPayload struct {
 	Targets    []siphonTarget `json:"targets"`
 }
 
-type siphonDownstream struct {
+type siphonRecordAndReplayHost struct {
 	Host        string   `json:"host"`
 	IgnorePaths []string `json:"ignore_paths,omitempty"`
 }
 
 type siphonTarget struct {
-	ShadowTest   string             `json:"shadowtest"`
-	TargetIPs    []string           `json:"target_ips"`
-	TargetPorts  []int              `json:"target_ports"`
-	IgrisHost    string             `json:"igris_host"`
-	Listeners    []siphonListener   `json:"listeners"`
-	RecorderHost string             `json:"recorder_host"`
-	Downstreams  []siphonDownstream `json:"downstreams,omitempty"`
-	ExcludeIPs   []string           `json:"exclude_ips,omitempty"`
+	ShadowTest      string                      `json:"shadowtest"`
+	TargetIPs       []string                    `json:"target_ips"`
+	TargetPorts     []int                       `json:"target_ports"`
+	IgrisHost       string                      `json:"igris_host"`
+	Listeners       []siphonListener            `json:"listeners"`
+	RecorderHost    string                      `json:"recorder_host"`
+	RecordAndReplay []siphonRecordAndReplayHost `json:"recordAndReplay,omitempty"`
+	ExcludeIPs      []string                    `json:"exclude_ips,omitempty"`
 }
 
 type siphonListener struct {
@@ -93,7 +93,7 @@ func siphonEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) boo
 	if st.Spec.Siphon != nil && st.Spec.Siphon.Enabled != nil && *st.Spec.Siphon.Enabled {
 		return true
 	}
-	if len(st.Spec.Downstreams) > 0 {
+	if len(st.Spec.RecordAndReplay) > 0 {
 		return true
 	}
 	if siphonIngressCaptureEnabled(st, target) {
@@ -197,9 +197,9 @@ func buildSiphonTarget(st *enginev1alpha1.ShadowTest, shadowNS string, podIPs []
 		}
 		host = shadowServiceHost(shadowNS, igrisServiceName(st))
 	}
-	var downstreams []siphonDownstream
-	for _, d := range st.Spec.Downstreams {
-		downstreams = append(downstreams, siphonDownstream{
+	var recordAndReplay []siphonRecordAndReplayHost
+	for _, d := range st.Spec.RecordAndReplay {
+		recordAndReplay = append(recordAndReplay, siphonRecordAndReplayHost{
 			Host:        d.Host,
 			IgnorePaths: d.IgnoreRequestPaths,
 		})
@@ -209,14 +209,14 @@ func buildSiphonTarget(st *enginev1alpha1.ShadowTest, shadowNS string, podIPs []
 		recorderHost = recorderHostFor(st, shadowNS)
 	}
 	return siphonTarget{
-		ShadowTest:   st.Namespace + "/" + st.Name,
-		TargetIPs:    podIPs,
-		TargetPorts:  ports,
-		IgrisHost:    host,
-		Listeners:    listeners,
-		RecorderHost: recorderHost,
-		Downstreams:  downstreams,
-		ExcludeIPs:   excludeIPs,
+		ShadowTest:      st.Namespace + "/" + st.Name,
+		TargetIPs:       podIPs,
+		TargetPorts:     ports,
+		IgrisHost:       host,
+		Listeners:       listeners,
+		RecorderHost:    recorderHost,
+		RecordAndReplay: recordAndReplay,
+		ExcludeIPs:      excludeIPs,
 	}
 }
 
@@ -278,7 +278,7 @@ func (r *ShadowTestReconciler) pushGlobalSiphonConfig(ctx context.Context, pendi
 		excludeIPs := r.resolveSiphonExcludeIPs(ctx, st.Status.ShadowNamespace, st)
 		t := buildSiphonTarget(st, st.Status.ShadowNamespace, ips, excludeIPs)
 		if egressRecordingEnabled(st) && t.RecorderHost == "" {
-			logf.FromContext(ctx).Info("Siphon target missing recorder_host despite downstreams",
+			logf.FromContext(ctx).Info("Siphon target missing recorder_host despite recordAndReplay",
 				"shadowtest", t.ShadowTest)
 		}
 		targets = append(targets, t)

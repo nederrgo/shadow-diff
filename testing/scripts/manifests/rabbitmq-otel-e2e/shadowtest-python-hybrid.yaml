@@ -21,8 +21,8 @@ spec:
         routingKey: order.created
         targetDependency: rabbitmq
 
-  downstreams:
-    - host: user-service.prod.svc.cluster.local
+  recordAndReplay:
+    - host: user-service.prod.internal
 
   otelInjection:
     enabled: true

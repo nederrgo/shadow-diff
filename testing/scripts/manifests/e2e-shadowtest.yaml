@@ -34,6 +34,6 @@ spec:
       driver: http_request
 
   # Egress replay (Sprint 4a.1): trap outbound HTTP via HTTP_PROXY -> Envoy :15001 ->  Beru
-  downstreams:
-    - host: httpbin.org
+  recordAndReplay:
+    - host: egress-httpbin.default.svc.cluster.local
       ignoreRequestPaths: []

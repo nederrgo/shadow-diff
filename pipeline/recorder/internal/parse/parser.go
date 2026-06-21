@@ -15,7 +15,7 @@ import (
 )
 
 // RunBidirectional reads paired HTTP transactions from pipe readers and posts to Beru.
-func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, downstreams []config.Downstream, client *beru.Client) {
+func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, recordAndReplay []config.RecordAndReplayHost, client *beru.Client) {
 	defer reqR.Close()
 	defer resR.Close()
 
@@ -49,8 +49,8 @@ func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, downstreams
 			discardHTTPResponse(resReader, req)
 			continue
 		}
-		if !HostMatches(host, downstreams) {
-			log.Printf("recorder parser: host %q not in downstreams, skipping", host)
+		if !HostMatches(host, recordAndReplay) {
+			log.Printf("recorder parser: host %q not in recordAndReplay, skipping", host)
 			discardHTTPResponse(resReader, req)
 			continue
 		}
@@ -81,7 +81,7 @@ func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, downstreams
 			Host:        NormalizeHTTPHost(host),
 			Path:        path,
 			Body:        JSONRawBody(reqBody),
-			IgnorePaths: IgnorePathsForHost(host, downstreams),
+			IgnorePaths: IgnorePathsForHost(host, recordAndReplay),
 			Response: beru.RecordResponse{
 				Status:  resp.StatusCode,
 				Headers: headers,
@@ -93,9 +93,9 @@ func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, downstreams
 }
 
 // HostMatches reports whether host is allowed by downstream rules.
-func HostMatches(host string, downstreams []config.Downstream) bool {
+func HostMatches(host string, recordAndReplay []config.RecordAndReplayHost) bool {
 	host = NormalizeHTTPHost(host)
-	for _, d := range downstreams {
+	for _, d := range recordAndReplay {
 		dh := NormalizeHTTPHost(d.Host)
 		if dh == host {
 			return true
@@ -120,9 +120,9 @@ func NormalizeHTTPHost(host string) string {
 }
 
 // IgnorePathsForHost returns ignore_paths for a matching downstream host.
-func IgnorePathsForHost(host string, downstreams []config.Downstream) []string {
+func IgnorePathsForHost(host string, recordAndReplay []config.RecordAndReplayHost) []string {
 	host = NormalizeHTTPHost(host)
-	for _, d := range downstreams {
+	for _, d := range recordAndReplay {
 		if NormalizeHTTPHost(d.Host) == host {
 			return d.IgnorePaths
 		}

@@ -533,12 +533,12 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | grep -E '
 
 ## Phase 4a.1 — Egress interception & strict replay
 
-When `spec.downstreams` is set, Monarch injects `HTTP_PROXY=http://127.0.0.1:15001` into shadow app containers and configures an egress Envoy listener with **ext_proc** to Beru. Beru hashes outbound requests (JSON compacted, optional path stripping) and returns a seeded mock or **HTTP 599** on miss.
+When `spec.recordAndReplay` is set, Monarch injects `HTTP_PROXY=http://127.0.0.1:15001` into shadow app containers and configures an egress Envoy listener with **ext_proc** to Beru. Beru hashes outbound requests (JSON compacted, optional path stripping) and returns a seeded mock or **HTTP 599** on miss.
 
 ### Prerequisites
 
 - Beru deployed with HTTP port **8080** (`beru/deploy/` includes `BERU_HTTP_ADDR=:8080`)
-- `ShadowTest` includes `downstreams` (see [`testing/scripts/manifests/e2e-shadowtest.yaml`](testing/scripts/manifests/e2e-shadowtest.yaml))
+- `ShadowTest` includes `recordAndReplay` (see [`testing/scripts/manifests/e2e-shadowtest.yaml`](testing/scripts/manifests/e2e-shadowtest.yaml))
 
 ### Automated Kind E2E
 
@@ -652,10 +652,10 @@ Covers: BPF ingress+egress clauses, `FlushOlderThan` goroutine lifecycle, keep-a
 ### Verification checklist (4a.2)
 
 1. Rebuild/load `siphon`, `beru`, `monarch` into Kind (use fresh image tags after code changes).
-2. Apply [`testing/scripts/manifests/e2e-shadowtest.yaml`](testing/scripts/manifests/e2e-shadowtest.yaml) with `spec.downstreams`.
+2. Apply [`testing/scripts/manifests/e2e-shadowtest.yaml`](testing/scripts/manifests/e2e-shadowtest.yaml) with `spec.recordAndReplay`.
 3. Prod curl to `httpbin.org/post` → Siphon logs `egress forwarder: recorded …`.
 4. `./testing/scripts/e2e-record-replay.sh` → shadow egress **200** without `seed_mock`.
-5. Siphon status: `downstreams_count>0`, `recorder_host_configured=true` (Monarch POST via hostIP).
+5. Siphon status: `record_and_replay_count>0`, `recorder_host_configured=true` (Monarch POST via hostIP).
 6. `go test ./internal/egress/...` — keep-alive parser test passes.
 
 ---

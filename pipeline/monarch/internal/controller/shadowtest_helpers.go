@@ -67,7 +67,7 @@ func envFromTarget(dep *appsv1.Deployment) ([]corev1.EnvVar, string) {
 }
 
 func appEnvWithEgressProxy(st *enginev1alpha1.ShadowTest, base []corev1.EnvVar) []corev1.EnvVar {
-	if len(st.Spec.Downstreams) == 0 {
+	if len(st.Spec.RecordAndReplay) == 0 {
 		return base
 	}
 	out := append([]corev1.EnvVar{}, base...)
@@ -83,7 +83,7 @@ func envoyContainerPorts(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort {
 	ports := []corev1.ContainerPort{
 		{Name: "ingress", ContainerPort: servicePortFor(st), Protocol: corev1.ProtocolTCP},
 	}
-	if len(st.Spec.Downstreams) > 0 {
+	if len(st.Spec.RecordAndReplay) > 0 {
 		ports = append(ports, corev1.ContainerPort{
 			Name: "egress", ContainerPort: egressProxyPort, Protocol: corev1.ProtocolTCP,
 		})

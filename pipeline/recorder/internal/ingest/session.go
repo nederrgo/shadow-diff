@@ -50,7 +50,7 @@ type SessionStore struct {
 	mu          sync.Mutex
 	sessions    map[uint64]*connSession
 	beru        *beru.Client
-	downstreams []config.Downstream
+	recordAndReplay []config.RecordAndReplayHost
 	pairTimeout time.Duration
 	maxFrame    int
 	nextConnID  uint64
@@ -58,14 +58,14 @@ type SessionStore struct {
 }
 
 // NewSessionStore creates a store with a background TTL sweeper.
-func NewSessionStore(client *beru.Client, downstreams []config.Downstream, pairTimeout time.Duration, maxFrame int) *SessionStore {
+func NewSessionStore(client *beru.Client, recordAndReplay []config.RecordAndReplayHost, pairTimeout time.Duration, maxFrame int) *SessionStore {
 	if maxFrame <= 0 {
 		maxFrame = DefaultMaxFrame
 	}
 	s := &SessionStore{
 		sessions:    make(map[uint64]*connSession),
 		beru:        client,
-		downstreams: downstreams,
+		recordAndReplay: recordAndReplay,
 		pairTimeout: pairTimeout,
 		maxFrame:    maxFrame,
 		stopSweeper: make(chan struct{}),
@@ -130,12 +130,6 @@ func (s *SessionStore) WriteFrame(connID uint64, dir byte, payload []byte) error
 		return nil
 	}
 
-	if dir == DirResponse && !sess.hasReqBytes {
-		s.mu.Unlock()
-		log.Printf("recorder: discarding orphan response frame on conn=%d", connID)
-		return nil
-	}
-
 	if dir == DirRequest {
 		if !sess.paired {
 			if len(payload) > 0 {
@@ -145,7 +139,11 @@ func (s *SessionStore) WriteFrame(connID uint64, dir byte, payload []byte) error
 					sess.reqFirstAt = time.Now()
 				}
 			}
+			start := sess.resAttached && sess.hasReqBytes
 			s.mu.Unlock()
+			if start {
+				return s.attachPipesAndParser(connID)
+			}
 			return nil
 		}
 		if sess.reqW == nil {
@@ -166,8 +164,12 @@ func (s *SessionStore) WriteFrame(connID uint64, dir byte, payload []byte) error
 		if !sess.paired {
 			sess.resBuf = append(sess.resBuf, payload...)
 			sess.resAttached = true
+			start := sess.hasReqBytes
 			s.mu.Unlock()
-			return s.attachPipesAndParser(connID)
+			if start {
+				return s.attachPipesAndParser(connID)
+			}
+			return nil
 		}
 		if sess.resW == nil {
 			pr, pw := io.Pipe()
@@ -233,7 +235,7 @@ func (s *SessionStore) maybeStartParser(connID uint64) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sess.parserCancel = cancel
 	sess.parserDone = make(chan struct{})
-	ds := s.downstreams
+	ds := s.recordAndReplay
 	client := s.beru
 	s.mu.Unlock()
 

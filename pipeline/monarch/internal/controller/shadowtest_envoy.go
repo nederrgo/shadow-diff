@@ -144,13 +144,13 @@ func egressVirtualHostDomains(hosts []string) []string {
 	return domains
 }
 
-func downstreamsConfigJSON(st *enginev1alpha1.ShadowTest) (string, error) {
+func recordAndReplayConfigJSON(st *enginev1alpha1.ShadowTest) (string, error) {
 	type entry struct {
 		Host               string   `json:"host"`
 		IgnoreRequestPaths []string `json:"ignoreRequestPaths,omitempty"`
 	}
-	entries := make([]entry, 0, len(st.Spec.Downstreams))
-	for _, d := range st.Spec.Downstreams {
+	entries := make([]entry, 0, len(st.Spec.RecordAndReplay))
+	for _, d := range st.Spec.RecordAndReplay {
 		entries = append(entries, entry{
 			Host:               d.Host,
 			IgnoreRequestPaths: d.IgnoreRequestPaths,
@@ -164,12 +164,12 @@ func downstreamsConfigJSON(st *enginev1alpha1.ShadowTest) (string, error) {
 }
 
 func renderEgressListenerYAML(st *enginev1alpha1.ShadowTest, role, beruTimeout string) (string, error) {
-	if len(st.Spec.Downstreams) == 0 {
+	if len(st.Spec.RecordAndReplay) == 0 {
 		return egressStubListenerYAML, nil
 	}
 
-	hosts := make([]string, 0, len(st.Spec.Downstreams))
-	for _, d := range st.Spec.Downstreams {
+	hosts := make([]string, 0, len(st.Spec.RecordAndReplay))
+	for _, d := range st.Spec.RecordAndReplay {
 		hosts = append(hosts, d.Host)
 	}
 	domains := egressVirtualHostDomains(hosts)
@@ -177,15 +177,15 @@ func renderEgressListenerYAML(st *enginev1alpha1.ShadowTest, role, beruTimeout s
 		return egressStubListenerYAML, nil
 	}
 
-	downstreamsJSON, err := downstreamsConfigJSON(st)
+	recordAndReplayJSON, err := recordAndReplayConfigJSON(st)
 	if err != nil {
 		return "", err
 	}
 
-	return buildEgressProxyListenerYAML(role, beruTimeout, domains, downstreamsJSON), nil
+	return buildEgressProxyListenerYAML(role, beruTimeout, domains, recordAndReplayJSON), nil
 }
 
-func buildEgressProxyListenerYAML(role, beruTimeout string, domains []string, downstreamsJSON string) string {
+func buildEgressProxyListenerYAML(role, beruTimeout string, domains []string, recordAndReplayJSON string) string {
 	var b strings.Builder
 	b.WriteString("  - name: egress_proxy\n")
 	b.WriteString("    address:\n")
@@ -201,7 +201,7 @@ func buildEgressProxyListenerYAML(role, beruTimeout string, domains []string, do
 	b.WriteString("          route_config:\n")
 	b.WriteString("            name: egress_routes\n")
 	b.WriteString("            virtual_hosts:\n")
-	b.WriteString("            - name: egress_downstreams\n")
+	b.WriteString("            - name: egress_record_and_replay\n")
 	b.WriteString("              domains:\n")
 	for _, d := range domains {
 		fmt.Fprintf(&b, "              - %q\n", d)
@@ -234,8 +234,8 @@ func buildEgressProxyListenerYAML(role, beruTimeout string, domains []string, do
 	b.WriteString("                  value: \"egress\"\n")
 	b.WriteString("                - key: x-shadow-role\n")
 	fmt.Fprintf(&b, "                  value: %q\n", role)
-	b.WriteString("                - key: x-shadow-downstreams-config\n")
-	fmt.Fprintf(&b, "                  value: %q\n", downstreamsJSON)
+	b.WriteString("                - key: x-shadow-record-and-replay-config\n")
+	fmt.Fprintf(&b, "                  value: %q\n", recordAndReplayJSON)
 	b.WriteString("              failure_mode_allow: false\n")
 	b.WriteString("              processing_mode:\n")
 	b.WriteString("                request_header_mode: SEND\n")

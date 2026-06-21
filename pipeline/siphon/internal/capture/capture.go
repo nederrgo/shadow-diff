@@ -271,7 +271,16 @@ func (cm *CaptureManager) captureLoop(ifaceName string) {
 		}
 
 		if !cm.sessionMap.GetOrDecide(srcIP, srcPort, dstIP, dstPort, sampleRate) {
+			if dstPort == 8080 || srcPort == 8080 {
+				log.Printf("siphon debug: tcp %s:%d -> %s:%d iface=%s dropped by sampling (rate=%d)",
+					srcIP, srcPort, dstIP, dstPort, ifaceName, sampleRate)
+			}
 			continue
+		}
+
+		if dstPort == 8080 || srcPort == 8080 {
+			log.Printf("siphon debug: tcp %s:%d -> %s:%d iface=%s -> assembler",
+				srcIP, srcPort, dstIP, dstPort, ifaceName)
 		}
 
 		// Feed packet into TCP assembler

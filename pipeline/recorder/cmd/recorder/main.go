@@ -14,10 +14,10 @@ import (
 
 func main() {
 	cfg := config.Load()
-	log.Printf("Recorder starting listen=%s downstreams=%d", cfg.ListenAddr, len(cfg.Downstreams))
+	log.Printf("Recorder starting listen=%s recordAndReplay=%d", cfg.ListenAddr, len(cfg.RecordAndReplay))
 
 	client := beru.NewClient(cfg.BeruHTTPURL)
-	store := ingest.NewSessionStore(client, cfg.Downstreams, cfg.PairTimeout, cfg.MaxFrameBytes)
+	store := ingest.NewSessionStore(client, cfg.RecordAndReplay, cfg.PairTimeout, cfg.MaxFrameBytes)
 	defer store.Stop()
 
 	srv := ingest.NewServer(cfg.ListenAddr, store)

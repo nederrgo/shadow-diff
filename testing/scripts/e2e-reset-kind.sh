@@ -6,7 +6,7 @@
 #   Igris listener    -> :80   (replays captured prod traffic)
 #   Envoy ingress     -> :8888 (Igris multicasts to shadow Services here)
 #   shadow app (echo) -> :80   (applicationPort; env copied from prod)
-#   Envoy egress proxy -> :15001 (HTTP_PROXY when spec.downstreams is set)
+#   Envoy egress proxy -> :15001 (HTTP_PROXY when spec.recordAndReplay is set)
 #
 # Usage:
 #   ./testing/scripts/e2e-reset-kind.sh                    # full reset + deploy + wait Ready
@@ -21,7 +21,7 @@
 #   ./testing/scripts/e2e-reset-kind.sh --no-reset         # deploy/upgrade only (no deletes)
 #   MONARCH_NO_CACHE=1 ./testing/scripts/e2e-reset-kind.sh # force fresh monarch:dev build (avoids stale Docker cache)
 #
-# Monarch owns the Siphon DaemonSet and POSTs /v1/config (targets, downstreams, recorder_host)
+# Monarch owns the Siphon DaemonSet and POSTs /v1/config (targets, recordAndReplay, recorder_host)
 # from ShadowTest spec. Set MONARCH_MODE=dev on the operator so helper images resolve to :dev tags.
 #
 set -euo pipefail
@@ -202,10 +202,12 @@ kubectl apply -f pipeline/siphon/deploy/rbac.yaml
 
 echo "==> Production app (echo on :80, memory limits)"
 kubectl apply -f testing/scripts/manifests/e2e-prod-app.yaml
+kubectl apply -f testing/scripts/manifests/e2e-egress-httpbin.yaml
+kubectl wait -n default --for=condition=Available deployment/egress-httpbin --timeout=120s
 kubectl rollout status deployment/my-prod-app -n default --timeout=120s
 kubectl wait -n default --for=condition=Ready pod -l app=my-prod-app --timeout=120s
 
-echo "==> ShadowTest (servicePort=8888, applicationPort=80, Igris :80/:8888, downstreams for egress recorder)"
+echo "==> ShadowTest (servicePort=8888, applicationPort=80, Igris :80/:8888, recordAndReplay for egress recorder)"
 # A Terminating CR from a prior run causes apply/patch races ("currently being deleted").
 wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
 kubectl apply -f testing/scripts/manifests/e2e-shadowtest.yaml
@@ -256,7 +258,7 @@ echo "==> Nudge Monarch to re-push Siphon config (recorder_host after Recorder i
 nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
 sleep 3
 
-echo "==> Verify Monarch pushed Siphon config (targets + downstreams + recorder_host)"
+echo "==> Verify Monarch pushed Siphon config (targets + recordAndReplay + recorder_host)"
 kubectl rollout status daemonset/siphon-agent -n siphon-system --timeout=120s 2>/dev/null || true
 wait_siphon_configured 1
 
