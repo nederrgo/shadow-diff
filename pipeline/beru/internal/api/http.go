@@ -8,6 +8,7 @@ import (
 
 	"github.com/shadow-diff/beru/internal/dashboard"
 	"github.com/shadow-diff/beru/internal/egressdiff"
+	"github.com/shadow-diff/beru/internal/otlp"
 	"github.com/shadow-diff/beru/internal/replay"
 	"github.com/shadow-diff/beru/internal/roles"
 	"github.com/shadow-diff/beru/internal/storage"
@@ -18,6 +19,7 @@ type Server struct {
 	Log        *slog.Logger
 	Mocks      *replay.MockStore
 	EgressDiff *egressdiff.Store
+	OTLP       *otlp.Server
 	DB         *storage.DB
 	Dashboard  *dashboard.Handler
 }
@@ -51,6 +53,9 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("/v1/seed_mock", s.handleSeedMock)
 	mux.HandleFunc("/v1/record_egress", s.handleRecordEgress)
 	mux.HandleFunc("/api/v1/egress/diff", s.handleEgressDiff)
+	if s.OTLP != nil {
+		mux.HandleFunc("/v1/traces", s.OTLP.HandleHTTP)
+	}
 	if s.Dashboard != nil {
 		s.Dashboard.Register(mux)
 	}

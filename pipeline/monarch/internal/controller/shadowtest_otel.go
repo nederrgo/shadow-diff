@@ -18,10 +18,14 @@ const (
 	envOtelServiceName              = "OTEL_SERVICE_NAME"
 	envOtelPropagators              = "OTEL_PROPAGATORS"
 	envOtelExporterOTLPEndpoint     = "OTEL_EXPORTER_OTLP_ENDPOINT"
-	envOtelExporterOTLPProtocol     = "OTEL_EXPORTER_OTLP_PROTOCOL"
-	envOtelNodeEnabledInstrumentations = "OTEL_NODE_ENABLED_INSTRUMENTATIONS"
+	envOtelExporterOTLPProtocol          = "OTEL_EXPORTER_OTLP_PROTOCOL"
+	envOtelExporterOTLPTracesProtocol    = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
+	envOtelNodeEnabledInstrumentations   = "OTEL_NODE_ENABLED_INSTRUMENTATIONS"
+	envOtelPythonDisabledInstrumentations = "OTEL_PYTHON_DISABLED_INSTRUMENTATIONS"
+	envOtelPythonMongoCaptureStatement    = "OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT"
 
-	defaultBeruOTLPEndpoint = "http://beru.beru-system.svc.cluster.local:4317"
+	defaultBeruOTLPEndpoint     = "http://beru.beru-system.svc.cluster.local:4317"
+	defaultBeruOTLPHTTPEndpoint = "http://beru.beru-system.svc.cluster.local:8080"
 )
 
 func otelInjectionEnabled(st *enginev1alpha1.ShadowTest) bool {
@@ -71,19 +75,41 @@ func otelPodAnnotations(st *enginev1alpha1.ShadowTest, appImage string) map[stri
 	return ann
 }
 
-func otelEnvVars(st *enginev1alpha1.ShadowTest, role string) []corev1.EnvVar {
+func otelEnvVars(st *enginev1alpha1.ShadowTest, role, appImage string) []corev1.EnvVar {
 	name := st.Name + "-" + role
 	if otelInjectionEnabled(st) && hasMongoDependency(st) {
-		return []corev1.EnvVar{
+		lang := detectOtelLanguage(appImage, otelLanguageFromSpec(st))
+		endpoint := defaultBeruOTLPEndpoint
+		protocol := "grpc"
+		tracesProtocol := "grpc"
+		if lang == "python" {
+			endpoint = defaultBeruOTLPHTTPEndpoint
+			protocol = "http/protobuf"
+			tracesProtocol = "http/protobuf"
+		}
+		envs := []corev1.EnvVar{
 			{Name: envOtelTracesExporter, Value: "otlp"},
 			{Name: envOtelMetricsExporter, Value: "none"},
 			{Name: envOtelLogsExporter, Value: "none"},
 			{Name: envOtelServiceName, Value: name},
 			{Name: envOtelPropagators, Value: "tracecontext"},
-			{Name: envOtelExporterOTLPEndpoint, Value: defaultBeruOTLPEndpoint},
-			{Name: envOtelExporterOTLPProtocol, Value: "grpc"},
-			{Name: envOtelNodeEnabledInstrumentations, Value: "mongodb,http"},
+			{Name: envOtelExporterOTLPEndpoint, Value: endpoint},
+			{Name: envOtelExporterOTLPProtocol, Value: protocol},
+			{Name: envOtelExporterOTLPTracesProtocol, Value: tracesProtocol},
 		}
+		if lang == "nodejs" {
+			envs = append(envs, corev1.EnvVar{
+				Name: envOtelNodeEnabledInstrumentations, Value: "mongodb,http",
+			})
+		}
+		if lang == "python" {
+			// ponytail: worker manually injects traceparent on pika publish; auto pika doubles firehose events
+			envs = append(envs,
+				corev1.EnvVar{Name: envOtelPythonDisabledInstrumentations, Value: "pika"},
+				corev1.EnvVar{Name: envOtelPythonMongoCaptureStatement, Value: "true"},
+			)
+		}
+		return envs
 	}
 	return []corev1.EnvVar{
 		{Name: envOtelTracesExporter, Value: "none"},

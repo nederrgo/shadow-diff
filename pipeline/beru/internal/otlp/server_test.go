@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/shadow-diff/beru/internal/egressdiff"
 )
@@ -301,5 +304,41 @@ func TestExport_payloadIsValidJSON(t *testing.T) {
 	reports := rec.snapshot()
 	if len(reports) != 1 || !json.Valid(reports[0].Payload) {
 		t.Fatalf("invalid payload: %+v", reports)
+	}
+}
+
+func TestHandleHTTP_mongoSpan(t *testing.T) {
+	rec := &recordingEgress{}
+	srv := &Server{Log: slog.Default(), EgressStore: rec}
+	stmt := `{"insert":"orders","documents":[{"order_id":"x"}]}`
+	req := &coltracepb.ExportTraceServiceRequest{
+		ResourceSpans: []*tracepb.ResourceSpans{{
+			Resource: &resourcepb.Resource{
+				Attributes: []*commonpb.KeyValue{kvString(attrShadowRole, "candidate")},
+			},
+			ScopeSpans: []*tracepb.ScopeSpans{{
+				Spans: []*tracepb.Span{{
+					TraceId: bytes.Repeat([]byte{0x07}, 16),
+					Attributes: []*commonpb.KeyValue{
+						kvString(attrDBSystem, "mongodb"),
+						kvString(attrDBStatement, stmt),
+					},
+				}},
+			}},
+		}},
+	}
+	body, err := proto.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	httpReq := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewReader(body))
+	httpReq.Header.Set("Content-Type", "application/x-protobuf")
+	srv.HandleHTTP(rr, httpReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if len(rec.snapshot()) != 1 {
+		t.Fatalf("expected 1 report, got %+v", rec.snapshot())
 	}
 }

@@ -18,6 +18,9 @@ func TestLoad(t *testing.T) {
 	if cfg.BeruEgressDiffURL() != "http://beru:8080/api/v1/egress/diff" {
 		t.Fatalf("url = %s", cfg.BeruEgressDiffURL())
 	}
+	if cfg.EgressExchange != "egress-events" {
+		t.Fatalf("EgressExchange = %q", cfg.EgressExchange)
+	}
 }
 
 func TestLoadMissingRequired(t *testing.T) {

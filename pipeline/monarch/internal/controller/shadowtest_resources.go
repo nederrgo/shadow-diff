@@ -134,7 +134,7 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 		beruAddr := beruGRPCAddressFor(st)
 		baseEnv := append(append([]corev1.EnvVar{}, env...), dependencyEnvVarsForRole(st, shadowNS, role)...)
 		if otelInjectionEnabled(st) {
-			baseEnv = append(baseEnv, otelEnvVars(st, role)...)
+			baseEnv = append(baseEnv, otelEnvVars(st, role, image)...)
 		}
 		appEnv := appEnvWithEgressProxy(st, baseEnv)
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{

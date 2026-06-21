@@ -14,11 +14,12 @@ import (
 
 // Runner consumes Firehose events from one shadow broker and forwards them to Beru.
 type Runner struct {
-	Workload string
-	URL      string
-	Beru     *beru.Client
-	MinDelay time.Duration
-	MaxDelay time.Duration
+	Workload       string
+	URL            string
+	Beru           *beru.Client
+	EgressExchange string
+	MinDelay       time.Duration
+	MaxDelay       time.Duration
 }
 
 // Run blocks until ctx is cancelled, reconnecting on broker failures.
@@ -119,7 +120,9 @@ func (r *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 	if !firehose.IsPublishTrace(msg.RoutingKey) {
 		return
 	}
-	_ = firehose.ExchangeNameFromTrace(msg.Headers)
+	if !shouldReportEgress(r.EgressExchange, firehose.ExchangeNameFromTrace(msg.Headers)) {
+		return
+	}
 
 	traceID, err := firehose.TraceIDFromFirehose(msg.Headers)
 	if err != nil {
@@ -155,11 +158,12 @@ func StartAll(ctx context.Context, cfg config.Config, beruClient *beru.Client) {
 	for _, w := range workers {
 		w := w
 		runner := &Runner{
-			Workload: w.workload,
-			URL:      w.url,
-			Beru:     beruClient,
-			MinDelay: cfg.ReconnectMin,
-			MaxDelay: cfg.ReconnectMax,
+			Workload:       w.workload,
+			URL:            w.url,
+			Beru:           beruClient,
+			EgressExchange: cfg.EgressExchange,
+			MinDelay:       cfg.ReconnectMin,
+			MaxDelay:       cfg.ReconnectMax,
 		}
 		go func() {
 			if err := runner.Run(ctx); err != nil && err != context.Canceled {

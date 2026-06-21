@@ -14,6 +14,9 @@ type Result struct {
 	Regressions []PathDiff
 	BodyA       []byte
 	BodyC       []byte
+	ControlA    [][]byte
+	ControlB    [][]byte
+	Candidate   [][]byte
 	Err         error
 }
 

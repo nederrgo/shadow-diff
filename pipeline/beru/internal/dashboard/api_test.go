@@ -93,6 +93,57 @@ func TestDashboardFilterTabs(t *testing.T) {
 	}
 }
 
+func TestSaveAndViewTraceSequence(t *testing.T) {
+	h := testHandler(t)
+	ctx := t.Context()
+	res := diff.Result{
+		TraceID:  "view-seq",
+		Protocol: "mongodb",
+		Status:   diff.StatusMismatch,
+		ControlA: [][]byte{[]byte(`{"insert":"orders","documents":[{"order_id":"1"}]}`)},
+		Candidate: [][]byte{
+			[]byte(`{"insert":"orders","documents":[{"order_id":"1"}]}`),
+			[]byte(`{"insert":"orders","documents":[{"audit":"n1"}]}`),
+		},
+		BodyA:       []byte(`{"insert":"orders"}`),
+		BodyC:       []byte(`{"insert":"orders"}`),
+		Regressions: []diff.PathDiff{{Path: "(count)", Expected: "1", Actual: "2"}},
+	}
+	if err := h.DB.SaveDiffResult(ctx, "default", res); err != nil {
+		t.Fatal(err)
+	}
+	traces, err := h.DB.ListTraces(ctx, 1, "", 10)
+	if err != nil || len(traces) == 0 {
+		t.Fatal(err)
+	}
+	var traceID int64
+	for _, tr := range traces {
+		if tr.TraceID == "view-seq" {
+			traceID = tr.ID
+			break
+		}
+	}
+	if traceID == 0 {
+		t.Fatal("trace row not found")
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/traces/"+strconv.FormatInt(traceID, 10), nil)
+	h.handleTrace(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.Bytes()
+	if !bytes.Contains(body, []byte("Egress sequence")) {
+		t.Fatal("missing egress sequence section")
+	}
+	if !bytes.Contains(body, []byte("Unexpected extra egress")) {
+		t.Fatal("missing extra egress badge")
+	}
+	if !bytes.Contains(body, []byte("documents")) {
+		t.Fatal("missing rich mongo payload")
+	}
+}
+
 func TestSaveAndViewTrace(t *testing.T) {
 	h := testHandler(t)
 	ctx := t.Context()

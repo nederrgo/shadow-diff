@@ -53,20 +53,19 @@ func ConfigFromEnv() Config {
 
 // Report is one workload egress payload for diff correlation.
 type Report struct {
-	TraceID         string
-	Workload        string
-	Protocol        string
-	Payload         []byte
-	ShadowTestName  string
+	TraceID        string
+	Workload       string
+	Protocol       string
+	Payload        []byte
+	ShadowTestName string
 }
 
 type pendingEgress struct {
-	deadline         time.Time
-	reports          map[string][]byte
-	protocol         string
-	diffDone         bool
-	timer            *time.Timer
-	shadowTestName   string
+	deadline       time.Time
+	payloads       map[string]map[string][][]byte // protocol -> role -> ordered payloads
+	diffDone       map[string]bool                // protocol -> diff completed
+	timer          *time.Timer
+	shadowTestName string
 }
 
 // Store correlates egress payloads by trace ID.
@@ -105,6 +104,7 @@ func (s *Store) Handle(report Report) {
 		return
 	}
 
+	protocol := report.Protocol
 	s.mu.Lock()
 	s.evictExpiredLocked()
 	s.enforceCapLocked()
@@ -113,8 +113,8 @@ func (s *Store) Handle(report Report) {
 	if !ok {
 		pt = &pendingEgress{
 			deadline: time.Now().Add(s.cfg.TraceTTL),
-			reports:  make(map[string][]byte),
-			protocol: report.Protocol,
+			payloads: make(map[string]map[string][][]byte),
+			diffDone: make(map[string]bool),
 		}
 		s.pending[report.TraceID] = pt
 		s.order = append(s.order, report.TraceID)
@@ -125,81 +125,117 @@ func (s *Store) Handle(report Report) {
 			})
 		}
 	}
-	if pt.protocol == "" {
-		pt.protocol = report.Protocol
-	}
 	if report.ShadowTestName != "" {
 		pt.shadowTestName = report.ShadowTestName
 	}
-	pt.reports[report.Workload] = append([]byte(nil), report.Payload...)
-
-	allPresent := len(pt.reports) >= len(roles.All)
-	for _, role := range roles.All {
-		if _, ok := pt.reports[role]; !ok {
-			allPresent = false
-			break
-		}
+	if pt.payloads[protocol] == nil {
+		pt.payloads[protocol] = make(map[string][][]byte)
 	}
-	ready := allPresent && !pt.diffDone
+	pt.payloads[protocol][report.Workload] = append(
+		pt.payloads[protocol][report.Workload],
+		copyBytes(report.Payload),
+	)
+
+	ready := protocolReady(pt, protocol) && !pt.diffDone[protocol]
 	s.mu.Unlock()
 
 	if ready {
-		s.tryDiff(report.TraceID)
+		if s.cfg.EgressWait > 0 {
+			// ponytail: batch OTLP spans until EgressWait; onWaitExpired diffs all ready protocols
+			return
+		}
+		s.tryDiffProtocol(report.TraceID, protocol)
 	}
+}
+
+func protocolReady(pt *pendingEgress, protocol string) bool {
+	byRole := pt.payloads[protocol]
+	if byRole == nil {
+		return false
+	}
+	for _, role := range roles.All {
+		if len(byRole[role]) == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Store) onWaitExpired(traceID string) {
 	s.mu.Lock()
 	pt, ok := s.pending[traceID]
-	if !ok || pt.diffDone {
+	if !ok {
 		s.mu.Unlock()
 		return
 	}
-	count := len(pt.reports)
-	ready := count >= 2
+	var protocols []string
+	for protocol := range pt.payloads {
+		if pt.diffDone[protocol] {
+			continue
+		}
+		if protocolReady(pt, protocol) || protocolHasMinReports(pt, protocol, 2) {
+			protocols = append(protocols, protocol)
+		}
+	}
 	s.mu.Unlock()
-	if ready {
-		s.tryDiff(traceID)
+	for _, protocol := range protocols {
+		s.tryDiffProtocol(traceID, protocol)
 	}
 }
 
-func (s *Store) tryDiff(traceID string) {
+func protocolHasMinReports(pt *pendingEgress, protocol string, min int) bool {
+	byRole := pt.payloads[protocol]
+	if byRole == nil {
+		return false
+	}
+	count := 0
+	for _, role := range roles.All {
+		if len(byRole[role]) > 0 {
+			count++
+		}
+	}
+	return count >= min
+}
+
+func (s *Store) tryDiffProtocol(traceID, protocol string) {
 	s.mu.Lock()
 	pt, ok := s.pending[traceID]
-	if !ok || pt.diffDone {
+	if !ok || pt.diffDone[protocol] {
 		s.mu.Unlock()
 		return
 	}
-	allPresent := true
-	for _, role := range roles.All {
-		if _, ok := pt.reports[role]; !ok {
-			allPresent = false
+	if !protocolReady(pt, protocol) && !protocolHasMinReports(pt, protocol, 2) {
+		s.mu.Unlock()
+		return
+	}
+	pt.diffDone[protocol] = true
+	shadowName := pt.shadowTestName
+	controlA := copySlice(pt.payloads[protocol][roles.ControlA])
+	controlB := copySlice(pt.payloads[protocol][roles.ControlB])
+	candidate := copySlice(pt.payloads[protocol][roles.Candidate])
+
+	allDone := true
+	for p := range pt.payloads {
+		if !pt.diffDone[p] {
+			allDone = false
 			break
 		}
 	}
-	if !allPresent && len(pt.reports) < 2 {
-		s.mu.Unlock()
-		return
+	if allDone {
+		if pt.timer != nil {
+			pt.timer.Stop()
+			pt.timer = nil
+		}
+		delete(s.pending, traceID)
+		s.removeFromOrderLocked(traceID)
 	}
-	pt.diffDone = true
-	if pt.timer != nil {
-		pt.timer.Stop()
-		pt.timer = nil
-	}
-	protocol := pt.protocol
-	shadowName := pt.shadowTestName
-	bodyA := copyBytes(pt.reports[roles.ControlA])
-	bodyB := copyBytes(pt.reports[roles.ControlB])
-	bodyC := copyBytes(pt.reports[roles.Candidate])
-	delete(s.pending, traceID)
-	s.removeFromOrderLocked(traceID)
 	s.mu.Unlock()
 
-	go s.runDiff(traceID, protocol, shadowName, bodyA, bodyB, bodyC)
+	go s.runDiff(traceID, protocol, shadowName, controlA, controlB, candidate)
 }
 
-func (s *Store) runDiff(traceID, protocol, shadowTestName string, bodyA, bodyB, bodyC []byte) {
-	if bodyA == nil {
+func (s *Store) runDiff(traceID, protocol, shadowTestName string, controlA, controlB, candidate [][]byte) {
+	if len(controlA) == 0 {
 		s.log.Info("Skipping egress diff without control-a payload", "traceID", traceID, "protocol", protocol)
 		return
 	}
@@ -215,7 +251,10 @@ func (s *Store) runDiff(traceID, protocol, shadowTestName string, bodyA, bodyB, 
 			s.log.Error("Could not load noise filters", "traceID", traceID, "err", err)
 		}
 	}
-	res := diff.AnalyzeEgress(s.log, traceID, protocol, bodyA, bodyB, bodyC, userNoise)
+	res, err := diff.AnalyzeEgress(s.log, traceID, protocol, controlA, controlB, candidate, userNoise)
+	if err != nil {
+		return
+	}
 	if s.Storage != nil && res.Err == nil {
 		if err := s.Storage.SaveDiffResult(context.Background(), shadowName, res); err != nil {
 			s.log.Error("Could not persist diff result", "traceID", traceID, "err", err)
@@ -228,6 +267,17 @@ func copyBytes(in []byte) []byte {
 		return nil
 	}
 	return append([]byte(nil), in...)
+}
+
+func copySlice(in [][]byte) [][]byte {
+	if in == nil {
+		return nil
+	}
+	out := make([][]byte, len(in))
+	for i, b := range in {
+		out[i] = copyBytes(b)
+	}
+	return out
 }
 
 func (s *Store) sweepLoop(ctx context.Context) {
@@ -255,22 +305,39 @@ func (s *Store) evictExpiredLocked() {
 		if now.Before(pt.deadline) {
 			continue
 		}
-		if pt.diffDone {
+		if allProtocolsDone(pt) {
 			delete(s.pending, id)
 			s.removeFromOrderLocked(id)
 			continue
 		}
-		received, missing := roleSets(pt.reports)
-		s.log.Info(fmt.Sprintf(
-			"Timed out waiting for Trace %s (%s egress): received %s; missing %s",
-			id, pt.protocol, formatRoleList(received), formatRoleList(missing),
-		))
+		for protocol := range pt.payloads {
+			if pt.diffDone[protocol] {
+				continue
+			}
+			received, missing := roleSetsForProtocol(pt, protocol)
+			s.log.Info(fmt.Sprintf(
+				"Timed out waiting for Trace %s (%s egress): received %s; missing %s",
+				id, protocol, formatRoleList(received), formatRoleList(missing),
+			))
+		}
 		if pt.timer != nil {
 			pt.timer.Stop()
 		}
 		delete(s.pending, id)
 		s.removeFromOrderLocked(id)
 	}
+}
+
+func allProtocolsDone(pt *pendingEgress) bool {
+	if len(pt.payloads) == 0 {
+		return true
+	}
+	for p := range pt.payloads {
+		if !pt.diffDone[p] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Store) enforceCapLocked() {
@@ -307,13 +374,10 @@ func (s *Store) removeFromOrderLocked(id string) {
 	}
 }
 
-func roleSets(reports map[string][]byte) (received, missing []string) {
-	have := make(map[string]struct{}, len(reports))
-	for r := range reports {
-		have[r] = struct{}{}
-	}
+func roleSetsForProtocol(pt *pendingEgress, protocol string) (received, missing []string) {
+	byRole := pt.payloads[protocol]
 	for _, r := range roles.All {
-		if _, ok := have[r]; ok {
+		if byRole != nil && len(byRole[r]) > 0 {
 			received = append(received, r)
 		} else {
 			missing = append(missing, r)

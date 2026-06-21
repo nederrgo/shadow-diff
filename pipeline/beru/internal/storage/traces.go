@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/shadow-diff/beru/internal/diff"
 )
@@ -33,6 +34,19 @@ type Mismatch struct {
 
 // SaveDiffResult persists trace metadata and mismatch payloads.
 func (db *DB) SaveDiffResult(ctx context.Context, shadowTestName string, r diff.Result) error {
+	const maxAttempts = 5
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		err = db.saveDiffResultOnce(ctx, shadowTestName, r)
+		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "locked") {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
+	}
+	return err
+}
+
+func (db *DB) saveDiffResultOnce(ctx context.Context, shadowTestName string, r diff.Result) error {
 	if r.Err != nil || r.TraceID == "" {
 		return nil
 	}
@@ -65,6 +79,9 @@ func (db *DB) SaveDiffResult(ctx context.Context, shadowTestName string, r diff.
 INSERT INTO traces (shadow_test_id, trace_id, protocol, status) VALUES (?, ?, ?, ?)`,
 		runID, r.TraceID, r.Protocol, r.Status)
 	if err != nil {
+		return err
+	}
+	if err := db.insertEgressPayloads(ctx, tx, r); err != nil {
 		return err
 	}
 	if !mismatch {
@@ -106,14 +123,70 @@ func (db *DB) insertMismatches(ctx context.Context, tx *sql.Tx, r diff.Result) e
 			cBody = sql.NullString{String: bodyC, Valid: len(r.BodyC) > 0}
 		}
 		_, err := tx.ExecContext(ctx, `
-INSERT INTO mismatches (trace_id, path, expected_value, actual_value, body_a_json, body_c_json)
-VALUES (?, ?, ?, ?, ?, ?)`,
-			r.TraceID, reg.Path, reg.Expected, reg.Actual, aBody, cBody)
+INSERT INTO mismatches (trace_id, protocol, path, expected_value, actual_value, body_a_json, body_c_json)
+VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			r.TraceID, r.Protocol, reg.Path, reg.Expected, reg.Actual, aBody, cBody)
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (db *DB) insertEgressPayloads(ctx context.Context, tx *sql.Tx, r diff.Result) error {
+	workloads := []struct {
+		name     string
+		payloads [][]byte
+	}{
+		{"control-a", r.ControlA},
+		{"control-b", r.ControlB},
+		{"candidate", r.Candidate},
+	}
+	for _, w := range workloads {
+		for i, payload := range w.payloads {
+			if len(payload) == 0 {
+				continue
+			}
+			_, err := tx.ExecContext(ctx, `
+INSERT INTO egress_payloads (trace_id, protocol, workload, sequence_index, payload_json)
+VALUES (?, ?, ?, ?, ?)`,
+				r.TraceID, r.Protocol, w.name, i, string(payload))
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// EgressPayload is one ordered egress operation stored for a trace.
+type EgressPayload struct {
+	Workload       string
+	SequenceIndex  int
+	PayloadJSON    string
+}
+
+// ListEgressPayloads returns ordered egress payloads for a trace and protocol.
+func (db *DB) ListEgressPayloads(ctx context.Context, traceID, protocol string) ([]EgressPayload, error) {
+	rows, err := db.sql.QueryContext(ctx, `
+SELECT workload, sequence_index, payload_json
+FROM egress_payloads
+WHERE trace_id = ? AND protocol = ?
+ORDER BY sequence_index, workload`, traceID, protocol)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []EgressPayload
+	for rows.Next() {
+		var p EgressPayload
+		if err := rows.Scan(&p.Workload, &p.SequenceIndex, &p.PayloadJSON); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // ListTraces returns traces for a shadow test run with optional status filter.
@@ -151,6 +224,30 @@ WHERE t.shadow_test_id = ?`
 	return out, rows.Err()
 }
 
+// ListTracesByTraceID returns all protocol rows for one W3C trace id within a run.
+func (db *DB) ListTracesByTraceID(ctx context.Context, shadowTestID int64, traceID string) ([]Trace, error) {
+	rows, err := db.sql.QueryContext(ctx, `
+SELECT t.id, t.shadow_test_id, t.trace_id, t.protocol, t.status, t.timestamp, s.name
+FROM traces t
+JOIN shadow_tests s ON s.id = t.shadow_test_id
+WHERE t.shadow_test_id = ? AND t.trace_id = ?
+ORDER BY t.id`, shadowTestID, traceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Trace
+	for rows.Next() {
+		var t Trace
+		if err := rows.Scan(&t.ID, &t.ShadowTestID, &t.TraceID, &t.Protocol, &t.Status, &t.Timestamp, &t.ShadowTestName); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // GetTraceByID returns one trace row by database id.
 func (db *DB) GetTraceByID(ctx context.Context, id int64) (Trace, error) {
 	var t Trace
@@ -166,11 +263,18 @@ WHERE t.id = ?`, id,
 	return t, nil
 }
 
-// ListMismatchesForTrace returns mismatch rows for a trace id string.
-func (db *DB) ListMismatchesForTrace(ctx context.Context, traceID string) ([]Mismatch, error) {
-	rows, err := db.sql.QueryContext(ctx, `
+// ListMismatchesForTrace returns mismatch rows for a trace id string and protocol.
+func (db *DB) ListMismatchesForTrace(ctx context.Context, traceID, protocol string) ([]Mismatch, error) {
+	q := `
 SELECT id, trace_id, path, expected_value, actual_value, body_a_json, body_c_json
-FROM mismatches WHERE trace_id = ? ORDER BY id`, traceID)
+FROM mismatches WHERE trace_id = ?`
+	args := []any{traceID}
+	if protocol != "" {
+		q += ` AND protocol = ?`
+		args = append(args, protocol)
+	}
+	q += ` ORDER BY id`
+	rows, err := db.sql.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -187,12 +291,18 @@ FROM mismatches WHERE trace_id = ? ORDER BY id`, traceID)
 	return out, rows.Err()
 }
 
-// MismatchBodies returns control-a and candidate JSON for a trace.
-func (db *DB) MismatchBodies(ctx context.Context, traceID string) ([]byte, []byte, error) {
-	rows, err := db.sql.QueryContext(ctx, `
+// MismatchBodies returns control-a and candidate JSON for a trace and protocol.
+func (db *DB) MismatchBodies(ctx context.Context, traceID, protocol string) ([]byte, []byte, error) {
+	q := `
 SELECT body_a_json, body_c_json FROM mismatches
-WHERE trace_id = ? AND body_a_json IS NOT NULL
-LIMIT 1`, traceID)
+WHERE trace_id = ? AND body_a_json IS NOT NULL`
+	args := []any{traceID}
+	if protocol != "" {
+		q += ` AND protocol = ?`
+		args = append(args, protocol)
+	}
+	q += ` LIMIT 1`
+	rows, err := db.sql.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, nil, err
 	}

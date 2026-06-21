@@ -1,5 +1,7 @@
 package storage
 
+import "strings"
+
 const schemaDDL = `
 CREATE TABLE IF NOT EXISTS shadow_tests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,6 +34,16 @@ CREATE TABLE IF NOT EXISTS mismatches (
 );
 CREATE INDEX IF NOT EXISTS idx_mismatches_trace ON mismatches(trace_id);
 
+CREATE TABLE IF NOT EXISTS egress_payloads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  trace_id TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  workload TEXT NOT NULL,
+  sequence_index INTEGER NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_egress_payloads_trace ON egress_payloads(trace_id, protocol);
+
 CREATE TABLE IF NOT EXISTS noise_filters (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   shadow_test_name TEXT NOT NULL,
@@ -42,6 +54,13 @@ CREATE TABLE IF NOT EXISTS noise_filters (
 `
 
 func (db *DB) migrate() error {
-	_, err := db.sql.Exec(schemaDDL)
-	return err
+	if _, err := db.sql.Exec(schemaDDL); err != nil {
+		return err
+	}
+	// ponytail: idempotent column add for existing DBs
+	_, err := db.sql.Exec(`ALTER TABLE mismatches ADD COLUMN protocol TEXT NOT NULL DEFAULT ''`)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return err
+	}
+	return nil
 }

@@ -56,17 +56,30 @@ func padLines(left, right *[]DiffLine) {
 }
 
 func prettyJSON(b []byte) string {
-	if len(b) == 0 {
+	return PrettyDisplayJSON(string(b))
+}
+
+// PrettyDisplayJSON pretty-prints JSON text or returns placeholders/raw text unchanged.
+func PrettyDisplayJSON(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return ""
 	}
-	if !json.Valid(b) {
-		return string(b)
+	if isDisplayPlaceholder(raw) {
+		return raw
+	}
+	if !json.Valid([]byte(raw)) {
+		return raw
 	}
 	var buf bytes.Buffer
-	if err := json.Indent(&buf, b, "", "  "); err != nil {
-		return string(b)
+	if err := json.Indent(&buf, []byte(raw), "", "  "); err != nil {
+		return raw
 	}
 	return buf.String()
+}
+
+func isDisplayPlaceholder(s string) bool {
+	return strings.HasPrefix(s, "[ ") && strings.HasSuffix(s, " ]")
 }
 
 func longestCommonSubsequence(a, b []string) []string {

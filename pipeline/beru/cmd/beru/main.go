@@ -56,6 +56,8 @@ func main() {
 	egressStore := egressdiff.NewStore(log, egressdiff.ConfigFromEnv())
 	egressStore.Storage = db
 
+	otlpSrv := &otlp.Server{Log: log, EgressStore: egressStore}
+
 	dash, err := dashboard.NewHandler(db, log)
 	if err != nil {
 		slog.Error("Failed to init dashboard", "err", err)
@@ -63,7 +65,7 @@ func main() {
 	}
 
 	httpAddr := envOr("BERU_HTTP_ADDR", ":8080")
-	httpSrv := &api.Server{Log: log, Mocks: mocks, EgressDiff: egressStore, DB: db, Dashboard: dash}
+	httpSrv := &api.Server{Log: log, Mocks: mocks, EgressDiff: egressStore, OTLP: otlpSrv, DB: db, Dashboard: dash}
 	go func() {
 		if err := httpSrv.Start(httpAddr); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server stopped", "err", err)
@@ -81,10 +83,7 @@ func main() {
 	})
 
 	grpcServerOTLP := grpc.NewServer()
-	coltracepb.RegisterTraceServiceServer(grpcServerOTLP, &otlp.Server{
-		Log:         log,
-		EgressStore: egressStore,
-	})
+	coltracepb.RegisterTraceServiceServer(grpcServerOTLP, otlpSrv)
 
 	go func() {
 		log.Info("Beru gRPC server listening", "addr", beruAddr)

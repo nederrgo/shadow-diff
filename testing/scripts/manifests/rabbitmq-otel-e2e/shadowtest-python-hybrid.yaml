@@ -1,0 +1,39 @@
+# Master hybrid ShadowTest: RabbitMQ ingress + Mongo OTLP + HTTP record/replay + RMQ Firehose egress.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: python-hybrid-shadow
+  namespace: default
+spec:
+  targetDeployment: python-prod-worker
+  targetNamespace: default
+
+  oldImage: python-test-worker:dev
+  newImage: python-test-worker:dev
+
+  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
+
+  inputs:
+    - driver: rabbitmq_message
+      amqp:
+        prodUrl: amqp://guest:guest@rmq-prod-broker.default.svc.cluster.local:5672/
+        exchange: orders
+        routingKey: order.created
+        targetDependency: rabbitmq
+
+  downstreams:
+    - host: user-service.prod.svc.cluster.local
+
+  otelInjection:
+    enabled: true
+    language: python
+
+  dependencies:
+    - name: rabbitmq
+      image: rabbitmq:3-management-alpine
+      port: 5672
+      envVarInjection: AMQP_URL
+    - name: mongodb
+      image: mongo:4.4
+      port: 27017
+      envVarInjection: MONGO_URL

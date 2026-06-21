@@ -94,7 +94,7 @@ func TestOtelEnvVars_mongoDependencyExportsOTLP(t *testing.T) {
 			}},
 		},
 	}
-	envs := otelEnvVars(st, roleControlA)
+	envs := otelEnvVars(st, roleControlA, "nodejs-test-worker:dev")
 	if got := envValue(envs, envOtelTracesExporter); got != "otlp" {
 		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want otlp", got)
 	}
@@ -104,6 +104,9 @@ func TestOtelEnvVars_mongoDependencyExportsOTLP(t *testing.T) {
 	if got := envValue(envs, envOtelExporterOTLPProtocol); got != "grpc" {
 		t.Fatalf("OTEL_EXPORTER_OTLP_PROTOCOL = %q", got)
 	}
+	if got := envValue(envs, envOtelExporterOTLPTracesProtocol); got != "grpc" {
+		t.Fatalf("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL = %q", got)
+	}
 	if got := envValue(envs, envOtelNodeEnabledInstrumentations); got != "mongodb,http" {
 		t.Fatalf("OTEL_NODE_ENABLED_INSTRUMENTATIONS = %q", got)
 	}
@@ -112,10 +115,39 @@ func TestOtelEnvVars_mongoDependencyExportsOTLP(t *testing.T) {
 	}
 }
 
+func TestOtelEnvVars_pythonMongoOmitsNodeInstrumentations(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "python-hybrid-shadow"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			OtelInjection: &enginev1alpha1.OtelInjectionSpec{Language: "python"},
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "mongo", Image: "mongo:4.4", Port: 27017, EnvVarInjection: "MONGO_URL",
+			}},
+		},
+	}
+	envs := otelEnvVars(st, roleControlA, "python-test-worker:dev")
+	if got := envValue(envs, envOtelExporterOTLPEndpoint); got != defaultBeruOTLPHTTPEndpoint {
+		t.Fatalf("OTEL_EXPORTER_OTLP_ENDPOINT = %q", got)
+	}
+	if got := envValue(envs, envOtelExporterOTLPTracesProtocol); got != "http/protobuf" {
+		t.Fatalf("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL = %q", got)
+	}
+	if got := envValue(envs, envOtelNodeEnabledInstrumentations); got != "" {
+		t.Fatalf("OTEL_NODE_ENABLED_INSTRUMENTATIONS = %q, want empty for python", got)
+	}
+	if got := envValue(envs, envOtelPythonDisabledInstrumentations); got != "pika" {
+		t.Fatalf("OTEL_PYTHON_DISABLED_INSTRUMENTATIONS = %q", got)
+	}
+	if got := envValue(envs, envOtelPythonMongoCaptureStatement); got != "true" {
+		t.Fatalf("OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT = %q", got)
+	}
+}
+
 func TestOtelEnvVars_noMongoUsesNoneExporter(t *testing.T) {
 	t.Parallel()
 	st := &enginev1alpha1.ShadowTest{ObjectMeta: metav1.ObjectMeta{Name: "http-shadow"}}
-	if got := envValue(otelEnvVars(st, roleControlA), envOtelTracesExporter); got != "none" {
+	if got := envValue(otelEnvVars(st, roleControlA, "app:latest"), envOtelTracesExporter); got != "none" {
 		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want none", got)
 	}
 }

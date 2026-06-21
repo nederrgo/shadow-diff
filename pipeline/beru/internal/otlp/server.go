@@ -79,7 +79,6 @@ func (s *Server) Export(ctx context.Context, req *coltracepb.ExportTraceServiceR
 					log.Debug("Skipping mongo span with unparseable db.statement", "err", err)
 					continue
 				}
-				// ponytail: one payload per workload per trace; last mongo span wins
 				s.EgressStore.Handle(egressdiff.Report{
 					TraceID:  traceID,
 					Workload: shadowRole,

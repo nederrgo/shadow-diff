@@ -37,6 +37,8 @@ type traceView struct {
 
 type tracePage struct {
 	Trace          traceView
+	Related        []traceView
+	SequenceSteps  []sequenceStepView
 	Mismatches     []mismatchView
 	LeftLines      []DiffLine
 	RightLines     []DiffLine
@@ -144,7 +146,7 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 		},
 		ShadowTestName: trace.ShadowTestName,
 	}
-	mismatches, err := h.DB.ListMismatchesForTrace(r.Context(), trace.TraceID)
+	mismatches, err := h.DB.ListMismatchesForTrace(r.Context(), trace.TraceID, trace.Protocol)
 	if err == nil {
 		for _, m := range mismatches {
 			page.Mismatches = append(page.Mismatches, mismatchView{
@@ -152,9 +154,23 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	bodyA, bodyC, err := h.DB.MismatchBodies(r.Context(), trace.TraceID)
-	if err == nil || err == sql.ErrNoRows {
-		page.LeftLines, page.RightLines = RenderLineDiff(bodyA, bodyC)
+	payloads, err := h.DB.ListEgressPayloads(r.Context(), trace.TraceID, trace.Protocol)
+	if err == nil && len(payloads) > 0 {
+		page.SequenceSteps = buildSequenceSteps(trace.Protocol, payloads)
+	} else {
+		bodyA, bodyC, err := h.DB.MismatchBodies(r.Context(), trace.TraceID, trace.Protocol)
+		if err == nil || err == sql.ErrNoRows {
+			page.LeftLines, page.RightLines = RenderLineDiff(bodyA, bodyC)
+		}
+	}
+	related, err := h.DB.ListTracesByTraceID(r.Context(), trace.ShadowTestID, trace.TraceID)
+	if err == nil {
+		for _, t := range related {
+			page.Related = append(page.Related, traceView{
+				ID: t.ID, TraceID: t.TraceID, Protocol: t.Protocol,
+				Status: t.Status, Timestamp: t.Timestamp,
+			})
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -72,18 +72,27 @@ func (h *Handler) handleAPITraceByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Trace not found", http.StatusNotFound)
 		return
 	}
-	mismatches, err := h.DB.ListMismatchesForTrace(r.Context(), trace.TraceID)
+	mismatches, err := h.DB.ListMismatchesForTrace(r.Context(), trace.TraceID, trace.Protocol)
 	if err != nil {
 		http.Error(w, "Could not load mismatches", http.StatusInternalServerError)
 		return
 	}
-	bodyA, bodyC, _ := h.DB.MismatchBodies(r.Context(), trace.TraceID)
-	writeJSON(w, map[string]any{
+	payloads, _ := h.DB.ListEgressPayloads(r.Context(), trace.TraceID, trace.Protocol)
+	related, _ := h.DB.ListTracesByTraceID(r.Context(), trace.ShadowTestID, trace.TraceID)
+	resp := map[string]any{
 		"trace":      trace,
+		"related":    related,
 		"mismatches": mismatches,
-		"body_a":     json.RawMessage(bodyA),
-		"body_c":     json.RawMessage(bodyC),
-	})
+	}
+	if len(payloads) > 0 {
+		resp["sequence_steps"] = buildSequenceSteps(trace.Protocol, payloads)
+		resp["egress_payloads"] = payloads
+	} else {
+		bodyA, bodyC, _ := h.DB.MismatchBodies(r.Context(), trace.TraceID, trace.Protocol)
+		resp["body_a"] = json.RawMessage(bodyA)
+		resp["body_c"] = json.RawMessage(bodyC)
+	}
+	writeJSON(w, resp)
 }
 
 type noiseFilterRequest struct {

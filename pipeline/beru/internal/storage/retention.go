@@ -50,6 +50,10 @@ DELETE FROM traces WHERE timestamp < datetime('now', printf('-%d days', ?))`, cu
 DELETE FROM mismatches WHERE trace_id NOT IN (SELECT trace_id FROM traces)`); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM egress_payloads WHERE trace_id NOT IN (SELECT trace_id FROM traces)`); err != nil {
+		return err
+	}
 	for _, d := range deltas {
 		if err := db.decrementRunCounters(ctx, tx, d.id, d.total, d.mismatches); err != nil {
 			return err

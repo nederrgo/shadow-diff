@@ -9,6 +9,7 @@ import (
 
 const (
 	defaultBeruEgressDiffPath = "/api/v1/egress/diff"
+	defaultEgressExchange     = "egress-events"
 	defaultReconnectMin       = time.Second
 	defaultReconnectMax       = 30 * time.Second
 )
@@ -20,6 +21,7 @@ type Config struct {
 	CandidateURL      string
 	BeruHTTPURL       string
 	BeruEgressDiffPath string
+	EgressExchange    string
 	ReconnectMin      time.Duration
 	ReconnectMax      time.Duration
 }
@@ -32,8 +34,12 @@ func Load() (Config, error) {
 		CandidateURL:       strings.TrimSpace(os.Getenv("CANDIDATE_AMQP_URL")),
 		BeruHTTPURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("BERU_HTTP_URL")), "/"),
 		BeruEgressDiffPath: defaultBeruEgressDiffPath,
+		EgressExchange:     defaultEgressExchange,
 		ReconnectMin:       defaultReconnectMin,
 		ReconnectMax:       defaultReconnectMax,
+	}
+	if v := strings.TrimSpace(os.Getenv("EGRESS_EXCHANGE")); v != "" {
+		cfg.EgressExchange = v
 	}
 	if v := strings.TrimSpace(os.Getenv("BERU_EGRESS_DIFF_PATH")); v != "" {
 		cfg.BeruEgressDiffPath = v
