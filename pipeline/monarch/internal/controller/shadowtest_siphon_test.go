@@ -57,6 +57,7 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	st.Name = "my-st"
 	st.Spec.TargetNamespace = "prod"
 	st.Spec.ServicePort = 8080
+	st.Spec.Inputs = []enginev1alpha1.InputSpec{{Port: 80, Driver: "http_request"}}
 	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{
 		MaxPayloadSize: 4096,
 		ExcludePaths:   []string{`^/healthz$`},
@@ -66,6 +67,11 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 		Spec: appsv1.DeploymentSpec{
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api", "tier": "web"}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Ports: []corev1.ContainerPort{{ContainerPort: 80}},
+					}},
+				},
 			},
 		},
 	}
@@ -86,6 +92,9 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	if spec.OTelEndpoint != shadowSiphonOTelEndpoint("shadow-default-my-st") {
 		t.Fatalf("endpoint %q", spec.OTelEndpoint)
 	}
+	if spec.RecorderOTelEndpoint != "" {
+		t.Fatalf("recorder endpoint %q", spec.RecorderOTelEndpoint)
+	}
 	if spec.MaxPayloadSize != 4096 {
 		t.Fatalf("max payload %d", spec.MaxPayloadSize)
 	}
@@ -94,6 +103,36 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	}
 	if len(spec.TargetPorts) == 0 {
 		t.Fatal("expected default ingress port")
+	}
+}
+
+func TestBuildPixieStreamRuleSpecEgressOnly(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "egress-st"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			TargetNamespace: "prod",
+			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{
+				{Host: "egress-httpbin.default.svc.cluster.local"},
+			},
+		},
+	}
+	dep := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}},
+			},
+		},
+	}
+	spec := buildPixieStreamRuleSpec(st, "shadow-default-egress-st", dep)
+	if spec.OTelEndpoint != "" {
+		t.Fatalf("ingress endpoint %q", spec.OTelEndpoint)
+	}
+	want := shadowRecorderOTelEndpoint(st, "shadow-default-egress-st")
+	if spec.RecorderOTelEndpoint != want {
+		t.Fatalf("recorder endpoint %q want %q", spec.RecorderOTelEndpoint, want)
+	}
+	if len(spec.RecordAndReplayHosts) != 1 || spec.RecordAndReplayHosts[0] != "egress-httpbin.default.svc.cluster.local" {
+		t.Fatalf("recordAndReplayHosts %v", spec.RecordAndReplayHosts)
 	}
 }
 

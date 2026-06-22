@@ -125,6 +125,7 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
   echo "Run RabbitMQ E2E:  ./testing/scripts/e2e-rabbitmq-test.sh"
   echo "Run OTel RabbitMQ E2E: ./testing/scripts/e2e-otel-rabbitmq-test.sh"
   echo "Run OTLP ingress E2E: ./testing/scripts/e2e-siphon-otlp-ingress-test.sh"
+  echo "Run Pixie egress record E2E: ./testing/scripts/e2e-pixie-egress-record-test.sh"
   echo "Run k6 stress:     testing/example-apps/k6/run-stress-test.sh  (or see testing/example-apps/k6/README.md)"
 
   if [[ "${RUN_TEST:-0}" -eq 1 ]]; then

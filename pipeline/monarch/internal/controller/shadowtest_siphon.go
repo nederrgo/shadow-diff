@@ -25,6 +25,10 @@ const (
 	shadowSiphonOTLPPort        = 4317
 )
 
+func pixieCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) bool {
+	return siphonEnabled(st, target) || egressRecordingEnabled(st)
+}
+
 func targetPrimaryContainerPorts(target *appsv1.Deployment) map[int32]bool {
 	ports := map[int32]bool{}
 	if target == nil || len(target.Spec.Template.Spec.Containers) == 0 {
@@ -105,6 +109,10 @@ func shadowSiphonOTelEndpoint(shadowNS string) string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local:%d", shadowSiphonServiceName, shadowNS, shadowSiphonOTLPPort)
 }
 
+func shadowRecorderOTelEndpoint(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+	return fmt.Sprintf("%s.%s.svc.cluster.local:%d", recorderServiceName(st), shadowNS, recorderOTLPPort)
+}
+
 func pixieStreamRuleName(st *enginev1alpha1.ShadowTest) string {
 	return "pixie-" + st.Name
 }
@@ -145,16 +153,31 @@ func buildPixieStreamRuleSpec(
 	shadowNS string,
 	target *appsv1.Deployment,
 ) enginev1alpha1.PixieStreamRuleSpec {
-	return enginev1alpha1.PixieStreamRuleSpec{
+	ingress := siphonEnabled(st, target)
+	egress := egressRecordingEnabled(st)
+
+	spec := enginev1alpha1.PixieStreamRuleSpec{
 		ShadowTestRef:   st.Namespace + "/" + st.Name,
 		Active:          true,
 		TargetNamespace: st.Spec.TargetNamespace,
 		TargetLabels:    copyStringMap(target.Spec.Template.Labels),
-		TargetPorts:     siphonIngressPorts(st),
-		OTelEndpoint:    shadowSiphonOTelEndpoint(shadowNS),
 		MaxPayloadSize:  siphonMaxPayloadSize(st),
 		ExcludePaths:    siphonExcludePaths(st),
 	}
+	if ingress {
+		spec.OTelEndpoint = shadowSiphonOTelEndpoint(shadowNS)
+		spec.TargetPorts = siphonIngressPorts(st)
+	}
+	if egress {
+		spec.RecorderOTelEndpoint = shadowRecorderOTelEndpoint(st, shadowNS)
+		for _, h := range st.Spec.RecordAndReplay {
+			host := strings.TrimSpace(h.Host)
+			if host != "" {
+				spec.RecordAndReplayHosts = append(spec.RecordAndReplayHosts, host)
+			}
+		}
+	}
+	return spec
 }
 
 func (r *ShadowTestReconciler) ensureShadowSiphonService(ctx context.Context, shadowNS string) error {
@@ -263,16 +286,20 @@ func (r *ShadowTestReconciler) reconcileSiphonCapture(
 	shadowNS string,
 	target *appsv1.Deployment,
 ) (captureTargets []string, siphonPhase string, err error) {
-	if !siphonEnabled(st, target) {
+	labels := copyStringMap(target.Spec.Template.Labels)
+	ingress := siphonEnabled(st, target)
+
+	if !pixieCaptureEnabled(st, target) {
 		if err := r.deletePixieStreamRule(ctx, st); err != nil {
-			return nil, "Degraded", err
+			return formatCaptureTargets(labels), "Degraded", err
 		}
 		return nil, "Disabled", nil
 	}
 
-	labels := copyStringMap(target.Spec.Template.Labels)
-	if err := r.ensureShadowSiphonService(ctx, shadowNS); err != nil {
-		return formatCaptureTargets(labels), "Degraded", err
+	if ingress {
+		if err := r.ensureShadowSiphonService(ctx, shadowNS); err != nil {
+			return formatCaptureTargets(labels), "Degraded", err
+		}
 	}
 	if err := r.reconcilePixieStreamRule(ctx, st, shadowNS, target); err != nil {
 		return formatCaptureTargets(labels), "Degraded", err

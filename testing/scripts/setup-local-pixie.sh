@@ -116,13 +116,10 @@ if [[ "$FOREGROUND_BRIDGE" -eq 1 ]]; then
 fi
 
 bridge_pid_file="${PIXIE_BRIDGE_STATE_DIR}/bridge.pid"
-mkdir -p "$PIXIE_BRIDGE_STATE_DIR"
 if [[ -f "$bridge_pid_file" ]] && kill -0 "$(cat "$bridge_pid_file")" 2>/dev/null; then
   echo "    bridge already running pid=$(cat "$bridge_pid_file")"
 else
-  nohup "$REPO/testing/scripts/pixie-stream-bridge.sh" >"${PIXIE_BRIDGE_STATE_DIR}/bridge.log" 2>&1 &
-  echo $! >"$bridge_pid_file"
-  echo "==> pixie-stream-bridge started pid=$(cat "$bridge_pid_file") log=${PIXIE_BRIDGE_STATE_DIR}/bridge.log"
+  start_pixie_stream_bridge_background
 fi
 
 echo ""

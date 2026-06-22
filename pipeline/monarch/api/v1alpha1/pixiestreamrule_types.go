@@ -39,8 +39,17 @@ type PixieStreamRuleSpec struct {
 	// +optional
 	TargetPorts []int32 `json:"targetPorts,omitempty"`
 
-	// OTelEndpoint is the gRPC OTLP export destination.
-	OTelEndpoint string `json:"otelEndpoint"`
+	// OTelEndpoint is the gRPC OTLP export destination for ingress (server-side) spans.
+	// +optional
+	OTelEndpoint string `json:"otelEndpoint,omitempty"`
+
+	// RecorderOTelEndpoint is gRPC OTLP export for egress spans (client or in-cluster server-side).
+	// +optional
+	RecorderOTelEndpoint string `json:"recorderOtelEndpoint,omitempty"`
+
+	// RecordAndReplayHosts are downstream hostnames for egress PxL Host-header filtering.
+	// +optional
+	RecordAndReplayHosts []string `json:"recordAndReplayHosts,omitempty"`
 
 	// MaxPayloadSize is the max bytes to parse per HTTP/2 frame.
 	// +optional

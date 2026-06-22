@@ -121,14 +121,22 @@ func (r *ShadowTestReconciler) reconcileRecorderDeployment(
 			Name:            containerRecorder,
 			Image:           recorderImageFor(st),
 			ImagePullPolicy: corev1.PullIfNotPresent,
-			Ports: []corev1.ContainerPort{{
-				Name:          "http",
-				ContainerPort: recorderServicePort,
-				Protocol:      corev1.ProtocolTCP,
-			}},
+			Ports: []corev1.ContainerPort{
+				{
+					Name:          "http",
+					ContainerPort: recorderServicePort,
+					Protocol:      corev1.ProtocolTCP,
+				},
+				{
+					Name:          "otlp-grpc",
+					ContainerPort: recorderOTLPPort,
+					Protocol:      corev1.ProtocolTCP,
+				},
+			},
 			Env: []corev1.EnvVar{
 				{Name: envBeruHTTPURL, Value: defaultBeruHTTPURL},
 				{Name: envRecorderListenAddr, Value: ":8080"},
+				{Name: envRecorderOTLPGRPCAddr, Value: ":4317"},
 				{Name: envRecorderRecordAndReplayFile, Value: defaultRecorderRecordAndReplayPath},
 			},
 			VolumeMounts: []corev1.VolumeMount{{
@@ -181,12 +189,20 @@ func (r *ShadowTestReconciler) reconcileRecorderService(
 	_, err := ctrl.CreateOrPatch(ctx, r.Client, svc, func() error {
 		svc.Labels = labels
 		svc.Spec.Selector = labels
-		svc.Spec.Ports = []corev1.ServicePort{{
-			Name:       "http",
-			Port:       recorderServicePort,
-			TargetPort: intstr.FromInt32(recorderServicePort),
-			Protocol:   corev1.ProtocolTCP,
-		}}
+		svc.Spec.Ports = []corev1.ServicePort{
+			{
+				Name:       "http",
+				Port:       recorderServicePort,
+				TargetPort: intstr.FromInt32(recorderServicePort),
+				Protocol:   corev1.ProtocolTCP,
+			},
+			{
+				Name:       "otlp-grpc",
+				Port:       recorderOTLPPort,
+				TargetPort: intstr.FromInt32(recorderOTLPPort),
+				Protocol:   corev1.ProtocolTCP,
+			},
+		}
 		return nil
 	})
 	return err

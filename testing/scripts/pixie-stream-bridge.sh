@@ -36,7 +36,8 @@ mkdir -p "$PIXIE_BRIDGE_STATE_DIR"
 echo "==> PixieStreamRule bridge (export interval=${PIXIE_EXPORT_INTERVAL_SEC}s, state=${PIXIE_BRIDGE_STATE_DIR})"
 
 reconcile_rules() {
-  local rules_json rule_count i name ns active out rule_json
+  local rules_json rule_count i name ns active rule_json
+  local otel_ep recorder_ep ingress_pxl egress_pxl ok failed
   rules_json=$(kubectl get pixiestreamrules -A -o json 2>/dev/null || echo '{"items":[]}')
   rule_count=$(echo "$rules_json" | jq -r '.items | length' 2>/dev/null || echo 0)
   rule_count=${rule_count//[^0-9]/}
@@ -47,16 +48,42 @@ reconcile_rules() {
     active=$(echo "$rule_json" | jq -r '.spec.active // false')
     name=$(echo "$rule_json" | jq -r '.metadata.name')
     ns=$(echo "$rule_json" | jq -r '.metadata.namespace')
-    out="${PIXIE_BRIDGE_STATE_DIR}/${ns}-${name}.pxl"
+    otel_ep=$(echo "$rule_json" | jq -r '.spec.otelEndpoint // ""')
+    recorder_ep=$(echo "$rule_json" | jq -r '.spec.recorderOtelEndpoint // ""')
+    ingress_pxl="${PIXIE_BRIDGE_STATE_DIR}/${ns}-${name}-ingress.pxl"
+    egress_pxl="${PIXIE_BRIDGE_STATE_DIR}/${ns}-${name}-egress.pxl"
     if [[ "$active" == "true" ]]; then
-      render_pixie_export_pxl "$rule_json" "$out"
-      if run_pixie_export_once "$out"; then
-        patch_pixie_stream_rule_status "$ns" "$name" "Active" "px.export ok"
+      ok=0
+      failed=""
+      if [[ -n "$otel_ep" ]]; then
+        render_pixie_ingress_pxl "$rule_json" "$ingress_pxl"
+        if run_pixie_export_once "$ingress_pxl"; then
+          ok=1
+        else
+          failed="ingress"
+        fi
       else
-        patch_pixie_stream_rule_status "$ns" "$name" "Error" "px.export failed"
+        rm -f "$ingress_pxl"
+      fi
+      if [[ -n "$recorder_ep" ]]; then
+        render_pixie_egress_pxl "$rule_json" "$egress_pxl"
+        if run_pixie_export_once "$egress_pxl"; then
+          ok=1
+        else
+          failed="${failed:+$failed+}egress"
+        fi
+      else
+        rm -f "$egress_pxl"
+      fi
+      if [[ -z "$otel_ep" && -z "$recorder_ep" ]]; then
+        patch_pixie_stream_rule_status "$ns" "$name" "Inactive" "no export endpoints"
+      elif [[ -n "$failed" ]]; then
+        patch_pixie_stream_rule_status "$ns" "$name" "Error" "px.export failed ($failed)"
+      else
+        patch_pixie_stream_rule_status "$ns" "$name" "Active" "px.export ok"
       fi
     else
-      rm -f "$out"
+      rm -f "${PIXIE_BRIDGE_STATE_DIR}/${ns}-${name}"*.pxl
       patch_pixie_stream_rule_status "$ns" "$name" "Inactive" "spec.active=false"
     fi
     i=$((i + 1))

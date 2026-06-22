@@ -13,12 +13,13 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 ```
 Prod app outbound HTTP
     │
-    ▼
-Siphon (BPF/TCP reassembly on prod node)
-    │  length-prefixed frames: R = request, S = response
+    ├── (legacy) Siphon TCP relay :8080 — length-prefixed R/S frames
+    │
+    └── Pixie eBPF egress (trace_role=1) → OTLP gRPC :4317 (gzip)
+    │
     ▼
 Recorder (shadow namespace)
-    │  pair streams → parse HTTP → filter by downstream host
+    │  parse HTTP / OTLP span attrs → filter by downstream host (Host header)
     ▼
 Beru  POST /v1/record_egress
     │  in-memory mock store (keyed by request hash)
@@ -29,8 +30,8 @@ Shadow app egress (HTTP_PROXY → Envoy :15001)
 
 | Stage | Component | What happens |
 | ----- | --------- | ------------ |
-| **Capture** | **Siphon** | Mirrors prod egress TCP bytes; relays framed `R`/`S` chunks to `recorder_host` |
-| **Parse + store** | **Recorder** | Reassembles request/response pairs, parses HTTP, posts matching transactions to Beru |
+| **Capture** | **Siphon** (legacy) or **Pixie** | TCP relay to `:8080`, or OTLP traces to `:4317` with `http.host` from request `Host` header |
+| **Parse + store** | **Recorder** | Reassembles pairs (TCP) or maps OTLP span attrs → `RecordPayload`; posts to Beru |
 | **Replay** | **Envoy egress sidecar** | Shadow outbound HTTP is hashed and looked up in Beru's mock store |
 
 **Ingress diff** (Igris → three shadows → Beru) and **AMQP egress diff** (egress-relay-rabbitmq) do not involve Recorder. Recorder only supports **HTTP egress recording** from prod.
@@ -95,6 +96,7 @@ recorder/
     parse/                HTTP request/response parser, host filter
     beru/                 POST /v1/record_egress client
     config/               env + recordAndReplay.json loader
+    receiver/             OTLP gRPC trace ingest (Pixie egress export)
 ```
 
 ---
@@ -125,6 +127,7 @@ make docker-build RECORDER_IMG=recorder:dev
 | -------- | -------- | ------- | ----------- |
 | `BERU_HTTP_URL` | Yes | — | Beru HTTP base URL (e.g. `http://beru.beru-system.svc.cluster.local:8080`) |
 | `RECORDER_LISTEN_ADDR` | No | `:8080` | TCP address for Siphon egress relay connections |
+| `RECORDER_OTLP_GRPC_ADDR` | No | `:4317` | gRPC OTLP trace receiver (Pixie egress `px.export`) |
 | `RECORDER_RECORD_AND_REPLAY_FILE` | No | `/etc/recorder/recordAndReplay.json` | JSON allowlist of record-and-replay hosts |
 | `RECORDER_PAIR_TIMEOUT` | No | `30s` | Drop incomplete request/response pairs after this duration |
 | `RECORDER_MAX_FRAME_BYTES` | No | `5242880` (5 MiB) | Max single frame payload from Siphon |
@@ -140,7 +143,7 @@ Recorder is deployed into the **shadow namespace** when a ShadowTest defines **`
 | Resource | Name pattern | Purpose |
 | -------- | ------------ | ------- |
 | Deployment | `<shadowtest-name>-recorder` | Recorder pod |
-| Service | `<shadowtest-name>-recorder` | Siphon dials this on port 8080 |
+| Service | `<shadowtest-name>-recorder` | Siphon TCP on `:8080`; Pixie OTLP on `:4317` |
 | ConfigMap | `<shadowtest-name>-recorder-config` | `recordAndReplay.json` from `spec.recordAndReplay` |
 
 ShadowTest fields:
@@ -165,6 +168,12 @@ End-to-end prod record → shadow replay (no manual `seed_mock`):
 ```sh
 ./testing/scripts/e2e-reset-kind.sh
 ./testing/scripts/e2e-record-replay.sh
+```
+
+Pixie egress → Recorder OTLP → Beru (prod outbound must use Service DNS so `Host` matches `recordAndReplay`):
+
+```sh
+./testing/scripts/e2e-pixie-egress-record-test.sh
 ```
 
 See [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) (Phase 4a.2 — prod egress auto-record).

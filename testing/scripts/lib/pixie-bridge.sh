@@ -222,6 +222,54 @@ wait_pixie_vizier_ready() {
   return 1
 }
 
+wait_pixie_vizier_healthy() {
+  local max_wait="${1:-120}" i=0
+  echo "==> Wait for Pixie Vizier CS_HEALTHY (px can run queries)"
+  while [[ "$i" -lt "$max_wait" ]]; do
+    if px get viziers 2>/dev/null | grep -qE '[[:space:]]CS_HEALTHY([[:space:]]|$)'; then
+      echo "    Vizier CS_HEALTHY"
+      return 0
+    fi
+    echo "    waiting for CS_HEALTHY (${i}s/${max_wait}s)"
+    sleep 5
+    i=$((i + 5))
+  done
+  echo "ERROR: Pixie Vizier not CS_HEALTHY" >&2
+  px get viziers 2>&1 | sed 's/^/       /' >&2 || true
+  echo "       Recovery: kubectl delete pod -n pl vizier-metadata-0; kubectl delete pod -n pl -l name=vizier-pem" >&2
+  return 1
+}
+
+pixie_vizier_healthy() {
+  px get viziers 2>/dev/null | grep -qE '[[:space:]]CS_HEALTHY([[:space:]]|$)'
+}
+
+wait_pixie_http_events_ready() {
+  local max_wait="${1:-180}" i=0 probe
+  probe=$(mktemp)
+  cat >"$probe" <<'EOF'
+import px
+df = px.DataFrame(table='http_events', start_time='-5s')
+px.display(df.head(1))
+EOF
+  echo "==> Wait for Pixie http_events schema (post-PEM restart warm-up)"
+  while [[ "$i" -lt "$max_wait" ]]; do
+    if timeout 25 px run -f "$probe" >/dev/null 2>&1; then
+      rm -f "$probe"
+      echo "    http_events table ready"
+      return 0
+    fi
+    echo "    waiting for http_events (${i}s/${max_wait}s)"
+    sleep 5
+    i=$((i + 5))
+  done
+  rm -f "$probe"
+  echo "ERROR: Pixie http_events not ready — PEM may still be registering" >&2
+  px get viziers 2>&1 | sed 's/^/       /' >&2 || true
+  echo "       Recovery: kubectl delete pod -n pl vizier-metadata-0; kubectl delete pod -n pl -l name=vizier-pem" >&2
+  return 1
+}
+
 pixie_bridge_repo() {
   if [[ -n "${REPO:-}" ]]; then
     echo "$REPO"
@@ -231,16 +279,75 @@ pixie_bridge_repo() {
 }
 
 pixie_pxl_template() {
-  local repo tpl
+  local kind="${1:-ingress}" repo tpl marker
   repo=$(pixie_bridge_repo)
   tpl="${repo}/testing/scripts/manifests/pixie-bridge/configmap.yaml"
-  if [[ -f "${PIXIE_PXL_TEMPLATE:-}" ]]; then
-    tpl="$PIXIE_PXL_TEMPLATE"
-    cat "$tpl"
+  case "$kind" in
+    ingress) marker='http-ingress-export.pxl.tmpl' ;;
+    egress) marker='http-egress-export.pxl.tmpl' ;;
+    *) echo "ERROR: unknown PxL template kind: $kind" >&2; return 1 ;;
+  esac
+  if [[ -n "${PIXIE_PXL_TEMPLATE:-}" ]]; then
+    cat "$PIXIE_PXL_TEMPLATE"
     return 0
   fi
-  # Extract embedded template from ConfigMap manifest.
-  awk '/http-export.pxl.tmpl: \|/{found=1;next} found{print}' "$tpl" | sed 's/^    //'
+  awk -v m="$marker" '$0 ~ m": \\|"{found=1;next} found && /^  [a-z]/ {exit} found{print}' "$tpl" | sed 's/^    //'
+}
+
+_render_pixie_pxl() {
+  local rule_json="$1" out="$2" kind="$3"
+  local labels excludes ports hosts label_lines exclude_lines port_lines host_lines tpl tmp_rule
+  labels=$(echo "$rule_json" | jq -c '.spec.targetLabels // {}')
+  excludes=$(echo "$rule_json" | jq -c '.spec.excludePaths // []')
+  ports=$(echo "$rule_json" | jq -c '.spec.targetPorts // []')
+  hosts=$(echo "$rule_json" | jq -c '.spec.recordAndReplayHosts // []')
+  exclude_lines=$(pixie_exclude_path_lines "$excludes")
+  if [[ "$kind" == "ingress" ]]; then
+    label_lines=$(pixie_label_filter_lines "$labels")
+    port_lines=$(pixie_port_filter_lines "$ports")
+    host_lines="# ingress: prod pod label filters"
+  else
+    label_lines="# egress: Host allowlist (not prod pod labels)"
+    port_lines="# egress: no local_port filter"
+    host_lines=$(pixie_egress_host_filter_lines "$hosts")
+  fi
+  tpl=$(pixie_pxl_template "$kind")
+  mkdir -p "$(dirname "$out")"
+  tmp_rule=$(mktemp)
+  printf '%s' "$rule_json" >"$tmp_rule"
+  PIXL_TPL="$tpl" PIXL_KIND="$kind" PIXL_LABELS="$label_lines" PIXL_EXCLUDES="$exclude_lines" PIXL_PORTS="$port_lines" PIXL_EGRESS_HOSTS="$host_lines" \
+    python3 - "$tmp_rule" "$out" <<'PY'
+import json, sys, os
+
+rule_path, out = sys.argv[1], sys.argv[2]
+with open(rule_path) as f:
+    rule = json.load(f)
+spec = rule.get('spec', {})
+tpl = os.environ['PIXL_TPL']
+text = tpl.replace('__TARGET_NAMESPACE__', spec.get('targetNamespace', 'default'))
+text = text.replace('__OTEL_ENDPOINT__', spec.get('otelEndpoint', ''))
+text = text.replace('__RECORDER_OTEL_ENDPOINT__', spec.get('recorderOtelEndpoint', ''))
+text = text.replace('__LABEL_FILTERS__', os.environ.get('PIXL_LABELS', '').strip())
+text = text.replace('__EXCLUDE_PATH_FILTERS__', os.environ.get('PIXL_EXCLUDES', '').strip())
+text = text.replace('__PORT_FILTERS__', os.environ.get('PIXL_PORTS', '').strip())
+text = text.replace('__EGRESS_HOST_FILTERS__', os.environ.get('PIXL_EGRESS_HOSTS', '').strip())
+with open(out, 'w') as f:
+    f.write(text)
+PY
+  rm -f "$tmp_rule"
+}
+
+render_pixie_ingress_pxl() {
+  _render_pixie_pxl "$1" "$2" ingress
+}
+
+render_pixie_egress_pxl() {
+  _render_pixie_pxl "$1" "$2" egress
+}
+
+# ponytail: legacy name — ingress export only
+render_pixie_export_pxl() {
+  render_pixie_ingress_pxl "$1" "$2"
 }
 
 pixie_label_filter_lines() {
@@ -291,37 +398,27 @@ pixie_port_filter_lines() {
   echo "df = df[df.local_port == ${p}]"
 }
 
-render_pixie_export_pxl() {
-  local rule_json="$1" out="$2"
-  local labels excludes ports label_lines exclude_lines port_lines tpl tmp_rule
-  labels=$(echo "$rule_json" | jq -c '.spec.targetLabels // {}')
-  excludes=$(echo "$rule_json" | jq -c '.spec.excludePaths // []')
-  ports=$(echo "$rule_json" | jq -c '.spec.targetPorts // []')
-  label_lines=$(pixie_label_filter_lines "$labels")
-  exclude_lines=$(pixie_exclude_path_lines "$excludes")
-  port_lines=$(pixie_port_filter_lines "$ports")
-  tpl=$(pixie_pxl_template)
-  mkdir -p "$(dirname "$out")"
-  tmp_rule=$(mktemp)
-  printf '%s' "$rule_json" >"$tmp_rule"
-  PIXL_TPL="$tpl" PIXL_LABELS="$label_lines" PIXL_EXCLUDES="$exclude_lines" PIXL_PORTS="$port_lines" \
-    python3 - "$tmp_rule" "$out" <<'PY'
-import json, sys, os
-
-rule_path, out = sys.argv[1], sys.argv[2]
-with open(rule_path) as f:
-    rule = json.load(f)
-spec = rule.get('spec', {})
-tpl = os.environ['PIXL_TPL']
-text = tpl.replace('__TARGET_NAMESPACE__', spec.get('targetNamespace', 'default'))
-text = text.replace('__OTEL_ENDPOINT__', spec.get('otelEndpoint', 'siphon:4317'))
-text = text.replace('__LABEL_FILTERS__', os.environ.get('PIXL_LABELS', '').strip())
-text = text.replace('__EXCLUDE_PATH_FILTERS__', os.environ.get('PIXL_EXCLUDES', '').strip())
-text = text.replace('__PORT_FILTERS__', os.environ.get('PIXL_PORTS', '').strip())
-with open(out, 'w') as f:
-    f.write(text)
-PY
-  rm -f "$tmp_rule"
+pixie_egress_host_filter_lines() {
+  local hosts_json="$1" n i host re
+  if [[ -z "$hosts_json" || "$hosts_json" == "null" || "$hosts_json" == "[]" ]]; then
+    echo "# no egress host filters"
+    return 0
+  fi
+  n=$(echo "$hosts_json" | jq 'length')
+  if [[ "$n" -eq 1 ]]; then
+    host=$(echo "$hosts_json" | jq -r '.[0]')
+    echo "df = df[df.req_host == '${host}']"
+    return 0
+  fi
+  # ponytail: PxL has no vectorized OR; regex union for multiple allowlist hosts
+  re=""
+  i=0
+  while [[ "$i" -lt "$n" ]]; do
+    host=$(echo "$hosts_json" | jq -r ".[$i]" | sed 's/[.]/\\./g')
+    re="${re}${re:+|}${host}"
+    i=$((i + 1))
+  done
+  echo "df = df[px.regex_match('^(${re})\$', df.req_host)]"
 }
 
 patch_pixie_stream_rule_status() {
@@ -345,4 +442,27 @@ run_pixie_export_once() {
     echo "WARN: px run export failed for ${pxl_file}: $(echo "$err" | tail -1)" >&2
     return 1
   fi
+}
+
+pixie_bridge_start_hint() {
+  local repo
+  repo=$(pixie_bridge_repo)
+  echo "${repo}/testing/scripts/start-pixie-stream-bridge.sh"
+}
+
+# mkdir before nohup redirect — shell opens bridge.log before pixie-stream-bridge.sh runs.
+start_pixie_stream_bridge_background() {
+  local repo pid_file
+  repo=$(pixie_bridge_repo)
+  export REPO="$repo"
+  PIXIE_BRIDGE_STATE_DIR="${PIXIE_BRIDGE_STATE_DIR:-${repo}/.cache/pixie-bridge}"
+  mkdir -p "$PIXIE_BRIDGE_STATE_DIR"
+  pid_file="${PIXIE_BRIDGE_STATE_DIR}/bridge.pid"
+  if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+    echo "pixie-stream-bridge already running pid=$(cat "$pid_file")"
+    return 0
+  fi
+  nohup "${repo}/testing/scripts/pixie-stream-bridge.sh" >"${PIXIE_BRIDGE_STATE_DIR}/bridge.log" 2>&1 &
+  echo $! >"$pid_file"
+  echo "pixie-stream-bridge started pid=$(cat "$pid_file") log=${PIXIE_BRIDGE_STATE_DIR}/bridge.log"
 }

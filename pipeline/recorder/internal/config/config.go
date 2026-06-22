@@ -12,6 +12,7 @@ import (
 const (
 	defaultRecordAndReplayFile = "/etc/recorder/recordAndReplay.json"
 	defaultListenAddr          = ":8080"
+	defaultOTLPGRPCAddr        = ":4317"
 	defaultPairTimeout         = 30 * time.Second
 	defaultMaxFrameBytes       = 5 << 20 // 5MB
 )
@@ -24,18 +25,20 @@ type RecordAndReplayHost struct {
 
 // Config holds Recorder process configuration.
 type Config struct {
-	ListenAddr         string
-	BeruHTTPURL        string
-	RecordAndReplay    []RecordAndReplayHost
+	ListenAddr          string
+	OTLPGRPCAddr        string
+	BeruHTTPURL         string
+	RecordAndReplay     []RecordAndReplayHost
 	RecordAndReplayFile string
-	PairTimeout        time.Duration
-	MaxFrameBytes      int
+	PairTimeout         time.Duration
+	MaxFrameBytes       int
 }
 
 // Load reads configuration from the environment and recordAndReplay file.
 func Load() Config {
 	cfg := Config{
 		ListenAddr:          envOr("RECORDER_LISTEN_ADDR", defaultListenAddr),
+		OTLPGRPCAddr:        envOr("RECORDER_OTLP_GRPC_ADDR", defaultOTLPGRPCAddr),
 		BeruHTTPURL:         strings.TrimSpace(os.Getenv("BERU_HTTP_URL")),
 		RecordAndReplayFile: envOr("RECORDER_RECORD_AND_REPLAY_FILE", defaultRecordAndReplayFile),
 		PairTimeout:         defaultPairTimeout,

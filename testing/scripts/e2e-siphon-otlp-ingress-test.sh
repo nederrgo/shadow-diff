@@ -32,7 +32,7 @@ PROD_LABEL="${PROD_LABEL:-app=my-prod-app}"
 TRACE_ID="${TRACE_ID:-otlp-ingress-$(date +%s)}"
 IGRIS_PORT="${IGRIS_PORT:-80}"
 REQUEST_PATH="/?otlp_probe=${TRACE_ID}"
-PIXIE_WAIT_SEC="${PIXIE_WAIT_SEC:-90}"
+PIXIE_WAIT_SEC="${PIXIE_WAIT_SEC:-}"
 
 require_kubectl_cluster
 
@@ -51,6 +51,8 @@ fi
 
 echo "==> Pixie Vizier (pl namespace)"
 wait_pixie_vizier_pem 120
+wait_pixie_vizier_healthy 120
+wait_pixie_http_events_ready 180
 
 echo "==> Production tap target (my-prod-app Service — not Siphon)"
 PROD_HOST=$(wait_prod_echo_ready "$PROD_NS" "$PROD_LABEL")
@@ -67,10 +69,25 @@ if [[ "$siphon_phase" == "Ready" ]]; then
   wait_pixie_stream_rule "$SHADOWTEST" "$SHADOWTEST_NS" 120
   otel_ep=$(kubectl get pixiestreamrule "pixie-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
     -o jsonpath='{.spec.otelEndpoint}' 2>/dev/null || true)
+  recorder_ep=$(kubectl get pixiestreamrule "pixie-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
+    -o jsonpath='{.spec.recorderOtelEndpoint}' 2>/dev/null || true)
   echo "    otelEndpoint=${otel_ep} (Pixie sends here — separate from prod ${PROD_HOST})"
+  if [[ -n "$recorder_ep" ]]; then
+    echo "    recorderOtelEndpoint=${recorder_ep}"
+  fi
   if [[ "$otel_ep" != *"siphon.${SHADOW_NS}.svc.cluster.local:4317"* ]]; then
     log_fail "PixieStreamRule must export to shadow Siphon Service, not prod"
     exit 1
+  fi
+fi
+
+if [[ -z "$PIXIE_WAIT_SEC" ]]; then
+  recorder_ep=$(kubectl get pixiestreamrule "pixie-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
+    -o jsonpath='{.spec.recorderOtelEndpoint}' 2>/dev/null || true)
+  if [[ -n "${recorder_ep:-}" ]]; then
+    PIXIE_WAIT_SEC=120
+  else
+    PIXIE_WAIT_SEC=90
   fi
 fi
 
@@ -78,7 +95,7 @@ echo "==> Shadow Siphon OTLP receiver (forwards to igris-http only)"
 ensure_shadow_siphon_deployment "$SHADOW_NS" "$SHADOWTEST" "$IGRIS_PORT"
 
 if ! pgrep -f pixie-stream-bridge.sh >/dev/null 2>&1; then
-  log_fail "pixie-stream-bridge not running — start: nohup ./testing/scripts/pixie-stream-bridge.sh > .cache/pixie-bridge/bridge.log 2>&1 &"
+  log_fail "pixie-stream-bridge not running — start: $(pixie_bridge_start_hint)"
   exit 1
 fi
 
@@ -86,12 +103,14 @@ echo "==> Step 1: curl production Service (${PROD_HOST}:80)"
 curl_prod_service "$PROD_NS" "$TRACE_ID" "$REQUEST_PATH"
 log_success "prod echo received request trace=${TRACE_ID}"
 
-pxl="${PIXIE_BRIDGE_STATE_DIR}/${SHADOWTEST_NS}-pixie-${SHADOWTEST}.pxl"
+ingress_pxl="${PIXIE_BRIDGE_STATE_DIR}/${SHADOWTEST_NS}-pixie-${SHADOWTEST}-ingress.pxl"
+egress_pxl="${PIXIE_BRIDGE_STATE_DIR}/${SHADOWTEST_NS}-pixie-${SHADOWTEST}-egress.pxl"
 echo "==> Step 2-3: Pixie px.export -> Siphon -> Igris (up to ${PIXIE_WAIT_SEC}s)"
 deadline=$((SECONDS + PIXIE_WAIT_SEC))
 multicast_ok=0
 while [[ "$SECONDS" -lt "$deadline" ]]; do
-  [[ -f "$pxl" ]] && run_pixie_export_once "$pxl" || true
+  [[ -f "$ingress_pxl" ]] && run_pixie_export_once "$ingress_pxl" || true
+  [[ -f "$egress_pxl" ]] && run_pixie_export_once "$egress_pxl" || true
   if wait_igris_multicast_trace "$SHADOW_NS" "$SHADOWTEST" "$TRACE_ID" 2; then
     multicast_ok=1
     break

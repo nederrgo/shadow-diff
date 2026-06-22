@@ -57,7 +57,18 @@ spec:
                 format: int64
                 type: integer
               otelEndpoint:
-                description: OTelEndpoint is the gRPC OTLP export destination.
+                description: OTelEndpoint is the gRPC OTLP export destination for
+                  ingress (server-side) spans.
+                type: string
+              recordAndReplayHosts:
+                description: RecordAndReplayHosts are downstream hostnames for egress
+                  PxL Host-header filtering.
+                items:
+                  type: string
+                type: array
+              recorderOtelEndpoint:
+                description: RecorderOTelEndpoint is gRPC OTLP export for egress spans
+                  (client or in-cluster server-side).
                 type: string
               shadowTestRef:
                 description: ShadowTestRef is the owning ShadowTest as "<namespace>/<name>".
@@ -81,7 +92,6 @@ spec:
                 type: array
             required:
             - active
-            - otelEndpoint
             - shadowTestRef
             - targetNamespace
             type: object

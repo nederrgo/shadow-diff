@@ -63,11 +63,13 @@ const (
 	configMapKeyRecordAndReplayJSON    = "recordAndReplay.json"
 	volumeNameRecorderConfig           = "recorder-config"
 	envRecorderListenAddr              = "RECORDER_LISTEN_ADDR"
+	envRecorderOTLPGRPCAddr            = "RECORDER_OTLP_GRPC_ADDR"
 	envRecorderRecordAndReplayFile     = "RECORDER_RECORD_AND_REPLAY_FILE"
 	envBeruHTTPURL                     = "BERU_HTTP_URL"
 	defaultRecorderRecordAndReplayPath = "/etc/recorder/recordAndReplay.json"
 	defaultBeruHTTPURL                 = "http://beru.beru-system.svc.cluster.local:8080"
 	recorderServicePort                = int32(8080)
+	recorderOTLPPort                   = int32(4317)
 )
 
 var envoyImagePullPolicy = corev1.PullIfNotPresent
