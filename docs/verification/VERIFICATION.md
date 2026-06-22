@@ -366,87 +366,67 @@ Expected: process stops accepting new connections, waits for in-flight multicast
 
 ---
 
-## Phase 3b — AF_PACKET Siphon (automatic prod capture)
+## Phase 3b — Pixie eBPF → Siphon OTLP (ingress capture)
 
-### Deploy Siphon
+Siphon receives **OTLP gRPC** on `:4317` (logs and traces) from Pixie `px.export`, parses HTTP fields, and POSTs to **igris-http** in the shadow namespace. Monarch writes a `PixieStreamRule` per ShadowTest; **pixie-stream-bridge** renders PxL and runs `px.export` to `spec.otelEndpoint`.
 
-```bash
-kubectl apply -k "$REPO/pipeline/siphon/deploy/"
-kubectl -n siphon-system rollout status daemonset/siphon-agent --timeout=120s
-```
+### Pixie local sandbox (Minikube kvm2)
 
-Siphon is deployed as a DaemonSet with `hostNetwork: true` using granular capabilities (`CAP_NET_RAW` and `CAP_NET_ADMIN` under root user `runAsUser: 0`) instead of full privileged access. 
-
-Siphon implements **high-performance kernel-level BPF (libpcap) filtering** dynamically. When configuration is POSTed to Siphon's HTTP control API, the Siphon agent compiles a target packet filter of IPv4 host/port clauses (`tcp and ( (host <IP> and port <Port>) or ... )`) and attaches it directly to the socket via the kernel BPF subsystem. This ensures zero-copy filtering at the kernel level for maximum performance. Userspace processing is then only used for sticky flow sampling (TTL-based map) and relaxed TCP stream assembly before multicasting to Igris.
-
-With `SIPHON_INTERFACE=any`, the agent captures on all active non-loopback interfaces (e.g. `eth0`, `cni0`, `veth*` on Kind).
-
-### ShadowTest with Siphon
-
-Apply a `ShadowTest` as in earlier sections. When `status.phase` is **Ready**, Monarch:
-
-1. Lists **production** pod IPs for `spec.targetDeployment`
-2. Pushes merged config to every `siphon-agent` pod (`POST /v1/config`)
-3. Sets `status.captureTargets`, `status.siphonPhase`, `status.igrisEndpoint`
-
-Optional spec:
-
-```yaml
-spec:
-  siphon:
-    enabled: true
-    sampleRate: 100   # percent of new flows (sticky per 4-tuple)
-    image: siphon:latest
-```
-
-### Verify capture path
+Pixie requires a **VM Minikube driver** (`kvm2` or `virtualbox`). Kind, `driver=none`, and `driver=docker` are not supported by Pixie PEM.
 
 ```bash
-# Siphon agent status (from any siphon pod IP)
-kubectl get pods -n siphon-system -o wide
-SIPHON_POD_IP=$(kubectl get pods -n siphon-system -l app.kubernetes.io/name=siphon-agent -o jsonpath='{.items[0].status.podIP}')
-curl -s "http://${SIPHON_POD_IP}:8080/v1/status" | jq .
+# 1. Pixie Cloud account (free): px auth login or export PIXIE_API_KEY
+MINIKUBE_DRIVER=kvm2 ./testing/scripts/setup-local-pixie.sh
 
-# Hit production (not shadow)
-kubectl port-forward -n default svc/my-prod-app 8080:80 &
-curl -s http://127.0.0.1:8080/
+# 2. Monarch E2E stack (deploy ShadowTest + prod echo)
+./testing/scripts/e2e-reset-minikube.sh --no-reset
 
-# Igris should show multicasts
-export SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
-kubectl logs -n "$SHADOW_NS" deploy/$(kubectl get deploy -n "$SHADOW_NS" -o name | grep igris | sed 's|deployment.apps/||') -f
+# 3. Confirm Vizier + PixieStreamRule
+kubectl get pods -n pl -l name=vizier-pem
+kubectl get pixiestreamrule -A
 ```
 
-On **Kind**, confirm `/v1/status` lists `interfaces` including `cni0` or a `veth` — not only `eth0`. Siphon logs should show `Reassembled HTTP request` after curling production.
+### Curl production Service (out-of-band tap)
 
-### One-shot Kind reset (recommended)
+Traffic hits **prod** `my-prod-app` Service; Pixie eBPF exports to shadow **Siphon** separately:
 
-From the repo root, builds/loads images, deploys Monarch/Beru/Siphon/prod/ShadowTest with **correct ports** (`prod:80`, `Envoy:8888`, `app:80`), and waits for `Ready`:
+```bash
+TRACE_ID="pixie-$(date +%s)"
+SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
+
+kubectl run curl-prod --rm -i --restart=Never --image=curlimages/curl -- \
+  curl -sf -H "x-shadow-trace-id: ${TRACE_ID}" \
+  "http://my-prod-app.default.svc.cluster.local:80/?probe=${TRACE_ID}"
+
+kubectl logs -n "$SHADOW_NS" deploy/my-app-shadow-igris --tail=50 | grep "$TRACE_ID"
+```
+
+Full automated path:
+
+```bash
+MINIKUBE_DRIVER=kvm2 ./testing/scripts/e2e-reset-minikube.sh --setup-pixie --run-otlp-ingress-test
+```
+
+### One-shot Kind reset (non-Pixie HTTP tests)
 
 ```bash
 ./testing/scripts/e2e-reset-kind.sh --run-test
 ```
 
-Flags: `--skip-build`, `--skip-load`, `--no-reset`, `--run-test`. Then run `./testing/scripts/e2e-pipeline-test.sh` anytime.
-
-### One-shot Minikube reset (VM driver, recommended for eBPF capture)
-
-Auto-selects a VM driver (not docker VM): **virtualbox** if VBoxManage is available, else **`none` on WSL** (host kubelet + host kernel for NetObserv BPF), else **kvm2**. Uses Calico; images build into Minikube's Docker daemon (`eval $(minikube docker-env)`) — no `kind load`:
+### One-shot Minikube reset
 
 ```bash
-# WSL + NetObserv (recommended)
-sudo MINIKUBE_DRIVER=none ./testing/scripts/e2e-reset-minikube.sh --run-test
+# Pixie OTLP ingress (kvm2 VM — required for Pixie PEM)
+MINIKUBE_DRIVER=kvm2 ./testing/scripts/e2e-reset-minikube.sh --setup-pixie --run-otlp-ingress-test
 ```
-
-Same flags as the Kind script. On WSL without VirtualBox, `none` auto-selects when run as root. kvm2 uses a VM ISO kernel (6.6.x) that often rejects NetObserv PCA BPF. For kvm2: nested virt + libvirt packages; script starts `virtlogd`, `virtlockd`, `libvirtd` without systemd. Override: `MINIKUBE_DRIVER=virtualbox|kvm2|none`.
 
 ### Build Siphon locally
 
 ```bash
 cd "$REPO/pipeline/siphon"
-make build    # requires Linux + gcc (CGO for afpacket)
+make build
 make docker-build SIPHON_IMG=siphon:dev
-kind load docker-image siphon:dev   # if using Kind
-kubectl rollout restart daemonset/siphon-agent -n siphon-system   # after kind load
+minikube image load siphon:dev   # if using Minikube
 ```
 
 ---

@@ -3,6 +3,8 @@ package controller
 import (
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
+
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
@@ -127,7 +129,7 @@ func TestValidateInputsMixedDriversRejected(t *testing.T) {
 	}
 }
 
-func TestBuildSiphonTargetAMQPOnlyNoIngressPorts(t *testing.T) {
+func TestBuildPixieStreamRuleSpecAMQPOnlyNoIngressPorts(t *testing.T) {
 	t.Parallel()
 	st := &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{
@@ -143,14 +145,9 @@ func TestBuildSiphonTargetAMQPOnlyNoIngressPorts(t *testing.T) {
 			}},
 		},
 	}
-	tgt := buildSiphonTarget(st, "shadow-ns", []string{"10.0.0.1"}, nil)
-	if len(tgt.TargetPorts) != 0 || len(tgt.Listeners) != 0 {
-		t.Fatalf("expected no ingress ports, got ports=%v listeners=%v", tgt.TargetPorts, tgt.Listeners)
-	}
-	if tgt.IgrisHost != "" {
-		t.Fatalf("expected empty igris_host, got %q", tgt.IgrisHost)
-	}
-	if len(tgt.TargetIPs) != 1 {
-		t.Fatalf("expected prod IPs preserved, got %v", tgt.TargetIPs)
+	dep := &appsv1.Deployment{}
+	spec := buildPixieStreamRuleSpec(st, "shadow-ns", dep)
+	if len(spec.TargetPorts) != 0 {
+		t.Fatalf("expected no ingress ports, got %v", spec.TargetPorts)
 	}
 }

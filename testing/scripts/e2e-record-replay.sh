@@ -253,10 +253,7 @@ if [[ -z "$EGRESS_HOST" ]]; then
   exit 1
 fi
 
-kubectl wait -n "$SHADOW_NS" --for=condition=Ready pod \
-  -l "shadow-diff.io/shadowtest-name=${SHADOWTEST},shadow-diff.io/role=control-a" --timeout=120s
 kubectl wait -n "$PROD_NS" --for=condition=Ready pod -l app=my-prod-app --timeout=120s
-wait_siphon_daemonset_rollout 180s
 kubectl wait -n beru-system --for=condition=Ready pod \
   -l app.kubernetes.io/name=beru --timeout=120s
 
@@ -268,15 +265,7 @@ PROD_POD=$(kubectl get pod -n "$PROD_NS" -l app=my-prod-app \
 
 echo "    prodPod=$PROD_POD shadowPod=$SHADOW_POD recordAndReplayHost=$EGRESS_HOST"
 
-echo "==> Wait for Siphon recorder config (targets + recordAndReplay + recorder_host)"
-wait_siphon_configured 1
-
-refresh_netobserv_hooks "$PROD_NS" "app=my-prod-app"
-
-echo "==> Wait for NetObserv -> Siphon gRPC collector stack"
-wait_siphon_pcap_stack
-ensure_netobserv_exports_to_collector
-
+echo "==> WARN: prod egress auto-record via NetObserv was removed; use RECORD_REPLAY_ALLOW_SEED_FALLBACK=1 or re-seed Beru manually"
 resolve_record_url
 
 echo "==> Record phase: prod direct egress to ${EGRESS_HOST}${EGRESS_PATH}"
@@ -299,10 +288,8 @@ if ! wait_recorder_seeded "$SHADOW_NS"; then
     echo "    WARN: Siphon did not record prod egress — applying Beru seed fallback (RECORD_REPLAY_ALLOW_SEED_FALLBACK=1)"
     seed_beru_from_prod_capture "$RECORD_BODY" "$EGRESS_LAST_BODY"
   else
-    echo "ERROR: Siphon did not record prod egress via NetObserv gRPC -> Recorder -> Beru" >&2
-    echo "       Check: kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent -c agent --tail=80 | grep -E 'gRPC collector|egress relay|preview='" >&2
-    echo "       Check: kubectl logs -n \$SHADOW_NS deploy/${SHADOWTEST}-recorder --tail=80 | grep -E 'recorder debug|recorder parser'" >&2
-    echo "       Check: kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent -c netobserv-ebpf-agent --tail=30" >&2
+    echo "ERROR: Beru was not seeded from prod egress capture (NetObserv path removed)" >&2
+    echo "       Check: kubectl logs -n \$SHADOW_NS deploy/${SHADOWTEST}-recorder --tail=80" >&2
     echo "       Set RECORD_REPLAY_ALLOW_SEED_FALLBACK=1 only to bypass capture for local debugging" >&2
     exit 1
   fi
@@ -327,9 +314,7 @@ done
 if [[ "$hit_code" != "200" ]]; then
   echo "ERROR: expected HTTP 200 from auto-recorded mock, got $hit_code after polling" >&2
   echo "       Debug checklist:" >&2
-  echo "         kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent -c agent --tail=80 | grep -E 'gRPC collector|egress relay|Siphon target'" >&2
-  echo "         kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent -c netobserv-ebpf-agent --tail=40" >&2
-  echo "         kubectl logs -n \$SHADOW_NS deploy/${SHADOWTEST}-recorder --tail=80 | grep -E 'recorder debug|recorder parser|beru client'" >&2
+  echo "         kubectl logs -n \$SHADOW_NS deploy/${SHADOWTEST}-recorder --tail=80" >&2
   echo "         kubectl logs -n beru-system deploy/beru --tail=30 | grep -E 'record|Regression'" >&2
   echo "       Recorder should log 'beru client: recorded POST ...'; Beru must NOT return 404 on /v1/record_egress" >&2
   exit 1

@@ -18,8 +18,7 @@ e2e_reset_deploy_stack() {
   echo "==> Monarch operator"
   make -C pipeline/monarch deploy IMG="$MONARCH_IMG"
   kubectl set env deployment/monarch-controller-manager -n monarch-system \
-    MONARCH_MODE=dev \
-    NETOBSERV_EBPF_AGENT_IMAGE="$NETOBSERV_IMG"
+    MONARCH_MODE=dev
   # Same :dev tag does not change Deployment spec after image rebuild; restart picks up new layers.
   if [[ "${SKIP_LOAD:-0}" -eq 0 ]]; then
     echo "==> Restart Monarch manager (pick up re-loaded ${MONARCH_IMG})"
@@ -32,7 +31,7 @@ e2e_reset_deploy_stack() {
   kubectl set image deployment/beru beru="$BERU_IMG" -n beru-system
   kubectl rollout status deployment/beru -n beru-system --timeout=120s
 
-  echo "==> Siphon RBAC (DaemonSet image + config managed by Monarch from ShadowTest spec)"
+  echo "==> Siphon RBAC (per-shadow OTLP receiver; Monarch writes PixieStreamRule)"
   kubectl apply -f pipeline/siphon/deploy/rbac.yaml
 
   echo "==> Production app (echo on :80, memory limits)"
@@ -51,7 +50,7 @@ e2e_reset_deploy_stack() {
   fi
   nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
 
-  echo "==> Wait for ShadowTest Ready (Monarch deploys Siphon DaemonSet + POSTs /v1/config)"
+  echo "==> Wait for ShadowTest Ready (Monarch reconciles PixieStreamRule + shadow Siphon Service)"
   local i phase siphon message shadow_ns
   for i in $(seq 1 36); do
     phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)
@@ -83,7 +82,13 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
     exit 1
   fi
   if [[ "$siphon_phase" == "Degraded" ]]; then
-    echo "WARN: siphonPhase=Degraded — Monarch could not POST /v1/config; check monarch logs and Siphon hostIP reachability"
+    echo "WARN: siphonPhase=Degraded — check PixieStreamRule and monarch-controller logs"
+  fi
+
+  if [[ -n "${SHADOW_NS:-}" && "$siphon_phase" == "Ready" ]]; then
+    echo "==> Shadow Siphon OTLP receiver (Pixie export destination)"
+    wait_pixie_capture_ready "$SHADOWTEST" "$SHADOWTEST_NS" "$SHADOW_NS" 120
+    wait_shadow_siphon_otlp "$SHADOW_NS"
   fi
 
   echo "==> Wait for Recorder rollout (Monarch resolves recorder:dev via MONARCH_MODE=dev)"
@@ -91,21 +96,9 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
     wait_recorder_rollout "$SHADOWTEST" "$SHADOWTEST_NS" "$SHADOW_NS" "$RECORDER_IMG" 120s
   fi
 
-  echo "==> Nudge Monarch to re-push Siphon config (recorder_host after Recorder is up)"
+  echo "==> Nudge Monarch reconcile (recorder_host after Recorder is up)"
   nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
   sleep 3
-
-  echo "==> Verify Monarch pushed Siphon config (targets + recordAndReplay + recorder_host)"
-  if [[ "${SKIP_LOAD:-0}" -eq 0 ]]; then
-    echo "==> Restart Siphon DaemonSet (pick up re-loaded ${SIPHON_IMG} + ${NETOBSERV_IMG})"
-    kubectl rollout restart daemonset/siphon-agent -n siphon-system 2>/dev/null || true
-  fi
-  wait_siphon_daemonset_rollout 180s
-  nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
-  sleep 3
-  wait_siphon_configured 1
-  echo "==> Verify NetObserv -> Siphon gRPC collector stack"
-  wait_siphon_pcap_stack
 
   echo "==> Verify shadow Envoy -> app port (applicationPort=80)"
   local role deploy app_port
@@ -118,14 +111,12 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
   echo ""
   echo "E2E stack is up."
   echo "  Shadow namespace: $SHADOW_NS"
-  local prod_ip siphon_host
+  local prod_ip
   prod_ip=$(kubectl get pods -n default -l app=my-prod-app -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2>/dev/null | head -1)
-  siphon_host=$(kubectl get pods -n siphon-system -l app.kubernetes.io/name=siphon-agent -o jsonpath='{range .items[*]}{.status.hostIP}{"\n"}{end}' 2>/dev/null | head -1)
   echo "  Prod IP:          ${prod_ip:-<pending>}"
-  echo "  Siphon API:       http://${siphon_host:-<pending>}:8080"
-  echo "  Siphon image:     $(kubectl get ds siphon-agent -n siphon-system -o jsonpath='{.spec.template.spec.containers[?(@.name=="agent")].image}' 2>/dev/null || echo '<pending>')"
-  echo "  NetObserv image:  $(kubectl get ds siphon-agent -n siphon-system -o jsonpath='{.spec.template.spec.containers[?(@.name=="netobserv-ebpf-agent")].image}' 2>/dev/null || echo '<pending>')"
-  echo "  (host curl to node IP often hangs from WSL; use in-cluster curl — see e2e-pipeline-test.sh)"
+  echo "  Capture labels:   $(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.captureTargets}' 2>/dev/null || echo '<pending>')"
+  echo "  Pixie export:     siphon.${SHADOW_NS}.svc.cluster.local:4317"
+  echo "  (ingress capture requires Pixie — ./testing/scripts/setup-local-pixie.sh)"
   echo ""
   echo "Run ingress test:  ./testing/scripts/e2e-pipeline-test.sh"
   echo "Run egress test:   ./testing/scripts/e2e-egress-test.sh"
@@ -133,6 +124,7 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
   echo "Run dependency E2E: ./testing/scripts/e2e-dependency-test.sh"
   echo "Run RabbitMQ E2E:  ./testing/scripts/e2e-rabbitmq-test.sh"
   echo "Run OTel RabbitMQ E2E: ./testing/scripts/e2e-otel-rabbitmq-test.sh"
+  echo "Run OTLP ingress E2E: ./testing/scripts/e2e-siphon-otlp-ingress-test.sh"
   echo "Run k6 stress:     testing/example-apps/k6/run-stress-test.sh  (or see testing/example-apps/k6/README.md)"
 
   if [[ "${RUN_TEST:-0}" -eq 1 ]]; then
@@ -167,5 +159,11 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
     echo ""
     chmod +x testing/scripts/e2e-otel-rabbitmq-test.sh
     ./testing/scripts/e2e-otel-rabbitmq-test.sh
+  fi
+
+  if [[ "${RUN_OTLP_INGRESS_TEST:-0}" -eq 1 ]]; then
+    echo ""
+    chmod +x testing/scripts/e2e-siphon-otlp-ingress-test.sh
+    ./testing/scripts/e2e-siphon-otlp-ingress-test.sh
   fi
 }

@@ -64,19 +64,19 @@ type InputSpec struct {
 	Addon string `json:"addon,omitempty"`
 }
 
-// SiphonSpec configures the cluster-wide AF_PACKET capture agent.
+// SiphonSpec configures Pixie eBPF streaming capture for L1 ingress.
 type SiphonSpec struct {
-	// Enabled disables Siphon config push when explicitly false.
+	// Enabled disables Pixie stream rules when explicitly false.
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Image overrides the Siphon DaemonSet container image.
+	// MaxPayloadSize is the max bytes to parse per HTTP/2 frame (default 65536).
 	// +optional
-	Image string `json:"image,omitempty"`
+	MaxPayloadSize int64 `json:"maxPayloadSize,omitempty"`
 
-	// SampleRate is the percentage (0-100) of new TCP flows to sample.
+	// ExcludePaths are regex strings to drop healthchecks/traffic at the kernel layer.
 	// +optional
-	SampleRate *int32 `json:"sampleRate,omitempty"`
+	ExcludePaths []string `json:"excludePaths,omitempty"`
 }
 
 // RecordAndReplayHostSpec declares an outbound host for egress record/replay.
@@ -260,11 +260,11 @@ type ShadowTestStatus struct {
 	// +optional
 	ShadowNamespace string `json:"shadowNamespace,omitempty"`
 
-	// CaptureTargets lists production pod IPs pushed to Siphon agents.
+	// CaptureTargets lists discovered prod pod template labels (key=value, sorted).
 	// +optional
 	CaptureTargets []string `json:"captureTargets,omitempty"`
 
-	// SiphonPhase summarizes Siphon config push (Ready, Degraded, Disabled).
+	// SiphonPhase summarizes Pixie stream rule reconciliation (Ready, Degraded, Disabled).
 	// +optional
 	SiphonPhase string `json:"siphonPhase,omitempty"`
 

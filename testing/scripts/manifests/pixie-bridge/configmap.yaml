@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pixie-stream-bridge
+  namespace: monarch-system
+data:
+  http-export.pxl.tmpl: |
+    import px
+
+    df = px.DataFrame(table='http_events', start_time='-30s', end_time=px.now())
+
+    df.namespace = df.ctx['namespace']
+    df.pod = df.ctx['pod']
+    df.service = df.ctx['service']
+
+    df = df[df.trace_role == 2]
+    df = df[df.namespace == '__TARGET_NAMESPACE__']
+    __LABEL_FILTERS__
+    __EXCLUDE_PATH_FILTERS__
+    __PORT_FILTERS__
+
+    df.body = df.req_body
+    df.trace_hdr = px.pluck(df.req_headers, 'x-shadow-trace-id')
+    df.end_time = df.time_ + df.latency
+
+    px.export(df, px.otel.Data(
+      endpoint=px.otel.Endpoint(
+        url='__OTEL_ENDPOINT__',
+        insecure=True,
+      ),
+      resource={
+        'service.name': df.service,
+        'k8s.pod.name': df.pod,
+        'k8s.namespace.name': df.namespace,
+      },
+      data=[
+        px.otel.trace.Span(
+          name=df.req_path,
+          start_time=df.time_,
+          end_time=df.end_time,
+          attributes={
+            'http.request.method': df.req_method,
+            'url.path': df.req_path,
+            'x-shadow-trace-id': df.trace_hdr,
+            'http.request.body': df.body,
+          },
+        ),
+      ],
+    ))

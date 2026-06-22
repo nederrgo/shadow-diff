@@ -435,16 +435,19 @@ spec:
                 description: Siphon configures kernel-level traffic capture to Igris.
                 properties:
                   enabled:
-                    description: Enabled disables Siphon config push when explicitly
+                    description: Enabled disables Pixie stream rules when explicitly
                       false.
                     type: boolean
-                  image:
-                    description: Image overrides the Siphon DaemonSet container image.
-                    type: string
-                  sampleRate:
-                    description: SampleRate is the percentage (0-100) of new TCP flows
-                      to sample.
-                    format: int32
+                  excludePaths:
+                    description: ExcludePaths are regex strings to drop healthchecks/traffic
+                      at the kernel layer.
+                    items:
+                      type: string
+                    type: array
+                  maxPayloadSize:
+                    description: MaxPayloadSize is the max bytes to parse per HTTP/2
+                      frame (default 65536).
+                    format: int64
                     type: integer
                 type: object
               targetDeployment:
@@ -469,8 +472,8 @@ spec:
                   declared (shadow-diff-<uid>).
                 type: string
               captureTargets:
-                description: CaptureTargets lists production pod IPs pushed to Siphon
-                  agents.
+                description: CaptureTargets lists discovered prod pod template labels
+                  (key=value, sorted).
                 items:
                   type: string
                 type: array
@@ -495,8 +498,8 @@ spec:
                   Deployments run.
                 type: string
               siphonPhase:
-                description: SiphonPhase summarizes Siphon config push (Ready, Degraded,
-                  Disabled).
+                description: SiphonPhase summarizes Pixie stream rule reconciliation
+                  (Ready, Degraded, Disabled).
                 type: string
             type: object
         required:

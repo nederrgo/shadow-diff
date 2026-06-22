@@ -15,6 +15,7 @@ igris/bin/
 siphon/bin/
 Dockerfile.cross
 *minikube-linux-amd64
+.cache/pixie-bridge/
 
 # Test binary, built with `go test -c`
 *.test

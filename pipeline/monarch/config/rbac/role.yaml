@@ -38,7 +38,6 @@ rules:
 - apiGroups:
   - apps
   resources:
-  - daemonsets
   - deployments
   verbs:
   - create
@@ -51,6 +50,7 @@ rules:
 - apiGroups:
   - engine.shadow-diff.io
   resources:
+  - pixiestreamrules
   - shadowtests
   verbs:
   - create
@@ -63,12 +63,14 @@ rules:
 - apiGroups:
   - engine.shadow-diff.io
   resources:
+  - pixiestreamrules/finalizers
   - shadowtests/finalizers
   verbs:
   - update
 - apiGroups:
   - engine.shadow-diff.io
   resources:
+  - pixiestreamrules/status
   - shadowtests/status
   verbs:
   - get

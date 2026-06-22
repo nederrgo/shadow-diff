@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"os"
 	"testing"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
@@ -57,15 +56,5 @@ func TestIgrisHTTPImageFor(t *testing.T) {
 	st.Spec.Igris = &enginev1alpha1.IgrisSpec{Image: "custom:tag"}
 	if got := igrisHTTPImageFor(st); got != "custom:tag" {
 		t.Fatalf("CR override: got %q", got)
-	}
-}
-
-func TestSiphonImageFor(t *testing.T) {
-	_ = os.Unsetenv("MONARCH_MODE")
-	_ = os.Unsetenv(envSiphonImage)
-
-	st := &enginev1alpha1.ShadowTest{}
-	if got := siphonImageFor(st); got != "siphon:latest" {
-		t.Fatalf("default: got %q", got)
 	}
 }

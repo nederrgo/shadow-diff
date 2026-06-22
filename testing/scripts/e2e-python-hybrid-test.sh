@@ -202,20 +202,12 @@ for role in control-a control-b candidate; do
   "$REPO/testing/scripts/assert-otel-injected.sh" "$SHADOW_NS" "$role" "$SHADOWTEST"
 done
 
-echo "==> Verify Siphon recorder config for HTTP recordAndReplay"
-wait_siphon_configured 1
+echo "==> WARN: Siphon PCAP/NetObserv arming removed; HTTP hybrid relies on RECORD_REPLAY_ALLOW_SEED_FALLBACK for egress seed"
+nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
 
 relay_deploy="${SHADOWTEST}-egress-relay-rabbitmq"
 kubectl rollout status "deployment/${relay_deploy}" -n "$SHADOW_NS" --timeout=180s
 kubectl rollout status "deployment/${SHADOWTEST}-igris-rabbitmq" -n "$SHADOW_NS" --timeout=120s
-
-# Gate 2: arm Siphon immediately before prod traffic (see testing/scripts/lib/siphon-config.sh).
-echo "==> Arm Siphon before prod traffic (config + BPF)"
-nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
-wait_siphon_configured 1
-refresh_netobserv_hooks "default" "app=python-prod-worker"
-wait_siphon_pcap_stack
-ensure_netobserv_exports_to_collector
 
 TRACE_HEX="$(openssl rand -hex 16)"
 SPAN_HEX="$(openssl rand -hex 8)"

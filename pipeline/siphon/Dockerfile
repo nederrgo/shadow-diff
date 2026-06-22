@@ -12,7 +12,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -o /siph
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /
-COPY --from=builder /siphon .
-USER 0:0
-EXPOSE 8080
+COPY --from=builder /siphon /
+USER 65532:65532
+EXPOSE 4317
 ENTRYPOINT ["/siphon"]

@@ -2,7 +2,7 @@
 # Reset and deploy the full Monarch E2E stack on Kind with correct ports.
 #
 # Port model (do not change without updating manifests):
-#   prod pod          -> :80   (HTTP_PORT=80, captured via NetObserv eBPF -> Siphon PCAP :9990)
+#   prod pod          -> :80   (HTTP_PORT=80; Pixie eBPF -> OTLP -> shadow Siphon :4317)
 #   Igris listener    -> :80   (replays captured prod traffic)
 #   Envoy ingress     -> :8888 (Igris multicasts to shadow Services here)
 #   shadow app (echo) -> :80   (applicationPort; env copied from prod)
@@ -16,13 +16,14 @@
 #   ./testing/scripts/e2e-reset-kind.sh --run-dependency-test  # above, then ./testing/scripts/e2e-dependency-test.sh
 #   ./testing/scripts/e2e-reset-kind.sh --run-rabbitmq-test   # above, then ./testing/scripts/e2e-rabbitmq-test.sh
 #   ./testing/scripts/e2e-reset-kind.sh --run-otel-rabbitmq-test  # above, then ./testing/scripts/e2e-otel-rabbitmq-test.sh
+#   ./testing/scripts/e2e-reset-kind.sh --run-otlp-ingress-test # above, then ./testing/scripts/e2e-siphon-otlp-ingress-test.sh
 #   ./testing/scripts/e2e-reset-kind.sh --skip-otel-bootstrap  # skip cert-manager + OTel Operator install
 #   ./testing/scripts/e2e-reset-kind.sh --skip-build       # assume images already built/loaded
 #   ./testing/scripts/e2e-reset-kind.sh --no-reset         # deploy/upgrade only (no deletes)
 #   MONARCH_NO_CACHE=1 ./testing/scripts/e2e-reset-kind.sh # force fresh monarch:dev build (avoids stale Docker cache)
 #
-# Monarch owns the Siphon DaemonSet and POSTs /v1/config (targets, recordAndReplay, recorder_host)
-# from ShadowTest spec. Set MONARCH_MODE=dev on the operator so helper images resolve to :dev tags.
+# Monarch writes PixieStreamRule + shadow Siphon Service from ShadowTest spec.
+# Set MONARCH_MODE=dev on the operator so helper images resolve to :dev tags.
 #
 set -euo pipefail
 
@@ -42,7 +43,6 @@ BERU_IMG="${BERU_IMG:-beru:dev}"
 IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
 SIPHON_IMG="${SIPHON_IMG:-siphon:dev}"
 RECORDER_IMG="${RECORDER_IMG:-recorder:dev}"
-NETOBSERV_IMG="${NETOBSERV_IMG:-quay.io/netobserv/netobserv-ebpf-agent:main}"
 
 SHADOWTEST="${SHADOWTEST:-my-app-shadow}"
 SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
@@ -56,11 +56,12 @@ RUN_RECORD_REPLAY=0
 RUN_DEPENDENCY_TEST=0
 RUN_RABBITMQ_TEST=0
 RUN_OTEL_RABBITMQ_TEST=0
+RUN_OTLP_INGRESS_TEST=0
 SKIP_OTEL_BOOTSTRAP=0
 
 usage() {
   sed -n '2,16p' "$0"
-  echo "Flags: --skip-build --skip-load --no-reset --skip-otel-bootstrap --run-test --run-egress-test --run-record-replay --run-dependency-test --run-rabbitmq-test --run-otel-rabbitmq-test -h"
+  echo "Flags: --skip-build --skip-load --no-reset --skip-otel-bootstrap --run-test --run-egress-test --run-record-replay --run-dependency-test --run-rabbitmq-test --run-otel-rabbitmq-test --run-otlp-ingress-test -h"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -74,6 +75,7 @@ while [[ $# -gt 0 ]]; do
     --run-dependency-test) RUN_DEPENDENCY_TEST=1 ;;
     --run-rabbitmq-test) RUN_RABBITMQ_TEST=1 ;;
     --run-otel-rabbitmq-test) RUN_OTEL_RABBITMQ_TEST=1 ;;
+    --run-otlp-ingress-test) RUN_OTLP_INGRESS_TEST=1 ;;
     --skip-otel-bootstrap) SKIP_OTEL_BOOTSTRAP=1 ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "Unknown flag: $1" >&2; usage; exit 1 ;;
@@ -139,7 +141,7 @@ ensure_kind_cluster_ready() {
 }
 
 echo "==> Monarch E2E reset (cluster=${KIND_CLUSTER:-local})"
-echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG igris=$IGRIS_IMG siphon=$SIPHON_IMG recorder=$RECORDER_IMG netobserv=$NETOBSERV_IMG"
+echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG igris=$IGRIS_IMG siphon=$SIPHON_IMG recorder=$RECORDER_IMG"
 if [[ "$SKIP_BUILD" -eq 1 ]]; then
   echo "WARN: --skip-build reuses existing local images; Monarch/Beru/Igris/Siphon code changes are NOT included until you rebuild"
 fi
@@ -164,20 +166,17 @@ if [[ "$SKIP_LOAD" -eq 0 ]]; then
   else
     echo "==> Skipping cert-manager + OpenTelemetry Operator (--skip-otel-bootstrap)"
   fi
-  echo "==> Pull NetObserv eBPF agent (Siphon PCAP sidecar)"
-  docker pull "$NETOBSERV_IMG" 2>/dev/null || bash "$REPO/testing/scripts/lib/docker.sh" pull "$NETOBSERV_IMG"
   echo "==> Load images into Kind ($KIND_CLUSTER)"
   kind load docker-image "$MONARCH_IMG" --name "$KIND_CLUSTER"
   kind load docker-image "$BERU_IMG" --name "$KIND_CLUSTER"
   kind load docker-image "$IGRIS_IMG" --name "$KIND_CLUSTER"
   kind load docker-image "$SIPHON_IMG" --name "$KIND_CLUSTER"
   kind load docker-image "$RECORDER_IMG" --name "$KIND_CLUSTER"
-  kind load docker-image "$NETOBSERV_IMG" --name "$KIND_CLUSTER"
 fi
 
 export SKIP_BUILD SKIP_LOAD NO_RESET RUN_TEST RUN_EGRESS_TEST RUN_RECORD_REPLAY
-export RUN_DEPENDENCY_TEST RUN_RABBITMQ_TEST RUN_OTEL_RABBITMQ_TEST
-export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG IGRIS_IMG SIPHON_IMG RECORDER_IMG NETOBSERV_IMG
+export RUN_DEPENDENCY_TEST RUN_RABBITMQ_TEST RUN_OTEL_RABBITMQ_TEST RUN_OTLP_INGRESS_TEST SETUP_PIXIE
+export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG IGRIS_IMG SIPHON_IMG RECORDER_IMG
 export E2E_IMAGE_REBUILD_HINT="After Monarch code fixes, rebuild: make -C pipeline/monarch docker-build IMG=${MONARCH_IMG} && kind load docker-image ${MONARCH_IMG} --name ${KIND_CLUSTER}"
 # shellcheck source=testing/scripts/lib/e2e-reset-deploy.sh
 source "$REPO/testing/scripts/lib/e2e-reset-deploy.sh"

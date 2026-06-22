@@ -3,10 +3,12 @@
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests/finalizers,verbs=update
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=pixiestreamrules,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=pixiestreamrules/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=pixiestreamrules/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
 
 package controller
 
@@ -139,7 +141,7 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 	}
 
-	captureIPs, siphonPhase, err := r.reconcileSiphonCapture(ctx, &shadowTest, shadowNS, &target)
+	captureTargets, siphonPhase, err := r.reconcileSiphonCapture(ctx, &shadowTest, shadowNS, &target)
 	if err != nil {
 		log.Error(err, "Siphon capture reconcile failed")
 		siphonPhase = "Degraded"
@@ -167,7 +169,7 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		msg = fmt.Sprintf("%s; Siphon %s", msg, siphonPhase)
 	}
 
-	if err := r.patchStatusFull(ctx, &shadowTest, "Ready", msg, shadowNS, captureIPs, siphonPhase, igrisEndpoint, igrisRMQPhase); err != nil {
+	if err := r.patchStatusFull(ctx, &shadowTest, "Ready", msg, shadowNS, captureTargets, siphonPhase, igrisEndpoint, igrisRMQPhase); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -269,7 +271,7 @@ func (r *ShadowTestReconciler) reconcileShadowWorkloads(
 func (r *ShadowTestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&enginev1alpha1.ShadowTest{}).
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.mapPodToShadowTests)).
+		Watches(&appsv1.Deployment{}, handler.EnqueueRequestsFromMapFunc(r.mapDeploymentToShadowTests)).
 		Named("shadowtest").
 		Complete(r)
 }

@@ -2,7 +2,7 @@
 # Source from e2e-reset-minikube.sh; do not execute directly.
 #
 # ponytail: EXIT trap for docker-env -u lives in the caller script only (once).
-# WSL: virtualbox shim, none (host kubelet — NetObserv BPF), or kvm2 (/dev/kvm).
+# WSL: virtualbox shim, kvm2 (/dev/kvm), or none (host kubelet fallback).
 # Intentionally no docker VM driver — same daemon as Kind defeats the eBPF networking goal.
 
 MINIKUBE_PROFILE="${MINIKUBE_PROFILE:-minikube}"
@@ -32,8 +32,35 @@ _vbox_available() {
   command -v VBoxManage >/dev/null 2>&1 && VBoxManage --version >/dev/null 2>&1
 }
 
+_ensure_kvm_device() {
+  if [[ ! -e /dev/kvm ]] && command -v modprobe >/dev/null 2>&1; then
+    # ponytail: WSL nested virt needs explicit modprobe after restart; .wslconfig alone is not enough
+    modprobe kvm 2>/dev/null || true
+    if grep -qi intel /proc/cpuinfo 2>/dev/null; then
+      modprobe kvm_intel 2>/dev/null || true
+    elif grep -qi amd /proc/cpuinfo 2>/dev/null; then
+      modprobe kvm_amd 2>/dev/null || true
+    fi
+  fi
+  [[ -e /dev/kvm ]] || return 1
+  # ponytail: modprobe creates root:root 0600; libvirt qemu (libvirt-qemu) needs group kvm
+  if [[ "$(id -u)" -eq 0 ]]; then
+    local mode group
+    mode="$(stat -c '%a' /dev/kvm 2>/dev/null || echo "")"
+    group="$(stat -c '%G' /dev/kvm 2>/dev/null || echo "")"
+    if [[ "$mode" == "600" && "$group" != "kvm" ]]; then
+      chown root:kvm /dev/kvm 2>/dev/null || true
+      chmod 660 /dev/kvm 2>/dev/null || true
+    fi
+    if getent passwd libvirt-qemu >/dev/null 2>&1; then
+      usermod -aG kvm libvirt-qemu 2>/dev/null || true
+    fi
+  fi
+  virsh domcapabilities --virttype kvm >/dev/null 2>&1
+}
+
 _kvm2_available() {
-  [[ -r /dev/kvm ]] && command -v virsh >/dev/null 2>&1
+  _ensure_kvm_device
 }
 
 _none_ready() {
@@ -422,6 +449,10 @@ _start_libvirt_daemon() {
 }
 
 _ensure_libvirtd_running() {
+  _ensure_kvm_device || {
+    echo "ERROR: KVM unavailable for libvirt (see kvm2 hints from minikube start)" >&2
+    exit 1
+  }
   _kvm2_libvirt_stack_ready && return 0
 
   if _has_systemd; then
@@ -515,7 +546,11 @@ resolve_minikube_driver() {
     echo virtualbox
     return 0
   fi
-  # ponytail: WSL host kernel loads NetObserv BPF; kvm2 VM ISO kernel 6.6.x often does not
+  # ponytail: prefer kvm2 for Pixie eBPF on WSL when nested virt is available
+  if _is_wsl && _kvm2_available; then
+    echo kvm2
+    return 0
+  fi
   if _is_wsl && _none_ready; then
     echo none
     return 0
@@ -547,8 +582,8 @@ _minikube_driver_unavailable() {
   if _is_wsl; then
     echo "       WSL Ubuntu (no docker VM driver — that would match Kind networking):" >&2
     echo "         1. Install VirtualBox on Windows, then re-run (script shims VBoxManage.exe)" >&2
-    echo "         2. Or none driver (host kubelet, NetObserv-friendly): sudo MINIKUBE_DRIVER=none ..." >&2
-    echo "         3. Or kvm2 (VM kernel may reject NetObserv BPF):" >&2
+    echo "         2. Or kvm2 for Pixie eBPF (recommended): nested virt + libvirt packages" >&2
+    echo "         3. Or none driver (host kubelet fallback): sudo MINIKUBE_DRIVER=none ..." >&2
     echo "            .wslconfig: [wsl2] nestedVirtualization=true  (restart WSL)" >&2
     echo "            sudo apt install qemu-kvm libvirt-daemon-system libvirt-clients" >&2
   else
@@ -570,7 +605,19 @@ _minikube_start_failed() {
     echo "         - minikube delete -p ${MINIKUBE_PROFILE} && retry if profile corrupted" >&2
   elif [[ "$driver" == kvm2 ]]; then
     echo "       kvm2:" >&2
-    [[ -r /dev/kvm ]] || echo "         - /dev/kvm missing (enable nested virt in .wslconfig, restart WSL)" >&2
+    if echo "$err" | grep -qi 'GUEST_DRIVER_MISMATCH'; then
+      echo "         - existing profile uses a different driver (often none on WSL)" >&2
+      echo "         - minikube delete -p ${MINIKUBE_PROFILE}" >&2
+      echo "         - MINIKUBE_DRIVER=kvm2 ./testing/scripts/setup-local-pixie.sh" >&2
+    fi
+    [[ -r /dev/kvm ]] || {
+      echo "         - /dev/kvm missing — try: sudo modprobe kvm kvm_intel  (or kvm_amd)" >&2
+      echo "         - WSL: .wslconfig [wsl2] nestedVirtualization=true then wsl --shutdown" >&2
+    }
+    virsh domcapabilities --virttype kvm >/dev/null 2>&1 || {
+      echo "         - libvirt cannot use KVM — fix: sudo chown root:kvm /dev/kvm && sudo chmod 660 /dev/kvm" >&2
+      echo "         - then: sudo usermod -aG kvm libvirt-qemu  (restart libvirtd if needed)" >&2
+    }
     command -v virsh >/dev/null 2>&1 || echo "         - install libvirt: sudo apt install qemu-kvm libvirt-daemon-system libvirt-clients" >&2
     _in_libvirt_group || echo "         - sudo usermod -aG libvirt \"\$USER\" && newgrp libvirt (required even for root)" >&2
     _kvm2_libvirt_stack_ready || {
@@ -581,7 +628,6 @@ _minikube_start_failed() {
       fi
     }
     [[ "$(id -u)" -eq 0 ]] && echo "         - kvm2 as root needs minikube --force (script adds this)" >&2
-    _is_wsl && echo "         - NetObserv PCA often fails on kvm2 VM kernel 6.6.x — try MINIKUBE_DRIVER=none" >&2
   elif [[ "$driver" == none ]]; then
     echo "       none:" >&2
     echo "         - run as root with docker running" >&2
@@ -599,29 +645,43 @@ _minikube_start_failed() {
   exit 1
 }
 
+resolve_minikube_cni() {
+  local driver="${1:-${MINIKUBE_DRIVER:-}}"
+  if [[ -n "${MINIKUBE_CNI:-}" ]]; then
+    echo "$MINIKUBE_CNI"
+    return 0
+  fi
+  # ponytail: Pixie eBPF path uses flannel; none driver keeps calico for legacy host kubelet
+  case "$driver" in
+    none) echo calico ;;
+    *)    echo flannel ;;
+  esac
+}
+
 ensure_minikube_ready() {
   require_minikube
 
-  local driver
+  local driver cni
   driver=$(resolve_minikube_driver) || _minikube_driver_unavailable
   export MINIKUBE_DRIVER="$driver"
+  cni=$(resolve_minikube_cni "$driver")
+  export MINIKUBE_CNI="$cni"
   if [[ "$driver" == none ]] || [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
     _ensure_none_preflight
   fi
 
   if [[ "${SKIP_LOAD:-0}" -eq 0 ]]; then
     if [[ "$driver" == none ]]; then
-      echo "==> Start Minikube (${MINIKUBE_PROFILE}, driver=none, host kernel $(uname -r), cni=calico, runtime=containerd)"
+      echo "==> Start Minikube (${MINIKUBE_PROFILE}, driver=none, host kernel $(uname -r), cni=${cni}, runtime=containerd)"
       echo "    (host kubelet + containerd; images build in host docker, load via minikube image load)"
     elif [[ "$driver" == kvm2 ]]; then
       _ensure_kvm2_libvirt_group
       _ensure_libvirtd_running
-      echo "==> Start Minikube (${MINIKUBE_PROFILE}, driver=${driver}, memory=4096, cpus=2, cni=calico)"
-      _is_wsl && echo "WARN: kvm2 VM kernel may reject NetObserv PCA BPF — MINIKUBE_DRIVER=none on WSL" >&2
+      echo "==> Start Minikube (${MINIKUBE_PROFILE}, driver=${driver}, memory=4096, cpus=2, cni=${cni})"
     else
-      echo "==> Start Minikube (${MINIKUBE_PROFILE}, driver=${driver}, memory=4096, cpus=2, cni=calico)"
+      echo "==> Start Minikube (${MINIKUBE_PROFILE}, driver=${driver}, memory=4096, cpus=2, cni=${cni})"
     fi
-    local -a start_args=(start --driver="$driver" --cni=calico)
+    local -a start_args=(start --driver="$driver" --cni="$cni")
     if [[ "$driver" == none ]]; then
       start_args+=(--container-runtime=containerd)
       if _has_systemd; then
@@ -661,7 +721,9 @@ ensure_minikube_ready() {
   local i
   for i in $(seq 1 30); do
     if kubectl cluster-info --context "$MINIKUBE_CONTEXT" >/dev/null 2>&1; then
-      _wait_calico_ready
+      if [[ "$cni" == calico ]]; then
+        _wait_calico_ready
+      fi
       return 0
     fi
     echo "    API not ready yet (${i}/30)"

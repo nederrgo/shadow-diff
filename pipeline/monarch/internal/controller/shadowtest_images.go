@@ -11,15 +11,12 @@ const (
 	imageBaseIgrisHTTP           = "igris-http"
 	imageBaseIgrisRabbitMQ       = "igris-rabbitmq"
 	imageBaseEgressRelayRabbitMQ = "egress-relay-rabbitmq"
-	imageBaseSiphon              = "siphon"
 	imageBaseRecorder            = "recorder"
 
 	envIgrisHTTPImage           = "IGRIS_HTTP_IMAGE"
 	envIgrisRabbitMQImage       = "IGRIS_RABBITMQ_IMAGE"
 	envEgressRelayRabbitMQImage = "EGRESS_RELAY_RABBITMQ_IMAGE"
-	envSiphonImage              = "SIPHON_IMAGE"
 	envRecorderImage            = "RECORDER_IMAGE"
-	envNetObservImage           = "NETOBSERV_EBPF_AGENT_IMAGE"
 )
 
 func monarchImageTagSuffix() string {
@@ -71,16 +68,4 @@ func recorderImageFor(st *enginev1alpha1.ShadowTest) string {
 		cr = st.Spec.Recorder.Image
 	}
 	return resolveHelperImage(imageBaseRecorder, cr, envRecorderImage)
-}
-
-func siphonImageFor(st *enginev1alpha1.ShadowTest) string {
-	cr := ""
-	if st.Spec.Siphon != nil {
-		cr = st.Spec.Siphon.Image
-	}
-	return resolveHelperImage(imageBaseSiphon, cr, envSiphonImage)
-}
-
-func defaultSiphonImage() string {
-	return imageBaseSiphon + monarchImageTagSuffix()
 }
