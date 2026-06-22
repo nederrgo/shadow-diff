@@ -145,17 +145,18 @@ func rabbitMQBrokerContainer(dep enginev1alpha1.DependencySpec) corev1.Container
 			},
 			InitialDelaySeconds: 10,
 			PeriodSeconds:       10,
-			TimeoutSeconds:      30,
-			FailureThreshold:    36,
+			// ponytail: trace_on can exceed 30s on small clusters; upgrade path is split readiness from trace_on
+			TimeoutSeconds:   60,
+			FailureThreshold: 36,
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("50m"),
-				corev1.ResourceMemory: resource.MustParse("64Mi"),
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
 			},
 			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("200m"),
-				corev1.ResourceMemory: resource.MustParse("256Mi"),
+				corev1.ResourceCPU:    resource.MustParse("500m"),
+				corev1.ResourceMemory: resource.MustParse("512Mi"),
 			},
 		},
 	}
