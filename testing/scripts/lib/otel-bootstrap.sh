@@ -40,29 +40,20 @@ _otel_bootstrap_repo() {
   cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd
 }
 
-load_otel_operator_images_into_kind() {
+load_otel_operator_images() {
   if [[ "${SKIP_OTEL_IMAGE_PRELOAD:-0}" == "1" ]]; then
     echo "==> Skipping OTel operator image preload (--skip or SKIP_OTEL_IMAGE_PRELOAD=1)"
     return 0
   fi
-  command -v kind >/dev/null 2>&1 || return 0
   command -v docker >/dev/null 2>&1 || return 0
 
-  local kind_cluster
-  kind_cluster="$(_kind_cluster_name)"
-  if [[ -z "$kind_cluster" ]]; then
-    return 0
-  fi
-  if ! kind get nodes --name "$kind_cluster" >/dev/null 2>&1; then
-    echo "WARN: Kind cluster '${kind_cluster}' has no nodes; skipping image preload (set KIND_CLUSTER=...)" >&2
-    return 0
-  fi
+  local ctx repo docker_sh
+  ctx=$(kubectl config current-context 2>/dev/null || true)
 
-  local repo docker_sh
   repo="$(_otel_bootstrap_repo)"
   docker_sh="$repo/testing/scripts/lib/docker.sh"
 
-  echo "==> Preload OTel operator images into Kind (${kind_cluster})"
+  echo "==> Preload OTel operator images (context=${ctx:-<unknown>})"
   echo "    ${OTEL_OPERATOR_IMAGE}"
   echo "    ${KUBE_RBAC_PROXY_IMAGE} (pull ${KUBE_RBAC_PROXY_PULL_IMAGE})"
   bash "$docker_sh" pull "$OTEL_OPERATOR_IMAGE"
@@ -70,15 +61,45 @@ load_otel_operator_images_into_kind() {
   if [[ "$KUBE_RBAC_PROXY_PULL_IMAGE" != "$KUBE_RBAC_PROXY_IMAGE" ]]; then
     docker tag "$KUBE_RBAC_PROXY_PULL_IMAGE" "$KUBE_RBAC_PROXY_IMAGE"
   fi
-  kind load docker-image "$OTEL_OPERATOR_IMAGE" --name "$kind_cluster"
-  kind load docker-image "$KUBE_RBAC_PROXY_IMAGE" --name "$kind_cluster"
+
+  if [[ "$ctx" == minikube ]]; then
+    if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
+      # shellcheck source=testing/scripts/lib/cluster-minikube.sh
+      load_minikube_images "$OTEL_OPERATOR_IMAGE" "$KUBE_RBAC_PROXY_IMAGE"
+    else
+      echo "    images loaded into Minikube docker (eval minikube docker-env must be active)"
+    fi
+    return 0
+  fi
+
+  if [[ "$ctx" == kind-* ]]; then
+    command -v kind >/dev/null 2>&1 || return 0
+    local kind_cluster="${ctx#kind-}"
+    if [[ -n "${KIND_CLUSTER:-}" ]]; then
+      kind_cluster="$KIND_CLUSTER"
+    fi
+    if ! kind get nodes --name "$kind_cluster" >/dev/null 2>&1; then
+      echo "WARN: Kind cluster '${kind_cluster}' has no nodes; skipping kind load (set KIND_CLUSTER=...)" >&2
+      return 0
+    fi
+    kind load docker-image "$OTEL_OPERATOR_IMAGE" --name "$kind_cluster"
+    kind load docker-image "$KUBE_RBAC_PROXY_IMAGE" --name "$kind_cluster"
+    return 0
+  fi
+
+  echo "WARN: unknown kubectl context '${ctx}'; OTel images pulled to host docker only" >&2
+}
+
+# ponytail: alias for callers not yet updated
+load_otel_operator_images_into_kind() {
+  load_otel_operator_images
 }
 
 recover_otel_operator_image_pull() {
   if kubectl get pods -n opentelemetry-operator-system --no-headers 2>/dev/null \
     | grep -q 'ImagePullBackOff\|ErrImagePull'; then
     echo "==> Detected ImagePullBackOff — loading images into Kind and restarting operator"
-    load_otel_operator_images_into_kind
+    load_otel_operator_images
     kubectl rollout restart deployment/opentelemetry-operator-controller-manager \
       -n opentelemetry-operator-system >/dev/null 2>&1 || true
     kubectl rollout status deployment/opentelemetry-operator-controller-manager \
@@ -159,12 +180,21 @@ wait_otel_operator_deployment() {
         image_pull_recovery=1
         continue
       fi
-      echo "ERROR: OTel operator pod still cannot pull images (Kind nodes may not reach ghcr.io/gcr.io)." >&2
+      echo "ERROR: OTel operator pod still cannot pull images." >&2
       echo "       Preload manually, then restart the deployment:" >&2
-      echo "         docker pull ${OTEL_OPERATOR_IMAGE}" >&2
-      echo "         docker pull ${KUBE_RBAC_PROXY_IMAGE}" >&2
-      echo "         kind load docker-image ${OTEL_OPERATOR_IMAGE} --name \${KIND_CLUSTER}" >&2
-      echo "         kind load docker-image ${KUBE_RBAC_PROXY_IMAGE} --name \${KIND_CLUSTER}" >&2
+      local ctx_hint
+      ctx_hint=$(kubectl config current-context 2>/dev/null || true)
+      if [[ "$ctx_hint" == minikube ]]; then
+        echo "         eval \$(minikube docker-env)" >&2
+        echo "         docker pull ${OTEL_OPERATOR_IMAGE}" >&2
+        echo "         docker pull ${KUBE_RBAC_PROXY_PULL_IMAGE}" >&2
+        echo "         docker tag ${KUBE_RBAC_PROXY_PULL_IMAGE} ${KUBE_RBAC_PROXY_IMAGE}" >&2
+      else
+        echo "         docker pull ${OTEL_OPERATOR_IMAGE}" >&2
+        echo "         docker pull ${KUBE_RBAC_PROXY_IMAGE}" >&2
+        echo "         kind load docker-image ${OTEL_OPERATOR_IMAGE} --name \${KIND_CLUSTER}" >&2
+        echo "         kind load docker-image ${KUBE_RBAC_PROXY_IMAGE} --name \${KIND_CLUSTER}" >&2
+      fi
       echo "         kubectl rollout restart deployment/opentelemetry-operator-controller-manager -n opentelemetry-operator-system" >&2
       kubectl describe pod -n opentelemetry-operator-system -l app.kubernetes.io/name=opentelemetry-operator 2>&1 | tail -25 >&2 || true
       return 1
@@ -190,7 +220,7 @@ install_otel_operator() {
   fi
 
   echo "==> Install OpenTelemetry Operator (${OTEL_OPERATOR_VERSION})"
-  load_otel_operator_images_into_kind
+  load_otel_operator_images
   kubectl apply -f "$OTEL_OPERATOR_MANIFEST"
 
   wait_otel_serving_certificate

@@ -19,6 +19,7 @@ const (
 	envEgressRelayRabbitMQImage = "EGRESS_RELAY_RABBITMQ_IMAGE"
 	envSiphonImage              = "SIPHON_IMAGE"
 	envRecorderImage            = "RECORDER_IMAGE"
+	envNetObservImage           = "NETOBSERV_EBPF_AGENT_IMAGE"
 )
 
 func monarchImageTagSuffix() string {

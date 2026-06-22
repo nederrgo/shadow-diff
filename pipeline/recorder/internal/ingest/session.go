@@ -12,30 +12,11 @@ import (
 	"github.com/shadow-diff/recorder/internal/parse"
 )
 
-type pipeWriter struct {
-	w *io.PipeWriter
-}
-
-func (p *pipeWriter) write(b []byte) (int, error) {
-	if len(b) == 0 {
-		return 0, nil
-	}
-	return p.w.Write(b)
-}
-
-func (p *pipeWriter) close() {
-	if p.w != nil {
-		_ = p.w.Close()
-	}
-}
-
 type connSession struct {
 	connID       uint64
 	reqR         io.ReadCloser
 	resR         io.ReadCloser
-	reqW         *pipeWriter
-	resW         *pipeWriter
-	reqBuf       []byte // ponytail: buffer until response leg; io.Pipe Write blocks without reader
+	reqBuf       []byte
 	resBuf       []byte
 	paired       bool
 	hasReqBytes  bool
@@ -47,14 +28,14 @@ type connSession struct {
 
 // SessionStore tracks in-flight pairing per Siphon TCP connection.
 type SessionStore struct {
-	mu          sync.Mutex
-	sessions    map[uint64]*connSession
-	beru        *beru.Client
+	mu              sync.Mutex
+	sessions        map[uint64]*connSession
+	beru            *beru.Client
 	recordAndReplay []config.RecordAndReplayHost
-	pairTimeout time.Duration
-	maxFrame    int
-	nextConnID  uint64
-	stopSweeper chan struct{}
+	pairTimeout     time.Duration
+	maxFrame        int
+	nextConnID      uint64
+	stopSweeper     chan struct{}
 }
 
 // NewSessionStore creates a store with a background TTL sweeper.
@@ -63,12 +44,12 @@ func NewSessionStore(client *beru.Client, recordAndReplay []config.RecordAndRepl
 		maxFrame = DefaultMaxFrame
 	}
 	s := &SessionStore{
-		sessions:    make(map[uint64]*connSession),
-		beru:        client,
+		sessions:        make(map[uint64]*connSession),
+		beru:            client,
 		recordAndReplay: recordAndReplay,
-		pairTimeout: pairTimeout,
-		maxFrame:    maxFrame,
-		stopSweeper: make(chan struct{}),
+		pairTimeout:     pairTimeout,
+		maxFrame:        maxFrame,
+		stopSweeper:     make(chan struct{}),
 	}
 	go s.sweepLoop()
 	return s
@@ -121,71 +102,28 @@ func (s *SessionStore) RegisterConn() uint64 {
 	return id
 }
 
-// WriteFrame delivers payload bytes for direction R or S on connID.
+// WriteFrame buffers payload until FinishConn (Siphon TCP close).
 func (s *SessionStore) WriteFrame(connID uint64, dir byte, payload []byte) error {
+	if len(payload) == 0 {
+		return nil
+	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	sess, ok := s.sessions[connID]
-	if !ok {
-		s.mu.Unlock()
+	if !ok || sess.paired {
 		return nil
 	}
-
-	if dir == DirRequest {
-		if !sess.paired {
-			if len(payload) > 0 {
-				sess.reqBuf = append(sess.reqBuf, payload...)
-				if !sess.hasReqBytes {
-					sess.hasReqBytes = true
-					sess.reqFirstAt = time.Now()
-				}
-			}
-			start := sess.resAttached && sess.hasReqBytes
-			s.mu.Unlock()
-			if start {
-				return s.attachPipesAndParser(connID)
-			}
-			return nil
+	switch dir {
+	case DirRequest:
+		sess.reqBuf = append(sess.reqBuf, payload...)
+		if !sess.hasReqBytes {
+			sess.hasReqBytes = true
+			sess.reqFirstAt = time.Now()
 		}
-		if sess.reqW == nil {
-			pr, pw := io.Pipe()
-			sess.reqR = pr
-			sess.reqW = &pipeWriter{w: pw}
-		}
-		w := sess.reqW
-		s.mu.Unlock()
-		if _, err := w.write(payload); err != nil {
-			return err
-		}
-		s.maybeStartParser(connID)
-		return nil
+	case DirResponse:
+		sess.resBuf = append(sess.resBuf, payload...)
+		sess.resAttached = true
 	}
-
-	if dir == DirResponse {
-		if !sess.paired {
-			sess.resBuf = append(sess.resBuf, payload...)
-			sess.resAttached = true
-			start := sess.hasReqBytes
-			s.mu.Unlock()
-			if start {
-				return s.attachPipesAndParser(connID)
-			}
-			return nil
-		}
-		if sess.resW == nil {
-			pr, pw := io.Pipe()
-			sess.resR = pr
-			sess.resW = &pipeWriter{w: pw}
-		}
-		w := sess.resW
-		s.mu.Unlock()
-		if _, err := w.write(payload); err != nil {
-			return err
-		}
-		s.maybeStartParser(connID)
-		return nil
-	}
-
-	s.mu.Unlock()
 	return nil
 }
 
@@ -196,16 +134,22 @@ func (s *SessionStore) attachPipesAndParser(connID uint64) error {
 		s.mu.Unlock()
 		return nil
 	}
+	if !sess.hasReqBytes || !sess.resAttached || len(sess.reqBuf) == 0 || len(sess.resBuf) == 0 {
+		s.mu.Unlock()
+		return nil
+	}
 	reqR, reqW := io.Pipe()
 	resR, resW := io.Pipe()
 	sess.reqR, sess.resR = reqR, resR
-	sess.reqW = &pipeWriter{w: reqW}
-	sess.resW = &pipeWriter{w: resW}
 	sess.paired = true
 	reqBuf := append([]byte(nil), sess.reqBuf...)
 	resBuf := append([]byte(nil), sess.resBuf...)
 	sess.reqBuf, sess.resBuf = nil, nil
 	s.mu.Unlock()
+
+	log.Printf("recorder debug: conn=%d pairing reqBuf=%d resBuf=%d reqPreview=%q resPreview=%q",
+		connID, len(reqBuf), len(resBuf),
+		payloadPreview(reqBuf, 120), payloadPreview(resBuf, 120))
 
 	go func() {
 		_, _ = reqW.Write(reqBuf)
@@ -213,33 +157,28 @@ func (s *SessionStore) attachPipesAndParser(connID uint64) error {
 	}()
 	go func() {
 		_, _ = resW.Write(resBuf)
-		// resW stays open for any follow-on S frames until FinishConn
+		_ = resW.Close()
 	}()
 
-	s.maybeStartParser(connID)
+	s.startParser(connID, reqR, resR)
 	return nil
 }
 
-func (s *SessionStore) maybeStartParser(connID uint64) {
+func (s *SessionStore) startParser(connID uint64, reqR, resR io.ReadCloser) {
 	s.mu.Lock()
 	sess, ok := s.sessions[connID]
 	if !ok || sess.parserCancel != nil {
 		s.mu.Unlock()
 		return
 	}
-	if sess.reqR == nil || sess.resR == nil {
-		s.mu.Unlock()
-		return
-	}
-	reqR, resR := sess.reqR, sess.resR
 	ctx, cancel := context.WithCancel(context.Background())
 	sess.parserCancel = cancel
 	sess.parserDone = make(chan struct{})
 	ds := s.recordAndReplay
 	client := s.beru
+	done := sess.parserDone
 	s.mu.Unlock()
 
-	done := sess.parserDone
 	go func() {
 		parse.RunBidirectional(ctx, reqR, resR, ds, client)
 		close(done)
@@ -247,7 +186,7 @@ func (s *SessionStore) maybeStartParser(connID uint64) {
 	}()
 }
 
-// FinishConn closes pipe writers when the TCP connection ends cleanly.
+// FinishConn flushes buffered frames and starts the parser when both legs arrived.
 func (s *SessionStore) FinishConn(connID uint64) {
 	s.mu.Lock()
 	sess, ok := s.sessions[connID]
@@ -255,16 +194,13 @@ func (s *SessionStore) FinishConn(connID uint64) {
 		s.mu.Unlock()
 		return
 	}
-	if sess.reqW != nil {
-		sess.reqW.close()
-	}
-	if sess.resW != nil {
-		sess.resW.close()
-	}
-	if sess.parserCancel != nil {
-		sess.parserCancel()
-	}
+	ready := !sess.paired && sess.hasReqBytes && sess.resAttached && len(sess.reqBuf) > 0 && len(sess.resBuf) > 0
 	s.mu.Unlock()
+	if ready {
+		_ = s.attachPipesAndParser(connID)
+		return
+	}
+	s.DiscardConn(connID)
 }
 
 // DiscardConn tears down incomplete pairs for a connection (EOF, reset, bad frame).
@@ -278,12 +214,6 @@ func (s *SessionStore) DiscardConn(connID uint64) {
 	delete(s.sessions, connID)
 	if sess.parserCancel != nil {
 		sess.parserCancel()
-	}
-	if sess.reqW != nil {
-		sess.reqW.close()
-	}
-	if sess.resW != nil {
-		sess.resW.close()
 	}
 	if sess.reqR != nil {
 		_ = sess.reqR.Close()

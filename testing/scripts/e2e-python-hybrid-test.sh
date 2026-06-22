@@ -213,8 +213,9 @@ kubectl rollout status "deployment/${SHADOWTEST}-igris-rabbitmq" -n "$SHADOW_NS"
 echo "==> Arm Siphon before prod traffic (config + BPF)"
 nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
 wait_siphon_configured 1
-echo "==> Warming up Siphon BPF filters..."
-sleep 5
+refresh_netobserv_hooks "default" "app=python-prod-worker"
+wait_siphon_pcap_stack
+ensure_netobserv_exports_to_collector
 
 TRACE_HEX="$(openssl rand -hex 16)"
 SPAN_HEX="$(openssl rand -hex 8)"

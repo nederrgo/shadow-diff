@@ -26,9 +26,9 @@ func main() {
 		apiAddr = ":8080"
 	}
 
-	ifaceEnv := os.Getenv("SIPHON_INTERFACE")
-	if ifaceEnv == "" {
-		ifaceEnv = "any"
+	pcapAddr := os.Getenv("SIPHON_PCAP_ADDR")
+	if pcapAddr == "" {
+		pcapAddr = "127.0.0.1:9990"
 	}
 
 	ttl := 5 * time.Minute
@@ -67,9 +67,14 @@ func main() {
 	egressStore := egress.NewSessionStore(poolMgr)
 	factory := assembly.NewStreamFactory(cfgMgr, poolMgr, egressStore, &requestsForwarded)
 	capMgr := capture.NewCaptureManager(cfgMgr, sessionMap, factory)
+	factory.SetEgressCaptureSummary(capture.LogEgressCaptureSummary)
+
+	if err := capMgr.Start(pcapAddr); err != nil {
+		log.Fatalf("gRPC collector failed: %v", err)
+	}
 
 	// 3. Start Control API Server
-	server := api.NewServer(apiAddr, cfgMgr, sessionMap, capMgr, &requestsForwarded, ifaceEnv)
+	server := api.NewServer(apiAddr, cfgMgr, sessionMap, capMgr, &requestsForwarded, pcapAddr)
 
 	go func() {
 		if err := server.Start(); err != nil {

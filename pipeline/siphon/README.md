@@ -1,6 +1,6 @@
 # Siphon
 
-**Siphon** is the **L1 — capture** agent for Shadow-Diff on **HTTP/TCP ingress** ShadowTests. It runs on Kubernetes nodes as a **DaemonSet**, uses **classic BPF + TCP reassembly** to mirror production traffic, and forwards bytes to **Igris (L2)** for ingress replay and optionally to **Recorder (L4b)** for prod egress auto-record.
+**Siphon** is the **L1 — capture** agent for Shadow-Diff on **HTTP/TCP ingress** ShadowTests. It runs on Kubernetes nodes as a **DaemonSet** (co-located with the **NetObserv eBPF agent**), receives packets via a **gRPC Collector** on `127.0.0.1:9990`, performs **TCP reassembly**, and forwards bytes to **Igris (L2)** for ingress replay and optionally to **Recorder (L4b)** for prod egress auto-record.
 
 Siphon does **not** participate in **RabbitMQ ingress** — AMQP capture uses broker-native routing (Monarch binds a prod shadow queue; see [igris-rabbitmq](../igrises/igris-rabbitmq/)). Synthetic HTTP tests can skip Siphon and send traffic directly to Igris.
 
@@ -11,13 +11,13 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 ## Role in the pipeline
 
 ```
-                    ┌─────────────────────────────────────┐
-  Prod pod          │  Siphon (hostNetwork DaemonSet)      │
-  inbound TCP  ────►│  BPF filter → TCP reassembly         │
-                    │       │                              │
-                    │       ├─ ingress ──► Igris (L2)      │
-                    │       └─ egress ───► Recorder (L4b)  │
-                    └─────────────────────────────────────┘
+                    ┌──────────────────────────────────────────────┐
+  Prod pod          │  siphon-agent pod (hostNetwork)               │
+  traffic    ────►  │  NetObserv eBPF → gRPC Collector :9990 → Siphon │
+                    │       │                                       │
+                    │       ├─ ingress ──► Igris (L2)               │
+                    │       └─ egress ───► Recorder (L4b)           │
+                    └──────────────────────────────────────────────┘
 ```
 
 | Path | Trigger | Destination | Purpose |
@@ -39,7 +39,7 @@ Monarch merges all Ready ShadowTests and **POSTs** JSON to each agent:
 POST http://<node-hostIP>:8080/v1/config
 ```
 
-Per-target fields include prod pod IPs, target ports, Igris host, listener drivers (`http_request` / `tcp_stream`), optional `recordAndReplay`, and `recorder_host`. On first valid config, Siphon starts **afpacket** capture, compiles a **BPF filter** for target IPs/ports, and attaches it to node interfaces.
+Per-target fields include prod pod IPs, target ports, Igris host, listener drivers (`http_request` / `tcp_stream`), optional `recordAndReplay`, and `recorder_host`. On first valid config, Siphon starts the **gRPC Collector** on `127.0.0.1:9990` and applies **user-space flow filters** from the target list (the co-located NetObserv agent sends `Collector.Send` RPCs with PCAP-framed payloads).
 
 Global **`sample_rate`** (0–100) controls what fraction of **new TCP flows** are forwarded (sticky per 4-tuple).
 
@@ -81,8 +81,8 @@ siphon/
   cmd/siphon/              main entrypoint
   internal/
     api/                   HTTP control plane (/v1/config, /v1/status)
-    config/                target maps, BPF filter inputs, egress rules
-    capture/               afpacket loops, BPF attach, TCP assembler
+    config/                target maps, capture filter inputs, egress rules
+    capture/               gRPC Collector (NetObserv), PCAP record decode, TCP assembler
     assembly/              stream factory — ingress dial Igris, egress pipes
     egress/                session pairing + relay to Recorder
     forward/               connection pools to Igris and Recorder
@@ -96,7 +96,7 @@ siphon/
 
 ## Build and test
 
-Siphon requires **CGO** (afpacket/BPF):
+Pure Go build (`CGO_ENABLED=0`).
 
 From the repo root:
 
@@ -123,7 +123,7 @@ make docker-build SIPHON_IMG=siphon:dev
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `SIPHON_API_ADDR` | `:8080` | Control API listen address |
-| `SIPHON_INTERFACE` | `any` | Capture interface (`any` auto-selects cni0, eth0, veth*, etc.) |
+| `SIPHON_PCAP_ADDR` | `127.0.0.1:9990` | gRPC Collector listen address (NetObserv `TARGET_HOST`/`TARGET_PORT`) |
 | `SIPHON_SESSION_TTL` | `5m` | Flow sampling session TTL |
 | `SIPHON_SESSION_MAX` | `100000` | Max tracked flows |
 | `SIPHON_IGRIS_MAX_CONNS` | `512` | Max pooled connections per Igris destination |

@@ -391,7 +391,7 @@ Injected into every shadow pod. **Ingress listener:** observes app responses, fo
 | Shadow proxy | Envoy, `ext_proc`, ConfigMaps from Monarch |
 | Auto-instrumentation | OpenTelemetry Operator, language SDK agents, OTLP |
 | Analysis | Go, gRPC, Beru OTLP + HTTP mock store |
-| Capture | Go, classic BPF (`gopacket/afpacket`), TCP reassembly |
+| Capture | Go, NetObserv gRPC Collector + TCP reassembly |
 | Egress parse | Recorder — framed TCP ingest, HTTP parse |
 
 ---

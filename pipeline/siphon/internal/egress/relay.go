@@ -3,7 +3,6 @@ package egress
 import (
 	"context"
 	"encoding/binary"
-	"io"
 	"log"
 	"net"
 	"sync"
@@ -19,9 +18,7 @@ const (
 	maxFrameBytes   = 5 << 20
 )
 
-// runRelay dials Recorder and copies both pipe legs as length-prefixed frames.
-// Both reqR and resR are allocated at session init; streamFrames block on the
-// pipe readers until the assembler delivers bytes.
+// runRelay dials Recorder and sends both legs as length-prefixed frames.
 func runRelay(sess *Session, poolMgr *forward.PoolManager) {
 	defer sess.clearRelayRunning()
 
@@ -31,10 +28,9 @@ func runRelay(sess *Session, poolMgr *forward.PoolManager) {
 		return
 	}
 
-	reqR := sess.reqR
-	resR := sess.resR
-	if reqR == nil || resR == nil {
-		log.Printf("egress relay: missing pipe legs for flow %s", sess.flowKey)
+	reqPayload, resPayload := sess.snapshotPayloads()
+	if len(reqPayload) == 0 && len(resPayload) == 0 {
+		log.Printf("egress relay: empty payloads for flow %s", sess.flowKey)
 		return
 	}
 
@@ -49,45 +45,31 @@ func runRelay(sess *Session, poolMgr *forward.PoolManager) {
 		return
 	}
 	defer func() { _ = conn.Close() }()
-	log.Printf("siphon debug: egress relay connected flow=%s dest=%s", sess.flowKey, dest)
+	log.Printf("siphon debug: egress relay connected flow=%s dest=%s req=%d res=%d bytes",
+		sess.flowKey, dest, len(reqPayload), len(resPayload))
 
-	var wg sync.WaitGroup
 	var writeMu sync.Mutex
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		streamFrames(&writeMu, conn, reqR, dirRequest, sess.flowKey)
-	}()
-	go func() {
-		defer wg.Done()
-		streamFrames(&writeMu, conn, resR, dirResponse, sess.flowKey)
-	}()
-	wg.Wait()
+	sendFrame(&writeMu, conn, dirRequest, reqPayload, sess.flowKey)
+	sendFrame(&writeMu, conn, dirResponse, resPayload, sess.flowKey)
+	sess.clearPayloads()
+	sess.resetForKeepAlive()
 }
 
-func streamFrames(writeMu *sync.Mutex, conn net.Conn, r io.ReadCloser, dir byte, flowKey string) {
-	buf := make([]byte, 32*1024)
-	var logged sync.Once
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			logged.Do(func() {
-				dirName := "response"
-				if dir == dirRequest {
-					dirName = "request"
-				}
-				log.Printf("siphon debug: egress relay frame flow=%s dir=%s nbytes=%d", flowKey, dirName, n)
-			})
-			writeMu.Lock()
-			werr := writeFrame(conn, dir, buf[:n])
-			writeMu.Unlock()
-			if werr != nil {
-				return
-			}
-		}
-		if err != nil {
-			return
-		}
+func sendFrame(writeMu *sync.Mutex, conn net.Conn, dir byte, payload []byte, flowKey string) {
+	if len(payload) == 0 {
+		return
+	}
+	dirName := "response"
+	if dir == dirRequest {
+		dirName = "request"
+	}
+	log.Printf("siphon debug: egress relay frame flow=%s dir=%s nbytes=%d preview=%q",
+		flowKey, dirName, len(payload), relayPayloadPreview(payload, 160))
+	writeMu.Lock()
+	werr := writeFrame(conn, dir, payload)
+	writeMu.Unlock()
+	if werr != nil {
+		log.Printf("egress relay: write frame flow=%s dir=%s: %v", flowKey, dirName, werr)
 	}
 }
 

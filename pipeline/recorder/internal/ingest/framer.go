@@ -13,7 +13,7 @@ func HandleConn(conn net.Conn, store *SessionStore, connID uint64) {
 	defer func() { _ = conn.Close() }()
 
 	header := make([]byte, FrameHeaderSize)
-	var loggedFirst sync.Once
+	var logReq, logRes sync.Once
 	for {
 		_, err := io.ReadFull(conn, header)
 		if err != nil {
@@ -55,12 +55,16 @@ func HandleConn(conn net.Conn, store *SessionStore, connID uint64) {
 			store.DiscardConn(connID)
 			return
 		}
-		loggedFirst.Do(func() {
-			dirName := "response"
-			if dir == DirRequest {
-				dirName = "request"
-			}
-			log.Printf("recorder debug: conn=%d first frame dir=%s len=%d", connID, dirName, len(payload))
-		})
+		if dir == DirRequest {
+			logReq.Do(func() {
+				log.Printf("recorder debug: conn=%d first request frame len=%d preview=%q",
+					connID, len(payload), payloadPreview(payload, 160))
+			})
+		} else {
+			logRes.Do(func() {
+				log.Printf("recorder debug: conn=%d first response frame len=%d preview=%q",
+					connID, len(payload), payloadPreview(payload, 160))
+			})
+		}
 	}
 }

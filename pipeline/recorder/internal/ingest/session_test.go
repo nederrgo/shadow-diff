@@ -38,6 +38,6 @@ func TestSessionStore_orphanResponseBufferedUntilRequest(t *testing.T) {
 	if err := store.WriteFrame(connID, DirRequest, req); err != nil {
 		t.Fatal(err)
 	}
-	// ponytail: paired after R arrives; parser may fail on fake Beru URL — session lifecycle only
+	store.FinishConn(connID)
 	time.Sleep(50 * time.Millisecond)
 }

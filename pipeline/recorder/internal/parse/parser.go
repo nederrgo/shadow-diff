@@ -55,19 +55,22 @@ func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, recordAndRe
 			continue
 		}
 
+		path := req.URL.Path
+		if path == "" {
+			path = "/"
+		}
+		log.Printf("recorder parser: matched request method=%s host=%q path=%s reqBodyLen=%d",
+			req.Method, NormalizeHTTPHost(host), path, len(reqBody))
+
 		resp, err := http.ReadResponse(resReader, req)
 		if err != nil {
-			log.Printf("recorder parser: ReadResponse error: %v", err)
+			peek, _ := resReader.Peek(120)
+			log.Printf("recorder parser: ReadResponse error: %v; resPeek=%q", err, parserPeek(peek))
 			return
 		}
 		respBody, _ := io.ReadAll(resp.Body)
 		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
-
-		path := req.URL.Path
-		if path == "" {
-			path = "/"
-		}
 
 		headers := make(map[string]string)
 		for k, vals := range resp.Header {

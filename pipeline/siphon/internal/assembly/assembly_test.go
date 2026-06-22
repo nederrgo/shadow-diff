@@ -25,7 +25,7 @@ func (m *mockStream) ReassemblyComplete() {}
 
 func TestCappedStream_discardsAfterMaxBytes(t *testing.T) {
 	inner := &mockStream{}
-	cap := newCappedStream(inner, "test-flow")
+	cap := newCappedStream(inner, "test-flow", nil)
 	cap.maxBytes = 100
 
 	cap.Reassembled([]tcpassembly.Reassembly{{Bytes: make([]byte, 60)}})

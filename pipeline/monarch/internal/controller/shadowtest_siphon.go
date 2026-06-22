@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -109,7 +110,7 @@ func siphonSampleRate(st *enginev1alpha1.ShadowTest) int {
 	return 100
 }
 
-func (r *ShadowTestReconciler) ensureSiphonDaemonSet(ctx context.Context, image string) error {
+func (r *ShadowTestReconciler) ensureSiphonDaemonSet(ctx context.Context, siphonImage, netObservImage string) error {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: siphonSystemNamespace}}
 	_, err := ctrl.CreateOrPatch(ctx, r.Client, ns, func() error {
 		if ns.Labels == nil {
@@ -127,6 +128,13 @@ func (r *ShadowTestReconciler) ensureSiphonDaemonSet(ctx context.Context, image 
 			ds.Labels = map[string]string{"app.kubernetes.io/name": siphonDaemonSetName}
 		}
 		ds.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": siphonDaemonSetName}}
+		maxUnavailable := intstr.FromInt(1)
+		ds.Spec.UpdateStrategy = appsv1.DaemonSetUpdateStrategy{
+			Type: appsv1.RollingUpdateDaemonSetStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDaemonSet{
+				MaxUnavailable: &maxUnavailable,
+			},
+		}
 		ds.Spec.Template.ObjectMeta.Labels = map[string]string{"app.kubernetes.io/name": siphonDaemonSetName}
 		ds.Spec.Template.Spec.HostNetwork = true
 		ds.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
@@ -134,9 +142,9 @@ func (r *ShadowTestReconciler) ensureSiphonDaemonSet(ctx context.Context, image 
 		runAsUser := int64(0)
 		runAsGroup := int64(0)
 		privEscalation := false
-		container := corev1.Container{
+		siphonContainer := corev1.Container{
 			Name:            "agent",
-			Image:           image,
+			Image:           siphonImage,
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			SecurityContext: &corev1.SecurityContext{
 				RunAsUser:                &runAsUser,
@@ -148,12 +156,19 @@ func (r *ShadowTestReconciler) ensureSiphonDaemonSet(ctx context.Context, image 
 				},
 			},
 			Env: []corev1.EnvVar{
-				{Name: "SIPHON_INTERFACE", Value: "any"},
+				{Name: envSiphonPCAPAddr, Value: siphonPCAPListenAddr},
 				{Name: "SIPHON_API_ADDR", Value: ":8080"},
 			},
 			Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: siphonAPIPort}},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: siphonCoordVolumeName, MountPath: "/var/run/siphon"},
+			},
 		}
-		ds.Spec.Template.Spec.Containers = []corev1.Container{container}
+		ds.Spec.Template.Spec.Containers = []corev1.Container{
+			siphonContainer,
+			netObservContainer(netObservImage),
+		}
+		ds.Spec.Template.Spec.Volumes = netObservPodVolumes()
 		ds.Spec.Template.Spec.Tolerations = []corev1.Toleration{{Operator: corev1.TolerationOpExists}}
 		return nil
 	})
@@ -291,14 +306,16 @@ func (r *ShadowTestReconciler) pushGlobalSiphonConfig(ctx context.Context, pendi
 	}
 	payload.Targets = targets
 
-	img := defaultSiphonImage()
+	siphonImg := defaultSiphonImage()
+	netObservImg := defaultNetObservImageResolved()
 	for i := range list.Items {
 		if siphonEnabled(&list.Items[i], nil) && list.Items[i].Status.Phase == "Ready" {
-			img = siphonImageFor(&list.Items[i])
+			siphonImg = siphonImageFor(&list.Items[i])
+			netObservImg = netObservImageFor(&list.Items[i])
 			break
 		}
 	}
-	if err := r.ensureSiphonDaemonSet(ctx, img); err != nil {
+	if err := r.ensureSiphonDaemonSet(ctx, siphonImg, netObservImg); err != nil {
 		return "Degraded", err
 	}
 
@@ -372,7 +389,7 @@ func (r *ShadowTestReconciler) reconcileSiphonCapture(
 	if !siphonEnabled(st, target) {
 		return nil, "Disabled", nil
 	}
-	if err := r.ensureSiphonDaemonSet(ctx, siphonImageFor(st)); err != nil {
+	if err := r.ensureSiphonDaemonSet(ctx, siphonImageFor(st), netObservImageFor(st)); err != nil {
 		return nil, "Degraded", err
 	}
 	ips, err := r.listTargetPodIPs(ctx, target)

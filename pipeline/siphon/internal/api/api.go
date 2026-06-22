@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"sync/atomic"
-	"time"
 
 	"github.com/shadow-diff/siphon/internal/capture"
 	"github.com/shadow-diff/siphon/internal/config"
@@ -18,17 +17,17 @@ type Server struct {
 	sessionMap   *session.SessionMap
 	capMgr       *capture.CaptureManager
 	forwardCount *uint64
-	interfaceEnv string
+	pcapAddr     string
 }
 
-func NewServer(addr string, cfgMgr *config.Manager, sessionMap *session.SessionMap, capMgr *capture.CaptureManager, forwardCount *uint64, interfaceEnv string) *Server {
+func NewServer(addr string, cfgMgr *config.Manager, sessionMap *session.SessionMap, capMgr *capture.CaptureManager, forwardCount *uint64, pcapAddr string) *Server {
 	return &Server{
 		addr:         addr,
 		cfgMgr:       cfgMgr,
 		sessionMap:   sessionMap,
 		capMgr:       capMgr,
 		forwardCount: forwardCount,
-		interfaceEnv: interfaceEnv,
+		pcapAddr:     pcapAddr,
 	}
 }
 
@@ -61,25 +60,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("Received configuration update: %d targets", len(payload.Targets))
 
-	// Dynamically start capturing when first valid config is received
 	if s.cfgMgr.HasAnyTargets() {
-		if err := s.capMgr.Start(s.interfaceEnv); err != nil {
+		if err := s.capMgr.Start(s.pcapAddr); err != nil {
 			log.Printf("Error starting capture: %v", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
-		// Handles may not be registered yet; retry BPF attach after capture loops start.
-		var applyErr error
-		for attempt := 0; attempt < 25; attempt++ {
-			applyErr = s.capMgr.ApplyBPFFilter()
-			if applyErr == nil {
-				break
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-		if applyErr != nil {
-			log.Printf("Error applying BPF filter to interfaces: %v", applyErr)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -96,7 +79,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ifaces, frames, packets := s.capMgr.Status()
+	pcapAddr, frames, packets := s.capMgr.Status()
 	activeSessions := s.sessionMap.ActiveCount()
 	cfg := s.cfgMgr.GetConfig()
 	targetsCount := len(cfg.Targets)
@@ -112,14 +95,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := map[string]interface{}{
-		"interfaces":           ifaces,
-		"frames_read":          frames,
-		"packets":              packets,
-		"requests_forwarded":   atomic.LoadUint64(s.forwardCount),
-		"sample_rate":          sampleRate,
-		"active_sessions":      activeSessions,
-		"targets_count":        targetsCount,
-		"record_and_replay_count": recordAndReplayCount,
+		"pcap_listen_addr":         pcapAddr,
+		"frames_read":              frames,
+		"packets":                  packets,
+		"requests_forwarded":       atomic.LoadUint64(s.forwardCount),
+		"sample_rate":              sampleRate,
+		"active_sessions":          activeSessions,
+		"targets_count":            targetsCount,
+		"record_and_replay_count":  recordAndReplayCount,
 		"recorder_host_configured": recorderHostConfigured,
 	}
 

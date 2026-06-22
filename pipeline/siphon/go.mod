@@ -2,9 +2,16 @@ module github.com/shadow-diff/siphon
 
 go 1.25.7
 
-require github.com/google/gopacket v1.1.19
+require (
+	github.com/golang/protobuf v1.5.4
+	github.com/google/gopacket v1.1.19
+	google.golang.org/grpc v1.81.1
+	google.golang.org/protobuf v1.36.11
+)
 
 require (
-	golang.org/x/net v0.0.0-20190620200207-3b0461eec859 // indirect
-	golang.org/x/sys v0.0.0-20190412213103-97732733099d // indirect
+	golang.org/x/net v0.51.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 )

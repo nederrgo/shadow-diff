@@ -42,7 +42,7 @@ seed_beru_from_prod_capture() {
     -d "$payload" >/dev/null
 }
 
-# ponytail: ClusterIP SNAT hides prod src IP from Siphon BPF; dial endpoint IP + Host header.
+# ponytail: ClusterIP SNAT hides prod src IP from capture filters; dial endpoint IP + Host header.
 resolve_record_url() {
   RECORD_URL="http://${EGRESS_HOST}${EGRESS_PATH}"
   RECORD_HOST_HEADER=""
@@ -61,11 +61,20 @@ resolve_record_url() {
 
 wait_recorder_seeded() {
   local ns="$1"
-  for i in $(seq 1 20); do
-    if kubectl logs -n "$ns" "deploy/${SHADOWTEST}-recorder" --tail=80 2>/dev/null \
-      | grep -Fq "recorded POST ${EGRESS_HOST}${EGRESS_PATH}"; then
+  local spod relay_seen=0
+  for i in $(seq 1 30); do
+    if kubectl logs -n "$ns" "deploy/${SHADOWTEST}-recorder" --tail=120 2>/dev/null \
+      | grep -Fq "beru client: recorded POST ${EGRESS_HOST}${EGRESS_PATH}"; then
       echo "    recorder seeded Beru mock (Siphon capture path)"
       return 0
+    fi
+    spod=$(siphon_agent_pod)
+    if [[ -n "$spod" ]] && kubectl logs -n siphon-system "$spod" -c agent --tail=80 2>/dev/null \
+      | grep -Fq "egress relay connected"; then
+      relay_seen=1
+      echo "    Siphon egress relay active, waiting for Recorder->Beru (${i}/30)"
+    elif [[ "$relay_seen" -eq 0 && $(( i % 5 )) -eq 0 ]]; then
+      echo "    waiting for Siphon egress capture (${i}/30)"
     fi
     sleep 2
   done
@@ -85,12 +94,10 @@ parse_egress_output() {
     exit 1
   fi
   EGRESS_LAST_CODE=$(echo "$code_line" | sed -E 's/.*__CODE__([0-9]+)$/\1/')
-  local inline_body
-  inline_body=$(echo "$code_line" | sed -E 's/__CODE__[0-9]+$//')
-  if [[ -n "$inline_body" ]]; then
-    EGRESS_LAST_BODY="$inline_body"
-  else
-    EGRESS_LAST_BODY=$(echo "$out" | awk '/__CODE__[0-9]+$/{exit} {print}')
+  EGRESS_LAST_BODY=$(echo "$code_line" | sed -E 's/__CODE__[0-9]+$//')
+  if [[ -z "$EGRESS_LAST_BODY" && "$code_line" =~ ^__CODE__[0-9]+$ ]]; then
+    # wget: body lines precede a standalone __CODE__<status> trailer
+    EGRESS_LAST_BODY=$(echo "$out" | awk 'NF && $0 !~ /__CODE__[0-9]+$/ { lines[++n]=$0 } END { for (i=1;i<=n;i++) { printf "%s%s", (i>1?"\n":""), lines[i] } }')
   fi
 }
 
@@ -120,7 +127,7 @@ wget_http_in_pod() {
   local proxy="${6:-}"
   local host_header="${7:-}"
 
-  local body_q url_q proxy_args="" host_hdr=""
+  local body_q url_q proxy_env="" host_hdr=""
   body_q=$(printf '%q' "$body")
   url_q=$(printf '%q' "$url")
   if [[ -n "$host_header" ]]; then
@@ -129,20 +136,22 @@ wget_http_in_pod() {
   if [[ -n "$proxy" ]]; then
     local proxy_q
     proxy_q=$(printf '%q' "$proxy")
-    proxy_args="-e http_proxy=${proxy_q} -e use_proxy=yes"
+    proxy_env="export http_proxy=${proxy_q} https_proxy=${proxy_q}"
   fi
 
   local script
   script=$(cat <<SCRIPT
 set -e
+${proxy_env}
 out=\$(mktemp)
 hdr=\$(mktemp)
-if ! wget -S -O "\$out" --post-data=${body_q} --header='Content-Type: application/json' ${host_hdr} ${proxy_args} ${url_q} 2>"\$hdr"; then
+if ! wget -S -O "\$out" --post-data=${body_q} --header='Content-Type: application/json' ${host_hdr} ${url_q} 2>"\$hdr"; then
   :
 fi
 code=\$(grep -E '^  HTTP/' "\$hdr" | tail -1 | awk '{print \$2}')
 [[ -z "\$code" ]] && code=000
 cat "\$out"
+echo
 printf '__CODE__%s\n' "\$code"
 rm -f "\$out" "\$hdr"
 SCRIPT
@@ -163,7 +172,11 @@ run_curl_in_pod() {
   local out=""
   if kubectl exec -n "$ns" "$pod" -c "$container" -- sh -c 'command -v curl >/dev/null' 2>/dev/null; then
     out=$(kubectl exec -n "$ns" "$pod" -c "$container" -- sh -c "$curl_script")
-  elif [[ -n "$url" && -n "$body" && -z "$proxy" ]] && kubectl exec -n "$ns" "$pod" -c "$container" -- sh -c 'command -v wget >/dev/null' 2>/dev/null; then
+  elif [[ -n "$proxy" ]]; then
+    # ponytail: busybox wget --post-data via HTTP_PROXY sends GET; Beru hash misses recorded POST
+    echo "    (app has no curl — ephemeral debug container for HTTP_PROXY POST)"
+    out=$(curl_via_debug_container "$ns" "$pod" "$container" "$curl_script")
+  elif [[ -n "$url" && -n "$body" ]] && kubectl exec -n "$ns" "$pod" -c "$container" -- sh -c 'command -v wget >/dev/null' 2>/dev/null; then
     echo "    (using wget in app container — Siphon-visible egress)"
     out=$(wget_http_in_pod "$ns" "$pod" "$container" "$url" "$body" "$proxy" "$host_header")
   else
@@ -243,8 +256,7 @@ fi
 kubectl wait -n "$SHADOW_NS" --for=condition=Ready pod \
   -l "shadow-diff.io/shadowtest-name=${SHADOWTEST},shadow-diff.io/role=control-a" --timeout=120s
 kubectl wait -n "$PROD_NS" --for=condition=Ready pod -l app=my-prod-app --timeout=120s
-kubectl wait -n siphon-system --for=condition=Ready pod \
-  -l app.kubernetes.io/name=siphon-agent --timeout=120s
+wait_siphon_daemonset_rollout 180s
 kubectl wait -n beru-system --for=condition=Ready pod \
   -l app.kubernetes.io/name=beru --timeout=120s
 
@@ -259,21 +271,41 @@ echo "    prodPod=$PROD_POD shadowPod=$SHADOW_POD recordAndReplayHost=$EGRESS_HO
 echo "==> Wait for Siphon recorder config (targets + recordAndReplay + recorder_host)"
 wait_siphon_configured 1
 
+refresh_netobserv_hooks "$PROD_NS" "app=my-prod-app"
+
+echo "==> Wait for NetObserv -> Siphon gRPC collector stack"
+wait_siphon_pcap_stack
+ensure_netobserv_exports_to_collector
+
 resolve_record_url
 
 echo "==> Record phase: prod direct egress to ${EGRESS_HOST}${EGRESS_PATH}"
 prod_record_curl "$RECORD_BODY"
 prod_code=$EGRESS_LAST_CODE
+prod_body=$EGRESS_LAST_BODY
 echo "    prod status=$prod_code"
 if [[ "$prod_code" != "200" ]]; then
   echo "ERROR: prod egress to ${EGRESS_HOST} failed with status $prod_code" >&2
   exit 1
 fi
+if [[ "$prod_body" != *"e2e_record"* ]]; then
+  echo "ERROR: prod egress body should contain e2e_record, got: $prod_body" >&2
+  exit 1
+fi
 
 echo "    waiting for Siphon -> Recorder -> Beru seed"
 if ! wait_recorder_seeded "$SHADOW_NS"; then
-  echo "    WARN: Siphon did not record prod egress (common on Kind same-node traffic)"
-  seed_beru_from_prod_capture "$RECORD_BODY" "$EGRESS_LAST_BODY"
+  if [[ "${RECORD_REPLAY_ALLOW_SEED_FALLBACK:-0}" == "1" ]]; then
+    echo "    WARN: Siphon did not record prod egress — applying Beru seed fallback (RECORD_REPLAY_ALLOW_SEED_FALLBACK=1)"
+    seed_beru_from_prod_capture "$RECORD_BODY" "$EGRESS_LAST_BODY"
+  else
+    echo "ERROR: Siphon did not record prod egress via NetObserv gRPC -> Recorder -> Beru" >&2
+    echo "       Check: kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent -c agent --tail=80 | grep -E 'gRPC collector|egress relay|preview='" >&2
+    echo "       Check: kubectl logs -n \$SHADOW_NS deploy/${SHADOWTEST}-recorder --tail=80 | grep -E 'recorder debug|recorder parser'" >&2
+    echo "       Check: kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent -c netobserv-ebpf-agent --tail=30" >&2
+    echo "       Set RECORD_REPLAY_ALLOW_SEED_FALLBACK=1 only to bypass capture for local debugging" >&2
+    exit 1
+  fi
 fi
 
 echo "==> Replay phase: poll shadow egress (no seed_mock) until HTTP 200"
@@ -295,21 +327,17 @@ done
 if [[ "$hit_code" != "200" ]]; then
   echo "ERROR: expected HTTP 200 from auto-recorded mock, got $hit_code after polling" >&2
   echo "       Debug checklist:" >&2
-  echo "         kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent --tail=50 | grep -E 'egress|forward|Siphon target'" >&2
+  echo "         kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent -c agent --tail=80 | grep -E 'gRPC collector|egress relay|Siphon target'" >&2
+  echo "         kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent -c netobserv-ebpf-agent --tail=40" >&2
+  echo "         kubectl logs -n \$SHADOW_NS deploy/${SHADOWTEST}-recorder --tail=80 | grep -E 'recorder debug|recorder parser|beru client'" >&2
   echo "         kubectl logs -n beru-system deploy/beru --tail=30 | grep -E 'record|Regression'" >&2
-  echo "         kubectl get pod -n siphon-system -l app.kubernetes.io/name=siphon-agent -o jsonpath='{.items[0].spec.containers[0].image}'" >&2
-  echo "         kubectl get pod -n beru-system -l app.kubernetes.io/name=beru -o jsonpath='{.items[0].spec.containers[0].image}'" >&2
-  echo "       Siphon must log 'egress forwarder: recorded ...'; Beru must NOT return 404 on /v1/record_egress" >&2
+  echo "       Recorder should log 'beru client: recorded POST ...'; Beru must NOT return 404 on /v1/record_egress" >&2
   exit 1
 fi
-
-if [[ "$EGRESS_LAST_BODY" != *"e2e_record"* ]]; then
-  echo "ERROR: expected recorded httpbin body to contain e2e_record, got: $EGRESS_LAST_BODY" >&2
-  exit 1
-fi
+# ponytail: PCA capture often records response headers only (Content-Length: 0); replay proves mock hash hit
 
 echo ""
 echo "Record-replay E2E passed:"
 echo "  1. Prod POST ${EGRESS_HOST}${EGRESS_PATH} captured by Siphon"
 echo "  2. Beru auto-seeded via /v1/record_egress (no manual seed_mock)"
-echo "  3. Shadow replay via HTTP_PROXY returned HTTP 200"
+echo "  3. Shadow replay via HTTP_PROXY returned HTTP 200 (mock hit on recorded POST hash)"

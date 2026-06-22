@@ -6,6 +6,159 @@ siphon_api_host() {
     -o jsonpath='{range .items[*]}{.status.hostIP}{"\n"}{end}' 2>/dev/null | head -1
 }
 
+siphon_agent_pod() {
+  kubectl get pods -n siphon-system -l app.kubernetes.io/name=siphon-agent \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
+}
+
+# NetObserv sidecar streams PCAP to Siphon on 127.0.0.1:9990 after /v1/config.
+wait_siphon_pcap_stack() {
+  local shadowtest="${SHADOWTEST:-my-app-shadow}"
+  local shadowtest_ns="${SHADOWTEST_NS:-default}"
+  local pod host status_json pcap_addr frames
+
+  for i in $(seq 1 30); do
+    pod=$(siphon_agent_pod)
+    if [[ -z "$pod" ]]; then
+      echo "    waiting for siphon-agent pod (${i}/30)"
+      sleep 2
+      continue
+    fi
+
+    if kubectl get pod "$pod" -n siphon-system -o jsonpath='{.status.containerStatuses[*].ready}' 2>/dev/null \
+      | grep -q false; then
+      echo "    waiting for siphon-agent containers Ready (${i}/30)"
+      if [[ $(( i % 5 )) -eq 0 ]]; then
+        kubectl get pod "$pod" -n siphon-system -o jsonpath='{range .status.containerStatuses[*]}{.name}={.state}{" "}{end}' 2>/dev/null || true
+        echo ""
+      fi
+      sleep 2
+      continue
+    fi
+
+    host=$(siphon_api_host)
+    if [[ -z "$host" ]]; then
+      sleep 2
+      continue
+    fi
+
+    if [[ $(( i % 5 )) -eq 0 ]]; then
+      nudge_siphon_config "$shadowtest" "$shadowtest_ns"
+    fi
+
+    status_json=$(siphon_status_json "$host")
+    pcap_addr=$(parse_siphon_status_field "$status_json" "pcap_listen_addr")
+    frames=$(parse_siphon_status_field "$status_json" "frames_read")
+
+    if kubectl logs -n siphon-system "$pod" -c agent --tail=120 2>/dev/null \
+      | grep -Fq "gRPC collector ready"; then
+      echo "    Siphon gRPC collector ready on ${pcap_addr:-127.0.0.1:9990} (frames_read=${frames:-0})"
+      return 0
+    fi
+
+    echo "    waiting for gRPC collector (${i}/30) pcap_listen_addr=${pcap_addr:-<unset>}"
+    sleep 2
+  done
+
+  echo "ERROR: Siphon gRPC collector not ready (NetObserv sidecar + agent on :9990)" >&2
+  pod=$(siphon_agent_pod)
+  if [[ -n "$pod" ]]; then
+    echo "       agent:    kubectl logs -n siphon-system $pod -c agent --tail=40" >&2
+    echo "       netobserv: kubectl logs -n siphon-system $pod -c netobserv-ebpf-agent --tail=40" >&2
+  fi
+  return 1
+}
+
+# ponytail: netobserv and agent start together; PCA dials :9990 before collector listens unless we restart netobserv
+ensure_netobserv_exports_to_collector() {
+  local pod i
+  pod=$(siphon_agent_pod)
+  [[ -n "$pod" ]] || {
+    echo "ERROR: no siphon-agent pod for NetObserv readiness check" >&2
+    return 1
+  }
+  for i in $(seq 1 60); do
+    if kubectl exec -n siphon-system "$pod" -c agent -- test -f /var/run/siphon/grpc-ready 2>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  if ! kubectl exec -n siphon-system "$pod" -c agent -- test -f /var/run/siphon/grpc-ready 2>/dev/null; then
+    echo "ERROR: Siphon gRPC ready file missing (/var/run/siphon/grpc-ready)" >&2
+    return 1
+  fi
+  if kubectl logs -n siphon-system "$pod" -c netobserv-ebpf-agent --since=30s 2>/dev/null \
+    | grep -q 'connection refused'; then
+    echo "==> Recreate siphon-agent pod (NetObserv connected before gRPC collector)"
+    kubectl delete pod "$pod" -n siphon-system --wait=true
+    wait_siphon_daemonset_rollout 180s
+    wait_siphon_pcap_stack || return 1
+    pod=$(siphon_agent_pod)
+  fi
+  for i in $(seq 1 60); do
+    if kubectl logs -n siphon-system "$pod" -c netobserv-ebpf-agent --tail=15 2>/dev/null \
+      | grep -Fq "Packets agent successfully started"; then
+      sleep 2
+      if ! kubectl logs -n siphon-system "$pod" -c netobserv-ebpf-agent --since=20s 2>/dev/null \
+        | grep -q 'connection refused'; then
+        echo "    NetObserv PCA export connected to Siphon"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  echo "WARN: NetObserv restart did not confirm PCA export — record phase may miss traffic" >&2
+  return 0
+}
+
+_netobserv_failure_hint() {
+  local pod="$1"
+  local logs node_kern
+  logs=$(kubectl logs -n siphon-system "$pod" -c netobserv-ebpf-agent --tail=8 2>&1 || true)
+  if echo "$logs" | grep -qE 'Verifier error|invalid zero-sized read|load program: permission denied'; then
+    node_kern=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.kernelVersion}' 2>/dev/null || echo unknown)
+    echo "       NetObserv PCA BPF failed kernel verifier on node kernel ${node_kern}" >&2
+    echo "       (permission denied in logs = verifier rejection, not missing caps/privileged)" >&2
+    if [[ "$node_kern" == 6.6.* ]]; then
+      echo "       minikube VM ISO ships kernel 6.6.x; NetObserv :main PCA programs may not load." >&2
+      echo "       WSL host kernel is newer — try MINIKUBE_DRIVER=none (host kubelet) or Kind for NetObserv E2E." >&2
+    fi
+    return 0
+  fi
+  echo "       Kind/minikube: NetObserv sidecar needs privileged + runAsUser:0 — rebuild monarch:dev and re-run reset" >&2
+}
+
+wait_siphon_daemonset_rollout() {
+  local timeout="${1:-180s}"
+  if kubectl rollout status daemonset/siphon-agent -n siphon-system --timeout="$timeout" 2>/dev/null; then
+    return 0
+  fi
+  echo "ERROR: siphon-agent DaemonSet not Ready (both agent + netobserv-ebpf-agent must be up)" >&2
+  local pod ready_line
+  pod=$(siphon_agent_pod)
+  if [[ -n "$pod" ]]; then
+    ready_line=$(kubectl get pod "$pod" -n siphon-system -o jsonpath='{range .status.containerStatuses[*]}{.name}:ready={.ready} restarts={.restartCount}{" "}{end}' 2>/dev/null || true)
+    echo "       pod=$pod $ready_line" >&2
+    echo "       netobserv logs (last 15 lines):" >&2
+    kubectl logs -n siphon-system "$pod" -c netobserv-ebpf-agent --tail=15 2>&1 | sed 's/^/         /' >&2 || true
+    _netobserv_failure_hint "$pod"
+  fi
+  return 1
+}
+
+# ponytail: restart after prod veths exist — netobserv bulk attach at DS startup races CNI Link not found
+refresh_netobserv_hooks() {
+  local prod_ns="${1:-${PROD_NS:-default}}"
+  local prod_label="${2:-app=my-prod-app}"
+  echo "==> Waiting for production target pods to stabilize..."
+  kubectl wait -n "$prod_ns" --for=condition=Ready pod -l "$prod_label" --timeout=60s
+  echo "==> Target pods ready. Cycling Siphon DaemonSet for clean eBPF hook attachments..."
+  kubectl rollout restart ds/siphon-agent -n siphon-system
+  wait_siphon_daemonset_rollout 180s
+  nudge_siphon_config "${SHADOWTEST:-my-app-shadow}" "${SHADOWTEST_NS:-default}"
+  sleep 2
+}
+
 nudge_siphon_config() {
   local shadowtest="${1:-${SHADOWTEST:-my-app-shadow}}"
   local ns="${2:-${SHADOWTEST_NS:-default}}"
@@ -181,6 +334,6 @@ wait_siphon_configured() {
   else
     echo "ERROR: Siphon missing targets (need targets_count>0)" >&2
   fi
-  echo "       Check: kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent | grep 'Siphon target'" >&2
+  echo "       Check: kubectl logs -n siphon-system -l app.kubernetes.io/name=siphon-agent -c agent | grep -E 'Siphon target|gRPC collector'" >&2
   return 1
 }

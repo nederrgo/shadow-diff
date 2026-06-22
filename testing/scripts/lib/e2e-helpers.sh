@@ -52,7 +52,9 @@ require_kubectl_cluster() {
   require_cmd kubectl
   if ! kubectl cluster-info >/dev/null 2>&1; then
     log_fail "kubectl cannot reach the Kubernetes API (connection refused or stale kubeconfig)"
-    echo "       Recreate the Kind stack: ./testing/scripts/e2e-reset-kind.sh" >&2
+    echo "       Recreate the cluster stack:" >&2
+    echo "         ./testing/scripts/e2e-reset-minikube.sh" >&2
+    echo "         ./testing/scripts/e2e-reset-kind.sh" >&2
     echo "       Or point kubeconfig at a running cluster: export KUBECONFIG=..." >&2
     exit 1
   fi

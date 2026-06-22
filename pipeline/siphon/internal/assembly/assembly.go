@@ -17,10 +17,11 @@ import (
 )
 
 type StreamFactory struct {
-	cfgMgr       *config.Manager
-	poolMgr      *forward.PoolManager
-	egressStore  *egress.SessionStore
-	forwardCount *uint64 // requests_forwarded metric pointer
+	cfgMgr               *config.Manager
+	poolMgr              *forward.PoolManager
+	egressStore          *egress.SessionStore
+	forwardCount         *uint64
+	egressCaptureSummary func(flowKey string)
 }
 
 func NewStreamFactory(cfgMgr *config.Manager, poolMgr *forward.PoolManager, egressStore *egress.SessionStore, forwardCount *uint64) *StreamFactory {
@@ -29,6 +30,18 @@ func NewStreamFactory(cfgMgr *config.Manager, poolMgr *forward.PoolManager, egre
 		poolMgr:      poolMgr,
 		egressStore:  egressStore,
 		forwardCount: forwardCount,
+	}
+}
+
+// SetEgressCaptureSummary hooks debug capture stats at egress leg complete (optional).
+func (f *StreamFactory) SetEgressCaptureSummary(fn func(string)) {
+	f.egressCaptureSummary = fn
+}
+
+// ProcessEgressIdleTruncation finalizes truncated HTTP request legs idle past truncationIdleTimeout.
+func (f *StreamFactory) ProcessEgressIdleTruncation() {
+	if f.egressStore != nil {
+		f.egressStore.ProcessIdleTruncation()
 	}
 }
 
@@ -71,7 +84,7 @@ func (f *StreamFactory) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream {
 		if ok {
 			flowKey := egress.FlowKey(srcIP, srcPort, dstIP, dstPort)
 			log.Printf("egress outbound stream %s", flowKey)
-			return newCappedStream(f.egressStore.GetOrCreate(flowKey, true, target), flowKey)
+			return newCappedStream(f.egressStore.GetOrCreate(flowKey, true, target), flowKey, f.egressCaptureSummary)
 		}
 	}
 
@@ -81,7 +94,7 @@ func (f *StreamFactory) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream {
 		if ok {
 			flowKey := egress.FlowKey(dstIP, dstPort, srcIP, srcPort)
 			log.Printf("egress inbound stream %s", flowKey)
-			return newCappedStream(f.egressStore.GetOrCreate(flowKey, false, target), flowKey)
+			return newCappedStream(f.egressStore.GetOrCreate(flowKey, false, target), flowKey, f.egressCaptureSummary)
 		}
 	}
 
@@ -173,18 +186,21 @@ func (s *discardStream) ReassemblyComplete()                             {}
 const defaultMaxStreamBytes = 5 << 20 // 5MB
 
 type cappedStream struct {
-	inner    tcpassembly.Stream
-	bytes    int
-	maxBytes int
-	discarded atomic.Bool
-	flowKey  string
+	inner         tcpassembly.Stream
+	bytes         int
+	chunks        int
+	maxBytes      int
+	discarded     atomic.Bool
+	flowKey       string
+	captureSummary func(string)
 }
 
-func newCappedStream(inner tcpassembly.Stream, flowKey string) *cappedStream {
+func newCappedStream(inner tcpassembly.Stream, flowKey string, captureSummary func(string)) *cappedStream {
 	return &cappedStream{
-		inner:    inner,
-		maxBytes: defaultMaxStreamBytes,
-		flowKey:  flowKey,
+		inner:          inner,
+		maxBytes:       defaultMaxStreamBytes,
+		flowKey:        flowKey,
+		captureSummary: captureSummary,
 	}
 }
 
@@ -196,10 +212,12 @@ func (s *cappedStream) Reassembled(reassemblies []tcpassembly.Reassembly) {
 		if len(r.Bytes) == 0 {
 			continue
 		}
-		if s.bytes == 0 && strings.Contains(s.flowKey, ":8080") {
-			log.Printf("siphon debug: egress reassembled flow=%s first_chunk=%d bytes", s.flowKey, len(r.Bytes))
-		}
+		s.chunks++
 		s.bytes += len(r.Bytes)
+		if strings.Contains(s.flowKey, ":80") {
+			log.Printf("siphon debug: egress reassembled flow=%s chunk=%d len=%d total=%d",
+				s.flowKey, s.chunks, len(r.Bytes), s.bytes)
+		}
 		if s.bytes > s.maxBytes {
 			s.discarded.Store(true)
 			log.Printf("egress stream %s exceeded %d bytes, discarding", s.flowKey, s.maxBytes)
@@ -213,6 +231,10 @@ func (s *cappedStream) Reassembled(reassemblies []tcpassembly.Reassembly) {
 func (s *cappedStream) ReassemblyComplete() {
 	if s.discarded.Load() {
 		return
+	}
+	log.Printf("siphon debug: egress reassembled flow=%s leg_total=%d bytes", s.flowKey, s.bytes)
+	if s.captureSummary != nil {
+		s.captureSummary(s.flowKey)
 	}
 	s.inner.ReassemblyComplete()
 }

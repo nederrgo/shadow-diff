@@ -14,6 +14,7 @@ beru/bin/
 igris/bin/
 siphon/bin/
 Dockerfile.cross
+*minikube-linux-amd64
 
 # Test binary, built with `go test -c`
 *.test

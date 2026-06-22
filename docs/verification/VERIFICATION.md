@@ -428,6 +428,17 @@ From the repo root, builds/loads images, deploys Monarch/Beru/Siphon/prod/Shadow
 
 Flags: `--skip-build`, `--skip-load`, `--no-reset`, `--run-test`. Then run `./testing/scripts/e2e-pipeline-test.sh` anytime.
 
+### One-shot Minikube reset (VM driver, recommended for eBPF capture)
+
+Auto-selects a VM driver (not docker VM): **virtualbox** if VBoxManage is available, else **`none` on WSL** (host kubelet + host kernel for NetObserv BPF), else **kvm2**. Uses Calico; images build into Minikube's Docker daemon (`eval $(minikube docker-env)`) — no `kind load`:
+
+```bash
+# WSL + NetObserv (recommended)
+sudo MINIKUBE_DRIVER=none ./testing/scripts/e2e-reset-minikube.sh --run-test
+```
+
+Same flags as the Kind script. On WSL without VirtualBox, `none` auto-selects when run as root. kvm2 uses a VM ISO kernel (6.6.x) that often rejects NetObserv PCA BPF. For kvm2: nested virt + libvirt packages; script starts `virtlogd`, `virtlockd`, `libvirtd` without systemd. Override: `MINIKUBE_DRIVER=virtualbox|kvm2|none`.
+
 ### Build Siphon locally
 
 ```bash

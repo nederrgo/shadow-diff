@@ -2,70 +2,155 @@ package egress
 
 import (
 	"fmt"
-	"io"
 	"log"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/gopacket/tcpassembly"
 	"github.com/shadow-diff/siphon/internal/config"
 	"github.com/shadow-diff/siphon/internal/forward"
 )
 
-// pipeStream implements tcpassembly.Stream without blocking the assembler.
-// Bytes are written to an io.Pipe; runRelay reads from the other end.
+const truncationIdleTimeout = 500 * time.Millisecond // ponytail: tied to 250ms capture flush tick
+
+// pipeStream accumulates TCP leg bytes until ReassemblyComplete, then relays when both legs close.
 type pipeStream struct {
-	pw        *io.PipeWriter
 	sess      *Session
 	store     *SessionStore
 	isRequest bool
-	logOnce   sync.Once
+	chunks    int
 }
 
 func (p *pipeStream) Reassembled(reassemblies []tcpassembly.Reassembly) {
-	var wrote bool
-	for _, r := range reassemblies {
-		if len(r.Bytes) > 0 {
-			wrote = true
-			break
-		}
-	}
-	// Start reader before Write: io.Pipe blocks until reqR/resR is read in runRelay.
-	if wrote && p.store != nil && p.sess != nil && p.sess.tryStartRelay() {
-		go runRelay(p.sess, p.store.poolMgr)
-	}
 	for _, r := range reassemblies {
 		if len(r.Bytes) == 0 {
 			continue
 		}
+		p.chunks++
 		n := len(r.Bytes)
-		p.logOnce.Do(func() {
-			leg := "response"
-			if p.isRequest {
-				leg = "request"
-			}
-			flow := ""
-			if p.sess != nil {
-				flow = p.sess.flowKey
-			}
-			log.Printf("siphon debug: egress pipe flow=%s leg=%s first_write=%d bytes", flow, leg, n)
-		})
-		_, _ = p.pw.Write(r.Bytes)
+		total := p.sess.legBytes(p.isRequest) + n
+		leg := "response"
+		if p.isRequest {
+			leg = "request"
+		}
+		flow := ""
+		if p.sess != nil {
+			flow = p.sess.flowKey
+		}
+		if strings.Contains(flow, ":80") {
+			log.Printf("siphon debug: egress pipe flow=%s leg=%s chunk=%d len=%d total=%d",
+				flow, leg, p.chunks, n, total)
+		}
+		p.sess.append(p.isRequest, r.Bytes)
 	}
+	p.sess.tryCloseLegIfComplete(p.isRequest, p.store)
 }
 
 func (p *pipeStream) ReassemblyComplete() {
-	_ = p.pw.Close()
-	if p.sess != nil {
-		p.sess.markLegClosed(p.isRequest)
+	leg := "response"
+	if p.isRequest {
+		leg = "request"
+	}
+	if p.sess == nil {
+		return
+	}
+	if p.isRequest {
+		p.sess.maybeApplyRequestTruncationFallback()
+	} else {
+		p.sess.finalizeResponseOnFIN()
+	}
+	total := p.sess.legBytes(p.isRequest)
+	p.sess.tryCloseLegIfComplete(p.isRequest, p.store)
+	if p.sess.legHTTPComplete(p.isRequest) || p.sess.legAlreadyClosed(p.isRequest) {
+		log.Printf("siphon debug: egress leg complete flow=%s leg=%s total=%d bytes",
+			p.sess.flowKey, leg, total)
+		return
+	}
+	log.Printf("siphon debug: egress leg flush flow=%s leg=%s total=%d bytes incomplete HTTP, awaiting more PCA or idle timeout",
+		p.sess.flowKey, leg, total)
+}
+
+func (s *Session) legHTTPComplete(isRequest bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if isRequest {
+		return httpLegComplete(s.reqBuf)
+	}
+	return httpLegComplete(s.resBuf)
+}
+
+func (s *Session) finalizeResponseOnFIN() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if httpLegComplete(s.resBuf) {
+		return
+	}
+	before := len(s.resBuf)
+	s.resBuf = finalizeTruncatedResponse(s.resBuf)
+	if !httpLegComplete(s.resBuf) {
+		return
+	}
+	if len(s.resBuf) != before || before == 0 {
+		log.Printf("siphon debug: egress response finalized on FIN flow=%s bytes=%d (PCA-capped)",
+			s.flowKey, len(s.resBuf))
 	}
 }
 
-// ClosePipeWriter closes the pipe writer for a pipeStream returned by GetOrCreate.
-func ClosePipeWriter(s tcpassembly.Stream) {
-	if ps, ok := s.(*pipeStream); ok && ps.pw != nil {
-		_ = ps.pw.Close()
+// maybeApplyRequestTruncationFallback rewrites Content-Length when PCA truncated the request body.
+func (s *Session) maybeApplyRequestTruncationFallback() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !isHTTPLeg(s.reqBuf) {
+		return httpLegComplete(s.reqBuf)
+	}
+	if httpLegComplete(s.reqBuf) {
+		return true
+	}
+	out, applied := applyRequestTruncationFallback(s.reqBuf)
+	s.reqBuf = out
+	if applied {
+		log.Printf("siphon debug: egress request finalized flow=%s bytes=%d (PCA-capped)",
+			s.flowKey, len(s.reqBuf))
+	} else if len(s.reqBuf) > 0 && !httpLegComplete(s.reqBuf) && strings.Contains(s.flowKey, ":80") {
+		log.Printf("siphon debug: request truncation fallback skipped flow=%s len=%d headers_complete=%v",
+			s.flowKey, len(s.reqBuf), httpHeadersComplete(s.reqBuf))
+	}
+	return httpLegComplete(s.reqBuf)
+}
+
+func (s *Session) legAlreadyClosed(isRequest bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if isRequest {
+		return s.reqClosed
+	}
+	return s.resClosed
+}
+
+func (s *Session) tryCloseLegIfComplete(isRequest bool, store *SessionStore) {
+	if s.legAlreadyClosed(isRequest) {
+		return
+	}
+	if isRequest && !s.legHTTPComplete(true) {
+		s.mu.Lock()
+		httpReq := isHTTPLeg(s.reqBuf)
+		s.mu.Unlock()
+		if httpReq {
+			s.maybeApplyRequestTruncationFallback()
+		}
+	}
+	if !s.legHTTPComplete(isRequest) {
+		return
+	}
+	s.markLegClosed(isRequest)
+	if s.bothLegsClosed() && s.tryStartRelay() {
+		go runRelay(s, store.poolMgr)
 	}
 }
+
+// ClosePipeWriter is a no-op; kept for cappedStream discard path compatibility.
+func ClosePipeWriter(s tcpassembly.Stream) {}
 
 type SessionStore struct {
 	mu       sync.Mutex
@@ -74,14 +159,15 @@ type SessionStore struct {
 }
 
 type Session struct {
-	mu           sync.Mutex
-	flowKey      string
-	reqR         io.ReadCloser
-	resR         io.ReadCloser
-	reqS         *pipeStream
-	resS         *pipeStream
-	relayRunning bool
-	Target       *config.SiphonTarget
+	mu              sync.Mutex
+	flowKey         string
+	reqBuf          []byte
+	resBuf          []byte
+	reqClosed       bool
+	resClosed       bool
+	relayRunning    bool
+	reqLastAppendAt time.Time
+	Target          *config.SiphonTarget
 }
 
 func NewSessionStore(poolMgr *forward.PoolManager) *SessionStore {
@@ -91,25 +177,82 @@ func NewSessionStore(poolMgr *forward.PoolManager) *SessionStore {
 	}
 }
 
-func allocBothPipes(sess *Session, store *SessionStore) {
-	reqR, reqW := io.Pipe()
-	resR, resW := io.Pipe()
-	sess.reqR = reqR
-	sess.resR = resR
-	sess.reqS = &pipeStream{pw: reqW, sess: sess, store: store, isRequest: true}
-	sess.resS = &pipeStream{pw: resW, sess: sess, store: store, isRequest: false}
+func (st *SessionStore) ProcessIdleTruncation() {
+	st.mu.Lock()
+	sessions := make([]*Session, 0, len(st.sessions))
+	for _, sess := range st.sessions {
+		sessions = append(sessions, sess)
+	}
+	st.mu.Unlock()
+
+	now := time.Now()
+	for _, sess := range sessions {
+		sess.mu.Lock()
+		idle := !sess.reqClosed && len(sess.reqBuf) > 0 && isHTTPLeg(sess.reqBuf) &&
+			!httpLegComplete(sess.reqBuf) &&
+			!sess.reqLastAppendAt.IsZero() && now.Sub(sess.reqLastAppendAt) >= truncationIdleTimeout
+		sess.mu.Unlock()
+		if !idle {
+			continue
+		}
+		sess.maybeApplyRequestTruncationFallback()
+		sess.tryCloseLegIfComplete(true, st)
+	}
+}
+
+func (s *Session) append(isRequest bool, b []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if isRequest {
+		s.reqBuf = append(s.reqBuf, b...)
+		s.reqLastAppendAt = time.Now()
+	} else {
+		s.resBuf = append(s.resBuf, b...)
+	}
+}
+
+func (s *Session) legBytes(isRequest bool) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if isRequest {
+		return len(s.reqBuf)
+	}
+	return len(s.resBuf)
+}
+
+func (s *Session) snapshotPayloads() (req, res []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.reqBuf) > 0 {
+		req = append([]byte(nil), s.reqBuf...)
+	}
+	if len(s.resBuf) > 0 {
+		res = append([]byte(nil), s.resBuf...)
+	}
+	return req, res
+}
+
+func (s *Session) clearPayloads() {
+	s.mu.Lock()
+	s.reqBuf = nil
+	s.resBuf = nil
+	s.mu.Unlock()
 }
 
 func (s *Session) markLegClosed(isRequest bool) {
 	s.mu.Lock()
 	if isRequest {
-		s.reqS = nil
-		s.reqR = nil
+		s.reqClosed = true
 	} else {
-		s.resS = nil
-		s.resR = nil
+		s.resClosed = true
 	}
 	s.mu.Unlock()
+}
+
+func (s *Session) bothLegsClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reqClosed && s.resClosed
 }
 
 // tryStartRelay marks the session as relay-running. Caller must go runRelay when true.
@@ -129,6 +272,16 @@ func (s *Session) clearRelayRunning() {
 	s.mu.Unlock()
 }
 
+func (s *Session) resetForKeepAlive() {
+	s.mu.Lock()
+	s.reqClosed = false
+	s.resClosed = false
+	s.reqBuf = nil
+	s.resBuf = nil
+	s.reqLastAppendAt = time.Time{}
+	s.mu.Unlock()
+}
+
 func (st *SessionStore) GetOrCreate(flowKey string, isRequest bool, target *config.SiphonTarget) tcpassembly.Stream {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -136,28 +289,10 @@ func (st *SessionStore) GetOrCreate(flowKey string, isRequest bool, target *conf
 	sess, ok := st.sessions[flowKey]
 	if !ok {
 		sess = &Session{flowKey: flowKey, Target: target}
-		allocBothPipes(sess, st)
 		st.sessions[flowKey] = sess
 	}
 
-	var stream tcpassembly.Stream
-	if isRequest {
-		if sess.reqS == nil {
-			pr, pw := io.Pipe()
-			sess.reqR = pr
-			sess.reqS = &pipeStream{pw: pw, sess: sess, store: st, isRequest: true}
-		}
-		stream = sess.reqS
-	} else {
-		if sess.resS == nil {
-			pr, pw := io.Pipe()
-			sess.resR = pr
-			sess.resS = &pipeStream{pw: pw, sess: sess, store: st, isRequest: false}
-		}
-		stream = sess.resS
-	}
-
-	return stream
+	return &pipeStream{sess: sess, store: st, isRequest: isRequest}
 }
 
 func (st *SessionStore) Remove(flowKey string) {

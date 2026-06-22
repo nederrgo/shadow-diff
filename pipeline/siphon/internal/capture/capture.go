@@ -1,95 +1,94 @@
 package capture
 
 import (
-	"fmt"
+	"context"
+	"encoding/binary"
 	"log"
 	"net"
-	"strings"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/gopacket"
-	"github.com/google/gopacket/afpacket"
 	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/tcpassembly"
 	"github.com/shadow-diff/siphon/internal/assembly"
 	"github.com/shadow-diff/siphon/internal/config"
+	"github.com/shadow-diff/siphon/internal/pbpacket"
 	"github.com/shadow-diff/siphon/internal/session"
-	"golang.org/x/net/bpf"
+	"google.golang.org/grpc"
 )
 
-// captureSnapLen is the snap length for BPF compilation and TPacket frames.
-// Must match OptFrameSize; keep moderate (8192) — very large values often fail
-// afpacket.NewTPacket on Kind nodes.
-const captureSnapLen = 8192
+const defaultPCAPListenAddr = "127.0.0.1:9990"
+
+// GRPCReadyFile signals NetObserv sidecar that the collector is listening (shared emptyDir).
+const GRPCReadyFile = "/var/run/siphon/grpc-ready"
+
+func markGRPCReady() {
+	_ = os.MkdirAll("/var/run/siphon", 0o755)
+	_ = os.WriteFile(GRPCReadyFile, []byte("1"), 0o644)
+}
+
+func clearGRPCReady() {
+	_ = os.Remove(GRPCReadyFile)
+}
 
 type CaptureManager struct {
+	pbpacket.UnimplementedCollectorServer
 	mu             sync.Mutex
 	cfgMgr         *config.Manager
 	sessionMap     *session.SessionMap
 	assembler      *tcpassembly.Assembler
 	streamPool     *tcpassembly.StreamPool
 	factory        *assembly.StreamFactory
-	interfaces     []string
+	pcapAddr       string
+	listener       net.Listener
+	grpcServer     *grpc.Server
 	framesRead     uint64
 	packetsMatched uint64
+	flowTrace      *flowTracer
 	running        bool
 	stopChan       chan struct{}
 	wg             sync.WaitGroup
-	handles        map[string]*afpacket.TPacket
 }
 
 func NewCaptureManager(cfgMgr *config.Manager, sessionMap *session.SessionMap, factory *assembly.StreamFactory) *CaptureManager {
 	pool := tcpassembly.NewStreamPool(factory)
 	assembler := tcpassembly.NewAssembler(pool)
 
-	return &CaptureManager{
+	cm := &CaptureManager{
 		cfgMgr:     cfgMgr,
 		sessionMap: sessionMap,
 		assembler:  assembler,
 		streamPool: pool,
 		factory:    factory,
+		flowTrace:  newFlowTracer(),
 		stopChan:   make(chan struct{}),
-		handles:    make(map[string]*afpacket.TPacket),
 	}
+	SetDebugTracer(cm.flowTrace)
+	return cm
 }
 
-func (cm *CaptureManager) Start(interfaceEnv string) error {
+func (cm *CaptureManager) Start(pcapAddr string) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
 	if cm.running {
 		return nil
 	}
-
-	var targets []string
-	if interfaceEnv == "any" || interfaceEnv == "" {
-		targets = selectCaptureInterfaces()
-	} else {
-		targets = []string{interfaceEnv}
+	if pcapAddr == "" {
+		pcapAddr = defaultPCAPListenAddr
 	}
-
-	if len(targets) == 0 {
-		return fmt.Errorf("no active network interfaces found to capture on")
-	}
-
-	cm.interfaces = targets
+	cm.pcapAddr = pcapAddr
 	cm.running = true
 	cm.stopChan = make(chan struct{})
 
-	log.Printf("Starting packet capture on interfaces: %v", targets)
+	log.Printf("Starting gRPC packet collector on %s", pcapAddr)
 
-	for _, iface := range targets {
-		cm.wg.Add(1)
-		go cm.captureLoop(iface)
-	}
+	cm.wg.Add(1)
+	go cm.listenLoop()
 
-	// Relaxed Return Path Assembly Flushing:
-	// To prevent sequence-number gaps (which happen often in mirrored/sniffer modes) from stalling
-	// the reassembly and accumulating memory, we run a periodic flushing ticker on the assembler.
-	// This forces the assembler to ignore sequence checks and flush any pending bytes immediately.
 	cm.wg.Add(1)
 	go cm.flushLoop()
 
@@ -107,126 +106,57 @@ func (cm *CaptureManager) Stop() {
 	}
 	cm.running = false
 	close(cm.stopChan)
+	gs := cm.grpcServer
+	cm.mu.Unlock()
 
-	// Close all active handles to unblock NextPacket reads during shutdown
-	for _, handle := range cm.handles {
-		handle.Close()
+	if gs != nil {
+		gs.GracefulStop()
 	}
+
+	cm.mu.Lock()
+	if cm.listener != nil {
+		_ = cm.listener.Close()
+		cm.listener = nil
+	}
+	cm.grpcServer = nil
 	cm.mu.Unlock()
 
 	cm.wg.Wait()
-	log.Println("Capture stopped on all interfaces.")
+	clearGRPCReady()
+	log.Println("Capture stopped.")
 }
 
-// selectCaptureInterfaces picks Kind-friendly interfaces first (cni0, eth0)
-// instead of opening a TPacket on every veth (which often fails or wastes FDs).
-func selectCaptureInterfaces() []string {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		log.Printf("list interfaces: %v", err)
-		return nil
-	}
-	byName := make(map[string]net.Interface, len(ifaces))
-	for _, iface := range ifaces {
-		byName[iface.Name] = iface
-	}
-	var preferred = []string{"cni0", "docker0", "flannel.1", "eth0", "ens160", "enp0s8"}
-	seen := make(map[string]bool)
-	var targets []string
-	add := func(name string) {
-		if seen[name] {
-			return
-		}
-		iface, ok := byName[name]
-		if !ok {
-			return
-		}
-		if (iface.Flags&net.FlagLoopback) != 0 || (iface.Flags&net.FlagUp) == 0 {
-			return
-		}
-		seen[name] = true
-		targets = append(targets, name)
-	}
-	for _, name := range preferred {
-		add(name)
-	}
-	// Kind/CNI bridges (e.g. br-xxxxxxxx) carry pod-to-pod traffic when cni0 is absent.
-	hasBridge := false
-	for _, iface := range ifaces {
-		if strings.HasPrefix(iface.Name, "br-") {
-			hasBridge = true
-			add(iface.Name)
-		}
-	}
-	// Kindnet without cni0/br: pod traffic appears on veth* pairs (your node only has eth0 + veth*).
-	if !seen["cni0"] && !hasBridge {
-		for _, iface := range ifaces {
-			if strings.HasPrefix(iface.Name, "veth") {
-				add(iface.Name)
-			}
-		}
-	}
-	if len(targets) > 0 {
-		log.Printf("Capture interfaces selected: %v", targets)
-		return targets
-	}
-	for _, iface := range ifaces {
-		if (iface.Flags & net.FlagLoopback) != 0 {
-			continue
-		}
-		if (iface.Flags & net.FlagUp) == 0 {
-			continue
-		}
-		targets = append(targets, iface.Name)
-	}
-	return targets
-}
-
-func (cm *CaptureManager) Status() (interfaces []string, frames uint64, packets uint64) {
+func (cm *CaptureManager) Status() (pcapAddr string, frames uint64, packets uint64) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	return cm.interfaces, atomic.LoadUint64(&cm.framesRead), atomic.LoadUint64(&cm.packetsMatched)
+	return cm.pcapAddr, atomic.LoadUint64(&cm.framesRead), atomic.LoadUint64(&cm.packetsMatched)
 }
 
-func (cm *CaptureManager) captureLoop(ifaceName string) {
-	defer cm.wg.Done()
-
-	// High-performance afpacket capture handle with shared captureSnapLen configuration
-	handle, err := afpacket.NewTPacket(
-		afpacket.OptInterface(ifaceName),
-		afpacket.OptFrameSize(captureSnapLen),
-		afpacket.OptBlockSize(captureSnapLen * 128),
-		afpacket.OptNumBlocks(128),
-	)
-	if err != nil {
-		log.Printf("Error opening afpacket on interface %s: %v", ifaceName, err)
-		return
-	}
-	defer handle.Close()
-
+func (cm *CaptureManager) setServeState(ln net.Listener, gs *grpc.Server) {
 	cm.mu.Lock()
-	if !cm.running {
-		cm.mu.Unlock()
-		return
-	}
-	cm.handles[ifaceName] = handle
+	cm.listener = ln
+	cm.grpcServer = gs
 	cm.mu.Unlock()
+}
 
-	defer func() {
-		cm.mu.Lock()
-		delete(cm.handles, ifaceName)
-		cm.mu.Unlock()
-	}()
+func (cm *CaptureManager) clearServeState() {
+	cm.mu.Lock()
+	cm.listener = nil
+	cm.grpcServer = nil
+	cm.mu.Unlock()
+}
 
-	// Install initial BPF filter if configuration targets exist
-	if err := cm.installBPFFilter(handle); err != nil {
-		log.Printf("BPF initial filter compilation/application skipped or failed on %s: %v", ifaceName, err)
+func (cm *CaptureManager) sleepOrStop(d time.Duration) bool {
+	select {
+	case <-cm.stopChan:
+		return false
+	case <-time.After(d):
+		return true
 	}
+}
 
-	packetSource := gopacket.NewPacketSource(handle, layers.LinkTypeEthernet)
-	packetSource.NoCopy = true
-
-	log.Printf("Capture started on interface: %s", ifaceName)
+func (cm *CaptureManager) listenLoop() {
+	defer cm.wg.Done()
 
 	for {
 		select {
@@ -235,120 +165,123 @@ func (cm *CaptureManager) captureLoop(ifaceName string) {
 		default:
 		}
 
-		packet, err := packetSource.NextPacket()
+		ln, err := net.Listen("tcp", cm.pcapAddr)
 		if err != nil {
-			continue
-		}
-
-		atomic.AddUint64(&cm.framesRead, 1)
-
-		// BPF filters for tcp and host, so all packets received here are TCP target packets.
-		// We still parse IPv4/TCP layers to pass structured flows and timestamps to the assembler.
-		var srcIP, dstIP string
-		if ip4Layer := packet.Layer(layers.LayerTypeIPv4); ip4Layer != nil {
-			ip4 := ip4Layer.(*layers.IPv4)
-			srcIP = ip4.SrcIP.String()
-			dstIP = ip4.DstIP.String()
-		} else {
-			continue
-		}
-
-		tcpLayer := packet.Layer(layers.LayerTypeTCP)
-		if tcpLayer == nil {
-			continue
-		}
-		tcp := tcpLayer.(*layers.TCP)
-		srcPort := uint16(tcp.SrcPort)
-		dstPort := uint16(tcp.DstPort)
-
-		// Increment packets_matched as BPF filter matches target IPv4 TCP traffic
-		atomic.AddUint64(&cm.packetsMatched, 1)
-
-		// Sticky Sampling Decision using the global sample rate
-		sampleRate := cm.cfgMgr.GetConfig().SampleRate
-		if sampleRate <= 0 {
-			sampleRate = 100
-		}
-
-		if !cm.sessionMap.GetOrDecide(srcIP, srcPort, dstIP, dstPort, sampleRate) {
-			if dstPort == 8080 || srcPort == 8080 {
-				log.Printf("siphon debug: tcp %s:%d -> %s:%d iface=%s dropped by sampling (rate=%d)",
-					srcIP, srcPort, dstIP, dstPort, ifaceName, sampleRate)
+			log.Printf("gRPC listen on %s failed: %v; retry in 2s", cm.pcapAddr, err)
+			if !cm.sleepOrStop(2 * time.Second) {
+				return
 			}
 			continue
 		}
 
-		if dstPort == 8080 || srcPort == 8080 {
-			log.Printf("siphon debug: tcp %s:%d -> %s:%d iface=%s -> assembler",
-				srcIP, srcPort, dstIP, dstPort, ifaceName)
-		}
+		gs := grpc.NewServer()
+		pbpacket.RegisterCollectorServer(gs, cm)
+		cm.setServeState(ln, gs)
+		markGRPCReady()
+		log.Printf("gRPC collector ready on %s", cm.pcapAddr)
 
-		// Feed packet into TCP assembler
-		netFlow := packet.NetworkLayer().NetworkFlow()
-		cm.assembler.AssembleWithTimestamp(netFlow, tcp, packet.Metadata().Timestamp)
+		err = gs.Serve(ln)
+		cm.clearServeState()
+
+		if err != nil {
+			select {
+			case <-cm.stopChan:
+				return
+			default:
+				log.Printf("gRPC serve on %s ended: %v; retry in 2s", cm.pcapAddr, err)
+				if !cm.sleepOrStop(2 * time.Second) {
+					return
+				}
+			}
+		}
 	}
 }
 
-func (cm *CaptureManager) installBPFFilter(handle *afpacket.TPacket) error {
-	cfg := cm.cfgMgr.GetConfig()
-	filter, err := BuildBPFFilter(cfg)
-	if err != nil {
-		return fmt.Errorf("build filter: %w", err)
+// Send implements pbpacket.CollectorServer. Uses req.Pcap.Value directly (no anypb.UnmarshalTo).
+func (cm *CaptureManager) Send(_ context.Context, req *pbpacket.Packet) (*pbpacket.CollectorReply, error) {
+	if req == nil || req.Pcap == nil || len(req.Pcap.Value) == 0 {
+		return &pbpacket.CollectorReply{}, nil
 	}
-
-	if err := compileAndAttachBPF(handle, filter); err != nil {
-		return fmt.Errorf("set filter: %w", err)
+	frame, ci, ok := decodePcapAny(req.Pcap.Value)
+	if !ok || len(frame) == 0 {
+		return &pbpacket.CollectorReply{}, nil
 	}
-
-	log.Printf("BPF filter successfully compiled and applied: %s", filter)
-	return nil
+	cm.processPacket(frame, ci)
+	return &pbpacket.CollectorReply{}, nil
 }
 
-func (cm *CaptureManager) ApplyBPFFilter() error {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	if !cm.running {
-		return nil
+// decodePcapAny strips a 16-byte pcap per-packet record header when incl_len matches.
+func decodePcapAny(data []byte) (frame []byte, ci gopacket.CaptureInfo, ok bool) {
+	if len(data) == 0 {
+		return nil, gopacket.CaptureInfo{}, false
 	}
-
-	cfg := cm.cfgMgr.GetConfig()
-	filter, err := BuildBPFFilter(cfg)
-	if err != nil {
-		return fmt.Errorf("apply BPF: build filter failed: %w", err)
+	if len(data) < 16 {
+		return data, gopacket.CaptureInfo{Timestamp: time.Now()}, true
 	}
-
-	for iface, handle := range cm.handles {
-		if err := compileAndAttachBPF(handle, filter); err != nil {
-			return fmt.Errorf("apply BPF: failed to set filter on %s: %w", iface, err)
-		}
-		log.Printf("BPF filter dynamically updated on interface %s: %s", iface, filter)
+	tsSec := binary.LittleEndian.Uint32(data[0:4])
+	tsUsec := binary.LittleEndian.Uint32(data[4:8])
+	inclLen := binary.LittleEndian.Uint32(data[8:12])
+	if int(inclLen) == len(data)-16 {
+		ts := time.Unix(int64(tsSec), int64(tsUsec)*1000)
+		return data[16:], gopacket.CaptureInfo{Timestamp: ts}, true
 	}
-
-	return nil
+	return data, gopacket.CaptureInfo{Timestamp: time.Now()}, true
 }
 
-func compileAndAttachBPF(handle *afpacket.TPacket, filter string) error {
-	pcapInsts, err := pcap.CompileBPFFilter(layers.LinkTypeEthernet, captureSnapLen, filter)
-	if err != nil {
-		return fmt.Errorf("compile: %w", err)
+func decodePacket(data []byte) gopacket.Packet {
+	pkt := gopacket.NewPacket(data, layers.LinkTypeEthernet, gopacket.Default)
+	if pkt.Layer(layers.LayerTypeIPv4) != nil {
+		return pkt
+	}
+	if len(data) > 0 && data[0]>>4 == 4 {
+		return gopacket.NewPacket(data, layers.LayerTypeIPv4, gopacket.Default)
+	}
+	return pkt
+}
+
+func (cm *CaptureManager) processPacket(data []byte, ci gopacket.CaptureInfo) {
+	atomic.AddUint64(&cm.framesRead, 1)
+
+	packet := decodePacket(data)
+
+	ip4Layer := packet.Layer(layers.LayerTypeIPv4)
+	if ip4Layer == nil {
+		return
+	}
+	ip4 := ip4Layer.(*layers.IPv4)
+	srcIP := ip4.SrcIP.String()
+	dstIP := ip4.DstIP.String()
+
+	tcpLayer := packet.Layer(layers.LayerTypeTCP)
+	if tcpLayer == nil {
+		return
+	}
+	tcp := tcpLayer.(*layers.TCP)
+	srcPort := uint16(tcp.SrcPort)
+	dstPort := uint16(tcp.DstPort)
+
+	if !packetMatchesCapture(cm.cfgMgr, srcIP, dstIP, int(srcPort), int(dstPort)) {
+		return
 	}
 
-	rawInsts := make([]bpf.RawInstruction, len(pcapInsts))
-	for i, inst := range pcapInsts {
-		rawInsts[i] = bpf.RawInstruction{
-			Op: inst.Code,
-			Jt: inst.Jt,
-			Jf: inst.Jf,
-			K:  inst.K,
-		}
+	atomic.AddUint64(&cm.packetsMatched, 1)
+
+	sampleRate := cm.cfgMgr.GetConfig().SampleRate
+	if sampleRate <= 0 {
+		sampleRate = 100
+	}
+	if !cm.sessionMap.GetOrDecide(srcIP, srcPort, dstIP, dstPort, sampleRate) {
+		return
 	}
 
-	if err := handle.SetBPF(rawInsts); err != nil {
-		return fmt.Errorf("attach: %w", err)
-	}
+	cm.flowTrace.log(cm.cfgMgr, srcIP, dstIP, srcPort, dstPort, tcp)
 
-	return nil
+	ts := ci.Timestamp
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+	netFlow := packet.NetworkLayer().NetworkFlow()
+	cm.assembler.AssembleWithTimestamp(netFlow, tcp, ts)
 }
 
 func (cm *CaptureManager) flushOlderLoop() {
@@ -376,9 +309,10 @@ func (cm *CaptureManager) flushLoop() {
 		case <-cm.stopChan:
 			return
 		case <-ticker.C:
-			// Flush buffered streams to ignore sequence gaps and force immediate delivery of reassembled segments
+			cm.factory.ProcessEgressIdleTruncation()
+			// ponytail: 500ms idle closed streams too early for multi-segment HTTP responses; use 10s
 			cm.assembler.FlushWithOptions(tcpassembly.FlushOptions{
-				T: time.Now().Add(-500 * time.Millisecond),
+				T: time.Now().Add(-10 * time.Second),
 			})
 		}
 	}
