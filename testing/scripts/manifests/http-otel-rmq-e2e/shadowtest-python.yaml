@@ -1,0 +1,34 @@
+# HTTP ingress (igris-http) + RabbitMQ egress (Firehose) OTel E2E — Python zero-touch (OTel flask+pika).
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: http-otel-rmq-python-shadow
+  namespace: default
+spec:
+  targetDeployment: http-rmq-python-prod
+  targetNamespace: default
+
+  oldImage: http-rmq-python-worker:dev
+  newImage: http-rmq-python-worker:dev
+
+  servicePort: 8888
+  applicationPort: 8080
+
+  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
+
+  inputs:
+    - port: 8888
+      driver: http_request
+
+  siphon:
+    enabled: false
+
+  otelInjection:
+    enabled: true
+    language: python
+
+  dependencies:
+    - name: rabbitmq
+      image: rabbitmq:3-management-alpine
+      port: 5672
+      envVarInjection: AMQP_URL

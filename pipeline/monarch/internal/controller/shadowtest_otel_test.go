@@ -57,6 +57,28 @@ func TestOtelPodAnnotations(t *testing.T) {
 	if ann[annotationOtelInjectPrefix+"java"] != "true" {
 		t.Fatal("missing inject-java")
 	}
+	if ann[annotationOtelContainerNames] != containerApp {
+		t.Fatalf("container-names = %q", ann[annotationOtelContainerNames])
+	}
+	if ann[annotationOtelJavaContainerNames] != containerApp {
+		t.Fatalf("java-container-names = %q", ann[annotationOtelJavaContainerNames])
+	}
+}
+
+func TestOtelPodAnnotations_nodejsScopesAppContainer(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		Spec: enginev1alpha1.ShadowTestSpec{
+			OtelInjection: &enginev1alpha1.OtelInjectionSpec{Language: "nodejs"},
+		},
+	}
+	ann := otelPodAnnotations(st, "http-rmq-test-app:dev")
+	if ann[annotationOtelInjectPrefix+"nodejs"] != "true" {
+		t.Fatal("missing inject-nodejs")
+	}
+	if ann[annotationOtelNodeJSContainerNames] != containerApp {
+		t.Fatalf("nodejs-container-names = %q", ann[annotationOtelNodeJSContainerNames])
+	}
 }
 
 func TestOtelPodAnnotations_disabledNotAppliedInReconcile(t *testing.T) {
@@ -136,8 +158,8 @@ func TestOtelEnvVars_pythonMongoOmitsNodeInstrumentations(t *testing.T) {
 	if got := envValue(envs, envOtelNodeEnabledInstrumentations); got != "" {
 		t.Fatalf("OTEL_NODE_ENABLED_INSTRUMENTATIONS = %q, want empty for python", got)
 	}
-	if got := envValue(envs, envOtelPythonDisabledInstrumentations); got != "pika" {
-		t.Fatalf("OTEL_PYTHON_DISABLED_INSTRUMENTATIONS = %q", got)
+	if got := envValue(envs, "OTEL_PYTHON_DISABLED_INSTRUMENTATIONS"); got != "" {
+		t.Fatalf("OTEL_PYTHON_DISABLED_INSTRUMENTATIONS = %q, want absent", got)
 	}
 	if got := envValue(envs, envOtelPythonMongoCaptureStatement); got != "true" {
 		t.Fatalf("OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT = %q", got)

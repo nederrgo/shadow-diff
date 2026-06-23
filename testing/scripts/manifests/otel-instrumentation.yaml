@@ -36,7 +36,7 @@ spec:
         value: http://beru.beru-system.svc.cluster.local:8080
       - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
         value: http/protobuf
-      - name: OTEL_PYTHON_DISABLED_INSTRUMENTATIONS
-        value: pika
+      - name: OTEL_PYTHON_ENABLED_INSTRUMENTATIONS
+        value: flask,pika
       - name: OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT
         value: "true"

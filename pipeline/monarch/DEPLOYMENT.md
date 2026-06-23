@@ -17,7 +17,7 @@ For each `ShadowTest`, Monarch reconciles resources in two places:
 | **Shadow namespace** `shadow-<cr-namespace>-<cr-name>` | `<name>-control-a`, `-control-b`, `-candidate` Deployments + Services (Envoy sidecar + app) |
 | Same shadow namespace | **Igris** Deployment + Service (HTTP/TCP ingress) *or* **igris-rabbitmq** (AMQP ingress) |
 | Same shadow namespace | **Recorder** Deployment + ConfigMap (when `spec.recordAndReplay` is set) |
-| Same shadow namespace | **egress-relay-rabbitmq** Deployment (AMQP-only ShadowTests with `downstreams`) |
+| Same shadow namespace | **egress-relay-rabbitmq** Deployment (ShadowTests with a RabbitMQ `dependencies[]` entry, or AMQP ingress) |
 | Same shadow namespace | Per-role **dependency** Deployments + Services (Redis, RabbitMQ, etc.) |
 | **`siphon-system`** (cluster-wide) | **Siphon** DaemonSet (shared; image from `spec.siphon.image`) |
 | **Production broker** (AMQP only) | Prod shadow queue `shadow-diff-<uid>` bound to your exchange |
@@ -301,7 +301,7 @@ Expected Deployments in the shadow namespace (varies by spec):
 | `<name>-igris` | HTTP/TCP `inputs` (not AMQP-only) |
 | `<name>-igris-rabbitmq` | `rabbitmq_message` input |
 | `<name>-recorder` | `spec.recordAndReplay` non-empty |
-| `<name>-egress-relay-rabbitmq` | AMQP input + `recordAndReplay` |
+| `<name>-egress-relay-rabbitmq` | RabbitMQ `dependencies[]` (HTTP or AMQP ingress) |
 | `<dep>-control-a`, etc. | Each `spec.dependencies` entry |
 
 ---

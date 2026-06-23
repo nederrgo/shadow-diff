@@ -750,6 +750,20 @@ Proves W3C `traceparent` propagates across AMQP consume/publish when shadow work
 
 See [`testing/scripts/manifests/rabbitmq-otel-e2e/README.md`](../../testing/scripts/manifests/rabbitmq-otel-e2e/README.md). Expect Beru log: `No egress regression for Trace <hex> (rabbitmq)`.
 
+### HTTP ingress → RabbitMQ egress OTel E2E (igris-http + Firehose)
+
+Proves the same W3C `trace_id` reaches Beru on **both** ingress (Envoy `ext_proc`) and AMQP egress (egress-relay-rabbitmq) when traffic enters via **igris-http** and the app publishes to RabbitMQ with OTel auto-instrumentation only.
+
+```bash
+./testing/scripts/e2e-http-otel-rmq-nodejs-test.sh   # Express + amqplib (zero-touch)
+./testing/scripts/e2e-http-otel-rmq-python-test.sh # Flask + pika (zero-touch; relay dedup)
+```
+
+See [`testing/scripts/manifests/http-otel-rmq-e2e/README.md`](../../testing/scripts/manifests/http-otel-rmq-e2e/README.md). Expect Beru logs:
+
+- `No regression for Trace <hex>` (ingress)
+- `No egress regression for Trace <hex> (rabbitmq)` (egress)
+
 Use `--skip-otel-bootstrap` on `e2e-reset-kind.sh` when cert-manager and the OpenTelemetry Operator are already installed.
 
 ### Unit tests
@@ -790,4 +804,6 @@ cd monarch && go test ./internal/controller/ -run 'TestOtel|TestRenderEnvoy'
 - [ ] `make -C siphon test` passes (BPF egress, FlushOlderThan, keep-alive parser)
 - [ ] RabbitMQ E2E: `./testing/scripts/e2e-rabbitmq-test.sh` (Phase 5b — prod queue + igris-rabbitmq multicast)
 - [ ] OTel RabbitMQ E2E: `./testing/scripts/e2e-otel-rabbitmq-test.sh` (Phase 5_OTel — W3C traceparent via OTel amqplib injection)
+- [ ] HTTP→RMQ OTel E2E (Node): `./testing/scripts/e2e-http-otel-rmq-nodejs-test.sh` (igris-http ingress + Firehose egress, dual Beru correlation)
+- [ ] HTTP→RMQ OTel E2E (Python): `./testing/scripts/e2e-http-otel-rmq-python-test.sh` (Flask + pika zero-touch)
 - [ ] `make -C igris-rabbitmq test` passes

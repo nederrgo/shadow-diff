@@ -27,14 +27,43 @@ func egressRelayRabbitMQReplicasFor(st *enginev1alpha1.ShadowTest) int32 {
 	return 1
 }
 
+func hasRabbitMQBrokerDependency(st *enginev1alpha1.ShadowTest) bool {
+	for _, dep := range st.Spec.Dependencies {
+		if isRabbitMQBrokerDependency(dep) {
+			return true
+		}
+	}
+	return false
+}
+
+func needsEgressRelayRabbitMQ(st *enginev1alpha1.ShadowTest) bool {
+	return hasRabbitMQInput(st) || hasRabbitMQBrokerDependency(st)
+}
+
+func rabbitMQBrokerDependencyForEgressRelay(st *enginev1alpha1.ShadowTest) (*enginev1alpha1.DependencySpec, error) {
+	if hasRabbitMQInput(st) {
+		amqpSpec, err := firstAMQPInput(st)
+		if err != nil {
+			return nil, err
+		}
+		dep, ok := dependencyByName(st, amqpSpec.TargetDependency)
+		if !ok {
+			return nil, fmt.Errorf("dependency %q not found", amqpSpec.TargetDependency)
+		}
+		return dep, nil
+	}
+	for i := range st.Spec.Dependencies {
+		if isRabbitMQBrokerDependency(st.Spec.Dependencies[i]) {
+			return &st.Spec.Dependencies[i], nil
+		}
+	}
+	return nil, fmt.Errorf("no rabbitmq broker dependency found")
+}
+
 func (r *ShadowTestReconciler) egressRelayRabbitMQEnv(st *enginev1alpha1.ShadowTest, shadowNS string) ([]corev1.EnvVar, error) {
-	amqpSpec, err := firstAMQPInput(st)
+	dep, err := rabbitMQBrokerDependencyForEgressRelay(st)
 	if err != nil {
 		return nil, err
-	}
-	dep, ok := dependencyByName(st, amqpSpec.TargetDependency)
-	if !ok {
-		return nil, fmt.Errorf("dependency %q not found", amqpSpec.TargetDependency)
 	}
 	return []corev1.EnvVar{
 		{Name: envControlAAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlA, dep.Port)},
@@ -51,7 +80,7 @@ func (r *ShadowTestReconciler) reconcileEgressRelayRabbitMQDeployment(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) error {
-	if !hasRabbitMQInput(st) {
+	if !needsEgressRelayRabbitMQ(st) {
 		return nil
 	}
 
@@ -111,7 +140,7 @@ func (r *ShadowTestReconciler) egressRelayRabbitMQDeploymentReady(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) (bool, error) {
-	if !hasRabbitMQInput(st) {
+	if !needsEgressRelayRabbitMQ(st) {
 		return true, nil
 	}
 	var deploy appsv1.Deployment

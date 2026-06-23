@@ -23,6 +23,7 @@ const (
 	roleCandidate        = "candidate"
 
 	containerEnvoySidecar = "envoy-sidecar"
+	containerApp          = "app"
 	envShadowRole         = "SHADOW_ROLE"
 	envoyImage            = "envoyproxy/envoy:v1.26-latest"
 	configMapKeyEnvoyYAML = "envoy.yaml"

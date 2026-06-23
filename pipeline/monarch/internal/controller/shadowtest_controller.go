@@ -233,6 +233,20 @@ func (r *ShadowTestReconciler) reconcileIngressRelays(
 		}
 	}
 
+	if needsEgressRelayRabbitMQ(st) && needsHTTPTCPIngress(st) {
+		if err := r.reconcileEgressRelayRabbitMQStack(ctx, st, shadowNS); err != nil {
+			return false, err
+		}
+		egressRelayReady, err := r.egressRelayRabbitMQDeploymentReady(ctx, st, shadowNS)
+		if err != nil {
+			return false, err
+		}
+		if !egressRelayReady {
+			_ = r.patchStatus(ctx, st, "Progressing", "waiting for egress-relay-rabbitmq", shadowNS)
+			return false, nil
+		}
+	}
+
 	return true, nil
 }
 

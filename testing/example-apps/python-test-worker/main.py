@@ -43,60 +43,6 @@ def is_candidate() -> bool:
     return "candidate" in env_or("OTEL_SERVICE_NAME", "")
 
 
-def carrier_from_amqp_headers(headers) -> dict:
-    out: dict = {}
-    if not headers:
-        return out
-    for key, val in headers.items():
-        if isinstance(val, bytes):
-            out[key] = val.decode("utf-8", errors="replace")
-        elif val is not None:
-            out[key] = str(val)
-    return out
-
-
-def attach_inbound_trace(properties):
-    try:
-        from opentelemetry import propagate
-        from opentelemetry.context import attach
-
-        carrier = carrier_from_amqp_headers(
-            properties.headers if properties is not None else None
-        )
-        if not carrier:
-            return None
-        return attach(propagate.extract(carrier))
-    except ImportError:
-        return None
-
-
-def detach_trace(token) -> None:
-    if token is None:
-        return
-    try:
-        from opentelemetry.context import detach
-
-        detach(token)
-    except ImportError:
-        return
-
-
-def trace_headers(properties=None) -> dict:
-    headers: dict = {}
-    try:
-        from opentelemetry import propagate
-
-        propagate.inject(headers)
-    except ImportError:
-        pass
-    if not headers.get("traceparent") and properties is not None:
-        inbound = carrier_from_amqp_headers(properties.headers)
-        tp = inbound.get("traceparent")
-        if tp:
-            headers["traceparent"] = tp
-    return headers
-
-
 def parse_order_id(body: bytes) -> str:
     try:
         data = json.loads(body.decode("utf-8"))
@@ -169,7 +115,6 @@ def handle_message(ch, method, properties, body, mongo_coll):
 
     shipped = {"order_id": order_id, "status": "shipped"}
     props = pika.BasicProperties(
-        headers=trace_headers(properties),
         content_type="application/json",
         delivery_mode=2,
     )
@@ -188,7 +133,6 @@ def handle_message(ch, method, properties, body, mongo_coll):
             routing_key=EGRESS_ROUTING_KEY,
             body=json.dumps(dup),
             properties=pika.BasicProperties(
-                headers=trace_headers(properties),
                 content_type="application/json",
                 delivery_mode=2,
             ),
@@ -226,14 +170,12 @@ def main() -> None:
         flush=True,
     )
 
-    def on_message(channel, method, properties, body):
-        token = attach_inbound_trace(properties)
-        try:
-            handle_message(channel, method, properties, body, mongo_coll)
-        finally:
-            detach_trace(token)
-
-    ch.basic_consume(queue=queue, on_message_callback=on_message)
+    ch.basic_consume(
+        queue=queue,
+        on_message_callback=lambda channel, method, properties, body: handle_message(
+            channel, method, properties, body, mongo_coll
+        ),
+    )
 
     def shutdown(_signum, _frame):
         conn.close()

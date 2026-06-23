@@ -359,7 +359,7 @@ Beru receives shadow traffic through **complementary ingest paths**:
 
 **OpenTelemetry sidecar.** When `spec.otelInjection` is enabled (default), Monarch annotates shadow app pods for the **OpenTelemetry Operator**, which injects a language-specific auto-instrumentation agent. The agent extracts inbound W3C context from Igris/AMQP headers, propagates `tracecontext` on instrumented outbound calls, and — when a Mongo dependency is declared — exports MongoDB client spans (`db.statement`) directly to Beru OTLP. Monarch sets `OTEL_EXPORTER_OTLP_ENDPOINT` to Beru; Python uses HTTP/protobuf, Node/Java use gRPC.
 
-Manual copying of `traceparent` / `x-shadow-trace-id` in application code is **no longer the primary model** — it remains as a fallback for untracked goroutines, disabled OTel injection, or libraries the agent cannot instrument (e.g. Python `pika`, where auto-instrumentation is disabled to avoid duplicate Firehose events).
+Manual copying of `traceparent` / `x-shadow-trace-id` in application code is **no longer the primary model** — it remains as a fallback for untracked goroutines, disabled OTel injection, or libraries the agent cannot instrument. Python `pika` auto-instrumentation is enabled; **egress-relay-rabbitmq** deduplicates duplicate Firehose publishes from OTel double-wrap within a short window.
 
 When trace context is missing entirely, Beru can fall back to sequence-based diffing.
 

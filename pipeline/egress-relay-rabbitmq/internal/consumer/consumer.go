@@ -20,6 +20,7 @@ type Runner struct {
 	EgressExchange string
 	MinDelay       time.Duration
 	MaxDelay       time.Duration
+	dedup          *publishDedup
 }
 
 // Run blocks until ctx is cancelled, reconnecting on broker failures.
@@ -124,7 +125,7 @@ func (r *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 		return
 	}
 
-	traceID, err := firehose.TraceIDFromFirehose(msg.Headers)
+	traceID, spanID, err := firehose.TraceContextFromFirehose(msg.Headers)
 	if err != nil {
 		log.Printf("workload=%s skip firehose message routing_key=%s: %v", r.Workload, msg.RoutingKey, err)
 		return
@@ -132,6 +133,10 @@ func (r *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 	payload, err := firehose.PayloadJSON(msg.Body)
 	if err != nil {
 		log.Printf("workload=%s skip firehose message trace=%s: %v", r.Workload, traceID, err)
+		return
+	}
+	if r.dedup != nil && !r.dedup.shouldForward(traceID, spanID, msg.Body) {
+		log.Printf("workload=%s dedup discard trace=%s span=%s", r.Workload, traceID, spanID)
 		return
 	}
 	report := beru.Report{
@@ -147,6 +152,9 @@ func (r *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 
 // StartAll launches one reconnect loop per configured broker URL.
 func StartAll(ctx context.Context, cfg config.Config, beruClient *beru.Client) {
+	dedup := newPublishDedup()
+	dedup.startPruner(ctx)
+
 	workers := []struct {
 		workload string
 		url      string
@@ -164,6 +172,7 @@ func StartAll(ctx context.Context, cfg config.Config, beruClient *beru.Client) {
 			EgressExchange: cfg.EgressExchange,
 			MinDelay:       cfg.ReconnectMin,
 			MaxDelay:       cfg.ReconnectMax,
+			dedup:          dedup,
 		}
 		go func() {
 			if err := runner.Run(ctx); err != nil && err != context.Canceled {

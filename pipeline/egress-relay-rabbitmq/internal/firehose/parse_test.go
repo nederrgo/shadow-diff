@@ -61,6 +61,40 @@ func TestTraceIDFromFirehose_traceparentBytes(t *testing.T) {
 	}
 }
 
+func TestTraceContextFromFirehose_traceparent(t *testing.T) {
+	headers := amqp.Table{
+		"properties": amqp.Table{
+			"headers": amqp.Table{
+				"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+			},
+		},
+	}
+	traceID, spanID, err := TraceContextFromFirehose(headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if traceID != "4bf92f3577b34da6a3ce929d0e0e4736" || spanID != "00f067aa0ba902b7" {
+		t.Fatalf("trace=%q span=%q", traceID, spanID)
+	}
+}
+
+func TestTraceContextFromFirehose_shadowTraceID(t *testing.T) {
+	headers := amqp.Table{
+		"properties": amqp.Table{
+			"headers": amqp.Table{
+				"x-shadow-trace-id": "abc123",
+			},
+		},
+	}
+	traceID, spanID, err := TraceContextFromFirehose(headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if traceID != "abc123" || spanID != "" {
+		t.Fatalf("trace=%q span=%q", traceID, spanID)
+	}
+}
+
 func TestTraceIDFromFirehose_shadowTraceID(t *testing.T) {
 	headers := amqp.Table{
 		"properties": amqp.Table{

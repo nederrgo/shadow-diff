@@ -18,6 +18,7 @@ Shadow RabbitMQ broker (per role)
     │  Firehose: amq.rabbitmq.trace / publish.#
     ▼
 egress-relay-rabbitmq (one reconnect loop per role)
+    │  surgical dedup (OTel double-publish filter)
     │  POST /api/v1/egress/diff  { trace_id, workload, protocol, payload }
     ▼
 Beru (L5)
@@ -29,10 +30,10 @@ Beru (L5)
 | 1 | **igris-rabbitmq (L2)** | Multicasts prod message to three shadow brokers with trace headers |
 | 2 | **Shadow worker (L3)** | Consumes ingress, publishes egress JSON to broker |
 | 3 | **Shadow RabbitMQ** | Firehose traces outbound `basic.publish` events |
-| 4 | **egress-relay-rabbitmq (L4a)** | Reads Firehose, extracts trace id + body, forwards to Beru |
+| 4 | **egress-relay-rabbitmq (L4a)** | Reads Firehose, dedups OTel artifacts, extracts trace id + body, forwards to Beru |
 | 5 | **Beru (L5)** | Compares payloads → `No egress regression for Trace … (rabbitmq)` |
 
-Trace ids are read from the **original application headers** embedded in Firehose metadata: `x-shadow-trace-id` first, then W3C `traceparent`. Workers can propagate context via OTel auto-instrumentation or manual header copy.
+Trace ids are read from the **original application headers** embedded in Firehose metadata: `x-shadow-trace-id` first, then W3C `traceparent` (trace id + span id). Workers propagate context via **OTel auto-instrumentation** (`amqplib`, Python `pika`, etc.) — application code does not need to copy headers. The relay filters known OTel `pika` double-Firehose artifacts so Beru count-diff stays accurate without disabling auto-instrumentation.
 
 ---
 
@@ -53,9 +54,10 @@ Monarch enables Firehose on shadow RabbitMQ dependency pods (`rabbitmqctl trace_
 For each Firehose message with routing key `publish.*`:
 
 1. Parse nested **`properties.headers`** from the trace envelope (original app headers).
-2. Extract **trace id** (`x-shadow-trace-id` or `traceparent`).
+2. Extract **trace id** and **span id** (`x-shadow-trace-id` → span id empty; `traceparent` → both).
 3. Validate message **body** as JSON (the published application payload).
-4. POST to Beru:
+4. **Surgical dedup** — if span id is present, drop a second Firehose event with the same `(trace_id, span_id, payload hash)` within **100ms** (see below).
+5. POST to Beru:
 
 ```json
 {
@@ -66,9 +68,25 @@ For each Firehose message with routing key `publish.*`:
 }
 ```
 
-### 3. Beru diff-of-diffs
+### 3. Surgical deduplicator (OTel `pika` double-publish)
 
-Beru buffers one report per `(trace_id, workload)`. When all three roles have reported, it runs the same diff-of-diffs pattern as HTTP ingress:
+OpenTelemetry's Python `pika` instrumentation can emit **two identical Firehose events** per `basic_publish` (same trace, span, and body). That breaks Beru's egress **count** diff. The relay filters library-level duplicates at the network edge without masking real regressions (e.g. candidate N+1 publishes a **different** JSON body).
+
+Shared in-memory cache across all three broker runners (`internal/consumer/dedup.go`):
+
+| Input | Behavior |
+| ----- | -------- |
+| No span id (`x-shadow-trace-id` only) | Forward every event (no dedup) |
+| `traceparent` present | Key = `trace_id:span_id:sha256(payload)[:8]` |
+| Duplicate key within **100ms** | Discard (OTel artifact) |
+| Same key after 100ms | Forward (stale window expired) |
+| Different payload hash | Always forward (real extra publish) |
+
+A background pruner deletes cache entries older than **5s** every minute.
+
+### 4. Beru diff-of-diffs
+
+Beru accumulates reports per `(trace_id, workload, protocol)` (multiple payloads per role). When all three roles have reported, it runs the same diff-of-diffs pattern as HTTP ingress:
 
 1. Diff(control-a, control-b) → noise
 2. Diff(control-a, candidate) → regressions
@@ -83,7 +101,7 @@ Success log: `No egress regression for Trace <id> (rabbitmq)`.
 egress-relay-rabbitmq/
   cmd/egress-relay-rabbitmq/   main entrypoint
   internal/
-    consumer/                  Firehose subscribe + reconnect per role
+    consumer/                  Firehose subscribe, dedup, reconnect per role
     firehose/                  Trace envelope parsing, trace id extraction
     beru/                      POST /api/v1/egress/diff client
     trace/                     W3C traceparent helpers
@@ -153,23 +171,25 @@ Example ShadowTest: [testing/scripts/manifests/rabbitmq-otel-e2e/shadowtest-otel
 
 ## Verification
 
-RabbitMQ egress diff E2E (manual trace propagation):
+RabbitMQ egress diff E2E (manual `traceparent` on publish):
 
 ```sh
 ./testing/scripts/e2e-rabbitmq-egress-test.sh
 ```
 
-OTel zero-touch AMQP egress (traceparent via OTel `amqplib` instrumentation):
+OTel zero-touch AMQP egress (Node `amqplib` auto-instrumentation):
 
 ```sh
 ./testing/scripts/e2e-otel-rabbitmq-test.sh
 ```
 
-Expected Beru log:
+Python hybrid — OTel `pika` + Mongo OTLP + HTTP replay; relay dedup + candidate N+1 count regression:
 
+```sh
+./testing/scripts/e2e-python-hybrid-test.sh
 ```
-No egress regression for Trace <trace-id> (rabbitmq)
-```
+
+Expected Beru logs (controls): `No egress regression for Trace <trace-id> (rabbitmq)`. Hybrid candidate run also expects count regression: `expected 1 message but got 2`.
 
 See [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md).
 

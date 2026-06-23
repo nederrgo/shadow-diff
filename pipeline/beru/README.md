@@ -265,11 +265,11 @@ Root Makefile aliases: `make beru-build`, `make beru-test`, and Monarch's `make 
 | ---- | ---------------------- |
 | **HTTP ingress (Igris → Envoy)** | Igris injects W3C `traceparent` on multicast; Envoy ingress `ext_proc` reports responses. Apps usually need no trace code. |
 | **Mongo egress (OTel → Beru)** | OTel agent auto-instruments MongoDB drivers, extracts inbound context from AMQP/HTTP headers, exports `db.statement` spans to Beru OTLP. No app-level header copying. |
-| **RabbitMQ egress (relay)** | Workers publish with W3C context (OTel `amqplib` injection or manual `traceparent` on `pika`); egress-relay-rabbitmq reads Firehose and posts to Beru HTTP API. |
+| **RabbitMQ egress (relay)** | Workers publish with W3C context (OTel `amqplib` / `pika` injection); egress-relay-rabbitmq reads Firehose and posts to Beru HTTP API (dedupes duplicate Firehose events by trace+span+payload). |
 
 Enable OTel injection via `spec.otelInjection` on ShadowTest + OpenTelemetry Operator + `Instrumentation` CR. Monarch sets `OTEL_EXPORTER_OTLP_ENDPOINT` to Beru when a Mongo dependency is declared. See `./testing/scripts/e2e-python-hybrid-test.sh`, `./testing/scripts/e2e-otel-rabbitmq-test.sh`, and [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) Phase 5_OTel.
 
-Manual propagation (`x-shadow-trace-id` / `traceparent` copying) remains supported for libraries the agent cannot instrument — see `testing/example-apps/rmq-test-worker` with `RMQ_WORKER_MANUAL_TRACE=1`.
+Manual propagation (`x-shadow-trace-id` / `traceparent` copying) remains supported for libraries the agent cannot instrument — see `testing/example-apps/rmq-test-worker` with `RMQ_WORKER_MANUAL_TRACE=1`. Python `pika` is auto-instrumented when OTel injection is enabled; egress-relay deduplicates duplicate Firehose publishes.
 
 ---
 

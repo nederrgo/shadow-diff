@@ -1,0 +1,29 @@
+# Prod mirror for ShadowTest — holds egress env; real worker runs in shadow pods with AMQP_URL.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http-rmq-python-prod
+  namespace: default
+  labels:
+    app: http-rmq-python-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: http-rmq-python-prod
+  template:
+    metadata:
+      labels:
+        app: http-rmq-python-prod
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["sh", "-c", "sleep infinity"]
+          env:
+            - name: HTTP_PORT
+              value: "8080"
+            - name: RMQ_EGRESS_EXCHANGE
+              value: egress-events
+            - name: RMQ_EGRESS_ROUTING_KEY
+              value: order.egress

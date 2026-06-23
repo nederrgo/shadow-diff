@@ -1,0 +1,11 @@
+{
+  "name": "http-rmq-test-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Trace-unaware HTTP ingress to RabbitMQ egress app for OTel E2E",
+  "main": "index.js",
+  "dependencies": {
+    "amqplib": "^0.10.5",
+    "express": "^4.21.2"
+  }
+}

@@ -9,8 +9,14 @@ import (
 )
 
 const (
-	annotationOtelInjectPrefix = "instrumentation.opentelemetry.io/inject-"
-	annotationOtelInjectSDK    = annotationOtelInjectPrefix + "sdk"
+	annotationOtelInjectPrefix          = "instrumentation.opentelemetry.io/inject-"
+	annotationOtelInjectSDK             = annotationOtelInjectPrefix + "sdk"
+	annotationOtelContainerNames        = "instrumentation.opentelemetry.io/container-names"
+	annotationOtelNodeJSContainerNames  = "instrumentation.opentelemetry.io/nodejs-container-names"
+	annotationOtelPythonContainerNames  = "instrumentation.opentelemetry.io/python-container-names"
+	annotationOtelJavaContainerNames    = "instrumentation.opentelemetry.io/java-container-names"
+	annotationOtelDotNetContainerNames = "instrumentation.opentelemetry.io/dotnet-container-names"
+	annotationOtelGoContainerNames      = "instrumentation.opentelemetry.io/go-container-names"
 
 	envOtelTracesExporter                 = "OTEL_TRACES_EXPORTER"
 	envOtelMetricsExporter                = "OTEL_METRICS_EXPORTER"
@@ -21,7 +27,6 @@ const (
 	envOtelExporterOTLPProtocol           = "OTEL_EXPORTER_OTLP_PROTOCOL"
 	envOtelExporterOTLPTracesProtocol     = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
 	envOtelNodeEnabledInstrumentations    = "OTEL_NODE_ENABLED_INSTRUMENTATIONS"
-	envOtelPythonDisabledInstrumentations = "OTEL_PYTHON_DISABLED_INSTRUMENTATIONS"
 	envOtelPythonMongoCaptureStatement    = "OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT"
 
 	defaultBeruOTLPEndpoint     = "http://beru.beru-system.svc.cluster.local:4317"
@@ -67,12 +72,34 @@ func detectOtelLanguage(image, specLang string) string {
 
 func otelPodAnnotations(st *enginev1alpha1.ShadowTest, appImage string) map[string]string {
 	ann := map[string]string{
-		annotationOtelInjectSDK: "true",
+		annotationOtelInjectSDK:      "true",
+		annotationOtelContainerNames: containerApp,
+		annotationOtelInjectPrefix + "sdk-container-names": containerApp,
 	}
 	if lang := detectOtelLanguage(appImage, otelLanguageFromSpec(st)); lang != "" {
 		ann[annotationOtelInjectPrefix+lang] = "true"
+		if key := otelLanguageContainerNamesAnnotation(lang); key != "" {
+			ann[key] = containerApp
+		}
 	}
 	return ann
+}
+
+func otelLanguageContainerNamesAnnotation(lang string) string {
+	switch lang {
+	case "nodejs":
+		return annotationOtelNodeJSContainerNames
+	case "python":
+		return annotationOtelPythonContainerNames
+	case "java":
+		return annotationOtelJavaContainerNames
+	case "dotnet":
+		return annotationOtelDotNetContainerNames
+	case "go":
+		return annotationOtelGoContainerNames
+	default:
+		return ""
+	}
 }
 
 func otelEnvVars(st *enginev1alpha1.ShadowTest, role, appImage string) []corev1.EnvVar {
@@ -103,11 +130,9 @@ func otelEnvVars(st *enginev1alpha1.ShadowTest, role, appImage string) []corev1.
 			})
 		}
 		if lang == "python" {
-			// ponytail: worker manually injects traceparent on pika publish; auto pika doubles firehose events
-			envs = append(envs,
-				corev1.EnvVar{Name: envOtelPythonDisabledInstrumentations, Value: "pika"},
-				corev1.EnvVar{Name: envOtelPythonMongoCaptureStatement, Value: "true"},
-			)
+			envs = append(envs, corev1.EnvVar{
+				Name: envOtelPythonMongoCaptureStatement, Value: "true",
+			})
 		}
 		return envs
 	}

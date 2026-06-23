@@ -68,7 +68,7 @@ func validateDependencies(st *enginev1alpha1.ShadowTest) error {
 			if resName == shadowDeploymentName(st, role) || resName == igrisDeploymentName(st) {
 				return fmt.Errorf("dependency %q collides with shadow workload name %q", dep.Name, resName)
 			}
-			if hasRabbitMQInput(st) && resName == egressRelayRabbitMQDeploymentName(st) {
+			if needsEgressRelayRabbitMQ(st) && resName == egressRelayRabbitMQDeploymentName(st) {
 				return fmt.Errorf("dependency %q collides with egress-relay-rabbitmq name %q", dep.Name, resName)
 			}
 		}

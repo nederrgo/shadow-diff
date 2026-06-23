@@ -77,22 +77,28 @@ func OriginalAppHeaders(traceHeaders amqp.Table) (amqp.Table, error) {
 	return headers, nil
 }
 
-// TraceIDFromFirehose extracts a trace id from Firehose metadata.
-func TraceIDFromFirehose(traceHeaders amqp.Table) (string, error) {
+// TraceContextFromFirehose extracts trace and span ids from Firehose metadata.
+func TraceContextFromFirehose(traceHeaders amqp.Table) (traceID, spanID string, err error) {
 	appHeaders, err := OriginalAppHeaders(traceHeaders)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if id, ok := getStringHeader(appHeaders, headerShadowTraceID); ok {
-		return id, nil
+		return id, "", nil
 	}
 	if tp, ok := getStringHeader(appHeaders, headerTraceparent); ok {
-		if tid, ok := trace.ParseTraceparent(tp); ok {
-			return tid, nil
+		if tid, sid, ok := trace.ParseTraceparent(tp); ok {
+			return tid, sid, nil
 		}
-		return "", fmt.Errorf("invalid traceparent header")
+		return "", "", fmt.Errorf("invalid traceparent header")
 	}
-	return "", fmt.Errorf("no trace id in firehose headers")
+	return "", "", fmt.Errorf("no trace id in firehose headers")
+}
+
+// TraceIDFromFirehose extracts a trace id from Firehose metadata.
+func TraceIDFromFirehose(traceHeaders amqp.Table) (string, error) {
+	traceID, _, err := TraceContextFromFirehose(traceHeaders)
+	return traceID, err
 }
 
 // PayloadJSON validates and returns the original message body as JSON.
