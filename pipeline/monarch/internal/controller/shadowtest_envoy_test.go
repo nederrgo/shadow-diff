@@ -94,6 +94,46 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 	}
 }
 
+func TestRenderEnvoyYAML_egressProxyHostPort(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			ServicePort:     80,
+			ApplicationPort: 8080,
+			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
+			BeruGRPCTimeout: "2s",
+			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{
+				{Host: "user-service.prod:8080"},
+			},
+		},
+	}
+	yaml, err := renderEnvoyYAML(st, "shadow-default-test", roleControlA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []string{
+		"user-service.prod:8080",
+		"user-service.prod:8080:*",
+		`user-service.prod`,
+		"x-shadow-record-and-replay-config",
+	} {
+		if !strings.Contains(yaml, c) {
+			t.Fatalf("expected %q in envoy yaml:\n%s", c, yaml)
+		}
+	}
+}
+
+func TestParseRecordAndReplayTarget(t *testing.T) {
+	host, port := parseRecordAndReplayTarget("api.example.com", defaultRecordAndReplayPort)
+	if host != "api.example.com" || port != 80 {
+		t.Fatalf("got %q:%d", host, port)
+	}
+	host, port = parseRecordAndReplayTarget("user-service.prod:8080", defaultRecordAndReplayPort)
+	if host != "user-service.prod" || port != 8080 {
+		t.Fatalf("got %q:%d", host, port)
+	}
+}
+
 func TestEgressVirtualHostDomains(t *testing.T) {
 	got := egressVirtualHostDomains([]string{"api.stripe.com", "api.stripe.com", "payments.internal.svc"})
 	want := []string{"api.stripe.com", "api.stripe.com:*", "payments.internal.svc", "payments.internal.svc:*"}
@@ -169,7 +209,7 @@ func TestRenderEnvoyYAML_mongoEgress(t *testing.T) {
 			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			BeruGRPCTimeout: "2s",
 			Dependencies: []enginev1alpha1.DependencySpec{{
-				Name: "mongo", Image: "mongo:7", Port: 27017, EnvVarInjection: "MONGO_URL",
+				Name: "mongo", Type: "mongodb", Image: "mongo:7", Port: 27017, EnvVarInjection: "MONGO_URL",
 			}},
 		},
 	}

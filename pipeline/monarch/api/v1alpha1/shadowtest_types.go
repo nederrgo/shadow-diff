@@ -94,13 +94,19 @@ type DependencySpec struct {
 	// Name is the logical dependency id; used in resource names and DNS labels.
 	Name string `json:"name"`
 
+	// Type is the technology classification (e.g. rabbitmq, mongodb, redis).
+	// Monarch uses this to auto-populate default images and ports.
+	Type string `json:"type"`
+
 	// Image is the container image (e.g. redis:7-alpine).
-	Image string `json:"image"`
+	// +optional
+	Image string `json:"image,omitempty"`
 
 	// Port is the TCP port exposed by the dependency container and Service.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
-	Port int32 `json:"port"`
+	// +optional
+	Port int32 `json:"port,omitempty"`
 
 	// EnvVarInjection is the app container env var name set to the role-specific dependency
 	// endpoint as host:port (e.g. redis-control-a.<shadow-ns>.svc.cluster.local:6379).
@@ -144,18 +150,6 @@ type IgrisRabbitMQSpec struct {
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-// OtelInjectionSpec configures OpenTelemetry Operator auto-instrumentation on shadow app pods.
-type OtelInjectionSpec struct {
-	// Enabled defaults to true when nil. Set false to skip OTel injection annotations and env.
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Language overrides image-based detection (java, python, nodejs, dotnet, go).
-	// +kubebuilder:validation:Enum=java;python;nodejs;dotnet;go
-	// +optional
-	Language string `json:"language,omitempty"`
-}
-
 // IgrisSpec overrides the always-deployed Igris workload.
 type IgrisSpec struct {
 	// Image overrides the default Igris container image.
@@ -178,7 +172,9 @@ type ShadowTestSpec struct {
 	TargetDeployment string `json:"targetDeployment"`
 
 	// TargetNamespace is the namespace containing TargetDeployment.
-	TargetNamespace string `json:"targetNamespace"`
+	// Defaults to the ShadowTest CR namespace when unset.
+	// +optional
+	TargetNamespace string `json:"targetNamespace,omitempty"`
 
 	// OldImage is the container image for Control-A and Control-B pods.
 	OldImage string `json:"oldImage"`
@@ -241,9 +237,11 @@ type ShadowTestSpec struct {
 	// +optional
 	Dependencies []DependencySpec `json:"dependencies,omitempty"`
 
-	// OtelInjection enables OpenTelemetry Operator SDK/agent injection on shadow app pods (default on).
+	// Language declares the application's runtime language (e.g. nodejs, python, java).
+	// Monarch uses this to automatically inject the correct OpenTelemetry Operator agents.
+	// +kubebuilder:validation:Enum=java;python;nodejs;dotnet;go
 	// +optional
-	OtelInjection *OtelInjectionSpec `json:"otelInjection,omitempty"`
+	Language string `json:"language,omitempty"`
 }
 
 // ShadowTestStatus defines the observed state of ShadowTest.

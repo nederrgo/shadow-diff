@@ -44,7 +44,7 @@ func TestEgressRelayRabbitMQEnv(t *testing.T) {
 				},
 			}},
 			Dependencies: []enginev1alpha1.DependencySpec{{
-				Name: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
+				Name: "rabbitmq", Type: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
 			}},
 		},
 	}
@@ -75,7 +75,7 @@ func TestEgressRelayRabbitMQEnv_HTTPIngressOnly(t *testing.T) {
 				Driver: "http_request",
 			}},
 			Dependencies: []enginev1alpha1.DependencySpec{{
-				Name: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
+				Name: "rabbitmq", Type: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
 			}},
 		},
 	}
@@ -100,7 +100,7 @@ func TestNeedsEgressRelayRabbitMQ(t *testing.T) {
 		Spec: enginev1alpha1.ShadowTestSpec{
 			Inputs: []enginev1alpha1.InputSpec{{Port: 8888, Driver: "http_request"}},
 			Dependencies: []enginev1alpha1.DependencySpec{{
-				Name: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
+				Name: "rabbitmq", Type: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
 			}},
 		},
 	}

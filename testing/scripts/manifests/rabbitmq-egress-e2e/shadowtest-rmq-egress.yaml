@@ -5,15 +5,12 @@ metadata:
   namespace: default
 spec:
   targetDeployment: rmq-prod-target
-  targetNamespace: default
 
   oldImage: rmq-test-worker:dev
   newImage: rmq-test-worker:dev
 
   servicePort: 8888
   applicationPort: 8080
-
-  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
 
   inputs:
     - driver: rabbitmq_message
@@ -28,6 +25,5 @@ spec:
 
   dependencies:
     - name: rabbitmq
-      image: rabbitmq:3-management-alpine
-      port: 5672
+      type: rabbitmq
       envVarInjection: AMQP_URL

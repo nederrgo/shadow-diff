@@ -22,7 +22,7 @@ func TestDumpMongoEnvoyYAML(t *testing.T) {
 			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			BeruGRPCTimeout: "2s",
 			Dependencies: []enginev1alpha1.DependencySpec{{
-				Name: "mongo", Image: "mongo:7", Port: 27017, EnvVarInjection: "MONGO_URL",
+				Name: "mongo", Type: "mongodb", Image: "mongo:7", Port: 27017, EnvVarInjection: "MONGO_URL",
 			}},
 		},
 	}

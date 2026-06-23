@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -10,6 +11,13 @@ import (
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
+
+func targetNamespaceFor(st *enginev1alpha1.ShadowTest) string {
+	if st.Spec.TargetNamespace != "" {
+		return st.Spec.TargetNamespace
+	}
+	return st.Namespace
+}
 
 func shadowNamespaceForCR(st *enginev1alpha1.ShadowTest) string {
 	return sanitizeForDNS(fmt.Sprintf("shadow-%s-%s", st.Namespace, st.Name))
@@ -156,4 +164,80 @@ func parseBeruHostPort(address string) (host string, port int32, err error) {
 		return "", 0, err
 	}
 	return h, int32(portNum), nil
+}
+
+const defaultRecordAndReplayPort int32 = 80 // ponytail: HTTP egress default; override via host:port in spec
+
+func parseRecordAndReplayTarget(rawHost string, defaultPort int32) (host string, port int32) {
+	host = strings.TrimSpace(rawHost)
+	port = defaultPort
+	if host == "" {
+		return "", defaultPort
+	}
+	if h, p, err := net.SplitHostPort(host); err == nil && h != "" {
+		host = h
+		if n, err := strconv.Atoi(p); err == nil {
+			port = int32(n)
+		}
+	}
+	return host, port
+}
+
+func recordAndReplayEntry(d enginev1alpha1.RecordAndReplayHostSpec) (host string, port int32, ignorePaths []string) {
+	host, port = parseRecordAndReplayTarget(d.Host, defaultRecordAndReplayPort)
+	return host, port, d.IgnoreRequestPaths
+}
+
+func recordAndReplayEgressDomains(st *enginev1alpha1.ShadowTest) []string {
+	var hosts []string
+	for _, d := range st.Spec.RecordAndReplay {
+		host, port, _ := recordAndReplayEntry(d)
+		if host == "" {
+			continue
+		}
+		if port != defaultRecordAndReplayPort {
+			hosts = append(hosts, fmt.Sprintf("%s:%d", host, port))
+		} else {
+			hosts = append(hosts, host)
+		}
+	}
+	return egressVirtualHostDomains(hosts)
+}
+
+func resolveDependencyDefaults(dep enginev1alpha1.DependencySpec) (image string, port int32) {
+	image = dep.Image
+	port = dep.Port
+	switch strings.ToLower(dep.Type) {
+	case "rabbitmq":
+		if image == "" {
+			image = "rabbitmq:3-management-alpine"
+		}
+		if port == 0 {
+			port = 5672
+		}
+	case "mongodb", "mongo":
+		if image == "" {
+			image = "mongo:6.0"
+		}
+		if port == 0 {
+			port = 27017
+		}
+	case "redis":
+		if image == "" {
+			image = "redis:7-alpine"
+		}
+		if port == 0 {
+			port = 6379
+		}
+	}
+	return
+}
+
+func isMongoDependencyType(dep enginev1alpha1.DependencySpec) bool {
+	switch strings.ToLower(dep.Type) {
+	case "mongodb", "mongo":
+		return true
+	default:
+		return false
+	}
 }

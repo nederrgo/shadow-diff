@@ -6,7 +6,6 @@ metadata:
   namespace: default
 spec:
   targetDeployment: http-rmq-nodejs-prod
-  targetNamespace: default
 
   oldImage: http-rmq-test-app:dev
   newImage: http-rmq-test-app:dev
@@ -14,21 +13,13 @@ spec:
   servicePort: 8888
   applicationPort: 8080
 
-  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
-
   inputs:
     - port: 8888
       driver: http_request
 
-  siphon:
-    enabled: false
-
-  otelInjection:
-    enabled: true
-    language: nodejs
+  language: nodejs
 
   dependencies:
     - name: rabbitmq
-      image: rabbitmq:3-management-alpine
-      port: 5672
+      type: rabbitmq
       envVarInjection: AMQP_URL

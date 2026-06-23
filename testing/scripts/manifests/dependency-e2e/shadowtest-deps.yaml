@@ -7,15 +7,12 @@ metadata:
   namespace: default
 spec:
   targetDeployment: db-test-prod
-  targetNamespace: default
 
   oldImage: db-test-app:dev
   newImage: db-test-app:dev
 
   servicePort: 8888
   applicationPort: 8080
-
-  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
 
   inputs:
     - port: 8888
@@ -26,6 +23,5 @@ spec:
 
   dependencies:
     - name: redis
-      image: redis:7-alpine
-      port: 6379
+      type: redis
       envVarInjection: REDIS_HOST

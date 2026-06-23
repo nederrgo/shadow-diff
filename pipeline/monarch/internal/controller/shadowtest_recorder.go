@@ -40,9 +40,10 @@ func recorderRecordAndReplayJSON(st *enginev1alpha1.ShadowTest) (string, error) 
 	}
 	out := make([]hostEntry, len(st.Spec.RecordAndReplay))
 	for i, d := range st.Spec.RecordAndReplay {
+		host, _, ignorePaths := recordAndReplayEntry(d)
 		out[i] = hostEntry{
-			Host:        d.Host,
-			IgnorePaths: d.IgnoreRequestPaths,
+			Host:        host,
+			IgnorePaths: ignorePaths,
 		}
 	}
 	b, err := json.Marshal(out)

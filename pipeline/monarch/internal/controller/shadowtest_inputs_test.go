@@ -92,7 +92,7 @@ func TestValidateInputsAMQPOnly(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{
 			Dependencies: []enginev1alpha1.DependencySpec{{
-				Name: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
+				Name: "rabbitmq", Type: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
 			}},
 			Inputs: []enginev1alpha1.InputSpec{{
 				Driver: "rabbitmq_message",
@@ -141,7 +141,7 @@ func TestBuildPixieStreamRuleSpecAMQPOnlyNoIngressPorts(t *testing.T) {
 				},
 			}},
 			Dependencies: []enginev1alpha1.DependencySpec{{
-				Name: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
+				Name: "rabbitmq", Type: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
 			}},
 		},
 	}

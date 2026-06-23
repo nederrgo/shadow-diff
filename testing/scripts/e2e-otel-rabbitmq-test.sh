@@ -16,13 +16,14 @@ IGRIS_RABBITMQ_IMG="${IGRIS_RABBITMQ_IMG:-igris-rabbitmq:dev}"
 EGRESS_RELAY_RABBITMQ_IMG="${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:dev}"
 BERU_IMG="${BERU_IMG:-beru:dev}"
 MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
-KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 SKIP_LOAD="${SKIP_LOAD:-0}"
 SKIP_MONARCH_BUILD="${SKIP_MONARCH_BUILD:-0}"
 SKIP_MONARCH_DEPLOY="${SKIP_MONARCH_DEPLOY:-0}"
 SKIP_BERU_BUILD="${SKIP_BERU_BUILD:-0}"
 SKIP_OTEL_BOOTSTRAP="${SKIP_OTEL_BOOTSTRAP:-0}"
+
+e2e_init_cluster "$REPO"
 
 PROD_EXCHANGE="${PROD_EXCHANGE:-orders}"
 PROD_ROUTING_KEY="${PROD_ROUTING_KEY:-order.created}"
@@ -61,11 +62,12 @@ if [[ "$SKIP_OTEL_BOOTSTRAP" != "1" ]]; then
 fi
 
 kubectl get deploy -n beru-system beru >/dev/null 2>&1 || {
-  log_fail "Beru not deployed — run: ./testing/scripts/e2e-reset-kind.sh"
+  log_fail "Beru not deployed — run: ./testing/scripts/e2e-reset-minikube.sh"
   exit 1
 }
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
+  e2e_prepare_docker_build
   echo "==> Build nodejs-test-worker image"
   make -C "$REPO/testing/example-apps/nodejs-test-worker" docker-build NODEJS_TEST_WORKER_IMG="$NODEJS_TEST_WORKER_IMG"
   echo "==> Build igris-rabbitmq image"
@@ -81,17 +83,16 @@ if [[ "$SKIP_BERU_BUILD" != "1" ]]; then
 fi
 
 if [[ "$SKIP_LOAD" != "1" ]]; then
-  require_cmd kind
-  [[ -n "${KIND_CLUSTER}" ]] || { log_fail "no Kind cluster; set KIND_CLUSTER"; exit 1; }
-  kind load docker-image "$NODEJS_TEST_WORKER_IMG" --name "$KIND_CLUSTER"
-  kind load docker-image "$IGRIS_RABBITMQ_IMG" --name "$KIND_CLUSTER"
-  kind load docker-image "$EGRESS_RELAY_RABBITMQ_IMG" --name "$KIND_CLUSTER"
-  kind load docker-image "$BERU_IMG" --name "$KIND_CLUSTER"
+  e2e_load_image "$NODEJS_TEST_WORKER_IMG"
+  e2e_load_image "$IGRIS_RABBITMQ_IMG"
+  e2e_load_image "$EGRESS_RELAY_RABBITMQ_IMG"
+  e2e_load_image "$BERU_IMG"
   docker pull rabbitmq:3-management-alpine 2>/dev/null || bash "$REPO/testing/scripts/lib/docker.sh" pull rabbitmq:3-management-alpine 2>/dev/null || true
-  kind load docker-image rabbitmq:3-management-alpine --name "$KIND_CLUSTER" 2>/dev/null || true
+  e2e_load_image rabbitmq:3-management-alpine 2>/dev/null || true
 fi
 
 if [[ "$SKIP_MONARCH_BUILD" != "1" ]]; then
+  e2e_prepare_docker_build
   if [[ "${MONARCH_NO_CACHE:-0}" == "1" ]]; then
     bash "$REPO/testing/scripts/lib/docker.sh" build --no-cache -t "$MONARCH_IMG" "$REPO/pipeline/monarch"
   else
@@ -100,7 +101,7 @@ if [[ "$SKIP_MONARCH_BUILD" != "1" ]]; then
 fi
 
 if [[ "$SKIP_LOAD" != "1" && "$SKIP_MONARCH_BUILD" != "1" ]]; then
-  kind load docker-image "$MONARCH_IMG" --name "$KIND_CLUSTER"
+  e2e_load_image "$MONARCH_IMG"
 fi
 
 if [[ "$SKIP_MONARCH_DEPLOY" != "1" ]]; then

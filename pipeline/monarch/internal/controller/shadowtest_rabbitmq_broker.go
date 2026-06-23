@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -27,6 +28,9 @@ const (
 )
 
 func isRabbitMQBrokerDependency(dep enginev1alpha1.DependencySpec) bool {
+	if strings.ToLower(dep.Type) == "rabbitmq" {
+		return true
+	}
 	return usesAMQPURLInjection(dep.EnvVarInjection)
 }
 
@@ -109,10 +113,10 @@ func (r *ShadowTestReconciler) pruneRabbitMQBrokerConfigMaps(
 	return nil
 }
 
-func rabbitMQBrokerContainer(dep enginev1alpha1.DependencySpec) corev1.Container {
+func rabbitMQBrokerContainer(image string, port int32) corev1.Container {
 	return corev1.Container{
 		Name:            "dependency",
-		Image:           dep.Image,
+		Image:           image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Env: []corev1.EnvVar{{
 			Name:  envRabbitMQEnabledPluginsFile,
@@ -120,7 +124,7 @@ func rabbitMQBrokerContainer(dep enginev1alpha1.DependencySpec) corev1.Container
 		}},
 		Ports: []corev1.ContainerPort{{
 			Name:          "tcp",
-			ContainerPort: dep.Port,
+			ContainerPort: port,
 			Protocol:      corev1.ProtocolTCP,
 		}},
 		VolumeMounts: []corev1.VolumeMount{{
@@ -131,7 +135,7 @@ func rabbitMQBrokerContainer(dep enginev1alpha1.DependencySpec) corev1.Container
 		}},
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
-				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(dep.Port)},
+				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
 			},
 			PeriodSeconds:    5,
 			TimeoutSeconds:   3,
@@ -162,7 +166,7 @@ func rabbitMQBrokerContainer(dep enginev1alpha1.DependencySpec) corev1.Container
 	}
 }
 
-func rabbitMQBrokerPodSpec(dep enginev1alpha1.DependencySpec) corev1.PodSpec {
+func rabbitMQBrokerPodSpec(dep enginev1alpha1.DependencySpec, image string, port int32) corev1.PodSpec {
 	return corev1.PodSpec{
 		Volumes: []corev1.Volume{{
 			Name: volumeNameRabbitMQPlugins,
@@ -174,6 +178,6 @@ func rabbitMQBrokerPodSpec(dep enginev1alpha1.DependencySpec) corev1.PodSpec {
 				},
 			},
 		}},
-		Containers: []corev1.Container{rabbitMQBrokerContainer(dep)},
+		Containers: []corev1.Container{rabbitMQBrokerContainer(image, port)},
 	}
 }

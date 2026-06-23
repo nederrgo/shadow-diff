@@ -20,7 +20,7 @@ func envoyConfigMapName(st *enginev1alpha1.ShadowTest, role string) string {
 
 func hasMongoDependency(st *enginev1alpha1.ShadowTest) bool {
 	for _, dep := range st.Spec.Dependencies {
-		if dep.Port == mongoProxyPort {
+		if isMongoDependency(dep) {
 			return true
 		}
 	}
@@ -29,11 +29,19 @@ func hasMongoDependency(st *enginev1alpha1.ShadowTest) bool {
 
 func mongoDependency(st *enginev1alpha1.ShadowTest) (enginev1alpha1.DependencySpec, bool) {
 	for _, dep := range st.Spec.Dependencies {
-		if dep.Port == mongoProxyPort {
+		if isMongoDependency(dep) {
 			return dep, true
 		}
 	}
 	return enginev1alpha1.DependencySpec{}, false
+}
+
+func isMongoDependency(dep enginev1alpha1.DependencySpec) bool {
+	if isMongoDependencyType(dep) {
+		return true
+	}
+	_, port := resolveDependencyDefaults(dep)
+	return port == mongoProxyPort
 }
 
 func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (string, error) {
@@ -58,8 +66,9 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (stri
 		if !ok {
 			return "", fmt.Errorf("mongo dependency expected but not found")
 		}
+		_, mongoPort := resolveDependencyDefaults(dep)
 		extraListeners += buildMongoEgressListenerYAML()
-		extraClusters = buildMongoEgressClustersYAML(shadowNS, dep, role)
+		extraClusters = buildMongoEgressClustersYAML(shadowNS, dep, role, mongoPort)
 	}
 
 	return fmt.Sprintf(envoyYAMLTemplate,
@@ -92,12 +101,12 @@ func buildMongoEgressListenerYAML() string {
 	return b.String()
 }
 
-func buildMongoEgressClustersYAML(shadowNS string, dep enginev1alpha1.DependencySpec, role string) string {
-	upstreamHost := dependencyEndpoint(shadowNS, dep.Name, role, dep.Port)
+func buildMongoEgressClustersYAML(shadowNS string, dep enginev1alpha1.DependencySpec, role string, port int32) string {
+	upstreamHost := dependencyEndpoint(shadowNS, dep.Name, role, port)
 	var host string
-	var port int32 = dep.Port
+	var clusterPort int32 = port
 	if h, p, err := parseHostPort(upstreamHost); err == nil {
-		host, port = h, p
+		host, clusterPort = h, p
 	} else {
 		host = upstreamHost
 	}
@@ -107,7 +116,7 @@ func buildMongoEgressClustersYAML(shadowNS string, dep enginev1alpha1.Dependency
 	b.WriteString("    connect_timeout: 5s\n")
 	fmt.Fprintf(&b, "    load_assignment:\n      cluster_name: %s\n", mongoUpstreamCluster)
 	b.WriteString("      endpoints:\n      - lb_endpoints:\n        - endpoint:\n            address:\n              socket_address:\n")
-	fmt.Fprintf(&b, "                address: %s\n                port_value: %d\n", host, port)
+	fmt.Fprintf(&b, "                address: %s\n                port_value: %d\n", host, clusterPort)
 	return b.String()
 }
 
@@ -151,9 +160,10 @@ func recordAndReplayConfigJSON(st *enginev1alpha1.ShadowTest) (string, error) {
 	}
 	entries := make([]entry, 0, len(st.Spec.RecordAndReplay))
 	for _, d := range st.Spec.RecordAndReplay {
+		host, _, ignorePaths := recordAndReplayEntry(d)
 		entries = append(entries, entry{
-			Host:               d.Host,
-			IgnoreRequestPaths: d.IgnoreRequestPaths,
+			Host:               host,
+			IgnoreRequestPaths: ignorePaths,
 		})
 	}
 	raw, err := json.Marshal(entries)
@@ -168,11 +178,7 @@ func renderEgressListenerYAML(st *enginev1alpha1.ShadowTest, role, beruTimeout s
 		return egressStubListenerYAML, nil
 	}
 
-	hosts := make([]string, 0, len(st.Spec.RecordAndReplay))
-	for _, d := range st.Spec.RecordAndReplay {
-		hosts = append(hosts, d.Host)
-	}
-	domains := egressVirtualHostDomains(hosts)
+	domains := recordAndReplayEgressDomains(st)
 	if len(domains) == 0 {
 		return egressStubListenerYAML, nil
 	}

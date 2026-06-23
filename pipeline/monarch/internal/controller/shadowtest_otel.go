@@ -9,42 +9,39 @@ import (
 )
 
 const (
-	annotationOtelInjectPrefix          = "instrumentation.opentelemetry.io/inject-"
-	annotationOtelInjectSDK             = annotationOtelInjectPrefix + "sdk"
-	annotationOtelContainerNames        = "instrumentation.opentelemetry.io/container-names"
-	annotationOtelNodeJSContainerNames  = "instrumentation.opentelemetry.io/nodejs-container-names"
-	annotationOtelPythonContainerNames  = "instrumentation.opentelemetry.io/python-container-names"
-	annotationOtelJavaContainerNames    = "instrumentation.opentelemetry.io/java-container-names"
+	annotationOtelInjectPrefix         = "instrumentation.opentelemetry.io/inject-"
+	annotationOtelInjectSDK            = annotationOtelInjectPrefix + "sdk"
+	annotationOtelContainerNames       = "instrumentation.opentelemetry.io/container-names"
+	annotationOtelNodeJSContainerNames = "instrumentation.opentelemetry.io/nodejs-container-names"
+	annotationOtelPythonContainerNames = "instrumentation.opentelemetry.io/python-container-names"
+	annotationOtelJavaContainerNames   = "instrumentation.opentelemetry.io/java-container-names"
 	annotationOtelDotNetContainerNames = "instrumentation.opentelemetry.io/dotnet-container-names"
-	annotationOtelGoContainerNames      = "instrumentation.opentelemetry.io/go-container-names"
+	annotationOtelGoContainerNames     = "instrumentation.opentelemetry.io/go-container-names"
 
-	envOtelTracesExporter                 = "OTEL_TRACES_EXPORTER"
-	envOtelMetricsExporter                = "OTEL_METRICS_EXPORTER"
-	envOtelLogsExporter                   = "OTEL_LOGS_EXPORTER"
-	envOtelServiceName                    = "OTEL_SERVICE_NAME"
-	envOtelPropagators                    = "OTEL_PROPAGATORS"
-	envOtelExporterOTLPEndpoint           = "OTEL_EXPORTER_OTLP_ENDPOINT"
-	envOtelExporterOTLPProtocol           = "OTEL_EXPORTER_OTLP_PROTOCOL"
-	envOtelExporterOTLPTracesProtocol     = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
-	envOtelNodeEnabledInstrumentations    = "OTEL_NODE_ENABLED_INSTRUMENTATIONS"
-	envOtelPythonMongoCaptureStatement    = "OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT"
+	envOtelTracesExporter              = "OTEL_TRACES_EXPORTER"
+	envOtelMetricsExporter             = "OTEL_METRICS_EXPORTER"
+	envOtelLogsExporter                = "OTEL_LOGS_EXPORTER"
+	envOtelServiceName                 = "OTEL_SERVICE_NAME"
+	envOtelPropagators                 = "OTEL_PROPAGATORS"
+	envOtelExporterOTLPEndpoint        = "OTEL_EXPORTER_OTLP_ENDPOINT"
+	envOtelExporterOTLPProtocol        = "OTEL_EXPORTER_OTLP_PROTOCOL"
+	envOtelExporterOTLPTracesProtocol  = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
+	envOtelNodeEnabledInstrumentations = "OTEL_NODE_ENABLED_INSTRUMENTATIONS"
+	envOtelPythonMongoCaptureStatement = "OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT"
 
 	defaultBeruOTLPEndpoint     = "http://beru.beru-system.svc.cluster.local:4317"
 	defaultBeruOTLPHTTPEndpoint = "http://beru.beru-system.svc.cluster.local:8080"
 )
 
 func otelInjectionEnabled(st *enginev1alpha1.ShadowTest) bool {
-	if st == nil || st.Spec.OtelInjection == nil || st.Spec.OtelInjection.Enabled == nil {
-		return true
-	}
-	return *st.Spec.OtelInjection.Enabled
+	return st != nil
 }
 
 func otelLanguageFromSpec(st *enginev1alpha1.ShadowTest) string {
-	if st == nil || st.Spec.OtelInjection == nil {
+	if st == nil {
 		return ""
 	}
-	return strings.TrimSpace(st.Spec.OtelInjection.Language)
+	return strings.TrimSpace(st.Spec.Language)
 }
 
 // detectOtelLanguage returns a language key for inject-<lang> annotations, or "" for sdk-only.
@@ -72,8 +69,8 @@ func detectOtelLanguage(image, specLang string) string {
 
 func otelPodAnnotations(st *enginev1alpha1.ShadowTest, appImage string) map[string]string {
 	ann := map[string]string{
-		annotationOtelInjectSDK:      "true",
-		annotationOtelContainerNames: containerApp,
+		annotationOtelInjectSDK:                            "true",
+		annotationOtelContainerNames:                       containerApp,
 		annotationOtelInjectPrefix + "sdk-container-names": containerApp,
 	}
 	if lang := detectOtelLanguage(appImage, otelLanguageFromSpec(st)); lang != "" {

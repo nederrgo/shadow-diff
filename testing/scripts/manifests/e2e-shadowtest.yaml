@@ -11,7 +11,6 @@ metadata:
   namespace: default
 spec:
   targetDeployment: my-prod-app
-  targetNamespace: default
 
   # Shadow pods (control-a, control-b, candidate)
   oldImage: mendhak/http-https-echo:latest
@@ -21,8 +20,6 @@ spec:
   servicePort: 8888
   # Must match the app listen port after Monarch copies prod env (HTTP_PORT=80 on echo)
   applicationPort: 80
-
-  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
 
   # Igris listen ports:
   #   80  — Siphon replays captured prod traffic (prod pod dst port 80)

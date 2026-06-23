@@ -6,12 +6,9 @@ metadata:
   namespace: default
 spec:
   targetDeployment: python-prod-worker
-  targetNamespace: default
 
   oldImage: python-test-worker:dev
   newImage: python-test-worker:dev
-
-  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
 
   inputs:
     - driver: rabbitmq_message
@@ -22,18 +19,15 @@ spec:
         targetDependency: rabbitmq
 
   recordAndReplay:
-    - host: user-service.prod.internal
+    - host: user-service.prod:8080
 
-  otelInjection:
-    enabled: true
-    language: python
+  language: python
 
   dependencies:
     - name: rabbitmq
-      image: rabbitmq:3-management-alpine
-      port: 5672
+      type: rabbitmq
       envVarInjection: AMQP_URL
     - name: mongodb
+      type: mongodb
       image: mongo:4.4
-      port: 27017
       envVarInjection: MONGO_URL

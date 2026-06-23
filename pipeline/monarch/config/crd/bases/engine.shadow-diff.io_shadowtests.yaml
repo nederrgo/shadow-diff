@@ -82,11 +82,15 @@ spec:
                       maximum: 65535
                       minimum: 1
                       type: integer
+                    type:
+                      description: |-
+                        Type is the technology classification (e.g. rabbitmq, mongodb, redis).
+                        Monarch uses this to auto-populate default images and ports.
+                      type: string
                   required:
                   - envVarInjection
-                  - image
                   - name
-                  - port
+                  - type
                   type: object
                 type: array
               egressRelayRabbitmq:
@@ -368,6 +372,17 @@ spec:
                       type: integer
                   type: object
                 type: array
+              language:
+                description: |-
+                  Language declares the application's runtime language (e.g. nodejs, python, java).
+                  Monarch uses this to automatically inject the correct OpenTelemetry Operator agents.
+                enum:
+                - java
+                - python
+                - nodejs
+                - dotnet
+                - go
+                type: string
               newImage:
                 description: NewImage is the container image for the Candidate pod.
                 type: string
@@ -375,25 +390,6 @@ spec:
                 description: OldImage is the container image for Control-A and Control-B
                   pods.
                 type: string
-              otelInjection:
-                description: OtelInjection enables OpenTelemetry Operator SDK/agent
-                  injection on shadow app pods (default on).
-                properties:
-                  enabled:
-                    description: Enabled defaults to true when nil. Set false to skip
-                      OTel injection annotations and env.
-                    type: boolean
-                  language:
-                    description: Language overrides image-based detection (java, python,
-                      nodejs, dotnet, go).
-                    enum:
-                    - java
-                    - python
-                    - nodejs
-                    - dotnet
-                    - go
-                    type: string
-                type: object
               recordAndReplay:
                 description: RecordAndReplay lists outbound hosts trapped by the egress
                   proxy for strict replay.
@@ -456,13 +452,14 @@ spec:
                   (inline env vars from the first container) is mirrored for shadow pods.
                 type: string
               targetNamespace:
-                description: TargetNamespace is the namespace containing TargetDeployment.
+                description: |-
+                  TargetNamespace is the namespace containing TargetDeployment.
+                  Defaults to the ShadowTest CR namespace when unset.
                 type: string
             required:
             - newImage
             - oldImage
             - targetDeployment
-            - targetNamespace
             type: object
           status:
             description: status defines the observed state of ShadowTest

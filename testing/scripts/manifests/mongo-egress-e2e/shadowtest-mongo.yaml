@@ -7,15 +7,12 @@ metadata:
   namespace: default
 spec:
   targetDeployment: mongo-test-prod
-  targetNamespace: default
 
   oldImage: mongo-test-app:dev
   newImage: mongo-test-app:dev
 
   servicePort: 8888
   applicationPort: 8080
-
-  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
 
   inputs:
     - port: 8888
@@ -24,12 +21,10 @@ spec:
   siphon:
     enabled: false
 
+  language: nodejs
+
   dependencies:
     - name: mongo
+      type: mongodb
       image: mongo:4.4
-      port: 27017
       envVarInjection: MONGO_URL
-
-  otelInjection:
-    enabled: true
-    language: nodejs

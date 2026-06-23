@@ -136,6 +136,35 @@ func TestBuildPixieStreamRuleSpecEgressOnly(t *testing.T) {
 	}
 }
 
+func TestBuildPixieStreamRuleSpecEgressHostPort(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "egress-st"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{
+				{Host: "user-service.prod:8080"},
+			},
+		},
+	}
+	dep := &appsv1.Deployment{}
+	spec := buildPixieStreamRuleSpec(st, "shadow-default-egress-st", dep)
+	if len(spec.RecordAndReplayHosts) != 1 || spec.RecordAndReplayHosts[0] != "user-service.prod" {
+		t.Fatalf("recordAndReplayHosts %v", spec.RecordAndReplayHosts)
+	}
+}
+
+func TestTargetNamespaceFor_defaultsToCRNamespace(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "st"},
+	}
+	if got := targetNamespaceFor(st); got != "default" {
+		t.Fatalf("got %q want default", got)
+	}
+	st.Spec.TargetNamespace = "prod"
+	if got := targetNamespaceFor(st); got != "prod" {
+		t.Fatalf("got %q want prod", got)
+	}
+}
+
 func TestEnsureShadowSiphonServicePatch_selector(t *testing.T) {
 	svc := &corev1.Service{}
 	patch := func() error {

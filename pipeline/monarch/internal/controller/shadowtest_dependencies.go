@@ -40,14 +40,18 @@ func validateDependencies(st *enginev1alpha1.ShadowTest) error {
 		if dep.Name == "" {
 			return fmt.Errorf("dependencies[%d]: name is required", i)
 		}
-		if dep.Image == "" {
-			return fmt.Errorf("dependencies[%d] %q: image is required", i, dep.Name)
+		if dep.Type == "" {
+			return fmt.Errorf("dependencies[%d] %q: type is required", i, dep.Name)
+		}
+		image, port := resolveDependencyDefaults(dep)
+		if image == "" {
+			return fmt.Errorf("dependencies[%d] %q: unknown type %q (image required)", i, dep.Name, dep.Type)
 		}
 		if dep.EnvVarInjection == "" {
 			return fmt.Errorf("dependencies[%d] %q: envVarInjection is required", i, dep.Name)
 		}
-		if dep.Port < 1 || dep.Port > 65535 {
-			return fmt.Errorf("dependencies[%d] %q: port %d out of range", i, dep.Name, dep.Port)
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("dependencies[%d] %q: port %d out of range", i, dep.Name, port)
 		}
 		sanitized := sanitizeForDNS(dep.Name)
 		if sanitized == "" {
@@ -57,7 +61,7 @@ func validateDependencies(st *enginev1alpha1.ShadowTest) error {
 			return fmt.Errorf("duplicate dependency name %q after sanitization", dep.Name)
 		}
 		seen[sanitized] = struct{}{}
-		if dep.Port == mongoProxyPort {
+		if port == mongoProxyPort {
 			if mongoCount++; mongoCount > 1 {
 				return fmt.Errorf("only one dependency on port %d (MongoDB) is supported", mongoProxyPort)
 			}
@@ -109,6 +113,7 @@ func (r *ShadowTestReconciler) reconcileDependencyDeployment(
 ) error {
 	name := dependencyResourceName(dep.Name, role)
 	podLabels := dependencyPodLabels(st, dep, role)
+	image, port := resolveDependencyDefaults(dep)
 
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -128,20 +133,20 @@ func (r *ShadowTestReconciler) reconcileDependencyDeployment(
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: podLabels}
 		deploy.Spec.Template.ObjectMeta.Labels = podLabels
 		if isRabbitMQBrokerDependency(dep) {
-			deploy.Spec.Template.Spec = rabbitMQBrokerPodSpec(dep)
+			deploy.Spec.Template.Spec = rabbitMQBrokerPodSpec(dep, image, port)
 		} else {
 			deploy.Spec.Template.Spec.Containers = []corev1.Container{{
 				Name:            "dependency",
-				Image:           dep.Image,
+				Image:           image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Ports: []corev1.ContainerPort{{
 					Name:          "tcp",
-					ContainerPort: dep.Port,
+					ContainerPort: port,
 					Protocol:      corev1.ProtocolTCP,
 				}},
 				ReadinessProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
-						TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(dep.Port)},
+						TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
 					},
 					InitialDelaySeconds: 2,
 					PeriodSeconds:       5,
@@ -172,6 +177,7 @@ func (r *ShadowTestReconciler) reconcileDependencyService(
 ) error {
 	name := dependencyResourceName(dep.Name, role)
 	podLabels := dependencyPodLabels(st, dep, role)
+	_, port := resolveDependencyDefaults(dep)
 
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -189,8 +195,8 @@ func (r *ShadowTestReconciler) reconcileDependencyService(
 		svc.Spec.Selector = podLabels
 		svc.Spec.Ports = []corev1.ServicePort{{
 			Name:       "tcp",
-			Port:       dep.Port,
-			TargetPort: intstr.FromInt32(dep.Port),
+			Port:       port,
+			TargetPort: intstr.FromInt32(port),
 			Protocol:   corev1.ProtocolTCP,
 		}}
 		return nil
@@ -262,17 +268,18 @@ func (r *ShadowTestReconciler) shadowDependenciesReady(
 }
 
 func dependencyEnvValue(shadowNS string, dep enginev1alpha1.DependencySpec, role string) string {
+	_, port := resolveDependencyDefaults(dep)
 	if usesMongoProxyInjection(dep) {
 		return shadowMongoProxyURL
 	}
 	if usesAMQPURLInjection(dep.EnvVarInjection) {
-		return shadowAMQPURL(shadowNS, dep.Name, role, dep.Port)
+		return shadowAMQPURL(shadowNS, dep.Name, role, port)
 	}
-	return dependencyEndpoint(shadowNS, dep.Name, role, dep.Port)
+	return dependencyEndpoint(shadowNS, dep.Name, role, port)
 }
 
 func usesMongoProxyInjection(dep enginev1alpha1.DependencySpec) bool {
-	return dep.Port == mongoProxyPort
+	return isMongoDependency(dep)
 }
 
 func usesAMQPURLInjection(envName string) bool {

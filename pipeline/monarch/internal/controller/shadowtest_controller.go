@@ -69,10 +69,10 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	var target appsv1.Deployment
-	targetKey := types.NamespacedName{Namespace: shadowTest.Spec.TargetNamespace, Name: shadowTest.Spec.TargetDeployment}
+	targetKey := types.NamespacedName{Namespace: targetNamespaceFor(&shadowTest), Name: shadowTest.Spec.TargetDeployment}
 	if err := r.Get(ctx, targetKey, &target); err != nil {
 		if apierrors.IsNotFound(err) {
-			msg := fmt.Sprintf("target Deployment %s/%s not found", shadowTest.Spec.TargetNamespace, shadowTest.Spec.TargetDeployment)
+			msg := fmt.Sprintf("target Deployment %s/%s not found", targetNamespaceFor(&shadowTest), shadowTest.Spec.TargetDeployment)
 			log.Info(msg)
 			_ = r.patchStatus(ctx, &shadowTest, "Failed", msg, shadowNS)
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil

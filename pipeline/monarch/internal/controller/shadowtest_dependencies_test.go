@@ -17,6 +17,7 @@ var _ = Describe("shadow dependencies", func() {
 		Spec: enginev1alpha1.ShadowTestSpec{
 			Dependencies: []enginev1alpha1.DependencySpec{{
 				Name:            "redis",
+				Type:            "redis",
 				Image:           "redis:7-alpine",
 				Port:            6379,
 				EnvVarInjection: "REDIS_ADDR",
@@ -46,11 +47,11 @@ var _ = Describe("shadow dependencies", func() {
 		Expect(env[0].Value).To(Equal("redis-control-a.shadow-default-mytest.svc.cluster.local:6379"))
 	})
 
-	It("injects cleartext MONGO_URL for port 27017", func() {
+	It("injects cleartext MONGO_URL for mongodb type", func() {
 		mongo := &enginev1alpha1.ShadowTest{
 			Spec: enginev1alpha1.ShadowTestSpec{
 				Dependencies: []enginev1alpha1.DependencySpec{{
-					Name: "mongo", Image: "mongo:7", Port: 27017, EnvVarInjection: "MONGO_URL",
+					Name: "mongo", Type: "mongodb", Image: "mongo:7", Port: 27017, EnvVarInjection: "MONGO_URL",
 				}},
 			},
 		}
@@ -61,20 +62,34 @@ var _ = Describe("shadow dependencies", func() {
 		Expect(env[0].Value).NotTo(ContainSubstring("mongodb+srv"))
 	})
 
-	It("detects rabbitmq broker dependencies by env var injection", func() {
+	It("resolves rabbitmq defaults from type alone", func() {
+		dep := enginev1alpha1.DependencySpec{Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL"}
+		image, port := resolveDependencyDefaults(dep)
+		Expect(image).To(Equal("rabbitmq:3-management-alpine"))
+		Expect(port).To(Equal(int32(5672)))
+		Expect(validateDependencies(&enginev1alpha1.ShadowTest{
+			Spec: enginev1alpha1.ShadowTestSpec{Dependencies: []enginev1alpha1.DependencySpec{dep}},
+		})).To(Succeed())
+	})
+
+	It("detects rabbitmq broker dependencies by type or env var injection", func() {
+		Expect(isRabbitMQBrokerDependency(enginev1alpha1.DependencySpec{
+			Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL",
+		})).To(BeTrue())
 		Expect(isRabbitMQBrokerDependency(enginev1alpha1.DependencySpec{
 			Name: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
 		})).To(BeTrue())
 		Expect(isRabbitMQBrokerDependency(enginev1alpha1.DependencySpec{
-			Name: "redis", Image: "redis:7", Port: 6379, EnvVarInjection: "REDIS_ADDR",
+			Name: "redis", Type: "redis", Image: "redis:7", Port: 6379, EnvVarInjection: "REDIS_ADDR",
 		})).To(BeFalse())
 	})
 
 	It("configures rabbitmq broker container with plugin file and firehose readiness", func() {
 		dep := enginev1alpha1.DependencySpec{
-			Name: "rabbitmq", Image: "rabbitmq:3-management-alpine", Port: 5672, EnvVarInjection: "AMQP_URL",
+			Name: "rabbitmq", Type: "rabbitmq", Image: "rabbitmq:3-management-alpine", Port: 5672, EnvVarInjection: "AMQP_URL",
 		}
-		c := rabbitMQBrokerContainer(dep)
+		image, port := resolveDependencyDefaults(dep)
+		c := rabbitMQBrokerContainer(image, port)
 		Expect(c.Env).To(ContainElement(corev1.EnvVar{
 			Name: envRabbitMQEnabledPluginsFile, Value: rabbitmqPluginsMountPath,
 		}))
@@ -96,7 +111,7 @@ var _ = Describe("shadow dependencies", func() {
 		rmq := &enginev1alpha1.ShadowTest{
 			Spec: enginev1alpha1.ShadowTestSpec{
 				Dependencies: []enginev1alpha1.DependencySpec{{
-					Name: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
+					Name: "rabbitmq", Type: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
 				}},
 			},
 		}
@@ -109,14 +124,14 @@ var _ = Describe("shadow dependencies", func() {
 		Expect(validateDependencies(st)).To(Succeed())
 		Expect(validateDependencies(&enginev1alpha1.ShadowTest{
 			Spec: enginev1alpha1.ShadowTestSpec{
-				Dependencies: []enginev1alpha1.DependencySpec{{Name: "redis", Image: "redis:7-alpine", Port: 6379}},
+				Dependencies: []enginev1alpha1.DependencySpec{{Name: "redis", Type: "redis", Image: "redis:7-alpine", Port: 6379}},
 			},
 		})).NotTo(Succeed())
 		Expect(validateDependencies(&enginev1alpha1.ShadowTest{
 			Spec: enginev1alpha1.ShadowTestSpec{
 				Dependencies: []enginev1alpha1.DependencySpec{
-					{Name: "redis", Image: "redis:7-alpine", Port: 6379, EnvVarInjection: "A"},
-					{Name: "redis", Image: "redis:7-alpine", Port: 6379, EnvVarInjection: "B"},
+					{Name: "redis", Type: "redis", Image: "redis:7-alpine", Port: 6379, EnvVarInjection: "A"},
+					{Name: "redis", Type: "redis", Image: "redis:7-alpine", Port: 6379, EnvVarInjection: "B"},
 				},
 			},
 		})).NotTo(Succeed())

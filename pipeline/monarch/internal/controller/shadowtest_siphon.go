@@ -159,7 +159,7 @@ func buildPixieStreamRuleSpec(
 	spec := enginev1alpha1.PixieStreamRuleSpec{
 		ShadowTestRef:   st.Namespace + "/" + st.Name,
 		Active:          true,
-		TargetNamespace: st.Spec.TargetNamespace,
+		TargetNamespace: targetNamespaceFor(st),
 		TargetLabels:    copyStringMap(target.Spec.Template.Labels),
 		MaxPayloadSize:  siphonMaxPayloadSize(st),
 		ExcludePaths:    siphonExcludePaths(st),
@@ -171,7 +171,7 @@ func buildPixieStreamRuleSpec(
 	if egress {
 		spec.RecorderOTelEndpoint = shadowRecorderOTelEndpoint(st, shadowNS)
 		for _, h := range st.Spec.RecordAndReplay {
-			host := strings.TrimSpace(h.Host)
+			host, _, _ := recordAndReplayEntry(h)
 			if host != "" {
 				spec.RecordAndReplayHosts = append(spec.RecordAndReplayHosts, host)
 			}
@@ -186,7 +186,7 @@ func (r *ShadowTestReconciler) ensureShadowSiphonService(ctx context.Context, sh
 			Namespace: shadowNS,
 			Name:      shadowSiphonServiceName,
 			Labels: map[string]string{
-				labelManagedBy:      valueManagedBy,
+				labelManagedBy:           valueManagedBy,
 				"app.kubernetes.io/name": shadowSiphonServiceName,
 			},
 		},
@@ -318,7 +318,7 @@ func (r *ShadowTestReconciler) mapDeploymentToShadowTests(ctx context.Context, o
 	}
 	var out []reconcile.Request
 	for _, st := range list.Items {
-		if st.Spec.TargetNamespace == dep.Namespace && st.Spec.TargetDeployment == dep.Name {
+		if targetNamespaceFor(&st) == dep.Namespace && st.Spec.TargetDeployment == dep.Name {
 			out = append(out, reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: st.Namespace, Name: st.Name},
 			})

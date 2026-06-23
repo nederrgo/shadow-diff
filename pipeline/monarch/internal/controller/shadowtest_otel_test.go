@@ -12,15 +12,7 @@ import (
 func TestOtelInjectionEnabled(t *testing.T) {
 	t.Parallel()
 	if !otelInjectionEnabled(&enginev1alpha1.ShadowTest{}) {
-		t.Fatal("expected default on")
-	}
-	disabled := false
-	if otelInjectionEnabled(&enginev1alpha1.ShadowTest{
-		Spec: enginev1alpha1.ShadowTestSpec{
-			OtelInjection: &enginev1alpha1.OtelInjectionSpec{Enabled: &disabled},
-		},
-	}) {
-		t.Fatal("expected disabled")
+		t.Fatal("expected always on")
 	}
 }
 
@@ -69,7 +61,7 @@ func TestOtelPodAnnotations_nodejsScopesAppContainer(t *testing.T) {
 	t.Parallel()
 	st := &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{
-			OtelInjection: &enginev1alpha1.OtelInjectionSpec{Language: "nodejs"},
+			Language: "nodejs",
 		},
 	}
 	ann := otelPodAnnotations(st, "http-rmq-test-app:dev")
@@ -78,19 +70,6 @@ func TestOtelPodAnnotations_nodejsScopesAppContainer(t *testing.T) {
 	}
 	if ann[annotationOtelNodeJSContainerNames] != containerApp {
 		t.Fatalf("nodejs-container-names = %q", ann[annotationOtelNodeJSContainerNames])
-	}
-}
-
-func TestOtelPodAnnotations_disabledNotAppliedInReconcile(t *testing.T) {
-	t.Parallel()
-	disabled := false
-	st := &enginev1alpha1.ShadowTest{
-		Spec: enginev1alpha1.ShadowTestSpec{
-			OtelInjection: &enginev1alpha1.OtelInjectionSpec{Enabled: &disabled},
-		},
-	}
-	if otelInjectionEnabled(st) {
-		t.Fatal("expected false")
 	}
 }
 
@@ -108,11 +87,9 @@ func TestOtelEnvVars_mongoDependencyExportsOTLP(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "mongo-test-shadow"},
 		Spec: enginev1alpha1.ShadowTestSpec{
-			OtelInjection: &enginev1alpha1.OtelInjectionSpec{
-				Language: "nodejs",
-			},
+			Language: "nodejs",
 			Dependencies: []enginev1alpha1.DependencySpec{{
-				Name: "mongo", Image: "mongo:4.4", Port: 27017, EnvVarInjection: "MONGO_URL",
+				Name: "mongo", Type: "mongodb", Image: "mongo:4.4", Port: 27017, EnvVarInjection: "MONGO_URL",
 			}},
 		},
 	}
@@ -142,9 +119,9 @@ func TestOtelEnvVars_pythonMongoOmitsNodeInstrumentations(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "python-hybrid-shadow"},
 		Spec: enginev1alpha1.ShadowTestSpec{
-			OtelInjection: &enginev1alpha1.OtelInjectionSpec{Language: "python"},
+			Language: "python",
 			Dependencies: []enginev1alpha1.DependencySpec{{
-				Name: "mongo", Image: "mongo:4.4", Port: 27017, EnvVarInjection: "MONGO_URL",
+				Name: "mongo", Type: "mongodb", Image: "mongo:4.4", Port: 27017, EnvVarInjection: "MONGO_URL",
 			}},
 		},
 	}
