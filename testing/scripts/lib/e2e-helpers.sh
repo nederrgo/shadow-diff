@@ -126,3 +126,74 @@ shadow_app_pod_for_role() {
     -l "shadow-diff.io/shadowtest-name=${shadowtest},shadow-diff.io/role=${role},shadow-diff.io/resource-kind!=dependency" \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
 }
+
+# Kind or Minikube cluster detection and image load (shared by ingress/E2E scripts).
+e2e_detect_cluster() {
+  if minikube -p "${MINIKUBE_PROFILE:-minikube}" status --format='{{.Host}}' 2>/dev/null | grep -qi running; then
+    echo minikube
+    return
+  fi
+  if kind get clusters 2>/dev/null | grep -q .; then
+    echo kind
+    return
+  fi
+  echo unknown
+}
+
+e2e_init_cluster() {
+  local repo="$1"
+  E2E_CLUSTER="${E2E_CLUSTER:-$(e2e_detect_cluster)}"
+  if [[ "$E2E_CLUSTER" == minikube ]]; then
+    # shellcheck source=testing/scripts/lib/cluster-minikube.sh
+    source "$repo/testing/scripts/lib/cluster-minikube.sh"
+  fi
+  echo "==> E2E cluster: ${E2E_CLUSTER}"
+}
+
+e2e_prepare_docker_build() {
+  if [[ "${E2E_CLUSTER:-}" == minikube && "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
+    use_minikube_docker_env
+  fi
+}
+
+e2e_load_image() {
+  local img="$1"
+  [[ "${SKIP_LOAD:-0}" == "1" ]] && return 0
+  case "${E2E_CLUSTER:-unknown}" in
+    minikube)
+      if [[ "${MINIKUBE_DRIVER:-kvm2}" == none ]]; then
+        load_minikube_image "$img"
+      else
+        use_minikube_docker_env
+        docker image inspect "$img" >/dev/null 2>&1 || {
+          log_fail "missing image ${img} in minikube docker — build or unset SKIP_LOAD"
+          exit 1
+        }
+      fi
+      ;;
+    kind)
+      require_cmd kind
+      local cluster="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
+      [[ -n "$cluster" ]] || { log_fail "no Kind cluster; set KIND_CLUSTER"; exit 1; }
+      kind load docker-image "$img" --name "$cluster"
+      ;;
+    *)
+      log_fail "need kind or minikube cluster (detected: ${E2E_CLUSTER})"
+      exit 1
+      ;;
+  esac
+}
+
+e2e_strip_kubectl_run_output() {
+  local out="$1"
+  echo "$out" | grep -v '^pod "' | grep -v '^If you don' | grep -v '^All commands' | grep -v '^Defaulted container' | grep -v 'credentials and sensitive'
+}
+
+e2e_in_cluster_curl() {
+  local name="$1"
+  shift
+  local out
+  out=$(kubectl run "$name" --rm -i --restart=Never -n default \
+    --image=curlimages/curl:latest -- "$@" 2>&1) || true
+  e2e_strip_kubectl_run_output "$out"
+}

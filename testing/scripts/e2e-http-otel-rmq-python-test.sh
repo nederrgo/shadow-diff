@@ -122,11 +122,6 @@ log_success "ShadowTest Ready namespace=${SHADOW_NS}"
 
 bash "$REPO/testing/scripts/lib/apply-otel-instrumentation.sh" "$SHADOW_NS"
 
-chmod +x "$REPO/testing/scripts/assert-otel-injected.sh"
-for role in control-a control-b candidate; do
-  "$REPO/testing/scripts/assert-otel-injected.sh" "$SHADOW_NS" "$role" "$SHADOWTEST"
-done
-
 http_otel_rmq_verify_firehose "$SHADOW_NS"
 
 kubectl rollout status "deployment/${RELAY_DEPLOY}" -n "$SHADOW_NS" --timeout=180s
@@ -141,6 +136,12 @@ for role in control-a control-b candidate; do
 done
 for role in control-a control-b candidate; do
   kubectl rollout status "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS" --timeout=180s
+done
+
+echo "==> Assert OTel injection on shadow app pods"
+chmod +x "$REPO/testing/scripts/assert-otel-injected.sh"
+for role in control-a control-b candidate; do
+  "$REPO/testing/scripts/assert-otel-injected.sh" "$SHADOW_NS" "$role" "$SHADOWTEST"
 done
 
 TRACE_HEX="$(openssl rand -hex 16)"

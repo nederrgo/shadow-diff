@@ -125,6 +125,48 @@ http_otel_rmq_verify_firehose() {
   done
 }
 
+http_otel_rmq_beru_pod_name() {
+  kubectl get pods -n beru-system -l app.kubernetes.io/name=beru \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null \
+    || kubectl get pods -n beru-system --no-headers 2>/dev/null | awk '/^beru-/{print $1; exit}'
+}
+
+# ponytail: poll one Beru log line; ingress must run before slow app/egress waits (tail window).
+http_otel_rmq_wait_beru_message() {
+  local label="$1" want_msg="$2" timeout_msg="$3" wait_secs="$4" trace_hex="$5"
+  local beru_pod logs i
+  beru_pod=$(http_otel_rmq_beru_pod_name)
+  if [[ -z "$beru_pod" ]]; then
+    log_fail "Beru pod not found in beru-system"
+    return 1
+  fi
+  echo "==> Wait for Beru ${label} (up to ${wait_secs}s): ${want_msg}"
+  for i in $(seq 1 "$wait_secs"); do
+    beru_pod=$(http_otel_rmq_beru_pod_name)
+    logs=$(kubectl logs -n beru-system "$beru_pod" --tail=500 2>/dev/null || true)
+    if grep -qF "$want_msg" <<<"$logs"; then
+      log_success "Beru: ${want_msg}"
+      return 0
+    fi
+    if [[ -n "$timeout_msg" ]] && grep -qF "$timeout_msg" <<<"$logs"; then
+      log_fail "Beru: ${timeout_msg}"
+      kubectl logs -n beru-system "$beru_pod" --tail=120 2>&1 \
+        | grep -E "${trace_hex}|INGRESS|regression|payload not JSON" >&2 \
+        || kubectl logs -n beru-system "$beru_pod" --tail=40 >&2 || true
+      return 1
+    fi
+    if [[ "$i" -lt "$wait_secs" ]]; then
+      echo "    waiting (${i}/${wait_secs})..." >&2
+      sleep 1
+    fi
+  done
+  log_fail "Beru logs missing '${want_msg}' after ${wait_secs}s"
+  kubectl logs -n beru-system "$beru_pod" --tail=120 2>&1 \
+    | grep -E "${trace_hex}|INGRESS|regression|payload not JSON" >&2 \
+    || kubectl logs -n beru-system "$beru_pod" --tail=40 >&2 || true
+  return 1
+}
+
 http_otel_rmq_run_test() {
   local shadowtest="$1" shadow_ns="$2" igris_deploy="$3" trace_hex="$4" trace_tp="$5" log_pattern="$6"
   local igris_url="http://${igris_deploy}.${shadow_ns}.svc.cluster.local:8888/publish"
@@ -143,6 +185,17 @@ http_otel_rmq_run_test() {
     return 1
   fi
   log_success "Igris accepted multicast (HTTP 202)"
+
+  local ingress_msg egress_msg ingress_timeout_msg
+  local ingress_wait="${HTTP_OTEL_RMQ_INGRESS_WAIT_SECS:-30}"
+  local egress_wait="${HTTP_OTEL_RMQ_EGRESS_WAIT_SECS:-45}"
+  ingress_msg="No regression for Trace ${trace_hex}"
+  egress_msg="No egress regression for Trace ${trace_hex} (rabbitmq)"
+  ingress_timeout_msg="Timed out waiting for Trace ${trace_hex} (INGRESS)"
+
+  # Ingress diff completes on HTTP response — poll before slow RMQ app log wait scrolls Beru tail.
+  http_otel_rmq_wait_beru_message "HTTP ingress" "$ingress_msg" "$ingress_timeout_msg" \
+    "$ingress_wait" "$trace_hex" || return 1
 
   echo "==> Wait for shadow apps to publish egress"
   local role pod dep
@@ -173,48 +226,6 @@ http_otel_rmq_run_test() {
     log_success "${role} published egress without logging trace id"
   done
 
-  echo "==> Wait for Beru ingress + RabbitMQ egress diff"
-  local beru_pod ingress_msg egress_msg ingress_timeout_msg
-  local wait_secs="${HTTP_OTEL_RMQ_BERU_WAIT_SECS:-45}"
-  ingress_msg="No regression for Trace ${trace_hex}"
-  egress_msg="No egress regression for Trace ${trace_hex} (rabbitmq)"
-  ingress_timeout_msg="Timed out waiting for Trace ${trace_hex} (INGRESS)"
-  beru_pod=$(kubectl get pods -n beru-system --no-headers 2>/dev/null | awk '/^beru-/{print $1; exit}')
-  if [[ -z "$beru_pod" ]]; then
-    log_fail "Beru pod not found in beru-system"
-    return 1
-  fi
-  local logs ingress_ok=0 egress_ok=0 i
-  for i in $(seq 1 "$wait_secs"); do
-    beru_pod=$(kubectl get pods -n beru-system --no-headers 2>/dev/null | awk '/^beru-/{print $1; exit}')
-    logs=$(kubectl logs -n beru-system "$beru_pod" --tail=400 2>/dev/null || true)
-    ingress_ok=0
-    egress_ok=0
-    grep -qF "$ingress_msg" <<<"$logs" && ingress_ok=1
-    grep -qF "$egress_msg" <<<"$logs" && egress_ok=1
-    if [[ "$ingress_ok" == "1" && "$egress_ok" == "1" ]]; then
-      log_success "Beru reported no ingress regression for trace ${trace_hex}"
-      log_success "Beru reported no RabbitMQ egress regression for trace ${trace_hex}"
-      return 0
-    fi
-    if grep -qF "$ingress_timeout_msg" <<<"$logs"; then
-      log_fail "Beru timed out waiting for ingress ext_proc reports (${ingress_timeout_msg})"
-      kubectl logs -n beru-system "$beru_pod" --tail=120 2>&1 | grep -E "${trace_hex}|INGRESS|regression|payload not JSON" >&2 || \
-        kubectl logs -n beru-system "$beru_pod" --tail=40 >&2 || true
-      return 1
-    fi
-    if [[ "$i" -lt "$wait_secs" ]]; then
-      echo "    waiting (${i}/${wait_secs}) ingress=${ingress_ok} egress=${egress_ok}" >&2
-      sleep 1
-    fi
-  done
-  if [[ "$ingress_ok" != "1" ]]; then
-    log_fail "Beru logs missing '${ingress_msg}' after ${wait_secs}s (HTTP ingress still uses Envoy ext_proc, not OTel)"
-    kubectl logs -n beru-system "$beru_pod" --tail=120 2>&1 | grep -E "${trace_hex}|INGRESS|regression|payload not JSON" >&2 || \
-      kubectl logs -n beru-system "$beru_pod" --tail=40 >&2 || true
-    return 1
-  fi
-  log_fail "Beru logs missing '${egress_msg}' after ${wait_secs}s"
-  kubectl logs -n beru-system "$beru_pod" --tail=80 >&2 || true
-  return 1
+  http_otel_rmq_wait_beru_message "RabbitMQ egress" "$egress_msg" "" "$egress_wait" "$trace_hex" || return 1
+  return 0
 }
