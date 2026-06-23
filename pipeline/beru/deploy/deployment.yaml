@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: beru-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beru
+  namespace: beru-system
+  labels:
+    app.kubernetes.io/name: beru
+    app.kubernetes.io/component: differ
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: beru
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: beru
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: beru
+          image: beru:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+          ports:
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: BERU_GRPC_ADDR
+              value: ":50051"
+            - name: BERU_OTLP_GRPC_ADDR
+              value: ":4317"
+            - name: BERU_HTTP_ADDR
+              value: ":8080"
+            - name: BERU_DB_PATH
+              value: /var/lib/beru/shadow_diff.db
+            - name: BERU_DB_RETENTION_DAYS
+              value: "7"
+          volumeMounts:
+            - name: beru-data
+              mountPath: /var/lib/beru
+      volumes:
+        - name: beru-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: beru
+  namespace: beru-system
+  labels:
+    app.kubernetes.io/name: beru
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: beru
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      protocol: TCP
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

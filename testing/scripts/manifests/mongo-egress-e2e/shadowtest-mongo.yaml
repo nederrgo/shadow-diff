@@ -1,0 +1,30 @@
+# ShadowTest with ephemeral MongoDB per role (Phase 5c mongo egress E2E).
+# Monarch resolves igris-http:dev when MONARCH_MODE=dev is set on the operator.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: mongo-test-shadow
+  namespace: default
+spec:
+  targetDeployment: mongo-test-prod
+
+  oldImage: mongo-test-app:dev
+  newImage: mongo-test-app:dev
+
+  servicePort: 8888
+  applicationPort: 8080
+
+  inputs:
+    - port: 8888
+      driver: http_request
+
+  siphon:
+    enabled: false
+
+  language: nodejs
+
+  dependencies:
+    - name: mongo
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

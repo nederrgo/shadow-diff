@@ -1,0 +1,25 @@
+# HTTP ingress (igris-http) + RabbitMQ egress (Firehose) OTel E2E — Python zero-touch (OTel flask+pika).
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: http-otel-rmq-python-shadow
+  namespace: default
+spec:
+  targetDeployment: http-rmq-python-prod
+
+  oldImage: http-rmq-python-worker:dev
+  newImage: http-rmq-python-worker:dev
+
+  servicePort: 8888
+  applicationPort: 8080
+
+  inputs:
+    - port: 8888
+      driver: http_request
+
+  language: python
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL

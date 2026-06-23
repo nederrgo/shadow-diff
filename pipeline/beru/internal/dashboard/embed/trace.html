@@ -1,0 +1,90 @@
+{{define "trace-content"}}
+<div class="space-y-6">
+  <div class="flex items-center justify-between">
+    <div>
+      <h2 class="text-lg font-semibold">Trace {{.Trace.TraceID}}</h2>
+      <p class="text-sm text-slate-500">{{.Trace.Protocol}} · {{.Trace.Timestamp}}</p>
+    </div>
+    <a href="/dashboard" class="text-sm text-blue-600 hover:underline">Back to timeline</a>
+  </div>
+
+  {{if .SequenceSteps}}
+  <section class="space-y-4">
+    <h3 class="text-sm font-semibold text-slate-700">Egress sequence</h3>
+    {{range .SequenceSteps}}
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+      <div class="px-4 py-2 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center gap-2">
+        <span class="text-sm font-medium">{{.Label}}</span>
+        {{if .IsExtra}}
+        <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-900">Unexpected extra egress</span>
+        {{end}}
+        {{if .IsMissing}}
+        <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-900">Missing egress</span>
+        {{end}}
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
+        <div>
+          <div class="px-4 py-1.5 text-xs font-medium text-slate-500 bg-slate-50">Expected (Control-A)</div>
+          <pre class="p-4 text-xs font-mono overflow-x-auto leading-5 whitespace-pre-wrap">{{.Expected}}</pre>
+        </div>
+        <div>
+          <div class="px-4 py-1.5 text-xs font-medium text-slate-500 bg-slate-50">Actual (Candidate)</div>
+          <pre class="p-4 text-xs font-mono overflow-x-auto leading-5 whitespace-pre-wrap">{{.Actual}}</pre>
+        </div>
+      </div>
+    </div>
+    {{end}}
+  </section>
+  {{else}}
+  <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+      <div class="px-4 py-2 border-b border-slate-200 bg-slate-50 text-sm font-medium">Expected (Control-A)</div>
+      <pre class="p-4 text-xs font-mono overflow-x-auto leading-5">{{range .LeftLines}}<span class="{{.Class}} block whitespace-pre">{{.Text}}</span>{{end}}</pre>
+    </div>
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+      <div class="px-4 py-2 border-b border-slate-200 bg-slate-50 text-sm font-medium">Actual (Candidate)</div>
+      <pre class="p-4 text-xs font-mono overflow-x-auto leading-5">{{range .RightLines}}<span class="{{.Class}} block whitespace-pre">{{.Text}}</span>{{end}}</pre>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .Related}}
+  <section class="bg-white rounded-lg border border-slate-200 p-4">
+    <h3 class="text-sm font-semibold mb-3">All protocols for this trace</h3>
+    <ul class="space-y-2 text-sm">
+      {{range .Related}}
+      <li class="flex flex-wrap items-center gap-3">
+        <span class="font-medium">{{.Protocol}}</span>
+        {{if eq .Status "MISMATCH"}}
+        <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">MISMATCH</span>
+        {{else}}
+        <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">MATCH</span>
+        {{end}}
+        {{if ne .ID $.Trace.ID}}
+        <a class="text-blue-600 hover:underline text-xs" href="/dashboard/traces/{{.ID}}">Open</a>
+        {{else}}
+        <span class="text-slate-400 text-xs">viewing</span>
+        {{end}}
+      </li>
+      {{end}}
+    </ul>
+  </section>
+  {{end}}
+
+  {{if .Mismatches}}
+  <section class="bg-white rounded-lg border border-slate-200 p-4">
+    <h3 class="text-sm font-semibold mb-3">Regression paths</h3>
+    <ul class="space-y-2">
+      {{range .Mismatches}}
+      <li class="flex flex-wrap items-center gap-3 text-sm border-b border-slate-100 pb-2">
+        <code class="bg-slate-100 px-2 py-1 rounded text-xs">{{.Path}}</code>
+        <span class="text-slate-500">expected <strong>{{.ExpectedValue}}</strong> got <strong class="text-red-700">{{.ActualValue}}</strong></span>
+        <button type="button" class="ignore-path text-xs px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
+                data-path="{{.Path}}" data-shadow-test="{{$.ShadowTestName}}">Ignore path</button>
+      </li>
+      {{end}}
+    </ul>
+  </section>
+  {{end}}
+</div>
+{{end}}

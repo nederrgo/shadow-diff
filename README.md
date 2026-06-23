@@ -1,141 +1,96 @@
 # Shadow-Diff
 
-Monorepo for **differential testing on Kubernetes**: replay traffic across three isolated shadow workloads (two controls + a candidate) and compare responses to find regressions while filtering non-deterministic noise.
+**Shadow-Diff** is an open-source **differential testing framework for Kubernetes**. It replays production or synthetic traffic against **three isolated shadow workloads** — two identical controls plus a candidate — and compares responses to find regressions while filtering non-deterministic noise.
 
-**Full system design:** [ARCHITECTURE.md](ARCHITECTURE.md)  
-**Step-by-step verification:** [VERIFICATION.md](VERIFICATION.md)
+The core idea is **diff-of-diffs**: diff control-a vs control-b to learn what varies on the same build (noise), then diff control-a vs candidate to surface changes that are not explained by that noise. You declare a single **`ShadowTest`** custom resource; **Monarch** provisions the shadow stack and wires capture, ingress, sidecars, and analysis paths.
 
----
-
-## Components
-
-| Directory | Component | Role | Status |
-|-----------|-----------|------|--------|
-| [`monarch/`](monarch/) | **Monarch** | Kubernetes operator — `ShadowTest` CRD, shadow namespace, Envoy sidecars, Igris + Siphon wiring | **MVP** — ingress replay, egress proxy, Siphon DaemonSet + config push |
-| [`igris/`](igris/) | **Igris** | Traffic hub — HTTP/TCP drivers, multicasts to control-a, control-b, candidate | **MVP** — HTTP + TCP drivers |
-| [`beru/`](beru/) | **Beru** | Differ + egress mock store — gRPC ingress diff-of-diffs, HTTP egress replay/recording | **MVP** — `ext_proc`, `seed_mock`, `record_egress` |
-| [`siphon/`](siphon/) | **Siphon** | Node capture agent — classic BPF, TCP reassembly, ingress forward to Igris, egress recorder to Beru | **MVP** — ingress capture + egress auto-record (Phase 4a.2) |
-| [`project-files/`](project-files/) | Docs | Early design notes (partially superseded by ARCHITECTURE.md) | Reference |
+This repo is a **Go monorepo** (`go.work` at the root). Each pipeline service is its own module; the root [`Makefile`](Makefile) delegates build, test, and image targets.
 
 ---
 
-## Monarch (control plane)
+## Why this project exists
 
-Monarch is a **Kubebuilder / controller-runtime** operator. It reconciles `ShadowTest` (`engine.shadow-diff.io/v1alpha1`) and materializes the shadow stack:
+Shipping a new container image to production is risky when behavior is hard to predict: flaky timestamps, ordering, external APIs, and AMQP side effects all obscure real regressions. Traditional staging often runs one environment with synthetic checks that miss prod-shaped traffic.
 
-- **Shadow namespace** with three Deployments: `<name>-control-a`, `<name>-control-b`, `<name>-candidate`
-- **Envoy sidecars** — ingress `ext_proc` to Beru, optional egress proxy when `spec.downstreams` is set
-- **Igris** in the shadow namespace (image/replicas from `spec.igris`)
-- **Siphon DaemonSet** in `siphon-system` (image from `spec.siphon`) and **`POST /v1/config`** to each agent using node **hostIP** (Siphon runs with `hostNetwork`)
+Shadow-Diff addresses that by:
 
-Monarch pushes a merged Siphon config per Ready ShadowTest: prod pod IPs, Igris listener ports, **`spec.downstreams`**, Beru HTTP address (`beru_http_host`), and exclude IPs for Igris/Beru ClusterIPs.
+- **Mirroring prod traffic** (HTTP/TCP via BPF capture, AMQP via broker-native shadow queues) or accepting synthetic drivers
+- **Running three roles in parallel** — control-a, control-b (`oldImage`), candidate (`newImage`) — under Envoy sidecars
+- **Correlating by trace id** so ingress responses, egress HTTP, and AMQP publishes are compared apples-to-apples
+- **Separating noise from signal** with diff-of-diffs and configurable ignore paths
+- **Optional egress record/replay** so shadow apps can call downstreams without hitting real prod APIs
 
-Monarch does **not** deploy Beru — apply [`beru/deploy/`](beru/deploy/) separately.
-
-See [monarch/DEPLOYMENT.md](monarch/DEPLOYMENT.md) and [monarch/REPO_OVERVIEW.md](monarch/REPO_OVERVIEW.md).
-
----
-
-## Siphon (capture agent)
-
-Siphon runs as a **DaemonSet** on production nodes (`hostNetwork`, `CAP_NET_RAW`). It uses **classic BPF** (libpcap compile + AF_PACKET) — not custom eBPF programs — to filter TCP for target prod pod IPs and ports.
-
-| Path | What it does |
-|------|----------------|
-| **Ingress (Phase 3b)** | Reassembles HTTP from prod → forwards to Igris on the matching listener port |
-| **Egress (Phase 4a.2)** | Captures prod outbound HTTP to `spec.downstreams` hosts, pairs request/response, `POST`s to Beru `/v1/record_egress` |
-
-Control API on `:8080`: `POST /v1/config`, `GET /v1/status` (`targets_count`, `downstreams_count`, `beru_http_configured`).
-
-**Kind E2E:** Monarch owns the DaemonSet image and config. Apply only RBAC bootstrap (`siphon/deploy/rbac.yaml`); do not `kubectl set image` manually — patch `spec.siphon.image` on the ShadowTest (or use [`scripts/e2e-reset-kind.sh`](scripts/e2e-reset-kind.sh), which sets `$SIPHON_IMG`).
+For how the layers connect and how data flows end-to-end, start with **[docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)**.
 
 ---
 
-## Beru (differ + egress mocks)
+## Repository layout
 
-Beru correlates traffic from the three shadow pods and runs **diff-of-diffs** (Control A vs B = noise; A vs Candidate = regressions).
-
-| Surface | Purpose |
-|---------|---------|
-| **gRPC `ReportTraffic`** | Direct / manual traffic reports |
-| **Envoy `ext_proc` (ingress)** | Observe shadow app responses by `x-shadow-trace-id` |
-| **Envoy `ext_proc` (egress)** | Strict replay — hash outbound request, return mock or **HTTP 599** on miss |
-| **HTTP `POST /v1/seed_mock`** | Manually seed egress mock responses (Phase 4a.1) |
-| **HTTP `POST /v1/record_egress`** | Auto-seed from Siphon prod capture (Phase 4a.2) |
-
-Deploy: `kubectl apply -f beru/deploy/` → `beru-system` (gRPC `:50051`, HTTP `:8080`). ShadowTest `spec.beruGRPCAddress` must match the Beru Service DNS name.
-
----
-
-## Implementation status (summary)
-
-Aligned with [ARCHITECTURE.md](ARCHITECTURE.md):
-
-| Phase | Feature | Status |
-|-------|---------|--------|
-| 2b | Ingress diff-of-diffs via Envoy `ext_proc` + Beru gRPC | Done |
-| 3a | Igris HTTP multicast to three shadow pods | Done |
-| 3b | Siphon ingress capture → Igris | Done |
-| 4a.1 | Shadow egress via `HTTP_PROXY` → Envoy → Beru strict replay | Done |
-| 4a.2 | Prod egress auto-record (Siphon → Beru) + shadow replay without `seed_mock` | Done |
-
-**Not yet:** raw eBPF programs, TLS decrypt, persistent Beru store, full prod env/volume parity, `async_message` Igris driver.
-
----
-
-## Quick start
-
-### Build and test (repo root)
-
-```bash
-make test-all          # Monarch + Beru + Igris unit tests
-make -C siphon test    # Siphon (separate module)
+```
+monarch/                          # repo root (Shadow-Diff monorepo)
+├── pipeline/                     # Runtime services — one Go module per component
+│   ├── monarch/                  # Control plane — ShadowTest operator (all layers)
+│   ├── igrises/                  # L2 ingress hub (igris-http, igris-rabbitmq)
+│   ├── siphon/                   # L1 capture agent (DaemonSet, BPF)
+│   ├── recorder/                 # L4b prod egress HTTP → Beru mock store
+│   ├── egress-relay-rabbitmq/    # L4a shadow AMQP publish → Beru egress diff
+│   └── beru/                     # L5 analysis sink — diff, mocks, dashboard
+├── docs/
+│   ├── architecture/             # System design (start here after this README)
+│   └── verification/             # Manual and E2E verification procedures
+├── testing/
+│   ├── scripts/                  # Kind E2E, manifests, shared shell helpers
+│   └── example-apps/             # Sample prod targets, workers, k6 load tests
+├── Makefile                      # Delegates to pipeline/*/Makefile targets
+└── go.work                       # Go workspace linking pipeline modules
 ```
 
-### Individual components
-
-```bash
-# Monarch operator
-make -C monarch test
-make -C monarch deploy IMG=<registry>/monarch:<tag>
-
-# Beru
-make -C beru test
-make beru-docker-build BERU_IMG=<registry>/beru:<tag>
-
-# Igris
-make -C igris test
-make igris-docker-build IGRIS_IMG=<registry>/igris:<tag>
-
-# Siphon
-make siphon-docker-build SIPHON_IMG=<registry>/siphon:<tag>
-```
-
-Most targets are forwarded from the root [`Makefile`](Makefile).
-
-### Kind E2E (full stack)
-
-```bash
-# Reset cluster, build/load images, deploy Monarch + Beru + ShadowTest, verify Siphon config
-./scripts/e2e-reset-kind.sh
-
-# With tests
-./scripts/e2e-reset-kind.sh --run-test           # ingress: prod → Siphon → Igris → Beru
-./scripts/e2e-reset-kind.sh --run-egress-test    # egress: seed_mock / 599 / 200
-./scripts/e2e-reset-kind.sh --run-record-replay  # auto-record prod egress → shadow replay
-
-# Pin image tags (recommended after code changes — avoids Kind layer cache)
-SIPHON_IMG=siphon:dev MONARCH_IMG=monarch:dev BERU_IMG=beru:dev \
-  ./scripts/e2e-reset-kind.sh --run-record-replay
-```
-
-Example ShadowTest: [`examples/e2e-shadowtest.yaml`](examples/e2e-shadowtest.yaml).
+| Path | Purpose |
+| ---- | ------- |
+| [`pipeline/`](pipeline/) | All deployable services and the Monarch operator |
+| [`docs/`](docs/) | Architecture, verification, deployment guides |
+| [`testing/`](testing/) | E2E scripts, ShadowTest sample manifests, example apps |
+| [`.github/workflows/`](.github/workflows/) | CI — unit tests, lint, E2E |
 
 ---
 
-## Related docs
+## Pipeline services
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — data flows, Monarch / Igris / Siphon / Beru integration
-- [VERIFICATION.md](VERIFICATION.md) — manual and automated verification per phase
-- [monarch/README.md](monarch/README.md) — operator development (Kubebuilder scaffold)
-- [monarch/DEPLOYMENT.md](monarch/DEPLOYMENT.md) — operator install
+Each service has its own README with layer role, build commands, and Monarch wiring. **Monarch** orchestrates L0–L5 from a `ShadowTest` CR; **Beru** is installed separately (cluster-wide) and referenced via `spec.beruGRPCAddress`.
+
+| Layer | Service | README |
+| ----- | ------- | ------ |
+| Control plane | **Monarch** | [pipeline/monarch/README.md](pipeline/monarch/README.md) |
+| L1 Capture | **Siphon** | [pipeline/siphon/README.md](pipeline/siphon/README.md) |
+| L2 Ingress | **Igris** (HTTP/TCP + AMQP) | [pipeline/igrises/README.md](pipeline/igrises/README.md) |
+| L4b Egress record | **Recorder** | [pipeline/recorder/README.md](pipeline/recorder/README.md) |
+| L4a AMQP egress diff | **egress-relay-rabbitmq** | [pipeline/egress-relay-rabbitmq/README.md](pipeline/egress-relay-rabbitmq/README.md) |
+| L5 Analysis | **Beru** | [pipeline/beru/README.md](pipeline/beru/README.md) |
+
+**Architecture (recommended next read):** [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) — layer stack, HTTP/AMQP paths, egress record/replay, Monarch wiring diagram.
+
+**Deploy Monarch + ShadowTest:** [pipeline/monarch/DEPLOYMENT.md](pipeline/monarch/DEPLOYMENT.md)
+
+**Verify on a cluster or Kind:** [docs/verification/VERIFICATION.md](docs/verification/VERIFICATION.md)
+
+---
+
+## Quick start (local E2E)
+
+With Docker and Kind available:
+
+```sh
+./testing/scripts/e2e-reset-kind.sh
+```
+
+This bootstraps a test cluster, builds and loads images, deploys Monarch and Beru, applies a sample `ShadowTest`, and waits for `Ready`. See [docs/verification/VERIFICATION.md](docs/verification/VERIFICATION.md) for step-by-step manual verification and individual E2E scripts (egress, RabbitMQ, OTel, dependencies).
+
+Build or test a single service from the repo root:
+
+```sh
+make -C pipeline/monarch test
+make beru-test
+make siphon-docker-build
+```
+
+Run `make help` or `make -C pipeline/monarch help` for the full target list.

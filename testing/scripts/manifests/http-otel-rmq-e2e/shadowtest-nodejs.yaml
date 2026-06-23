@@ -1,0 +1,25 @@
+# HTTP ingress (igris-http) + RabbitMQ egress (Firehose) OTel E2E fixtures.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: http-otel-rmq-nodejs-shadow
+  namespace: default
+spec:
+  targetDeployment: http-rmq-nodejs-prod
+
+  oldImage: http-rmq-test-app:dev
+  newImage: http-rmq-test-app:dev
+
+  servicePort: 8888
+  applicationPort: 8080
+
+  inputs:
+    - port: 8888
+      driver: http_request
+
+  language: nodejs
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL

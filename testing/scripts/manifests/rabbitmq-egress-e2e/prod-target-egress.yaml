@@ -1,0 +1,31 @@
+# Production Deployment mirrored by ShadowTest; enables RabbitMQ egress publish in shadow workers.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rmq-prod-target
+  namespace: default
+  labels:
+    app: rmq-prod-target
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rmq-prod-target
+  template:
+    metadata:
+      labels:
+        app: rmq-prod-target
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["sh", "-c", "sleep infinity"]
+          env:
+            - name: HTTP_PORT
+              value: "8080"
+            - name: RMQ_EGRESS_EXCHANGE
+              value: "egress-events"
+            - name: RMQ_EGRESS_ROUTING_KEY
+              value: "order.egress"
+            - name: RMQ_WORKER_MANUAL_TRACE
+              value: "1"

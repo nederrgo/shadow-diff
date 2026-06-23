@@ -1,0 +1,27 @@
+# ShadowTest with ephemeral Redis per role (Phase 5a dependency E2E).
+# Apply after Monarch/Beru are running; build db-test-app:dev and load into Kind first.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: db-test-shadow
+  namespace: default
+spec:
+  targetDeployment: db-test-prod
+
+  oldImage: db-test-app:dev
+  newImage: db-test-app:dev
+
+  servicePort: 8888
+  applicationPort: 8080
+
+  inputs:
+    - port: 8888
+      driver: http_request
+
+  siphon:
+    enabled: false
+
+  dependencies:
+    - name: redis
+      type: redis
+      envVarInjection: REDIS_HOST

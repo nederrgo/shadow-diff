@@ -1,0 +1,41 @@
+# Production MongoDB for python-hybrid E2E.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo-prod
+  namespace: default
+  labels:
+    app: mongo-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo-prod
+  template:
+    metadata:
+      labels:
+        app: mongo-prod
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:4.4
+          ports:
+            - containerPort: 27017
+          readinessProbe:
+            tcpSocket:
+              port: 27017
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-prod
+  namespace: default
+spec:
+  selector:
+    app: mongo-prod
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017

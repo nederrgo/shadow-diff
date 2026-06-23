@@ -1,0 +1,36 @@
+# Production target for python-hybrid ShadowTest (Siphon captures HTTP egress).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-prod-worker
+  namespace: default
+  labels:
+    app: python-prod-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-prod-worker
+  template:
+    metadata:
+      labels:
+        app: python-prod-worker
+    spec:
+      containers:
+        - name: app
+          image: python-test-worker:dev
+          env:
+            - name: AMQP_URL
+              value: amqp://guest:guest@rmq-prod-broker.default.svc.cluster.local:5672/
+            - name: MONGO_URL
+              value: mongodb://mongo-prod.default.svc.cluster.local:27017
+            - name: AMQP_EXCHANGE
+              value: orders
+            - name: AMQP_QUEUE
+              value: orders
+            - name: AMQP_BINDING_KEY
+              value: order.created
+            - name: HTTP_EGRESS_REPLAY_HOST
+              value: user-service.prod.internal
+            - name: HTTP_EGRESS_CONNECT_URL
+              value: http://user-service.prod.svc.cluster.local:8080/v1/log

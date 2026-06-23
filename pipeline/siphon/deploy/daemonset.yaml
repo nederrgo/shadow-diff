@@ -1,0 +1,17 @@
+# LEGACY: hostNetwork DaemonSet + NetObserv PCAP path superseded by per-shadow
+# unprivileged Siphon Deployment (OTLP gRPC :4317). Monarch provisions the
+# shadow-namespace Service; apply a Deployment with SIPHON_IGRIS_BASE_URL instead.
+#
+# Optional manual bootstrap namespace/SA still used by: kubectl apply -f deploy/rbac.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: siphon-system
+  labels:
+    app.kubernetes.io/name: siphon
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: siphon-agent
+  namespace: siphon-system

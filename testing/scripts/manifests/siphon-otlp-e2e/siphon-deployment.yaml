@@ -1,0 +1,47 @@
+# Siphon OTLP receiver in the shadow namespace (Monarch creates the Service; this
+# Deployment supplies Endpoints via pod labels). Image tag must match Kind load.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: siphon
+  labels:
+    app.kubernetes.io/name: siphon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: siphon
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: siphon
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: siphon
+          image: siphon:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SIPHON_OTLP_GRPC_ADDR
+              value: ":4317"
+            - name: SIPHON_IGRIS_BASE_URL
+              value: "__IGRIS_BASE_URL__"
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

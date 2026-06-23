@@ -1,0 +1,32 @@
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: rmq-test-shadow
+  namespace: default
+spec:
+  targetDeployment: rmq-prod-target
+
+  oldImage: rmq-test-worker:dev
+  newImage: rmq-test-worker:dev
+
+  servicePort: 8888
+  applicationPort: 8080
+
+  inputs:
+    - driver: rabbitmq_message
+      amqp:
+        prodUrl: amqp://guest:guest@rmq-prod-broker.default.svc.cluster.local:5672/
+        exchange: orders
+        routingKey: order.created
+        targetDependency: rabbitmq
+
+  siphon:
+    enabled: false
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL
+
+  recordAndReplay:
+    - host: httpbin.org

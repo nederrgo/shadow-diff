@@ -1,0 +1,114 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: pixiestreamrules.engine.shadow-diff.io
+spec:
+  group: engine.shadow-diff.io
+  names:
+    kind: PixieStreamRule
+    listKind: PixieStreamRuleList
+    plural: pixiestreamrules
+    shortNames:
+    - psr
+    singular: pixiestreamrule
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: PixieStreamRule configures Pixie out-of-band OTel streaming for
+          one ShadowTest.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PixieStreamRuleSpec defines Pixie eBPF capture targeting
+              for a ShadowTest.
+            properties:
+              active:
+                description: Active when false signals Pixie to detach capture immediately.
+                type: boolean
+              excludePaths:
+                description: ExcludePaths are regex strings dropped at the kernel
+                  layer.
+                items:
+                  type: string
+                type: array
+              maxPayloadSize:
+                description: MaxPayloadSize is the max bytes to parse per HTTP/2 frame.
+                format: int64
+                type: integer
+              otelEndpoint:
+                description: OTelEndpoint is the gRPC OTLP export destination for
+                  ingress (server-side) spans.
+                type: string
+              recordAndReplayHosts:
+                description: RecordAndReplayHosts are downstream hostnames for egress
+                  PxL Host-header filtering.
+                items:
+                  type: string
+                type: array
+              recorderOtelEndpoint:
+                description: RecorderOTelEndpoint is gRPC OTLP export for egress spans
+                  (client or in-cluster server-side).
+                type: string
+              shadowTestRef:
+                description: ShadowTestRef is the owning ShadowTest as "<namespace>/<name>".
+                type: string
+              targetLabels:
+                additionalProperties:
+                  type: string
+                description: TargetLabels are prod pod template labels from the target
+                  Deployment.
+                type: object
+              targetNamespace:
+                description: TargetNamespace is the production namespace containing
+                  captured pods.
+                type: string
+              targetPorts:
+                description: TargetPorts are ingress listener ports from ShadowTest
+                  inputs.
+                items:
+                  format: int32
+                  type: integer
+                type: array
+            required:
+            - active
+            - shadowTestRef
+            - targetNamespace
+            type: object
+          status:
+            description: PixieStreamRuleStatus defines the observed state of PixieStreamRule.
+            properties:
+              message:
+                description: Message carries human-readable detail.
+                type: string
+              phase:
+                description: Phase is Active, Inactive, or Error.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

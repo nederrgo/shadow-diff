@@ -1,0 +1,47 @@
+# In-cluster HTTP POST target for record/replay E2E (httpbin.org is flaky from Kind).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress-httpbin
+  namespace: default
+  labels:
+    app: egress-httpbin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: egress-httpbin
+  template:
+    metadata:
+      labels:
+        app: egress-httpbin
+    spec:
+      containers:
+        - name: echo
+          image: mendhak/http-https-echo:latest
+          env:
+            - name: HTTP_PORT
+              value: "80"
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-httpbin
+  namespace: default
+spec:
+  clusterIP: None
+  selector:
+    app: egress-httpbin
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
