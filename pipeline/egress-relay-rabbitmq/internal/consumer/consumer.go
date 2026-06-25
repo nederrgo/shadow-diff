@@ -121,7 +121,7 @@ func (r *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 	if !firehose.IsPublishTrace(msg.RoutingKey) {
 		return
 	}
-	if !shouldReportEgress(r.EgressExchange, firehose.ExchangeNameFromTrace(msg.Headers)) {
+	if !shouldReportEgress(r.EgressExchange, firehose.ExchangeNameFromPublish(msg.Headers, msg.RoutingKey)) {
 		return
 	}
 

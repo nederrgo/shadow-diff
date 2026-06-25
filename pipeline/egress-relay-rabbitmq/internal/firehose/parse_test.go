@@ -136,6 +136,16 @@ func TestTraceIDFromFirehose_defaultExchangePublish(t *testing.T) {
 	}
 }
 
+func TestExchangeNameFromPublish_routingKeyFallback(t *testing.T) {
+	headers := amqp.Table{"exchange_name": ""}
+	if got := ExchangeNameFromPublish(headers, "publish.egress-events"); got != "egress-events" {
+		t.Fatalf("exchange = %q, want egress-events", got)
+	}
+	if got := ExchangeNameFromPublish(amqp.Table{}, "publish.orders"); got != "orders" {
+		t.Fatalf("exchange = %q, want orders", got)
+	}
+}
+
 func TestTraceIDFromFirehose_missingHeadersNoPanic(t *testing.T) {
 	if _, err := TraceIDFromFirehose(amqp.Table{}); err == nil {
 		t.Fatal("expected error for missing headers")

@@ -27,6 +27,8 @@ SKIP_MONARCH_DEPLOY="${SKIP_MONARCH_DEPLOY:-0}"
 SKIP_BERU_BUILD="${SKIP_BERU_BUILD:-0}"
 SKIP_OTEL_BOOTSTRAP="${SKIP_OTEL_BOOTSTRAP:-0}"
 
+MONGO_IMAGE="${MONGO_IMAGE:-mongo:4.4}"
+
 MANIFEST_DIR="$REPO/testing/scripts/manifests/http-otel-rmq-e2e"
 RELAY_DEPLOY="${SHADOWTEST}-egress-relay-rabbitmq"
 IGRIS_DEPLOY="${SHADOWTEST}-igris"
@@ -78,6 +80,9 @@ if [[ "$SKIP_LOAD" != "1" ]]; then
   docker pull rabbitmq:3-management-alpine 2>/dev/null || \
     bash "$REPO/testing/scripts/lib/docker.sh" pull rabbitmq:3-management-alpine 2>/dev/null || true
   http_otel_rmq_load_image rabbitmq:3-management-alpine
+  docker pull "$MONGO_IMAGE" 2>/dev/null || \
+    bash "$REPO/testing/scripts/lib/docker.sh" pull "$MONGO_IMAGE" 2>/dev/null || true
+  http_otel_rmq_load_image "$MONGO_IMAGE"
 fi
 
 if [[ "$SKIP_MONARCH_BUILD" != "1" ]]; then
@@ -130,6 +135,10 @@ for role in control-a control-b candidate; do
   kubectl rollout status "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS" --timeout=180s
 done
 
+for role in control-a control-b candidate; do
+  kubectl rollout status "deployment/mongodb-${role}" -n "$SHADOW_NS" --timeout=180s
+done
+
 echo "==> Restart shadow apps so OTel webhook injects after Instrumentation CR exists"
 for role in control-a control-b candidate; do
   kubectl rollout restart "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS"
@@ -147,6 +156,8 @@ done
 TRACE_HEX="$(openssl rand -hex 16)"
 SPAN_HEX="$(openssl rand -hex 8)"
 TRACE_TP="00-${TRACE_HEX}-${SPAN_HEX}-01"
+
+http_otel_rmq_warmup "$SHADOWTEST" "$SHADOW_NS" "$IGRIS_DEPLOY"
 
 http_otel_rmq_run_test "$SHADOWTEST" "$SHADOW_NS" "$IGRIS_DEPLOY" "$TRACE_HEX" "$TRACE_TP" \
   "rmq egress published exchange=egress-events"

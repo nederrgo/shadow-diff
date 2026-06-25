@@ -97,3 +97,71 @@ func TestStore_multiProtocolIsolation(t *testing.T) {
 	}
 	t.Fatalf("expected both protocol success logs, got: %s", buf.String())
 }
+
+func TestStore_lateReportAfterEgressWait(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	cfg := Config{TraceTTL: time.Minute, MaxPendingTraces: 100, SweepInterval: time.Hour, EgressWait: 50 * time.Millisecond}
+	store := NewStore(log, cfg)
+
+	mongo := []byte(`{"insert":"c","documents":[{"id":1}]}`)
+	store.Handle(Report{TraceID: "t5", Workload: "control-a", Protocol: "mongodb", Payload: mongo})
+	store.Handle(Report{TraceID: "t5", Workload: "control-b", Protocol: "mongodb", Payload: mongo})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(buf.String(), "missing candidate") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	store.Handle(Report{TraceID: "t5", Workload: "candidate", Protocol: "mongodb", Payload: mongo})
+
+	deadline = time.Now().Add(2 * time.Second)
+	want := "No egress regression for Trace t5 (mongodb)"
+	for time.Now().Before(deadline) {
+		if strings.Contains(buf.String(), want) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected %q, got: %s", want, buf.String())
+}
+
+func TestStore_rabbitmqFirstThenLateMongo(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	cfg := Config{TraceTTL: time.Minute, MaxPendingTraces: 100, SweepInterval: time.Hour, EgressWait: 50 * time.Millisecond}
+	store := NewStore(log, cfg)
+
+	rmq := []byte(`{"v":1}`)
+	mongo := []byte(`{"insert":"c","documents":[{"id":1}]}`)
+
+	for _, role := range []string{"control-a", "control-b", "candidate"} {
+		store.Handle(Report{TraceID: "t6", Workload: role, Protocol: "rabbitmq", Payload: rmq})
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(buf.String(), "No egress regression for Trace t6 (rabbitmq)") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	store.Handle(Report{TraceID: "t6", Workload: "control-b", Protocol: "mongodb", Payload: mongo})
+	store.Handle(Report{TraceID: "t6", Workload: "candidate", Protocol: "mongodb", Payload: mongo})
+	time.Sleep(60 * time.Millisecond) // waitFired + partial mongodb attempt
+	store.Handle(Report{TraceID: "t6", Workload: "control-a", Protocol: "mongodb", Payload: mongo})
+
+	deadline = time.Now().Add(2 * time.Second)
+	want := "No egress regression for Trace t6 (mongodb)"
+	for time.Now().Before(deadline) {
+		if strings.Contains(buf.String(), want) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected %q, got: %s", want, buf.String())
+}

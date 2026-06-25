@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -92,6 +93,64 @@ func TestEgressRelayRabbitMQEnv_HTTPIngressOnly(t *testing.T) {
 	}
 	if byName["EGRESS_EXCHANGE"] != "egress-events" {
 		t.Fatalf("EGRESS_EXCHANGE = %q", byName["EGRESS_EXCHANGE"])
+	}
+}
+
+func TestEgressRelayRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
+	r := &ShadowTestReconciler{}
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
+			Inputs: []enginev1alpha1.InputSpec{{
+				Driver: "rabbitmq_message",
+				AMQP: &enginev1alpha1.AMQPInputSpec{
+					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
+					TargetDependency: "rabbitmq",
+				},
+			}},
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL",
+			}},
+		},
+	}
+	env, err := r.egressRelayRabbitMQEnv(st, "shadow-default-rmq-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range env {
+		if e.Name == envControlAAMQPURL && !strings.Contains(e.Value, ":5672/") {
+			t.Fatalf("CONTROL_A_AMQP_URL = %q, want port 5672", e.Value)
+		}
+	}
+}
+
+func TestIgrisRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
+	r := &ShadowTestReconciler{}
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
+		Status: enginev1alpha1.ShadowTestStatus{AmqpQueueName: "shadow-diff-test"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Inputs: []enginev1alpha1.InputSpec{{
+				Driver: "rabbitmq_message",
+				AMQP: &enginev1alpha1.AMQPInputSpec{
+					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
+					TargetDependency: "rabbitmq",
+				},
+			}},
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL",
+			}},
+		},
+	}
+	env, err := r.igrisRabbitMQEnv(st, "shadow-default-rmq-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range env {
+		if e.Name == envControlAAMQPURL && !strings.Contains(e.Value, ":5672/") {
+			t.Fatalf("CONTROL_A_AMQP_URL = %q, want port 5672", e.Value)
+		}
 	}
 }
 

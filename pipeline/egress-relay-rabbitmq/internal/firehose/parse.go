@@ -120,3 +120,15 @@ func ExchangeNameFromTrace(traceHeaders amqp.Table) string {
 	}
 	return name
 }
+
+// ExchangeNameFromPublish resolves the published exchange from Firehose headers or routing key.
+func ExchangeNameFromPublish(traceHeaders amqp.Table, routingKey string) string {
+	if name := ExchangeNameFromTrace(traceHeaders); name != "" {
+		return name
+	}
+	const prefix = "publish."
+	if strings.HasPrefix(routingKey, prefix) {
+		return strings.TrimPrefix(routingKey, prefix)
+	}
+	return ""
+}

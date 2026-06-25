@@ -64,6 +64,7 @@ type pendingEgress struct {
 	deadline       time.Time
 	payloads       map[string]map[string][][]byte // protocol -> role -> ordered payloads
 	diffDone       map[string]bool                // protocol -> diff completed
+	waitFired      bool                           // EgressWait timer has run
 	timer          *time.Timer
 	shadowTestName string
 }
@@ -137,11 +138,12 @@ func (s *Store) Handle(report Report) {
 	)
 
 	ready := protocolReady(pt, protocol) && !pt.diffDone[protocol]
+	waitFired := pt.waitFired
 	s.mu.Unlock()
 
 	if ready {
-		if s.cfg.EgressWait > 0 {
-			// ponytail: batch OTLP spans until EgressWait; onWaitExpired diffs all ready protocols
+		if s.cfg.EgressWait > 0 && !waitFired {
+			// ponytail: batch until onWaitExpired; late spans diff after waitFired
 			return
 		}
 		s.tryDiffProtocol(report.TraceID, protocol)
@@ -168,6 +170,7 @@ func (s *Store) onWaitExpired(traceID string) {
 		s.mu.Unlock()
 		return
 	}
+	pt.waitFired = true
 	var protocols []string
 	for protocol := range pt.payloads {
 		if pt.diffDone[protocol] {
@@ -204,33 +207,41 @@ func (s *Store) tryDiffProtocol(traceID, protocol string) {
 		s.mu.Unlock()
 		return
 	}
-	if !protocolReady(pt, protocol) && !protocolHasMinReports(pt, protocol, 2) {
+	ready := protocolReady(pt, protocol)
+	partial := !ready && protocolHasMinReports(pt, protocol, 2)
+	if !ready && !partial {
 		s.mu.Unlock()
 		return
 	}
-	pt.diffDone[protocol] = true
+	if ready {
+		pt.diffDone[protocol] = true
+		shadowName := pt.shadowTestName
+		controlA := copySlice(pt.payloads[protocol][roles.ControlA])
+		controlB := copySlice(pt.payloads[protocol][roles.ControlB])
+		candidate := copySlice(pt.payloads[protocol][roles.Candidate])
+
+		allDone := true
+		for p := range pt.payloads {
+			if !pt.diffDone[p] {
+				allDone = false
+				break
+			}
+		}
+		if allDone && pt.timer != nil {
+			pt.timer.Stop()
+			pt.timer = nil
+		}
+		// ponytail: do not delete pending here — RMQ can finish before OTLP mongo arrives;
+		// sweep evicts at TraceTTL once allProtocolsDone or logs timeout
+		s.mu.Unlock()
+		go s.runDiff(traceID, protocol, shadowName, controlA, controlB, candidate)
+		return
+	}
 	shadowName := pt.shadowTestName
 	controlA := copySlice(pt.payloads[protocol][roles.ControlA])
 	controlB := copySlice(pt.payloads[protocol][roles.ControlB])
 	candidate := copySlice(pt.payloads[protocol][roles.Candidate])
-
-	allDone := true
-	for p := range pt.payloads {
-		if !pt.diffDone[p] {
-			allDone = false
-			break
-		}
-	}
-	if allDone {
-		if pt.timer != nil {
-			pt.timer.Stop()
-			pt.timer = nil
-		}
-		delete(s.pending, traceID)
-		s.removeFromOrderLocked(traceID)
-	}
 	s.mu.Unlock()
-
 	go s.runDiff(traceID, protocol, shadowName, controlA, controlB, candidate)
 }
 

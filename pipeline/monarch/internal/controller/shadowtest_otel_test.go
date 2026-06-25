@@ -150,3 +150,89 @@ func TestOtelEnvVars_noMongoUsesNoneExporter(t *testing.T) {
 		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want none", got)
 	}
 }
+
+func TestOtelEnvVars_pythonRabbitMQEnablesPikaPropagation(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "http-otel-rmq-python-shadow"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Language: "python",
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL",
+			}},
+		},
+	}
+	envs := otelEnvVars(st, roleControlA, "http-rmq-python-worker:dev")
+	if got := envValue(envs, envOtelTracesExporter); got != "otlp" {
+		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want otlp", got)
+	}
+	if got := envValue(envs, envOtelPythonEnabledInstrumentations); got != "flask,pika" {
+		t.Fatalf("OTEL_PYTHON_ENABLED_INSTRUMENTATIONS = %q", got)
+	}
+}
+
+func TestOtelEnvVars_nodejsRabbitMQEnablesAmqplib(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "http-otel-rmq-nodejs-shadow"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Language: "nodejs",
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL",
+			}},
+		},
+	}
+	envs := otelEnvVars(st, roleControlA, "http-rmq-test-app:dev")
+	if got := envValue(envs, envOtelTracesExporter); got != "none" {
+		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want none", got)
+	}
+	if got := envValue(envs, envOtelNodeEnabledInstrumentations); got != "amqplib,http" {
+		t.Fatalf("OTEL_NODE_ENABLED_INSTRUMENTATIONS = %q", got)
+	}
+}
+
+func TestOtelEnvVars_nodejsMongoAndRabbitMQ(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "http-otel-rmq-nodejs-shadow"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Language: "nodejs",
+			Dependencies: []enginev1alpha1.DependencySpec{
+				{Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL"},
+				{Name: "mongodb", Type: "mongodb", Image: "mongo:4.4", Port: 27017, EnvVarInjection: "MONGO_URL"},
+			},
+		},
+	}
+	envs := otelEnvVars(st, roleControlA, "http-rmq-test-app:dev")
+	if got := envValue(envs, envOtelTracesExporter); got != "otlp" {
+		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want otlp", got)
+	}
+	if got := envValue(envs, envOtelNodeEnabledInstrumentations); got != "mongodb,http,amqplib" {
+		t.Fatalf("OTEL_NODE_ENABLED_INSTRUMENTATIONS = %q", got)
+	}
+}
+
+func TestOtelEnvVars_pythonMongoAndRabbitMQ(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "http-otel-rmq-python-shadow"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Language: "python",
+			Dependencies: []enginev1alpha1.DependencySpec{
+				{Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL"},
+				{Name: "mongodb", Type: "mongodb", Image: "mongo:4.4", Port: 27017, EnvVarInjection: "MONGO_URL"},
+			},
+		},
+	}
+	envs := otelEnvVars(st, roleControlA, "http-rmq-python-worker:dev")
+	if got := envValue(envs, envOtelTracesExporter); got != "otlp" {
+		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want otlp", got)
+	}
+	if got := envValue(envs, envOtelPythonEnabledInstrumentations); got != "flask,pika,pymongo" {
+		t.Fatalf("OTEL_PYTHON_ENABLED_INSTRUMENTATIONS = %q", got)
+	}
+	if got := envValue(envs, envOtelPythonMongoCaptureStatement); got != "true" {
+		t.Fatalf("OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT = %q", got)
+	}
+}
+

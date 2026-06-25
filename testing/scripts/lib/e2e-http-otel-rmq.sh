@@ -167,6 +167,22 @@ http_otel_rmq_wait_beru_message() {
   return 1
 }
 
+http_otel_rmq_warmup() {
+  local shadowtest="$1" shadow_ns="$2" igris_deploy="$3"
+  local igris_url="http://${igris_deploy}.${shadow_ns}.svc.cluster.local:8888/publish"
+  local warm_tp="00-$(openssl rand -hex 16)-$(openssl rand -hex 8)-01"
+  echo "==> Warm up OTel auto-instrumentation (${igris_url})"
+  local write_out
+  write_out=$(http_otel_rmq_in_cluster_curl "http-otel-rmq-warm-${RANDOM}" \
+    curl -sS -w '__HTTP_CODE__%{http_code}' -o /dev/null \
+    -X POST "${igris_url}" \
+    -H "Content-Type: application/json" \
+    -H "traceparent: ${warm_tp}" \
+    -d '{"warmup":true}')
+  echo "    warmup: $write_out"
+  sleep "${HTTP_OTEL_RMQ_WARMUP_SECS:-20}"
+}
+
 http_otel_rmq_run_test() {
   local shadowtest="$1" shadow_ns="$2" igris_deploy="$3" trace_hex="$4" trace_tp="$5" log_pattern="$6"
   local igris_url="http://${igris_deploy}.${shadow_ns}.svc.cluster.local:8888/publish"
@@ -189,6 +205,9 @@ http_otel_rmq_run_test() {
   local ingress_msg egress_msg ingress_timeout_msg
   local ingress_wait="${HTTP_OTEL_RMQ_INGRESS_WAIT_SECS:-30}"
   local egress_wait="${HTTP_OTEL_RMQ_EGRESS_WAIT_SECS:-45}"
+  if [[ "${HTTP_OTEL_RMQ_MONGO:-1}" == "1" ]]; then
+    ingress_wait="${HTTP_OTEL_RMQ_INGRESS_WAIT_SECS:-45}"
+  fi
   ingress_msg="No regression for Trace ${trace_hex}"
   egress_msg="No egress regression for Trace ${trace_hex} (rabbitmq)"
   ingress_timeout_msg="Timed out waiting for Trace ${trace_hex} (INGRESS)"
@@ -225,6 +244,31 @@ http_otel_rmq_run_test() {
     fi
     log_success "${role} published egress without logging trace id"
   done
+
+  if [[ "${HTTP_OTEL_RMQ_MONGO:-1}" == "1" ]]; then
+    echo "==> Wait for shadow apps mongo insert (mongo insert ok)"
+    for role in control-a control-b candidate; do
+      dep="${shadowtest}-${role}"
+      pod=$(shadow_app_pod_for_role "$shadow_ns" "$shadowtest" "$role")
+      local ok=0
+      for _ in $(seq 1 30); do
+        if kubectl logs -n "$shadow_ns" "$pod" -c app --tail=100 2>/dev/null | grep -q "mongo insert ok"; then
+          ok=1
+          break
+        fi
+        sleep 2
+      done
+      if [[ "$ok" != "1" ]]; then
+        log_fail "${role} app logs missing 'mongo insert ok'"
+        kubectl logs -n "$shadow_ns" "$pod" -c app --tail=40 >&2 || true
+        return 1
+      fi
+      log_success "${role} mongo insert ok"
+    done
+    local mongo_egress_msg="No egress regression for Trace ${trace_hex} (mongodb)"
+    local mongo_wait="${HTTP_OTEL_RMQ_MONGO_WAIT_SECS:-45}"
+    http_otel_rmq_wait_beru_message "MongoDB egress" "$mongo_egress_msg" "" "$mongo_wait" "$trace_hex" || return 1
+  fi
 
   http_otel_rmq_wait_beru_message "RabbitMQ egress" "$egress_msg" "" "$egress_wait" "$trace_hex" || return 1
   return 0

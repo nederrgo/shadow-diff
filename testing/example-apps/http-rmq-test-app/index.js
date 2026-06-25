@@ -1,7 +1,10 @@
 'use strict';
 
+// ponytail: mongodb@4.17 — OTel operator bundles instrumentation-mongodb@0.35, broken with driver 6.x
+
 const express = require('express');
 const amqp = require('amqplib');
+const { MongoClient } = require('mongodb');
 
 function envOr(name, fallback) {
   const value = (process.env[name] || '').trim();
@@ -29,6 +32,14 @@ async function main() {
   const egressExchange = envOr('RMQ_EGRESS_EXCHANGE', 'egress-events');
   const egressRoutingKey = envOr('RMQ_EGRESS_ROUTING_KEY', 'order.egress');
 
+  let collection = null;
+  const mongoURL = envOr('MONGO_URL', '');
+  if (mongoURL) {
+    const client = new MongoClient(mongoURL);
+    await client.connect();
+    collection = client.db(envOr('MONGO_DB', 'test')).collection('items');
+  }
+
   const conn = await amqp.connect(amqpUrl);
   const ch = await conn.createChannel();
   await ch.assertExchange(egressExchange, 'topic', { durable: true });
@@ -43,7 +54,12 @@ async function main() {
   app.post('/publish', async (req, res) => {
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
-      const payload = Buffer.from(JSON.stringify({ ...body, source: 'http-rmq-test-app' }));
+      const doc = { ...body, source: 'http-rmq-test-app' };
+      if (collection) {
+        await collection.insertOne({ ...doc });
+        console.log('mongo insert ok');
+      }
+      const payload = Buffer.from(JSON.stringify(doc));
       await ch.publish(egressExchange, egressRoutingKey, payload, {
         contentType: 'application/json',
         persistent: true,
@@ -51,13 +67,13 @@ async function main() {
       console.log(`rmq egress published exchange=${egressExchange} routing_key=${egressRoutingKey}`);
       res.status(200).json({ status: 'ok' });
     } catch (err) {
-      console.error(`rmq egress publish failed: ${err}`);
+      console.error(`publish failed: ${err}`);
       res.status(500).json({ error: String(err) });
     }
   });
 
   console.log(
-    `http-rmq-test-app listening on :${port} amqp=${amqpUrl} egress=${egressExchange}/${egressRoutingKey}`,
+    `http-rmq-test-app listening on :${port} amqp=${amqpUrl} mongo=${mongoURL || '<none>'} egress=${egressExchange}/${egressRoutingKey}`,
   );
   app.listen(Number(port));
 

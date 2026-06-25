@@ -1,4 +1,4 @@
-# HTTP ingress (igris-http) + RabbitMQ egress (Firehose) OTel E2E fixtures.
+# HTTP ingress (igris-http) + Mongo OTLP + RabbitMQ egress (Firehose) OTel E2E fixtures.
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest
 metadata:
@@ -23,3 +23,7 @@ spec:
     - name: rabbitmq
       type: rabbitmq
       envVarInjection: AMQP_URL
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

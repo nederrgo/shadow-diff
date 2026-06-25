@@ -19,24 +19,19 @@ spec:
       - name: OTEL_LOGS_EXPORTER
         value: none
       - name: OTEL_NODE_ENABLED_INSTRUMENTATIONS
-        value: amqplib,http
+        value: amqplib,http,mongodb
   java:
     env:
       - name: OTEL_TRACES_EXPORTER
         value: none
   python:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:0.45b0
     env:
-      - name: OTEL_TRACES_EXPORTER
-        value: none
       - name: OTEL_METRICS_EXPORTER
         value: none
       - name: OTEL_LOGS_EXPORTER
         value: none
-      - name: OTEL_EXPORTER_OTLP_ENDPOINT
-        value: http://beru.beru-system.svc.cluster.local:8080
-      - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
-        value: http/protobuf
       - name: OTEL_PYTHON_ENABLED_INSTRUMENTATIONS
-        value: flask,pika
+        value: flask,pika,pymongo
       - name: OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT
         value: "true"

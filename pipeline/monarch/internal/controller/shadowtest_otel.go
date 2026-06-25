@@ -26,8 +26,9 @@ const (
 	envOtelExporterOTLPEndpoint        = "OTEL_EXPORTER_OTLP_ENDPOINT"
 	envOtelExporterOTLPProtocol        = "OTEL_EXPORTER_OTLP_PROTOCOL"
 	envOtelExporterOTLPTracesProtocol  = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
-	envOtelNodeEnabledInstrumentations = "OTEL_NODE_ENABLED_INSTRUMENTATIONS"
-	envOtelPythonMongoCaptureStatement = "OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT"
+	envOtelNodeEnabledInstrumentations   = "OTEL_NODE_ENABLED_INSTRUMENTATIONS"
+	envOtelPythonEnabledInstrumentations = "OTEL_PYTHON_ENABLED_INSTRUMENTATIONS"
+	envOtelPythonMongoCaptureStatement   = "OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT"
 
 	defaultBeruOTLPEndpoint     = "http://beru.beru-system.svc.cluster.local:4317"
 	defaultBeruOTLPHTTPEndpoint = "http://beru.beru-system.svc.cluster.local:8080"
@@ -99,10 +100,36 @@ func otelLanguageContainerNamesAnnotation(lang string) string {
 	}
 }
 
+func otelNoneExporterEnv(name string) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: envOtelTracesExporter, Value: "none"},
+		{Name: envOtelMetricsExporter, Value: "none"},
+		{Name: envOtelLogsExporter, Value: "none"},
+		{Name: envOtelServiceName, Value: name},
+		{Name: envOtelPropagators, Value: "tracecontext"},
+	}
+}
+
+func otelOTLPHttpExporterEnv(name string) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: envOtelTracesExporter, Value: "otlp"},
+		{Name: envOtelMetricsExporter, Value: "none"},
+		{Name: envOtelLogsExporter, Value: "none"},
+		{Name: envOtelServiceName, Value: name},
+		{Name: envOtelPropagators, Value: "tracecontext"},
+		{Name: envOtelExporterOTLPEndpoint, Value: defaultBeruOTLPHTTPEndpoint},
+		{Name: envOtelExporterOTLPProtocol, Value: "http/protobuf"},
+		{Name: envOtelExporterOTLPTracesProtocol, Value: "http/protobuf"},
+	}
+}
+
 func otelEnvVars(st *enginev1alpha1.ShadowTest, role, appImage string) []corev1.EnvVar {
 	name := st.Name + "-" + role
-	if otelInjectionEnabled(st) && hasMongoDependency(st) {
-		lang := detectOtelLanguage(appImage, otelLanguageFromSpec(st))
+	if !otelInjectionEnabled(st) {
+		return nil
+	}
+	lang := detectOtelLanguage(appImage, otelLanguageFromSpec(st))
+	if hasMongoDependency(st) {
 		endpoint := defaultBeruOTLPEndpoint
 		protocol := "grpc"
 		tracesProtocol := "grpc"
@@ -122,24 +149,42 @@ func otelEnvVars(st *enginev1alpha1.ShadowTest, role, appImage string) []corev1.
 			{Name: envOtelExporterOTLPTracesProtocol, Value: tracesProtocol},
 		}
 		if lang == "nodejs" {
+			nodeInst := "mongodb,http"
+			if hasRabbitMQBrokerDependency(st) {
+				nodeInst = "mongodb,http,amqplib"
+			}
 			envs = append(envs, corev1.EnvVar{
-				Name: envOtelNodeEnabledInstrumentations, Value: "mongodb,http",
+				Name: envOtelNodeEnabledInstrumentations, Value: nodeInst,
 			})
 		}
 		if lang == "python" {
 			envs = append(envs, corev1.EnvVar{
 				Name: envOtelPythonMongoCaptureStatement, Value: "true",
 			})
+			if hasRabbitMQBrokerDependency(st) {
+				envs = append(envs, corev1.EnvVar{
+					Name: envOtelPythonEnabledInstrumentations, Value: "flask,pika,pymongo",
+				})
+			}
 		}
 		return envs
 	}
-	return []corev1.EnvVar{
-		{Name: envOtelTracesExporter, Value: "none"},
-		{Name: envOtelMetricsExporter, Value: "none"},
-		{Name: envOtelLogsExporter, Value: "none"},
-		{Name: envOtelServiceName, Value: name},
-		{Name: envOtelPropagators, Value: "tracecontext"},
+	// ponytail: pika injects traceparent only when the SDK is up (OTEL_TRACES_EXPORTER=otlp);
+	// amqplib propagates with exporter=none — HTTP→RMQ Python needs flask,pika on pod env
+	// because Monarch reconcile overwrites the Instrumentation CR env on the Deployment.
+	if lang == "python" && hasRabbitMQBrokerDependency(st) {
+		envs := otelOTLPHttpExporterEnv(name)
+		envs = append(envs, corev1.EnvVar{
+			Name: envOtelPythonEnabledInstrumentations, Value: "flask,pika",
+		})
+		return envs
 	}
+	if lang == "nodejs" && hasRabbitMQBrokerDependency(st) {
+		return append(otelNoneExporterEnv(name), corev1.EnvVar{
+			Name: envOtelNodeEnabledInstrumentations, Value: "amqplib,http",
+		})
+	}
+	return otelNoneExporterEnv(name)
 }
 
 func mergeAnnotations(base, extra map[string]string) map[string]string {
