@@ -3,7 +3,7 @@
   <div class="flex items-center justify-between">
     <div>
       <h2 class="text-lg font-semibold">Trace {{.Trace.TraceID}}</h2>
-      <p class="text-sm text-slate-500">{{.Trace.Protocol}} · {{.Trace.Timestamp}}</p>
+      <p class="text-sm text-slate-500">{{.Trace.Protocol}} · {{.Trace.Timestamp}}{{if .Trace.Signature}} · <span class="font-mono">{{.Trace.Signature}}</span>{{end}}</p>
     </div>
     <a href="/dashboard" class="text-sm text-blue-600 hover:underline">Back to timeline</a>
   </div>
@@ -14,7 +14,12 @@
     {{range .SequenceSteps}}
     <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
       <div class="px-4 py-2 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center gap-2">
+        {{if .Signature}}
+        <span class="text-sm font-medium font-mono">{{.Signature}}</span>
+        <span class="text-xs text-slate-500">{{.Label}}</span>
+        {{else}}
         <span class="text-sm font-medium">{{.Label}}</span>
+        {{end}}
         {{if .IsExtra}}
         <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-900">Unexpected extra egress</span>
         {{end}}
@@ -55,13 +60,14 @@
       {{range .Related}}
       <li class="flex flex-wrap items-center gap-3">
         <span class="font-medium">{{.Protocol}}</span>
+        {{if .Signature}}<span class="font-mono text-xs text-slate-600">{{.Signature}}</span>{{end}}
         {{if eq .Status "MISMATCH"}}
         <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">MISMATCH</span>
         {{else}}
         <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">MATCH</span>
         {{end}}
-        {{if ne .ID $.Trace.ID}}
-        <a class="text-blue-600 hover:underline text-xs" href="/dashboard/traces/{{.ID}}">Open</a>
+        {{if ne .Protocol $.Trace.Protocol}}
+        <a class="text-blue-600 hover:underline text-xs" href="{{.DetailURL}}">Open</a>
         {{else}}
         <span class="text-slate-400 text-xs">viewing</span>
         {{end}}

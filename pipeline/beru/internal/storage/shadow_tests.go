@@ -16,6 +16,12 @@ type ShadowTest struct {
 	MatchRate      float64
 }
 
+// EnsureShadowTest creates the shadow test run row if missing.
+func (db *DB) EnsureShadowTest(ctx context.Context, name string) error {
+	_, err := db.ensureShadowTest(ctx, name)
+	return err
+}
+
 func (db *DB) ensureShadowTest(ctx context.Context, name string) (int64, error) {
 	if name == "" {
 		name = defaultShadowTest
@@ -66,33 +72,6 @@ LIMIT ?`, limit)
 		out = append(out, st)
 	}
 	return out, rows.Err()
-}
-
-func (db *DB) incrementRunCounters(ctx context.Context, tx *sql.Tx, shadowTestID int64, mismatch bool) error {
-	if mismatch {
-		_, err := tx.ExecContext(ctx, `
-UPDATE shadow_tests
-SET total_traces = total_traces + 1, mismatch_count = mismatch_count + 1
-WHERE id = ?`, shadowTestID)
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `
-UPDATE shadow_tests
-SET total_traces = total_traces + 1
-WHERE id = ?`, shadowTestID)
-	return err
-}
-
-func (db *DB) decrementRunCounters(ctx context.Context, tx *sql.Tx, shadowTestID int64, total, mismatches int) error {
-	if total == 0 {
-		return nil
-	}
-	_, err := tx.ExecContext(ctx, `
-UPDATE shadow_tests
-SET total_traces = CASE WHEN total_traces >= ? THEN total_traces - ? ELSE 0 END,
-    mismatch_count = CASE WHEN mismatch_count >= ? THEN mismatch_count - ? ELSE 0 END
-WHERE id = ?`, total, total, mismatches, mismatches, shadowTestID)
-	return err
 }
 
 // GetShadowTest returns one run by id.

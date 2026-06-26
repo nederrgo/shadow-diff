@@ -11,39 +11,6 @@ CREATE TABLE IF NOT EXISTS shadow_tests (
   mismatch_count INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS traces (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  shadow_test_id INTEGER NOT NULL REFERENCES shadow_tests(id),
-  trace_id TEXT NOT NULL,
-  protocol TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(status IN ('MATCH','MISMATCH')),
-  timestamp TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_traces_shadow_test ON traces(shadow_test_id);
-CREATE INDEX IF NOT EXISTS idx_traces_status ON traces(status);
-CREATE INDEX IF NOT EXISTS idx_traces_timestamp ON traces(timestamp);
-
-CREATE TABLE IF NOT EXISTS mismatches (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  trace_id TEXT NOT NULL,
-  path TEXT NOT NULL,
-  expected_value TEXT,
-  actual_value TEXT,
-  body_a_json TEXT,
-  body_c_json TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_mismatches_trace ON mismatches(trace_id);
-
-CREATE TABLE IF NOT EXISTS egress_payloads (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  trace_id TEXT NOT NULL,
-  protocol TEXT NOT NULL,
-  workload TEXT NOT NULL,
-  sequence_index INTEGER NOT NULL,
-  payload_json TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_egress_payloads_trace ON egress_payloads(trace_id, protocol);
-
 CREATE TABLE IF NOT EXISTS noise_filters (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   shadow_test_name TEXT NOT NULL,
@@ -57,10 +24,22 @@ func (db *DB) migrate() error {
 	if _, err := db.sql.Exec(schemaDDL); err != nil {
 		return err
 	}
-	// ponytail: idempotent column add for existing DBs
-	_, err := db.sql.Exec(`ALTER TABLE mismatches ADD COLUMN protocol TEXT NOT NULL DEFAULT ''`)
+	// ponytail: drop legacy dashboard tables after v2 migration
+	for _, stmt := range []string{
+		`DROP TABLE IF EXISTS mismatches`,
+		`DROP TABLE IF EXISTS egress_payloads`,
+		`DROP TABLE IF EXISTS traces`,
+	} {
+		if _, err := db.sql.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	_, err := db.sql.Exec(`ALTER TABLE raw_reports ADD COLUMN shadow_test_name TEXT NOT NULL DEFAULT ''`)
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		return err
+		// raw_reports owned by v2 migrate; ignore if table missing on fresh legacy-only path
+		if !strings.Contains(strings.ToLower(err.Error()), "no such table") {
+			return err
+		}
 	}
 	return nil
 }

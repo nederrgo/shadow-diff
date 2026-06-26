@@ -71,6 +71,14 @@ func (db *DB) Close() error {
 	return db.sql.Close()
 }
 
+// SQL exposes the underlying database handle for v2 storage wiring.
+func (db *DB) SQL() *sql.DB {
+	if db == nil {
+		return nil
+	}
+	return db.sql
+}
+
 // DefaultShadowTestName returns the configured default shadow test name.
 func (db *DB) DefaultShadowTestName() string {
 	if db.defaultTestName == "" {

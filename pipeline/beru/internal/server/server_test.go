@@ -1,23 +1,46 @@
 package server
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
-	"github.com/shadow-diff/beru/internal/ingest"
+	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
+	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 	"github.com/shadow-diff/beru/internal/roles"
 )
 
-func TestReportTraffic(t *testing.T) {
-	var buf bytes.Buffer
-	log := slog.New(slog.NewTextHandler(&buf, nil))
-	store := ingest.NewStore(log, ingest.Config{TraceTTL: time.Minute, MaxPendingTraces: 100, SweepInterval: time.Hour})
+type routeRecorder struct {
+	done atomic.Bool
+}
 
-	srv := &TrafficReporter{Log: log, Store: store}
+func (r *routeRecorder) AppendReport(ctx context.Context, report *v2storage.RawReport) ([]v2storage.RawReport, error) {
+	r.done.Store(true)
+	return []v2storage.RawReport{*report}, nil
+}
+
+func (r *routeRecorder) SaveDiffVerdict(ctx context.Context, traceID string, verdict *v2storage.VerdictState) error {
+	return nil
+}
+
+func (r *routeRecorder) ListReports(ctx context.Context, traceID, protocol string) ([]v2storage.RawReport, error) {
+	return nil, nil
+}
+
+func (r *routeRecorder) ListTraceGroups(ctx context.Context, shadowTestName string, limit int) ([]v2storage.TraceGroup, error) {
+	return nil, nil
+}
+
+func (r *routeRecorder) GetVerdict(ctx context.Context, traceID string) (*v2storage.VerdictState, error) {
+	return nil, nil
+}
+
+func TestReportTraffic(t *testing.T) {
+	rec := &routeRecorder{}
+	router := v2engine.NewTraceRouter(1, rec, nil)
+	srv := &TrafficReporter{Router: router}
 	_, err := srv.ReportTraffic(context.Background(), &beruv1.ReportTrafficRequest{
 		Report: &beruv1.TrafficReport{
 			TraceId:   "t1",
@@ -32,5 +55,13 @@ func TestReportTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(50 * time.Millisecond)
+	deadline := time.After(2 * time.Second)
+	for !rec.done.Load() {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for router")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 }

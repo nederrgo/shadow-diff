@@ -16,13 +16,13 @@ import (
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
 	"github.com/shadow-diff/beru/internal/api"
 	"github.com/shadow-diff/beru/internal/dashboard"
-	"github.com/shadow-diff/beru/internal/egressdiff"
 	"github.com/shadow-diff/beru/internal/envoyextproc"
-	"github.com/shadow-diff/beru/internal/ingest"
 	"github.com/shadow-diff/beru/internal/otlp"
 	"github.com/shadow-diff/beru/internal/replay"
 	"github.com/shadow-diff/beru/internal/server"
 	"github.com/shadow-diff/beru/internal/storage"
+	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
+	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 func main() {
@@ -49,23 +49,26 @@ func main() {
 	}
 	defer db.Close()
 
-	cfg := ingest.ConfigFromEnv()
-	store := ingest.NewStore(log, cfg)
-	store.Storage = db
+	v2Repo, err := v2storage.NewSQLiteRepository(db.SQL())
+	if err != nil {
+		slog.Error("Failed to open v2 storage repository", "err", err)
+		os.Exit(1)
+	}
+	router := v2engine.NewTraceRouter(8, v2Repo, db)
+
 	mocks := replay.NewMockStore()
-	egressStore := egressdiff.NewStore(log, egressdiff.ConfigFromEnv())
-	egressStore.Storage = db
+	defaultTest := db.DefaultShadowTestName()
 
-	otlpSrv := &otlp.Server{Log: log, EgressStore: egressStore}
+	otlpSrv := &otlp.Server{Log: log, Router: router, DefaultShadowTest: defaultTest}
 
-	dash, err := dashboard.NewHandler(db, log)
+	dash, err := dashboard.NewHandler(db, v2Repo, log)
 	if err != nil {
 		slog.Error("Failed to init dashboard", "err", err)
 		os.Exit(1)
 	}
 
 	httpAddr := envOr("BERU_HTTP_ADDR", ":8080")
-	httpSrv := &api.Server{Log: log, Mocks: mocks, EgressDiff: egressStore, OTLP: otlpSrv, DB: db, Dashboard: dash}
+	httpSrv := &api.Server{Log: log, Mocks: mocks, Router: router, OTLP: otlpSrv, DB: db, Dashboard: dash}
 	go func() {
 		if err := httpSrv.Start(httpAddr); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server stopped", "err", err)
@@ -74,12 +77,12 @@ func main() {
 	}()
 
 	grpcServerBeru := grpc.NewServer()
-	beruv1.RegisterTrafficReporterServer(grpcServerBeru, &server.TrafficReporter{Log: log, Store: store})
+	beruv1.RegisterTrafficReporterServer(grpcServerBeru, &server.TrafficReporter{
+		Log: log, Router: router, DefaultShadowTest: defaultTest,
+	})
 	extprocv3.RegisterExternalProcessorServer(grpcServerBeru, &envoyextproc.Server{
-		Log:   log,
-		Store: store,
-		Mocks: mocks,
-		Role:  envoyextproc.RoleFromEnv(),
+		Log: log, Router: router, Mocks: mocks, Role: envoyextproc.RoleFromEnv(),
+		DefaultShadowTest: defaultTest,
 	})
 
 	grpcServerOTLP := grpc.NewServer()

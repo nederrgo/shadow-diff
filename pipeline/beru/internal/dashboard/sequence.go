@@ -1,22 +1,23 @@
 package dashboard
 
 import (
-	"strings"
 	"strconv"
+	"strings"
 
 	"github.com/shadow-diff/beru/internal/roles"
-	"github.com/shadow-diff/beru/internal/storage"
+	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 const (
-	placeholderNoQuery      = "[ NO QUERY EXECUTED ]"
-	placeholderNoMessage    = "[ NO MESSAGE PUBLISHED ]"
-	placeholderNoOperation  = "[ NO OPERATION EXECUTED ]"
+	placeholderNoQuery     = "[ NO QUERY EXECUTED ]"
+	placeholderNoMessage   = "[ NO MESSAGE PUBLISHED ]"
+	placeholderNoOperation = "[ NO OPERATION EXECUTED ]"
 )
 
 type sequenceStepView struct {
 	Index       int
 	Label       string
+	Signature   string
 	Expected    string
 	Actual      string
 	IsExtra     bool
@@ -25,51 +26,35 @@ type sequenceStepView struct {
 	HasActual   bool
 }
 
-func buildSequenceSteps(protocol string, payloads []storage.EgressPayload) []sequenceStepView {
-	if len(payloads) == 0 {
-		return nil
+func buildSequenceStepsFromReports(protocol string, reports []v2storage.RawReport) []sequenceStepView {
+	controlA := reportsForRole(reports, roles.ControlA)
+	candidate := reportsForRole(reports, roles.Candidate)
+	lastStep := len(controlA)
+	if len(candidate) > lastStep {
+		lastStep = len(candidate)
 	}
-	byWorkload := map[string]map[int]string{
-		roles.ControlA:  {},
-		roles.Candidate: {},
-	}
-	aMax, cMax := -1, -1
-	for _, p := range payloads {
-		switch p.Workload {
-		case roles.ControlA:
-			byWorkload[roles.ControlA][p.SequenceIndex] = p.PayloadJSON
-			if p.SequenceIndex > aMax {
-				aMax = p.SequenceIndex
-			}
-		case roles.Candidate:
-			byWorkload[roles.Candidate][p.SequenceIndex] = p.PayloadJSON
-			if p.SequenceIndex > cMax {
-				cMax = p.SequenceIndex
-			}
-		}
-	}
-	lastStep := aMax
-	if cMax > lastStep {
-		lastStep = cMax
-	}
-	if lastStep < 0 {
+	if lastStep == 0 {
 		return nil
 	}
 
 	placeholder := missingPlaceholder(protocol)
 	unit := sequenceUnit(protocol)
-	steps := make([]sequenceStepView, 0, lastStep+1)
-	for i := 0; i <= lastStep; i++ {
+	steps := make([]sequenceStepView, 0, lastStep)
+	for i := 0; i < lastStep; i++ {
 		step := sequenceStepView{Index: i, Label: unit + " " + strconv.Itoa(i+1)}
-		if raw, ok := byWorkload[roles.ControlA][i]; ok && raw != "" {
+		if i < len(controlA) {
 			step.HasExpected = true
-			step.Expected = PrettyDisplayJSON(raw)
+			step.Expected = PrettyDisplayJSON(string(controlA[i].PayloadBytes))
+			step.Signature = controlA[i].Signature
 		} else {
 			step.Expected = placeholder
 		}
-		if raw, ok := byWorkload[roles.Candidate][i]; ok && raw != "" {
+		if i < len(candidate) {
 			step.HasActual = true
-			step.Actual = PrettyDisplayJSON(raw)
+			step.Actual = PrettyDisplayJSON(string(candidate[i].PayloadBytes))
+			if step.Signature == "" {
+				step.Signature = candidate[i].Signature
+			}
 		} else {
 			step.Actual = placeholder
 		}
@@ -78,6 +63,16 @@ func buildSequenceSteps(protocol string, payloads []storage.EgressPayload) []seq
 		steps = append(steps, step)
 	}
 	return steps
+}
+
+func reportsForRole(reports []v2storage.RawReport, role string) []v2storage.RawReport {
+	var out []v2storage.RawReport
+	for _, r := range reports {
+		if r.ShadowRole == role {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func missingPlaceholder(protocol string) string {
@@ -100,4 +95,15 @@ func sequenceUnit(protocol string) string {
 	default:
 		return "Operation"
 	}
+}
+
+func signaturesFromReports(reports []v2storage.RawReport) string {
+	var parts []string
+	for _, r := range reports {
+		if r.ShadowRole != roles.ControlA || r.Signature == "" {
+			continue
+		}
+		parts = append(parts, r.Signature)
+	}
+	return strings.Join(parts, ", ")
 }

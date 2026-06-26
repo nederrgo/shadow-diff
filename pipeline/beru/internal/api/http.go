@@ -7,18 +7,19 @@ import (
 	"net/http"
 
 	"github.com/shadow-diff/beru/internal/dashboard"
-	"github.com/shadow-diff/beru/internal/egressdiff"
 	"github.com/shadow-diff/beru/internal/otlp"
 	"github.com/shadow-diff/beru/internal/replay"
 	"github.com/shadow-diff/beru/internal/roles"
 	"github.com/shadow-diff/beru/internal/storage"
+	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
+	v2report "github.com/shadow-diff/beru/internal/v2/report"
 )
 
 // Server exposes HTTP endpoints for egress replay testing and the dashboard.
 type Server struct {
 	Log        *slog.Logger
-	Mocks      *replay.MockStore
-	EgressDiff *egressdiff.Store
+	Mocks     *replay.MockStore
+	Router    *v2engine.TraceRouter
 	OTLP       *otlp.Server
 	DB         *storage.DB
 	Dashboard  *dashboard.Handler
@@ -100,7 +101,7 @@ func (s *Server) handleEgressDiff(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if s.EgressDiff == nil {
+	if s.Router == nil {
 		http.Error(w, "Egress diff not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -127,13 +128,16 @@ func (s *Server) handleEgressDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.EgressDiff.Handle(egressdiff.Report{
-		TraceID:        req.TraceID,
-		Workload:       req.Workload,
-		Protocol:       req.Protocol,
-		Payload:        append([]byte(nil), req.Payload...),
-		ShadowTestName: req.ShadowTestName,
-	})
+	shadowTest := req.ShadowTestName
+	if shadowTest == "" && s.DB != nil {
+		shadowTest = s.DB.DefaultShadowTestName()
+	}
+	rawReport, err := v2report.FromEgress(req.TraceID, req.Workload, req.Protocol, shadowTest, req.Payload)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	s.Router.Route(rawReport)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

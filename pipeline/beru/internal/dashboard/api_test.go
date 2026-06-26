@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strconv"
 	"testing"
+	"time"
 
-	"github.com/shadow-diff/beru/internal/diff"
+	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 	"github.com/shadow-diff/beru/internal/storage"
 )
 
@@ -22,11 +22,32 @@ func testHandler(t *testing.T) *Handler {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	h, err := NewHandler(db, slog.Default())
+	repo, err := v2storage.NewSQLiteRepository(db.SQL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHandler(db, repo, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return h
+}
+
+func seedMongoMismatch(t *testing.T, h *Handler, traceID string) {
+	t.Helper()
+	ctx := t.Context()
+	repo := h.Repo
+	now := time.Now().UTC()
+	for _, rep := range []v2storage.RawReport{
+		{TraceID: traceID, ShadowRole: "control-a", ShadowTestName: "default", Protocol: "mongodb", Direction: v2storage.DirectionEgress, Signature: "mongodb:insert:orders", PayloadBytes: []byte(`{"insert":"orders","documents":[{"order_id":"1"}]}`), CapturedAt: now},
+		{TraceID: traceID, ShadowRole: "control-b", ShadowTestName: "default", Protocol: "mongodb", Direction: v2storage.DirectionEgress, Signature: "mongodb:insert:orders", PayloadBytes: []byte(`{"insert":"orders","documents":[{"order_id":"1"}]}`), CapturedAt: now},
+		{TraceID: traceID, ShadowRole: "candidate", ShadowTestName: "default", Protocol: "mongodb", Direction: v2storage.DirectionEgress, Signature: "mongodb:insert:orders", PayloadBytes: []byte(`{"insert":"orders","documents":[{"order_id":"1"}]}`), CapturedAt: now},
+		{TraceID: traceID, ShadowRole: "candidate", ShadowTestName: "default", Protocol: "mongodb", Direction: v2storage.DirectionEgress, Signature: "mongodb:insert:orders", PayloadBytes: []byte(`{"insert":"orders","documents":[{"audit":"n1"}]}`), CapturedAt: now.Add(time.Millisecond)},
+	} {
+		if _, err := repo.AppendReport(ctx, &rep); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestAPIShadowTests(t *testing.T) {
@@ -71,63 +92,15 @@ func TestDashboardIndex(t *testing.T) {
 	if !bytes.Contains(body, []byte("Beru Dashboard")) {
 		t.Fatal("missing dashboard title")
 	}
-	if !bytes.Contains(body, []byte(`data-filter="all" class="filter-tab px-3 py-1 rounded text-sm active"`)) {
-		t.Fatal("expected All tab active by default")
-	}
-}
-
-func TestDashboardFilterTabs(t *testing.T) {
-	h := testHandler(t)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/?filter=match", nil)
-	h.handleIndex(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d", rec.Code)
-	}
-	body := rec.Body.Bytes()
-	if !bytes.Contains(body, []byte(`data-filter="match" class="filter-tab px-3 py-1 rounded text-sm active"`)) {
-		t.Fatal("expected Matches tab active for filter=match")
-	}
-	if bytes.Contains(body, []byte(`data-filter="all" class="filter-tab px-3 py-1 rounded text-sm active"`)) {
-		t.Fatal("expected All tab inactive when filter=match")
-	}
 }
 
 func TestSaveAndViewTraceSequence(t *testing.T) {
 	h := testHandler(t)
-	ctx := t.Context()
-	res := diff.Result{
-		TraceID:  "view-seq",
-		Protocol: "mongodb",
-		Status:   diff.StatusMismatch,
-		ControlA: [][]byte{[]byte(`{"insert":"orders","documents":[{"order_id":"1"}]}`)},
-		Candidate: [][]byte{
-			[]byte(`{"insert":"orders","documents":[{"order_id":"1"}]}`),
-			[]byte(`{"insert":"orders","documents":[{"audit":"n1"}]}`),
-		},
-		BodyA:       []byte(`{"insert":"orders"}`),
-		BodyC:       []byte(`{"insert":"orders"}`),
-		Regressions: []diff.PathDiff{{Path: "(count)", Expected: "1", Actual: "2"}},
-	}
-	if err := h.DB.SaveDiffResult(ctx, "default", res); err != nil {
-		t.Fatal(err)
-	}
-	traces, err := h.DB.ListTraces(ctx, 1, "", 10)
-	if err != nil || len(traces) == 0 {
-		t.Fatal(err)
-	}
-	var traceID int64
-	for _, tr := range traces {
-		if tr.TraceID == "view-seq" {
-			traceID = tr.ID
-			break
-		}
-	}
-	if traceID == 0 {
-		t.Fatal("trace row not found")
-	}
+	traceID := "view-seq"
+	seedMongoMismatch(t, h, traceID)
+
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/traces/"+strconv.FormatInt(traceID, 10), nil)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/traces/"+traceID+"?protocol=mongodb", nil)
 	h.handleTrace(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
@@ -139,35 +112,28 @@ func TestSaveAndViewTraceSequence(t *testing.T) {
 	if !bytes.Contains(body, []byte("Unexpected extra egress")) {
 		t.Fatal("missing extra egress badge")
 	}
-	if !bytes.Contains(body, []byte("documents")) {
-		t.Fatal("missing rich mongo payload")
+	if !bytes.Contains(body, []byte("mongodb:insert:orders")) {
+		t.Fatal("missing egress signature")
 	}
 }
 
-func TestSaveAndViewTrace(t *testing.T) {
+func TestSaveAndViewTraceIngress(t *testing.T) {
 	h := testHandler(t)
 	ctx := t.Context()
-	res := diff.Result{
-		TraceID:  "view-trace",
-		Protocol: diff.ProtocolIngress,
-		Status:   diff.StatusMismatch,
-		BodyA:    []byte(`{"x":1}`),
-		BodyC:    []byte(`{"x":2}`),
-		Regressions: []diff.PathDiff{{Path: "x", Expected: "1", Actual: "2"}},
+	traceID := "view-trace"
+	now := time.Now().UTC()
+	for _, rep := range []v2storage.RawReport{
+		{TraceID: traceID, ShadowRole: "control-a", ShadowTestName: "default", Protocol: "http", Direction: v2storage.DirectionIngress, Signature: "http:GET:/", PayloadBytes: []byte(`{"x":1}`), CapturedAt: now},
+		{TraceID: traceID, ShadowRole: "control-b", ShadowTestName: "default", Protocol: "http", Direction: v2storage.DirectionIngress, Signature: "http:GET:/", PayloadBytes: []byte(`{"x":1}`), CapturedAt: now},
+		{TraceID: traceID, ShadowRole: "candidate", ShadowTestName: "default", Protocol: "http", Direction: v2storage.DirectionIngress, Signature: "http:GET:/", PayloadBytes: []byte(`{"x":2}`), CapturedAt: now},
+	} {
+		if _, err := h.Repo.AppendReport(ctx, &rep); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := h.DB.SaveDiffResult(ctx, "default", res); err != nil {
-		t.Fatal(err)
-	}
-	runs, err := h.DB.ListShadowTests(ctx, 1)
-	if err != nil || len(runs) == 0 {
-		t.Fatal(err)
-	}
-	traces, err := h.DB.ListTraces(ctx, runs[0].ID, "", 10)
-	if err != nil || len(traces) == 0 {
-		t.Fatal(err)
-	}
+
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/traces/"+strconv.FormatInt(traces[0].ID, 10), nil)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/traces/"+traceID+"?protocol=http", nil)
 	h.handleTrace(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())

@@ -37,6 +37,7 @@
             <th class="py-2 pr-4">Timestamp</th>
             <th class="py-2 pr-4">Trace ID</th>
             <th class="py-2 pr-4">Protocol</th>
+            <th class="py-2 pr-4">Signature</th>
             <th class="py-2 pr-4">Status</th>
             <th class="py-2 pr-4"></th>
           </tr>
@@ -47,6 +48,7 @@
             <td class="py-2 pr-4 font-mono text-xs">{{.Timestamp}}</td>
             <td class="py-2 pr-4 font-mono text-xs">{{.TraceID}}</td>
             <td class="py-2 pr-4">{{.Protocol}}</td>
+            <td class="py-2 pr-4 font-mono text-xs text-slate-700">{{if .Signature}}{{.Signature}}{{else}}—{{end}}</td>
             <td class="py-2 pr-4">
               {{if eq .Status "MISMATCH"}}
               <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">MISMATCH</span>
@@ -55,11 +57,11 @@
               {{end}}
             </td>
             <td class="py-2 pr-4">
-              <a class="text-blue-600 hover:underline" href="/dashboard/traces/{{.ID}}">View diff</a>
+              <a class="text-blue-600 hover:underline" href="{{.DetailURL}}">View diff</a>
             </td>
           </tr>
           {{else}}
-          <tr><td colspan="5" class="py-6 text-center text-slate-500">No traces recorded yet.</td></tr>
+          <tr><td colspan="6" class="py-6 text-center text-slate-500">No traces recorded yet.</td></tr>
           {{end}}
         </tbody>
       </table>

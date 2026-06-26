@@ -11,8 +11,9 @@ import (
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
-	"github.com/shadow-diff/beru/internal/egressdiff"
 	"github.com/shadow-diff/beru/internal/roles"
+	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
+	v2report "github.com/shadow-diff/beru/internal/v2/report"
 )
 
 const (
@@ -24,24 +25,21 @@ const (
 	attrDBQueryText    = "db.query.text"
 )
 
-type egressHandler interface {
-	Handle(report egressdiff.Report)
-}
-
 // Server implements the OpenTelemetry TraceService gRPC receiver.
 type Server struct {
 	coltracepb.UnimplementedTraceServiceServer
-	Log         *slog.Logger
-	EgressStore egressHandler
+	Log               *slog.Logger
+	Router            *v2engine.TraceRouter
+	DefaultShadowTest string
 }
 
-// Export receives OTLP span batches and routes MongoDB egress spans to the diff store.
+// Export receives OTLP span batches and routes MongoDB egress spans to the state engine.
 func (s *Server) Export(ctx context.Context, req *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
 	log := s.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	if req == nil || s.EgressStore == nil {
+	if req == nil || s.Router == nil {
 		return &coltracepb.ExportTraceServiceResponse{}, nil
 	}
 	if n := len(req.GetResourceSpans()); n > 0 {
@@ -79,12 +77,9 @@ func (s *Server) Export(ctx context.Context, req *coltracepb.ExportTraceServiceR
 					log.Debug("Skipping mongo span with unparseable db.statement", "err", err)
 					continue
 				}
-				s.EgressStore.Handle(egressdiff.Report{
-					TraceID:  traceID,
-					Workload: shadowRole,
-					Protocol: "mongodb",
-					Payload:  payload,
-				})
+				if raw, err := v2report.FromEgress(traceID, shadowRole, "mongodb", s.DefaultShadowTest, payload); err == nil {
+					s.Router.Route(raw)
+				}
 				log.Info("Ingested OTLP MongoDB egress span", "trace", traceID, "role", shadowRole)
 				mongoSpans++
 			}

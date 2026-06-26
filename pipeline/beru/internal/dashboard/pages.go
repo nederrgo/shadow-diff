@@ -1,10 +1,11 @@
 package dashboard
 
 import (
-	"database/sql"
 	"net/http"
 	"strconv"
 	"strings"
+
+	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 type indexPage struct {
@@ -28,11 +29,12 @@ type runView struct {
 }
 
 type traceView struct {
-	ID        int64
 	TraceID   string
 	Protocol  string
 	Status    string
 	Timestamp string
+	Signature string
+	DetailURL string
 }
 
 type tracePage struct {
@@ -56,7 +58,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if h.DB == nil {
+	if h.DB == nil || h.Repo == nil {
 		http.Error(w, "Storage not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -70,7 +72,6 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	for _, run := range runs {
 		page.Runs = append(page.Runs, runView{
 			ID: run.ID, Name: run.Name, StartTime: run.StartTime,
-			TotalTraces: run.TotalTraces, MismatchCount: run.MismatchCount, MatchRate: run.MatchRate,
 		})
 	}
 
@@ -80,36 +81,42 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	page.SelectedRunID = selectedID
 
+	shadowTestName := h.DB.DefaultShadowTestName()
 	if selectedID > 0 {
-		st, err := h.DB.GetShadowTest(r.Context(), selectedID)
-		if err == nil {
-			page.TotalTraces = st.TotalTraces
-			page.MismatchCount = st.MismatchCount
-			page.MatchRate = st.MatchRate
+		if st, err := h.DB.GetShadowTest(r.Context(), selectedID); err == nil {
+			shadowTestName = st.Name
 			page.ShadowTestName = st.Name
 		}
-		filter := r.URL.Query().Get("filter")
-		if filter == "" {
-			filter = "all"
+	}
+
+	filter := r.URL.Query().Get("filter")
+	if filter == "" {
+		filter = "all"
+	}
+	page.Filter = filter
+	statusFilter := ""
+	if filter == "match" {
+		statusFilter = "MATCH"
+	} else if filter == "mismatch" {
+		statusFilter = "MISMATCH"
+	}
+
+	summaries, err := listTraceSummaries(r.Context(), h.Repo, shadowTestName, statusFilter, 200)
+	if err != nil {
+		http.Error(w, "Could not list traces", http.StatusInternalServerError)
+		return
+	}
+	for _, s := range summaries {
+		page.Traces = append(page.Traces, summaryToView(s))
+	}
+	page.TotalTraces = len(summaries)
+	for _, s := range summaries {
+		if s.Status == "MISMATCH" {
+			page.MismatchCount++
 		}
-		page.Filter = filter
-		statusFilter := filter
-		if statusFilter == "match" {
-			statusFilter = "MATCH"
-		} else if statusFilter == "mismatch" {
-			statusFilter = "MISMATCH"
-		} else if statusFilter == "all" {
-			statusFilter = ""
-		}
-		traces, err := h.DB.ListTraces(r.Context(), selectedID, statusFilter, 200)
-		if err == nil {
-			for _, t := range traces {
-				page.Traces = append(page.Traces, traceView{
-					ID: t.ID, TraceID: t.TraceID, Protocol: t.Protocol,
-					Status: t.Status, Timestamp: t.Timestamp,
-				})
-			}
-		}
+	}
+	if page.TotalTraces > 0 {
+		page.MatchRate = float64(page.TotalTraces-page.MismatchCount) / float64(page.TotalTraces) * 100
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -123,53 +130,64 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if h.DB == nil {
+	if h.DB == nil || h.Repo == nil {
 		http.Error(w, "Storage not configured", http.StatusServiceUnavailable)
 		return
 	}
-	idStr := strings.TrimPrefix(r.URL.Path, "/dashboard/traces/")
-	id, err := strconv.ParseInt(strings.Trim(idStr, "/"), 10, 64)
-	if err != nil || id <= 0 {
+
+	traceID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/dashboard/traces/"), "/")
+	protocol := r.URL.Query().Get("protocol")
+	if traceID == "" || protocol == "" {
 		http.NotFound(w, r)
 		return
 	}
 
-	trace, err := h.DB.GetTraceByID(r.Context(), id)
-	if err != nil {
+	reports, err := h.Repo.ListReports(r.Context(), traceID, protocol)
+	if err != nil || len(reports) == 0 {
 		http.NotFound(w, r)
 		return
 	}
+
+	shadowTestName := reports[0].ShadowTestName
+	if shadowTestName == "" {
+		shadowTestName = h.DB.DefaultShadowTestName()
+	}
+
+	summaries, _ := listTraceSummaries(r.Context(), h.Repo, shadowTestName, "", 500)
+	var current traceView
+	for _, s := range summaries {
+		if s.TraceID == traceID && s.Protocol == protocol {
+			current = summaryToView(s)
+			break
+		}
+	}
+	if current.TraceID == "" {
+		current = traceView{
+			TraceID:   traceID,
+			Protocol:  protocol,
+			Signature: signaturesFromReports(reports),
+			DetailURL: traceDetailURL(traceID, protocol),
+		}
+	}
+
 	page := tracePage{
-		Trace: traceView{
-			ID: trace.ID, TraceID: trace.TraceID, Protocol: trace.Protocol,
-			Status: trace.Status, Timestamp: trace.Timestamp,
-		},
-		ShadowTestName: trace.ShadowTestName,
+		Trace:          current,
+		ShadowTestName: shadowTestName,
 	}
-	mismatches, err := h.DB.ListMismatchesForTrace(r.Context(), trace.TraceID, trace.Protocol)
-	if err == nil {
-		for _, m := range mismatches {
-			page.Mismatches = append(page.Mismatches, mismatchView{
-				Path: m.Path, ExpectedValue: m.ExpectedValue, ActualValue: m.ActualValue,
-			})
-		}
-	}
-	payloads, err := h.DB.ListEgressPayloads(r.Context(), trace.TraceID, trace.Protocol)
-	if err == nil && len(payloads) > 0 {
-		page.SequenceSteps = buildSequenceSteps(trace.Protocol, payloads)
+
+	verdict, _ := h.Repo.GetVerdict(r.Context(), traceID)
+	page.Mismatches = mismatchesForProtocol(verdict, protocol)
+
+	if isEgressProtocol(protocol) {
+		page.SequenceSteps = buildSequenceStepsFromReports(protocol, reports)
 	} else {
-		bodyA, bodyC, err := h.DB.MismatchBodies(r.Context(), trace.TraceID, trace.Protocol)
-		if err == nil || err == sql.ErrNoRows {
-			page.LeftLines, page.RightLines = RenderLineDiff(bodyA, bodyC)
-		}
+		bodyA, bodyC := ingressBodies(reports)
+		page.LeftLines, page.RightLines = RenderLineDiff(bodyA, bodyC)
 	}
-	related, err := h.DB.ListTracesByTraceID(r.Context(), trace.ShadowTestID, trace.TraceID)
-	if err == nil {
-		for _, t := range related {
-			page.Related = append(page.Related, traceView{
-				ID: t.ID, TraceID: t.TraceID, Protocol: t.Protocol,
-				Status: t.Status, Timestamp: t.Timestamp,
-			})
+
+	for _, s := range summaries {
+		if s.TraceID == traceID && s.Protocol != protocol {
+			page.Related = append(page.Related, summaryToView(s))
 		}
 	}
 
@@ -177,4 +195,69 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 	if err := h.tpl.ExecuteTemplate(w, "trace-layout", page); err != nil {
 		h.Log.Error("Template render failed", "err", err)
 	}
+}
+
+func summaryToView(s v2storage.TraceSummary) traceView {
+	return traceView{
+		TraceID:   s.TraceID,
+		Protocol:  s.Protocol,
+		Status:    s.Status,
+		Timestamp: s.LastCapturedAt,
+		Signature: s.Signatures,
+		DetailURL: traceDetailURL(s.TraceID, s.Protocol),
+	}
+}
+
+func isEgressProtocol(protocol string) bool {
+	switch strings.ToLower(protocol) {
+	case "http", "ingress":
+		return false
+	default:
+		return true
+	}
+}
+
+func ingressBodies(reports []v2storage.RawReport) ([]byte, []byte) {
+	var bodyA, bodyC []byte
+	for _, rep := range reports {
+		if rep.Protocol != "http" {
+			continue
+		}
+		switch rep.ShadowRole {
+		case "control-a":
+			if len(bodyA) == 0 {
+				bodyA = rep.PayloadBytes
+			}
+		case "candidate":
+			if len(bodyC) == 0 {
+				bodyC = rep.PayloadBytes
+			}
+		}
+	}
+	return bodyA, bodyC
+}
+
+func mismatchesForProtocol(verdict *v2storage.VerdictState, protocol string) []mismatchView {
+	if verdict == nil || verdict.SummaryDetails == "" {
+		return nil
+	}
+	prefix := protocol + ":"
+	var out []mismatchView
+	for _, detail := range strings.Split(verdict.SummaryDetails, "; ") {
+		detail = strings.TrimSpace(detail)
+		if detail == "" {
+			continue
+		}
+		if !strings.Contains(detail, prefix) && !strings.HasPrefix(detail, "count ") {
+			if protocol != "http" {
+				continue
+			}
+		}
+		out = append(out, mismatchView{
+			Path:          detail,
+			ExpectedValue: "match",
+			ActualValue:   detail,
+		})
+	}
+	return out
 }

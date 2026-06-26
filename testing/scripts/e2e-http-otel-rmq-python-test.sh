@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # E2E: HTTP ingress (igris-http) → OTel → AMQP egress (Firehose) — Python zero-touch (flask+pika).
+# Beru Step 5 Part 1: dual-write to legacy stores + v2 TraceRouter; log grep strings unchanged.
 # Kind: kind load docker-image. Minikube: minikube docker-env or image load (auto-detected).
 set -euo pipefail
 

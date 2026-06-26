@@ -52,8 +52,11 @@ json_query() {
       mismatch_count)
         jq -r --arg p "$TRACE_PREFIX" '[.[] | select(.TraceID | startswith($p)) | select(.Status == "MISMATCH")] | length' "$file"
         ;;
-      first_mismatch_id)
-        jq -r --arg p "$TRACE_PREFIX" '[.[] | select(.TraceID | startswith($p)) | select(.Status == "MISMATCH")][0].ID' "$file"
+      first_mismatch_trace)
+        jq -r --arg p "$TRACE_PREFIX" '[.[] | select(.TraceID | startswith($p)) | select(.Status == "MISMATCH")][0].TraceID' "$file"
+        ;;
+      first_mismatch_protocol)
+        jq -r --arg p "$TRACE_PREFIX" '[.[] | select(.TraceID | startswith($p)) | select(.Status == "MISMATCH")][0].Protocol' "$file"
         ;;
     esac
     return
@@ -92,13 +95,23 @@ traces, prefix = json.load(open(sys.argv[1])), sys.argv[2]
 print(sum(1 for t in traces if t.get("TraceID", "").startswith(prefix) and t.get("Status") == "MISMATCH"))
 PY
       ;;
-    first_mismatch_id)
+    first_mismatch_trace)
       python3 - "$file" "$TRACE_PREFIX" <<'PY'
 import json, sys
 traces, prefix = json.load(open(sys.argv[1])), sys.argv[2]
 for t in traces:
     if t.get("TraceID", "").startswith(prefix) and t.get("Status") == "MISMATCH":
-        print(t.get("ID", ""))
+        print(t.get("TraceID", ""))
+        break
+PY
+      ;;
+    first_mismatch_protocol)
+      python3 - "$file" "$TRACE_PREFIX" <<'PY'
+import json, sys
+traces, prefix = json.load(open(sys.argv[1])), sys.argv[2]
+for t in traces:
+    if t.get("TraceID", "").startswith(prefix) and t.get("Status") == "MISMATCH":
+        print(t.get("Protocol", ""))
         break
 PY
       ;;
@@ -270,11 +283,13 @@ fi
 log_success "found ${match_count} MATCH and ${mismatch_count} MISMATCH traces"
 
 echo "==> Verify mismatch diff viewer"
-mismatch_id=$(json_query "$traces_file" first_mismatch_id)
-[[ -n "$mismatch_id" && "$mismatch_id" != "null" ]] || { log_fail "no mismatch trace id"; exit 1; }
-diff_code=$(curl -sS -o /dev/null -w '%{http_code}' "${BERU_HTTP}/dashboard/traces/${mismatch_id}")
-[[ "$diff_code" == "200" ]] || { log_fail "GET /dashboard/traces/${mismatch_id} got ${diff_code}"; exit 1; }
-log_success "diff viewer page OK for trace id=${mismatch_id}"
+mismatch_trace=$(json_query "$traces_file" first_mismatch_trace)
+mismatch_protocol=$(json_query "$traces_file" first_mismatch_protocol)
+[[ -n "$mismatch_trace" && "$mismatch_trace" != "null" ]] || { log_fail "no mismatch trace id"; exit 1; }
+[[ -n "$mismatch_protocol" && "$mismatch_protocol" != "null" ]] || { log_fail "no mismatch protocol"; exit 1; }
+diff_code=$(curl -sS -o /dev/null -w '%{http_code}' "${BERU_HTTP}/dashboard/traces/${mismatch_trace}?protocol=${mismatch_protocol}")
+[[ "$diff_code" == "200" ]] || { log_fail "GET /dashboard/traces/${mismatch_trace}?protocol=${mismatch_protocol} got ${diff_code}"; exit 1; }
+log_success "diff viewer page OK for trace=${mismatch_trace} protocol=${mismatch_protocol}"
 
 echo "==> Verify noise filter API"
 filter_code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BERU_HTTP}/api/v1/noise/filters" \

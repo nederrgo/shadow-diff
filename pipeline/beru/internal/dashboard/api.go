@@ -30,21 +30,31 @@ func (h *Handler) handleAPITraces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if h.DB == nil {
+	if h.DB == nil || h.Repo == nil {
 		http.Error(w, "Storage not configured", http.StatusServiceUnavailable)
 		return
 	}
+	shadowTestName := h.DB.DefaultShadowTestName()
 	runID, _ := strconv.ParseInt(r.URL.Query().Get("shadow_test_id"), 10, 64)
-	if runID == 0 {
-		runs, err := h.DB.ListShadowTests(r.Context(), 1)
-		if err != nil || len(runs) == 0 {
-			writeJSON(w, []any{})
-			return
+	if runID > 0 {
+		if st, err := h.DB.GetShadowTest(r.Context(), runID); err == nil {
+			shadowTestName = st.Name
 		}
-		runID = runs[0].ID
+	} else {
+		runs, err := h.DB.ListShadowTests(r.Context(), 1)
+		if err == nil && len(runs) > 0 {
+			shadowTestName = runs[0].Name
+		}
 	}
 	status := r.URL.Query().Get("status")
-	traces, err := h.DB.ListTraces(r.Context(), runID, status, 500)
+	if status == "" {
+		if f := r.URL.Query().Get("filter"); f == "match" {
+			status = "MATCH"
+		} else if f == "mismatch" {
+			status = "MISMATCH"
+		}
+	}
+	traces, err := listTraceSummaries(r.Context(), h.Repo, shadowTestName, status, 500)
 	if err != nil {
 		http.Error(w, "Could not list traces", http.StatusInternalServerError)
 		return
@@ -57,41 +67,36 @@ func (h *Handler) handleAPITraceByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if h.DB == nil {
+	if h.Repo == nil {
 		http.Error(w, "Storage not configured", http.StatusServiceUnavailable)
 		return
 	}
-	idStr := strings.TrimPrefix(r.URL.Path, "/api/v1/traces/")
-	id, err := strconv.ParseInt(strings.Trim(idStr, "/"), 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "Invalid trace id", http.StatusBadRequest)
+	traceID := traceIDFromAPIPath(r.URL.Path)
+	protocol := r.URL.Query().Get("protocol")
+	if traceID == "" || protocol == "" {
+		http.Error(w, "trace id and protocol are required", http.StatusBadRequest)
 		return
 	}
-	trace, err := h.DB.GetTraceByID(r.Context(), id)
-	if err != nil {
+	reports, err := h.Repo.ListReports(r.Context(), traceID, protocol)
+	if err != nil || len(reports) == 0 {
 		http.Error(w, "Trace not found", http.StatusNotFound)
 		return
 	}
-	mismatches, err := h.DB.ListMismatchesForTrace(r.Context(), trace.TraceID, trace.Protocol)
-	if err != nil {
-		http.Error(w, "Could not load mismatches", http.StatusInternalServerError)
-		return
-	}
-	payloads, _ := h.DB.ListEgressPayloads(r.Context(), trace.TraceID, trace.Protocol)
-	related, _ := h.DB.ListTracesByTraceID(r.Context(), trace.ShadowTestID, trace.TraceID)
+	verdict, _ := h.Repo.GetVerdict(r.Context(), traceID)
 	resp := map[string]any{
-		"trace":      trace,
-		"related":    related,
-		"mismatches": mismatches,
+		"trace_id": traceID,
+		"protocol": protocol,
+		"reports":  reports,
+		"verdict":  verdict,
 	}
-	if len(payloads) > 0 {
-		resp["sequence_steps"] = buildSequenceSteps(trace.Protocol, payloads)
-		resp["egress_payloads"] = payloads
+	if isEgressProtocol(protocol) {
+		resp["sequence_steps"] = buildSequenceStepsFromReports(protocol, reports)
 	} else {
-		bodyA, bodyC, _ := h.DB.MismatchBodies(r.Context(), trace.TraceID, trace.Protocol)
+		bodyA, bodyC := ingressBodies(reports)
 		resp["body_a"] = json.RawMessage(bodyA)
 		resp["body_c"] = json.RawMessage(bodyC)
 	}
+	resp["mismatches"] = mismatchesForProtocol(verdict, protocol)
 	writeJSON(w, resp)
 }
 
@@ -127,6 +132,10 @@ func (h *Handler) handleAPINoiseFilters(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, map[string]string{"status": "saved"})
+}
+
+func traceIDFromAPIPath(path string) string {
+	return strings.Trim(strings.TrimPrefix(path, "/api/v1/traces/"), "/")
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # E2E: Ultimate hybrid — RabbitMQ ingress + Mongo OTLP + HTTP record/replay + RMQ Firehose egress.
 # Candidate executes extra Mongo write + extra RMQ publish; Beru flags dual count regressions.
+# Beru Step 5 Part 1: v2 engine mirrors legacy count-regression log strings during dual-write.
 #
 # Kind (default): builds + kind load docker-image
 # Minikube + Pixie: auto when pl namespace exists; HTTP seed via Pixie egress OTLP -> Recorder
