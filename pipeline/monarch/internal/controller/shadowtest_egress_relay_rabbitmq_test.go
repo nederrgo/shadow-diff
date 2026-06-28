@@ -158,7 +158,7 @@ func TestIgrisRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
 	r := &ShadowTestReconciler{}
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
-		Status: enginev1alpha1.ShadowTestStatus{AmqpQueueName: "shadow-diff-test"},
+		Status:     enginev1alpha1.ShadowTestStatus{AmqpQueueName: "shadow-diff-test"},
 		Spec: enginev1alpha1.ShadowTestSpec{
 			Inputs: []enginev1alpha1.InputSpec{{
 				Driver: "rabbitmq_message",

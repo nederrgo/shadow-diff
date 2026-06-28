@@ -68,7 +68,7 @@ When faced with a fork in the road during development, use these verified projec
 ### Clean Infrastructure Profiles over Application Hacking
 * **Scenario**: A specific runtime engine (like Node.js) blocks a required telemetry feature unless we execute custom initialization code.
 * **The Wrong Path**: Forcing a custom startup script into the application repository or writing a highly fragile runtime "monkey-patch" that intercepts internal library methods.
-* **The Shadow-Diff Path**: Building a thin, platform-owned custom container runner to safely override the default setup. This keeps the application source code 100% clean and ensures our platform uses stable, publicly documented APIs that won't break on minor library updates.
+* **The Shadow-Diff Path**: Using write-time Kubernetes manifest mutation via `initContainers` and volume-mounted injection loops. By programmatically wrapping the application's boot vector with an automated platform script inside the PodSpec, we manipulate runtime execution entirely at the infrastructure layer. We force critical white-box tracing constraints—like `enhancedDatabaseReporting` for Node.js and statement captures for Python—to be **enabled natively and unconditionally by default**. This eliminates Docker registry bloat, leaves the application source code 100% untouched, and ensures our platform uses stable, public APIs that won't break on minor library updates.
 
 ### Structural Verification over String Flaking
 * **Scenario**: Database statements and event payloads naturally contain non-deterministic data (timestamps, auto-generated IDs, random hashes).

@@ -233,7 +233,7 @@ func podTerminalReason(pod *corev1.Pod) beruWaitReason {
 		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
 			return beruWaitReason{
 				terminal: true,
-				message:  fmt.Sprintf("beru-local pod %s container %s exited %d: %s",
+				message: fmt.Sprintf("beru-local pod %s container %s exited %d: %s",
 					pod.Name, cs.Name, cs.State.Terminated.ExitCode, cs.State.Terminated.Message),
 			}
 		}

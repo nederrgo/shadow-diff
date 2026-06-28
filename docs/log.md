@@ -9,6 +9,13 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-06-28]
+### Added
+* pipeline/monarch: wrapper.js resolves OTel SDK from operator node_modules path
+* pipeline/monarch: Node.js wrapper uses NodeSDK MongoDBInstrumentation enhancedDatabaseReporting
+* pipeline/monarch: ignore shell placeholder when resolving Node entrypoint
+* pipeline/monarch: Node.js entrypoint wrapper for Mongo enhancedDatabaseReporting
+
 ## [2026-06-27]
 ### Added
 * pipeline/monarch/internal/controller/shadowtest_otel.go: inject only detected language to avoid duplicate OTel volume mounts

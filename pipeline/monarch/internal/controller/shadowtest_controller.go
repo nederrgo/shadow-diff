@@ -28,8 +28,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 	otelv1alpha1 "github.com/open-telemetry/opentelemetry-operator/apis/v1alpha1"
+	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
 type ShadowTestReconciler struct {
@@ -154,7 +154,7 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	shadowsReady, err := r.reconcileShadowWorkloads(ctx, &shadowTest, shadowNS, env)
+	shadowsReady, err := r.reconcileShadowWorkloads(ctx, &shadowTest, shadowNS, env, &target)
 	if err != nil {
 		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
 		return ctrl.Result{}, err
@@ -293,6 +293,7 @@ func (r *ShadowTestReconciler) reconcileShadowWorkloads(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 	env []corev1.EnvVar,
+	target *appsv1.Deployment,
 ) (bool, error) {
 	for _, step := range []struct {
 		role  string
@@ -305,7 +306,7 @@ func (r *ShadowTestReconciler) reconcileShadowWorkloads(
 		if err := r.reconcileEnvoyConfigMap(ctx, st, shadowNS, step.role); err != nil {
 			return false, err
 		}
-		if err := r.reconcileShadowDeployment(ctx, st, shadowNS, step.role, step.image, env); err != nil {
+		if err := r.reconcileShadowDeployment(ctx, st, shadowNS, step.role, step.image, env, target); err != nil {
 			return false, err
 		}
 		if err := r.reconcileShadowService(ctx, st, shadowNS, step.role); err != nil {

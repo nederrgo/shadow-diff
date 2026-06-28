@@ -98,6 +98,7 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS, role, image string,
 	env []corev1.EnvVar,
+	target *appsv1.Deployment,
 ) error {
 	deployName := sanitizeForDNS(fmt.Sprintf("%s-%s", st.Name, role))
 	podLabels := deploymentPodLabels(st, role)
@@ -148,7 +149,7 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 		appEnv := appEnvWithEgressProxy(st, baseEnv)
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{
 			{
-				Name:  "app",
+				Name:  containerApp,
 				Image: image,
 				Ports: appContainerPortsFor(st),
 				Env:   appEnv,
@@ -167,6 +168,13 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 					{Name: volumeNameEnvoyConfig, MountPath: "/etc/envoy", ReadOnly: true},
 				},
 			},
+		}
+		if nodeJSEntrypointWrapperEnabled(st, image) {
+			applyNodeJSEntrypointWrapper(
+				&deploy.Spec.Template.Spec,
+				&deploy.Spec.Template.Spec.Containers[0],
+				resolveNodeEntrypointModule(targetPrimaryContainer(target)),
+			)
 		}
 		return nil
 	})

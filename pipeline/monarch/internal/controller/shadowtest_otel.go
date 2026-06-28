@@ -18,14 +18,14 @@ const (
 	annotationOtelDotNetContainerNames = "instrumentation.opentelemetry.io/dotnet-container-names"
 	annotationOtelGoContainerNames     = "instrumentation.opentelemetry.io/go-container-names"
 
-	envOtelTracesExporter              = "OTEL_TRACES_EXPORTER"
-	envOtelMetricsExporter             = "OTEL_METRICS_EXPORTER"
-	envOtelLogsExporter                = "OTEL_LOGS_EXPORTER"
-	envOtelServiceName                 = "OTEL_SERVICE_NAME"
-	envOtelPropagators                 = "OTEL_PROPAGATORS"
-	envOtelExporterOTLPEndpoint        = "OTEL_EXPORTER_OTLP_ENDPOINT"
-	envOtelExporterOTLPProtocol        = "OTEL_EXPORTER_OTLP_PROTOCOL"
-	envOtelExporterOTLPTracesProtocol  = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
+	envOtelTracesExporter                = "OTEL_TRACES_EXPORTER"
+	envOtelMetricsExporter               = "OTEL_METRICS_EXPORTER"
+	envOtelLogsExporter                  = "OTEL_LOGS_EXPORTER"
+	envOtelServiceName                   = "OTEL_SERVICE_NAME"
+	envOtelPropagators                   = "OTEL_PROPAGATORS"
+	envOtelExporterOTLPEndpoint          = "OTEL_EXPORTER_OTLP_ENDPOINT"
+	envOtelExporterOTLPProtocol          = "OTEL_EXPORTER_OTLP_PROTOCOL"
+	envOtelExporterOTLPTracesProtocol    = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
 	envOtelNodeEnabledInstrumentations   = "OTEL_NODE_ENABLED_INSTRUMENTATIONS"
 	envOtelPythonEnabledInstrumentations = "OTEL_PYTHON_ENABLED_INSTRUMENTATIONS"
 	envOtelPythonMongoCaptureStatement   = "OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT"
@@ -168,12 +168,8 @@ func otelEnvVars(st *enginev1alpha1.ShadowTest, shadowNS, role, appImage string)
 			{Name: envOtelExporterOTLPTracesProtocol, Value: tracesProtocol},
 		}
 		if lang == "nodejs" {
-			nodeInst := "mongodb,http"
-			if hasRabbitMQBrokerDependency(st) {
-				nodeInst = "mongodb,http,amqplib"
-			}
 			envs = append(envs, corev1.EnvVar{
-				Name: envOtelNodeEnabledInstrumentations, Value: nodeInst,
+				Name: envOtelNodeEnabledInstrumentations, Value: otelNodeEnabledInstrumentations(st, appImage),
 			})
 		}
 		if lang == "python" {
@@ -204,6 +200,20 @@ func otelEnvVars(st *enginev1alpha1.ShadowTest, shadowNS, role, appImage string)
 		})
 	}
 	return otelNoneExporterEnv(name)
+}
+
+// otelNodeEnabledInstrumentations lists operator auto-instrumentations; Mongo is omitted when
+// the entrypoint wrapper registers MongoDBInstrumentation with enhancedDatabaseReporting.
+func otelNodeEnabledInstrumentations(st *enginev1alpha1.ShadowTest, appImage string) string {
+	var inst []string
+	if hasMongoDependency(st) && !nodeJSEntrypointWrapperEnabled(st, appImage) {
+		inst = append(inst, "mongodb")
+	}
+	inst = append(inst, "http")
+	if hasRabbitMQBrokerDependency(st) {
+		inst = append(inst, "amqplib")
+	}
+	return strings.Join(inst, ",")
 }
 
 // overwriteEnvByName replaces or appends env vars by name (last writer wins).

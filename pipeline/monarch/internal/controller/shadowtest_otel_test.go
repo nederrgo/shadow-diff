@@ -93,7 +93,7 @@ func TestSanitizeOtelInjectionAnnotations(t *testing.T) {
 	prod := map[string]string{
 		annotationOtelInjectPrefix + "python": "prod-otel-cr",
 		annotationOtelInjectSDK:               "true",
-		"other.example.com/keep":                "yes",
+		"other.example.com/keep":              "yes",
 	}
 	ann := sanitizeOtelInjectionAnnotations(prod, st, "python:3.12")
 	if ann["other.example.com/keep"] != "yes" {
@@ -162,8 +162,8 @@ func TestOtelEnvVars_mongoDependencyExportsOTLP(t *testing.T) {
 	if got := envValue(envs, envOtelExporterOTLPTracesProtocol); got != "grpc" {
 		t.Fatalf("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL = %q", got)
 	}
-	if got := envValue(envs, envOtelNodeEnabledInstrumentations); got != "mongodb,http" {
-		t.Fatalf("OTEL_NODE_ENABLED_INSTRUMENTATIONS = %q", got)
+	if got := envValue(envs, envOtelNodeEnabledInstrumentations); got != "http" {
+		t.Fatalf("OTEL_NODE_ENABLED_INSTRUMENTATIONS = %q, want http (mongo via entrypoint wrapper)", got)
 	}
 	if got := envValue(envs, envOtelServiceName); got != "mongo-test-shadow-control-a" {
 		t.Fatalf("OTEL_SERVICE_NAME = %q", got)
@@ -263,8 +263,8 @@ func TestOtelEnvVars_nodejsMongoAndRabbitMQ(t *testing.T) {
 	if got := envValue(envs, envOtelTracesExporter); got != "otlp" {
 		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want otlp", got)
 	}
-	if got := envValue(envs, envOtelNodeEnabledInstrumentations); got != "mongodb,http,amqplib" {
-		t.Fatalf("OTEL_NODE_ENABLED_INSTRUMENTATIONS = %q", got)
+	if got := envValue(envs, envOtelNodeEnabledInstrumentations); got != "http,amqplib" {
+		t.Fatalf("OTEL_NODE_ENABLED_INSTRUMENTATIONS = %q, want http,amqplib (mongo via entrypoint wrapper)", got)
 	}
 }
 
@@ -291,4 +291,3 @@ func TestOtelEnvVars_pythonMongoAndRabbitMQ(t *testing.T) {
 		t.Fatalf("OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT = %q", got)
 	}
 }
-
