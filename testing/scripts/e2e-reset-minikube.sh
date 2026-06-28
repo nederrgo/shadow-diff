@@ -136,7 +136,7 @@ if [[ "${SETUP_PIXIE:-1}" -eq 1 && "${SKIP_PIXIE:-0}" -eq 0 ]]; then
 fi
 
 echo "==> Monarch E2E reset (minikube profile=${MINIKUBE_PROFILE}, driver=${MINIKUBE_DRIVER}, cni=${MINIKUBE_CNI:-flannel})"
-echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG igris=$IGRIS_IMG siphon=$SIPHON_IMG recorder=$RECORDER_IMG"
+echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG (beru-local) igris=$IGRIS_IMG siphon=$SIPHON_IMG recorder=$RECORDER_IMG"
 if [[ "$SKIP_BUILD" -eq 1 ]]; then
   echo "WARN: --skip-build reuses existing minikube docker images; code changes are NOT included until you rebuild"
 fi

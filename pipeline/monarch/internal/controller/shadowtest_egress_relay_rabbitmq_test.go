@@ -65,6 +65,35 @@ func TestEgressRelayRabbitMQEnv(t *testing.T) {
 	}
 }
 
+func TestEgressRelayRabbitMQEnv_localBeru(t *testing.T) {
+	r := &ShadowTestReconciler{}
+	const shadowNS = "shadow-default-http-rmq-test"
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "http-rmq-test", Namespace: "default"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Inputs: []enginev1alpha1.InputSpec{{
+				Port:   8888,
+				Driver: "http_request",
+			}},
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "rabbitmq", Type: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
+			}},
+		},
+	}
+	env, err := r.egressRelayRabbitMQEnv(st, shadowNS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]string{}
+	for _, e := range env {
+		byName[e.Name] = e.Value
+	}
+	want := "http://" + beruHTTPHostFor(st, shadowNS)
+	if byName[envBeruHTTPURL] != want {
+		t.Fatalf("BERU_HTTP_URL = %q, want %q", byName[envBeruHTTPURL], want)
+	}
+}
+
 func TestEgressRelayRabbitMQEnv_HTTPIngressOnly(t *testing.T) {
 	r := &ShadowTestReconciler{}
 	st := &enginev1alpha1.ShadowTest{

@@ -128,19 +128,36 @@ func applicationPortFor(st *enginev1alpha1.ShadowTest) int32 {
 	return defaultApplicationPort
 }
 
-func beruGRPCAddressFor(st *enginev1alpha1.ShadowTest) string {
+func beruGRPCAddressFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
 	if st.Spec.BeruGRPCAddress != "" {
 		return st.Spec.BeruGRPCAddress
 	}
-	return defaultBeruGRPCAddress
+	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruGRPCPort)
 }
 
-func beruHTTPHostFor(st *enginev1alpha1.ShadowTest) string {
-	host, _, err := parseBeruHostPort(beruGRPCAddressFor(st))
-	if err != nil || host == "" {
-		return defaultBeruHTTPAddress
+func beruHTTPHostFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+	if st.Spec.BeruGRPCAddress != "" {
+		host, _, err := parseBeruHostPort(st.Spec.BeruGRPCAddress)
+		if err != nil || host == "" {
+			return defaultBeruHTTPAddress
+		}
+		return fmt.Sprintf("%s:8080", host)
 	}
-	return fmt.Sprintf("%s:8080", host)
+	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
+}
+
+func beruOTLPEndpointFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+	if st.Spec.BeruGRPCAddress != "" {
+		return defaultBeruOTLPEndpoint
+	}
+	return fmt.Sprintf("http://%s:%d", localBeruDNSHost(shadowNS), localBeruOTLPPort)
+}
+
+func beruOTLPHTTPEndpointFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+	if st.Spec.BeruGRPCAddress != "" {
+		return defaultBeruOTLPHTTPEndpoint
+	}
+	return fmt.Sprintf("http://%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
 }
 
 func beruGRPCTimeoutFor(st *enginev1alpha1.ShadowTest) string {

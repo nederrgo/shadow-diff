@@ -99,3 +99,7 @@ test-all: ## Run Monarch, Beru, Igris, Siphon, Recorder, igris-rabbitmq, and egr
 	@$(MAKE) -C $(RECORDER_DIR) test
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
+.PHONY: log
+log:
+	@if [ -z "$(MSG)" ]; then echo "Error: Please provide a message. Example: make log MSG='Added service x'"; exit 1; fi
+	@python3 scripts/log_change.py "$(MSG)"

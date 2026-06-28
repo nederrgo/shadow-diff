@@ -34,13 +34,6 @@ MANIFEST_DIR="$REPO/testing/scripts/manifests/http-otel-rmq-e2e"
 RELAY_DEPLOY="${SHADOWTEST}-egress-relay-rabbitmq"
 IGRIS_DEPLOY="${SHADOWTEST}-igris"
 
-cleanup() {
-  echo "==> Cleaning up HTTP OTel RMQ Python E2E resources..."
-  kubectl delete shadowtest "${SHADOWTEST}" -n "${SHADOWTEST_NS}" --ignore-not-found --wait=false
-  kubectl delete namespace "${SHADOW_NS}" --ignore-not-found=true 2>/dev/null || true
-}
-trap cleanup EXIT
-
 echo "==> HTTP OTel RMQ E2E (Python)"
 http_otel_rmq_init_cluster "$REPO"
 require_kubectl_cluster
@@ -54,11 +47,6 @@ if [[ "$SKIP_OTEL_BOOTSTRAP" != "1" ]]; then
     echo "==> OpenTelemetry Operator already installed"
   fi
 fi
-
-kubectl get deploy -n beru-system beru >/dev/null 2>&1 || {
-  log_fail "Beru not deployed — run: ./testing/scripts/e2e-reset-kind.sh or ./testing/scripts/e2e-reset-minikube.sh"
-  exit 1
-}
 
 http_otel_rmq_prepare_docker_build
 
@@ -96,23 +84,17 @@ fi
 
 if [[ "$SKIP_MONARCH_DEPLOY" != "1" ]]; then
   make -C "$REPO/pipeline/monarch" deploy IMG="$MONARCH_IMG"
-  kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev
+  kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev BERU_IMAGE="$BERU_IMG"
   if [[ "$SKIP_LOAD" != "1" ]]; then
     kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
   fi
   kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
 fi
 
-kubectl set image deployment/beru -n beru-system beru="$BERU_IMG" --record=false 2>/dev/null || true
-kubectl rollout status deployment/beru -n beru-system --timeout=120s 2>/dev/null || true
-
 http_otel_rmq_upgrade_crd "$REPO"
 
 kubectl apply -f "$MANIFEST_DIR/prod-target-python.yaml"
 kubectl rollout status deployment/http-rmq-python-prod -n default --timeout=120s
-
-echo "==> Pre-provision Instrumentation CR in ${SHADOW_NS}"
-bash "$REPO/testing/scripts/lib/apply-otel-instrumentation.sh" "$SHADOW_NS"
 
 wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
 kubectl delete shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --ignore-not-found --wait=true 2>/dev/null || true
@@ -126,7 +108,7 @@ SHADOW_NS=$(http_otel_rmq_wait_shadowtest "$SHADOWTEST" "$SHADOWTEST_NS" "$RELAY
 }
 log_success "ShadowTest Ready namespace=${SHADOW_NS}"
 
-bash "$REPO/testing/scripts/lib/apply-otel-instrumentation.sh" "$SHADOW_NS"
+http_otel_rmq_wait_local_beru "$SHADOW_NS"
 
 http_otel_rmq_verify_firehose "$SHADOW_NS"
 
@@ -138,14 +120,6 @@ done
 
 for role in control-a control-b candidate; do
   kubectl rollout status "deployment/mongodb-${role}" -n "$SHADOW_NS" --timeout=180s
-done
-
-echo "==> Restart shadow apps so OTel webhook injects after Instrumentation CR exists"
-for role in control-a control-b candidate; do
-  kubectl rollout restart "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS"
-done
-for role in control-a control-b candidate; do
-  kubectl rollout status "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS" --timeout=180s
 done
 
 echo "==> Assert OTel injection on shadow app pods"
@@ -163,6 +137,6 @@ http_otel_rmq_warmup "$SHADOWTEST" "$SHADOW_NS" "$IGRIS_DEPLOY"
 http_otel_rmq_run_test "$SHADOWTEST" "$SHADOW_NS" "$IGRIS_DEPLOY" "$TRACE_HEX" "$TRACE_TP" \
   "rmq egress published exchange=egress-events"
 
-trap - EXIT
-cleanup
 log_success "HTTP OTel RMQ Python E2E passed (trace ${TRACE_HEX})"
+echo "==> Left ShadowTest ${SHADOWTEST_NS}/${SHADOWTEST} (shadow namespace ${SHADOW_NS}) for inspection"
+echo "    Remove via Monarch: ./testing/scripts/delete-shadowtest.sh ${SHADOWTEST} ${SHADOWTEST_NS}"

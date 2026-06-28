@@ -17,12 +17,16 @@ import (
 )
 
 const (
-	attrShadowRole     = "shadow_role"
-	attrServiceName    = "service.name"
-	attrDBSystem       = "db.system"
-	attrDBSystemName   = "db.system.name"
-	attrDBStatement    = "db.statement"
-	attrDBQueryText    = "db.query.text"
+	attrShadowRole         = "shadow_role"
+	attrServiceName        = "service.name"
+	attrDBSystem           = "db.system"
+	attrDBSystemName       = "db.system.name"
+	attrDBStatement        = "db.statement"
+	attrDBQueryText        = "db.query.text"
+	attrDBOperation        = "db.operation"
+	attrDBOperationName    = "db.operation.name"
+	attrDBMongoCollection  = "db.mongodb.collection"
+	attrDBCollectionName   = "db.collection.name"
 )
 
 // Server implements the OpenTelemetry TraceService gRPC receiver.
@@ -72,12 +76,19 @@ func (s *Server) Export(ctx context.Context, req *coltracepb.ExportTraceServiceR
 					continue
 				}
 				stmt := mongoDBStatement(span)
-				payload, err := ParseMongoStatement(stmt)
-				if err != nil {
-					log.Debug("Skipping mongo span with unparseable db.statement", "err", err)
-					continue
+				hints := mongoHintsFromSpan(span)
+				var payload []byte
+				var err error
+				if stmt != "" {
+					payload, err = ParseMongoStatement(stmt)
+					if err != nil {
+						log.Debug("Skipping mongo span with unparseable db.statement", "err", err)
+						continue
+					}
+				} else {
+					payload = []byte("{}")
 				}
-				if raw, err := v2report.FromEgress(traceID, shadowRole, "mongodb", s.DefaultShadowTest, payload); err == nil {
+				if raw, err := v2report.FromMongoEgress(traceID, shadowRole, s.DefaultShadowTest, payload, hints); err == nil {
 					s.Router.Route(raw)
 				}
 				log.Info("Ingested OTLP MongoDB egress span", "trace", traceID, "role", shadowRole)
@@ -147,6 +158,17 @@ func mongoDBStatement(span *tracepb.Span) string {
 	return stringAttrFirst(span.GetAttributes(), attrDBStatement, attrDBQueryText)
 }
 
+func mongoHintsFromSpan(span *tracepb.Span) v2report.MongoHints {
+	hints := v2report.MongoHints{
+		Operation:  stringAttrFirst(span.GetAttributes(), attrDBOperation, attrDBOperationName),
+		Collection: stringAttrFirst(span.GetAttributes(), attrDBMongoCollection, attrDBCollectionName),
+	}
+	if hints.Operation == "" {
+		hints.Operation = v2report.MongoOperationFromStatement(mongoDBStatement(span))
+	}
+	return hints
+}
+
 func isMongoSpan(span *tracepb.Span) bool {
 	if span == nil {
 		return false
@@ -154,5 +176,9 @@ func isMongoSpan(span *tracepb.Span) bool {
 	if mongoDBSystem(span) != "mongodb" {
 		return false
 	}
-	return mongoDBStatement(span) != ""
+	if mongoDBStatement(span) != "" {
+		return true
+	}
+	hints := mongoHintsFromSpan(span)
+	return hints.Operation != "" && hints.Collection != ""
 }

@@ -357,7 +357,7 @@ Beru receives shadow traffic through **complementary ingest paths**:
 
 **Ingress multicast.** Igris and igris-rabbitmq inject W3C **`traceparent`** on cloned traffic (and echo **`x-shadow-trace-id`** for backward compatibility). Envoy forwards these headers unchanged and reports ingress responses to Beru — apps usually need no trace code on the HTTP ingress path.
 
-**OpenTelemetry sidecar.** When `spec.otelInjection` is enabled (default), Monarch annotates shadow app pods for the **OpenTelemetry Operator**, which injects a language-specific auto-instrumentation agent. The agent extracts inbound W3C context from Igris/AMQP headers, propagates `tracecontext` on instrumented outbound calls, and — when a Mongo dependency is declared — exports MongoDB client spans (`db.statement`) directly to Beru OTLP. Monarch sets `OTEL_EXPORTER_OTLP_ENDPOINT` to Beru; Python uses HTTP/protobuf, Node/Java use gRPC.
+**OpenTelemetry sidecar.** When `spec.otelInjection` is enabled (default), Monarch reconciles an `Instrumentation/shadow-diff-telemetry` CR in the shadow namespace (exporter → Beru OTLP), gates on CR visibility before creating shadow app pods, sanitizes any production `instrumentation.opentelemetry.io/*` annotations, and force-overwrites `OTEL_*` env vars so hardcoded SDKs cannot dial prod collectors. Monarch annotates shadow app pods to bind the OpenTelemetry Operator to that CR, which injects a language-specific auto-instrumentation agent. The agent extracts inbound W3C context from Igris/AMQP headers, propagates `tracecontext` on instrumented outbound calls, and — when a Mongo dependency is declared — exports MongoDB client spans (`db.statement`) directly to Beru OTLP. Monarch sets `OTEL_EXPORTER_OTLP_ENDPOINT` to Beru; Python uses HTTP/protobuf, Node/Java use gRPC.
 
 Manual copying of `traceparent` / `x-shadow-trace-id` in application code is **no longer the primary model** — it remains as a fallback for untracked goroutines, disabled OTel injection, or libraries the agent cannot instrument. Python `pika` auto-instrumentation is enabled; **egress-relay-rabbitmq** deduplicates duplicate Firehose publishes from OTel double-wrap within a short window.
 
@@ -397,7 +397,7 @@ Analysis sink. **Ingress:** Envoy `ext_proc` reports per role → diff-of-diffs.
 
 ### OpenTelemetry agent (sidecar)
 
-Injected by the **OpenTelemetry Operator** when `spec.otelInjection` is enabled (default). Monarch adds `instrumentation.opentelemetry.io/inject-*` pod annotations and per-role `OTEL_SERVICE_NAME` / exporter env. The agent auto-instruments supported libraries (HTTP, MongoDB drivers, `amqplib`, etc.), propagates W3C `tracecontext`, and exports spans to Beru OTLP when a Mongo dependency is present. Disable with `spec.otelInjection.enabled: false` if the operator is not installed.
+Injected by the **OpenTelemetry Operator** when `spec.otelInjection` is enabled (default). Monarch reconciles `Instrumentation/shadow-diff-telemetry` in the shadow namespace, adds `instrumentation.opentelemetry.io/inject-*` pod annotations bound to that CR (stripping production injection targets), and force-overwrites per-role `OTEL_SERVICE_NAME` / exporter env over values copied from the prod Deployment. The agent auto-instruments supported libraries (HTTP, MongoDB drivers, `amqplib`, etc.), propagates W3C `tracecontext`, and exports spans to Beru OTLP when a Mongo dependency is present. Disable with `spec.otelInjection.enabled: false` if the operator is not installed.
 
 ### Envoy (sidecar)
 

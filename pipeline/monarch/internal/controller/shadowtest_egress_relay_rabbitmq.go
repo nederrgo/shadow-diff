@@ -70,7 +70,7 @@ func (r *ShadowTestReconciler) egressRelayRabbitMQEnv(st *enginev1alpha1.ShadowT
 		{Name: envControlAAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlA, port)},
 		{Name: envControlBAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlB, port)},
 		{Name: envCandidateAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleCandidate, port)},
-		{Name: envBeruHTTPURL, Value: fmt.Sprintf("http://%s", beruHTTPHostFor(st))},
+		{Name: envBeruHTTPURL, Value: fmt.Sprintf("http://%s", beruHTTPHostFor(st, shadowNS))},
 		// ponytail: default worker egress exchange; skip igris ingress publishes on orders
 		{Name: "EGRESS_EXCHANGE", Value: "egress-events"},
 	}, nil

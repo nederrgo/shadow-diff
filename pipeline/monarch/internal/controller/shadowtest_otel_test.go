@@ -12,7 +12,15 @@ import (
 func TestOtelInjectionEnabled(t *testing.T) {
 	t.Parallel()
 	if !otelInjectionEnabled(&enginev1alpha1.ShadowTest{}) {
-		t.Fatal("expected always on")
+		t.Fatal("expected on by default")
+	}
+	disabled := false
+	if otelInjectionEnabled(&enginev1alpha1.ShadowTest{
+		Spec: enginev1alpha1.ShadowTestSpec{
+			OtelInjection: &enginev1alpha1.OtelInjectionSpec{Enabled: &disabled},
+		},
+	}) {
+		t.Fatal("expected off when enabled=false")
 	}
 }
 
@@ -43,11 +51,14 @@ func TestOtelPodAnnotations(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{}
 	st.Name = "st"
 	ann := otelPodAnnotations(st, "eclipse-temurin:17")
-	if ann[annotationOtelInjectSDK] != "true" {
-		t.Fatal("missing inject-sdk")
+	if _, ok := ann[annotationOtelInjectSDK]; ok {
+		t.Fatal("inject-sdk should be absent")
 	}
-	if ann[annotationOtelInjectPrefix+"java"] != "true" {
-		t.Fatal("missing inject-java")
+	if ann[annotationOtelInjectPrefix+"java"] != otelInstrumentationName {
+		t.Fatalf("inject-java = %q, want %q", ann[annotationOtelInjectPrefix+"java"], otelInstrumentationName)
+	}
+	if _, ok := ann[annotationOtelInjectPrefix+"python"]; ok {
+		t.Fatal("inject-python should be absent for java workload")
 	}
 	if ann[annotationOtelContainerNames] != containerApp {
 		t.Fatalf("container-names = %q", ann[annotationOtelContainerNames])
@@ -65,11 +76,55 @@ func TestOtelPodAnnotations_nodejsScopesAppContainer(t *testing.T) {
 		},
 	}
 	ann := otelPodAnnotations(st, "http-rmq-test-app:dev")
-	if ann[annotationOtelInjectPrefix+"nodejs"] != "true" {
-		t.Fatal("missing inject-nodejs")
+	if ann[annotationOtelInjectPrefix+"nodejs"] != otelInstrumentationName {
+		t.Fatalf("inject-nodejs = %q, want %q", ann[annotationOtelInjectPrefix+"nodejs"], otelInstrumentationName)
+	}
+	if _, ok := ann[annotationOtelInjectPrefix+"python"]; ok {
+		t.Fatal("inject-python should be absent for nodejs workload")
 	}
 	if ann[annotationOtelNodeJSContainerNames] != containerApp {
 		t.Fatalf("nodejs-container-names = %q", ann[annotationOtelNodeJSContainerNames])
+	}
+}
+
+func TestSanitizeOtelInjectionAnnotations(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{Spec: enginev1alpha1.ShadowTestSpec{Language: "python"}}
+	prod := map[string]string{
+		annotationOtelInjectPrefix + "python": "prod-otel-cr",
+		annotationOtelInjectSDK:               "true",
+		"other.example.com/keep":                "yes",
+	}
+	ann := sanitizeOtelInjectionAnnotations(prod, st, "python:3.12")
+	if ann["other.example.com/keep"] != "yes" {
+		t.Fatal("non-otel annotation removed")
+	}
+	if _, ok := ann[annotationOtelInjectSDK]; ok {
+		t.Fatal("inject-sdk should be stripped")
+	}
+	if ann[annotationOtelInjectPrefix+"python"] != otelInstrumentationName {
+		t.Fatalf("inject-python = %q", ann[annotationOtelInjectPrefix+"python"])
+	}
+}
+
+func TestOverwriteEnvByName(t *testing.T) {
+	t.Parallel()
+	base := []corev1.EnvVar{
+		{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: "http://prod-collector:4317"},
+		{Name: "FOO", Value: "bar"},
+	}
+	out := overwriteEnvByName(base,
+		corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: "http://beru-local:4317"},
+		corev1.EnvVar{Name: "OTEL_PROPAGATORS", Value: "tracecontext"},
+	)
+	if got := envValue(out, "OTEL_EXPORTER_OTLP_ENDPOINT"); got != "http://beru-local:4317" {
+		t.Fatalf("endpoint = %q", got)
+	}
+	if got := envValue(out, "FOO"); got != "bar" {
+		t.Fatalf("FOO = %q", got)
+	}
+	if got := envValue(out, "OTEL_PROPAGATORS"); got != "tracecontext" {
+		t.Fatalf("propagators = %q", got)
 	}
 }
 
@@ -93,12 +148,13 @@ func TestOtelEnvVars_mongoDependencyExportsOTLP(t *testing.T) {
 			}},
 		},
 	}
-	envs := otelEnvVars(st, roleControlA, "nodejs-test-worker:dev")
+	envs := otelEnvVars(st, shadowNamespaceForCR(st), roleControlA, "nodejs-test-worker:dev")
 	if got := envValue(envs, envOtelTracesExporter); got != "otlp" {
 		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want otlp", got)
 	}
-	if got := envValue(envs, envOtelExporterOTLPEndpoint); got != defaultBeruOTLPEndpoint {
-		t.Fatalf("OTEL_EXPORTER_OTLP_ENDPOINT = %q", got)
+	wantOTLP := beruOTLPEndpointFor(st, shadowNamespaceForCR(st))
+	if got := envValue(envs, envOtelExporterOTLPEndpoint); got != wantOTLP {
+		t.Fatalf("OTEL_EXPORTER_OTLP_ENDPOINT = %q, want %q", got, wantOTLP)
 	}
 	if got := envValue(envs, envOtelExporterOTLPProtocol); got != "grpc" {
 		t.Fatalf("OTEL_EXPORTER_OTLP_PROTOCOL = %q", got)
@@ -125,8 +181,8 @@ func TestOtelEnvVars_pythonMongoOmitsNodeInstrumentations(t *testing.T) {
 			}},
 		},
 	}
-	envs := otelEnvVars(st, roleControlA, "python-test-worker:dev")
-	if got := envValue(envs, envOtelExporterOTLPEndpoint); got != defaultBeruOTLPHTTPEndpoint {
+	envs := otelEnvVars(st, shadowNamespaceForCR(st), roleControlA, "python-test-worker:dev")
+	if got := envValue(envs, envOtelExporterOTLPEndpoint); got != beruOTLPHTTPEndpointFor(st, shadowNamespaceForCR(st)) {
 		t.Fatalf("OTEL_EXPORTER_OTLP_ENDPOINT = %q", got)
 	}
 	if got := envValue(envs, envOtelExporterOTLPTracesProtocol); got != "http/protobuf" {
@@ -146,7 +202,7 @@ func TestOtelEnvVars_pythonMongoOmitsNodeInstrumentations(t *testing.T) {
 func TestOtelEnvVars_noMongoUsesNoneExporter(t *testing.T) {
 	t.Parallel()
 	st := &enginev1alpha1.ShadowTest{ObjectMeta: metav1.ObjectMeta{Name: "http-shadow"}}
-	if got := envValue(otelEnvVars(st, roleControlA, "app:latest"), envOtelTracesExporter); got != "none" {
+	if got := envValue(otelEnvVars(st, shadowNamespaceForCR(st), roleControlA, "app:latest"), envOtelTracesExporter); got != "none" {
 		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want none", got)
 	}
 }
@@ -162,7 +218,7 @@ func TestOtelEnvVars_pythonRabbitMQEnablesPikaPropagation(t *testing.T) {
 			}},
 		},
 	}
-	envs := otelEnvVars(st, roleControlA, "http-rmq-python-worker:dev")
+	envs := otelEnvVars(st, shadowNamespaceForCR(st), roleControlA, "http-rmq-python-worker:dev")
 	if got := envValue(envs, envOtelTracesExporter); got != "otlp" {
 		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want otlp", got)
 	}
@@ -182,7 +238,7 @@ func TestOtelEnvVars_nodejsRabbitMQEnablesAmqplib(t *testing.T) {
 			}},
 		},
 	}
-	envs := otelEnvVars(st, roleControlA, "http-rmq-test-app:dev")
+	envs := otelEnvVars(st, shadowNamespaceForCR(st), roleControlA, "http-rmq-test-app:dev")
 	if got := envValue(envs, envOtelTracesExporter); got != "none" {
 		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want none", got)
 	}
@@ -203,7 +259,7 @@ func TestOtelEnvVars_nodejsMongoAndRabbitMQ(t *testing.T) {
 			},
 		},
 	}
-	envs := otelEnvVars(st, roleControlA, "http-rmq-test-app:dev")
+	envs := otelEnvVars(st, shadowNamespaceForCR(st), roleControlA, "http-rmq-test-app:dev")
 	if got := envValue(envs, envOtelTracesExporter); got != "otlp" {
 		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want otlp", got)
 	}
@@ -224,7 +280,7 @@ func TestOtelEnvVars_pythonMongoAndRabbitMQ(t *testing.T) {
 			},
 		},
 	}
-	envs := otelEnvVars(st, roleControlA, "http-rmq-python-worker:dev")
+	envs := otelEnvVars(st, shadowNamespaceForCR(st), roleControlA, "http-rmq-python-worker:dev")
 	if got := envValue(envs, envOtelTracesExporter); got != "otlp" {
 		t.Fatalf("OTEL_TRACES_EXPORTER = %q, want otlp", got)
 	}

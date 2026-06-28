@@ -76,3 +76,15 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - opentelemetry.io
+  resources:
+  - instrumentations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

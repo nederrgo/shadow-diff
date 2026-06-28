@@ -197,3 +197,13 @@ e2e_in_cluster_curl() {
     --image=curlimages/curl:latest -- "$@" 2>&1) || true
   e2e_strip_kubectl_run_output "$out"
 }
+
+# Monarch provisions deployment/beru-local per ShadowTest (no shared beru-system).
+wait_local_beru_rollout() {
+  local shadow_ns="$1" timeout="${2:-120s}"
+  echo "==> Wait for beru-local in ${shadow_ns}"
+  kubectl wait --namespace="$shadow_ns" --for=condition=available --timeout="$timeout" \
+    deployment/beru-local
+  kubectl rollout status deployment/beru-local -n "$shadow_ns" --timeout="$timeout"
+  log_success "beru-local ready in ${shadow_ns}"
+}

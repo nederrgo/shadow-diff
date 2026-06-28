@@ -71,6 +71,8 @@ const (
 	defaultBeruHTTPURL                 = "http://beru.beru-system.svc.cluster.local:8080"
 	recorderServicePort                = int32(8080)
 	recorderOTLPPort                   = int32(4317)
+
+	volumeNameLocalBeruData = "beru-sqlite-data"
 )
 
 var envoyImagePullPolicy = corev1.PullIfNotPresent

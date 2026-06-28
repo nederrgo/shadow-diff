@@ -390,6 +390,16 @@ spec:
                 description: OldImage is the container image for Control-A and Control-B
                   pods.
                 type: string
+              otelInjection:
+                description: OtelInjection configures OpenTelemetry Operator auto-instrumentation
+                  (default on).
+                properties:
+                  enabled:
+                    default: true
+                    description: Enabled toggles OTel operator injection (default
+                      true when unset).
+                    type: boolean
+                type: object
               recordAndReplay:
                 description: RecordAndReplay lists outbound hosts trapped by the egress
                   proxy for strict replay.

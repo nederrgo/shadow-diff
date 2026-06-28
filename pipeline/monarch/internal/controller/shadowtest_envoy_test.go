@@ -50,6 +50,29 @@ func TestRenderEnvoyYAML(t *testing.T) {
 	}
 }
 
+func TestRenderEnvoyYAML_localBeruGRPC(t *testing.T) {
+	t.Parallel()
+	const shadowNS = "shadow-default-my-test"
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-test", Namespace: "default"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			ServicePort:     80,
+			ApplicationPort: 8080,
+		},
+	}
+	yaml, err := renderEnvoyYAML(st, shadowNS, roleControlA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHost := "beru-local.shadow-default-my-test.svc.cluster.local"
+	if !strings.Contains(yaml, wantHost) {
+		t.Fatalf("expected local Beru host %q in envoy yaml:\n%s", wantHost, yaml)
+	}
+	if strings.Contains(yaml, "http://"+wantHost) {
+		t.Fatal("envoy beru cluster must use bare host, not http:// URI")
+	}
+}
+
 func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "test"},

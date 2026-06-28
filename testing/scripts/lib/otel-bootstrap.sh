@@ -232,6 +232,28 @@ install_otel_stack() {
   echo "==> OTel stack ready (cert-manager + OpenTelemetry Operator)"
 }
 
+build_monarch_otel_node_image() {
+  local repo="${1:-$(_otel_bootstrap_repo)}"
+  local img="${MONARCH_OTEL_NODE_IMG:-monarch-otel-nodejs:dev}"
+  echo "==> Build Node autoinstrumentation image (${img}, enhancedDatabaseReporting)"
+  make -C "$repo/testing/otel-node-autoinstrumentation" docker-build MONARCH_OTEL_NODE_IMG="$img"
+}
+
+load_monarch_otel_node_image() {
+  local img="${MONARCH_OTEL_NODE_IMG:-monarch-otel-nodejs:dev}"
+  [[ "${SKIP_LOAD:-0}" == "1" ]] && return 0
+  local repo="$(_otel_bootstrap_repo)"
+  # shellcheck source=testing/scripts/lib/e2e-http-otel-rmq.sh
+  source "$repo/testing/scripts/lib/e2e-http-otel-rmq.sh" 2>/dev/null || true
+  if declare -F http_otel_rmq_load_image >/dev/null 2>&1; then
+    http_otel_rmq_load_image "$img"
+  elif declare -F load_minikube_image >/dev/null 2>&1; then
+    load_minikube_image "$img"
+  else
+    echo "WARN: could not load ${img} into cluster — set SKIP_LOAD=1 if already present" >&2
+  fi
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   install_otel_stack
 fi

@@ -147,6 +147,7 @@ var _ = Describe("ShadowTest Controller", func() {
 			for i := 0; i < 12; i++ {
 				_, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 				Expect(err).NotTo(HaveOccurred())
+				markDeploymentAvailable(localBeruName)
 				markDeploymentAvailable(igrisDeploymentName(st))
 				for _, role := range []string{roleControlA, roleControlB, roleCandidate} {
 					markDeploymentAvailable(shadowDeploymentName(st, role))
@@ -159,7 +160,7 @@ var _ = Describe("ShadowTest Controller", func() {
 
 			var deps appsv1.DeploymentList
 			Expect(k8sClient.List(ctx, &deps, client.InNamespace(shadowNS))).To(Succeed())
-			Expect(deps.Items).To(HaveLen(4))
+			Expect(deps.Items).To(HaveLen(5))
 
 			roles := map[string]struct{}{}
 			var shadowDeps []appsv1.Deployment
@@ -204,7 +205,7 @@ var _ = Describe("ShadowTest Controller", func() {
 
 			var svcs corev1.ServiceList
 			Expect(k8sClient.List(ctx, &svcs, client.InNamespace(shadowNS))).To(Succeed())
-			Expect(svcs.Items).To(HaveLen(4))
+			Expect(svcs.Items).To(HaveLen(5))
 
 			for _, d := range shadowDeps {
 				role := d.Labels[labelRole]

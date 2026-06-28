@@ -684,7 +684,7 @@ Verify:
 ### Prerequisites
 
 1. **[OpenTelemetry Operator](https://github.com/open-telemetry/opentelemetry-operator)** installed (mutating admission webhook).
-2. At least one **`Instrumentation` CR** in the **shadow namespace** (or operator-wide default). Without it, Monarch’s `instrumentation.opentelemetry.io/inject-*` annotations are **ignored** and pods stay uninstrumented.
+2. Monarch reconciles **`Instrumentation/shadow-diff-telemetry`** in each shadow namespace automatically (no manual apply required for Monarch-managed ShadowTests). Without the operator webhook, Monarch’s `instrumentation.opentelemetry.io/inject-*` annotations are **ignored** and pods stay uninstrumented.
 
 Example (adjust exporter settings for your cluster; MVP uses propagation-only env from Monarch):
 
@@ -709,9 +709,10 @@ spec:
 ### Monarch behavior
 
 - `spec.otelInjection.enabled` defaults to **true** (set `false` to opt out).
-- `spec.otelInjection.language` overrides image heuristic (`java`, `python`, `nodejs`, `dotnet`, `go`).
-- Shadow app pods get `inject-sdk: "true"` plus `inject-<language>` when detected from image.
-- App env: `OTEL_TRACES_EXPORTER=none`, `OTEL_PROPAGATORS=tracecontext`, etc. (no span export in MVP).
+- `spec.language` overrides image heuristic (`java`, `python`, `nodejs`, `dotnet`, `go`).
+- Monarch reconciles `Instrumentation/shadow-diff-telemetry` in the shadow namespace (Beru OTLP exporter, W3C `tracecontext`).
+- Shadow app pods get `inject-<language>: shadow-diff-telemetry` (production OTel annotations stripped; no `inject-sdk`).
+- App env: Monarch overwrites prod-copied `OTEL_*` vars; dependency-specific exporter settings per mongo/rabbitmq branches.
 
 ### Verify injection (before traffic)
 
@@ -776,7 +777,7 @@ cd monarch && go test ./internal/controller/ -run 'TestOtel|TestRenderEnvoy'
 
 ### Checklist
 
-- [ ] OTel Operator + `Instrumentation` CR in shadow namespace
+- [ ] OTel Operator installed; `kubectl get instrumentation shadow-diff-telemetry -n <shadow-ns>` exists after ShadowTest Ready
 - [ ] `assert-otel-injected.sh` passes for shadow app pods (not only Pod Ready)
 - [ ] Igris 202 includes `traceparent` and `x-shadow-trace-id`
 - [ ] Beru correlates ingress when only `traceparent` is sent

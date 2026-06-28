@@ -92,12 +92,19 @@ func compareSignature(protocol, signature string, aSlice, cSlice []storage.RawRe
 		pairCount = len(cSlice)
 	}
 	for i := 0; i < pairCount; i++ {
-		if bytes.Equal(aSlice[i].PayloadBytes, cSlice[i].PayloadBytes) {
+		if payloadsEqual(protocol, aSlice[i].PayloadBytes, cSlice[i].PayloadBytes) {
 			continue
 		}
 		details = append(details, fmt.Sprintf("payload mismatch: %s index=%d", label, i))
 	}
 	return details
+}
+
+func payloadsEqual(protocol string, a, b []byte) bool {
+	if strings.EqualFold(protocol, "mongodb") {
+		return mongoPayloadsEqual(a, b)
+	}
+	return bytes.Equal(a, b)
 }
 
 func unionSignatures(a, b sigBuckets) []string {

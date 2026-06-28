@@ -11,7 +11,7 @@ func TestBuildSequenceSteps_extraAndMissing(t *testing.T) {
 	reports := []storage.RawReport{
 		{ShadowRole: "control-a", Protocol: "mongodb", Signature: "mongodb:insert:orders", PayloadBytes: []byte(`{"insert":"orders"}`), CapturedAt: time.Now()},
 		{ShadowRole: "candidate", Protocol: "mongodb", Signature: "mongodb:insert:orders", PayloadBytes: []byte(`{"insert":"orders"}`), CapturedAt: time.Now()},
-		{ShadowRole: "candidate", Protocol: "mongodb", Signature: "mongodb:insert:audit", PayloadBytes: []byte(`{"insert":"orders","audit":"n1"}`), CapturedAt: time.Now()},
+		{ShadowRole: "candidate", Protocol: "mongodb", Signature: "mongodb:insert:audit", PayloadBytes: []byte(`{"insert":"audit","documents":[{"n":"1"}]}`), CapturedAt: time.Now()},
 	}
 	steps := buildSequenceStepsFromReports("mongodb", reports)
 	if len(steps) != 2 {

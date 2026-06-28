@@ -135,7 +135,7 @@ func (r *ShadowTestReconciler) reconcileRecorderDeployment(
 				},
 			},
 			Env: []corev1.EnvVar{
-				{Name: envBeruHTTPURL, Value: defaultBeruHTTPURL},
+				{Name: envBeruHTTPURL, Value: fmt.Sprintf("http://%s", beruHTTPHostFor(st, shadowNS))},
 				{Name: envRecorderListenAddr, Value: ":8080"},
 				{Name: envRecorderOTLPGRPCAddr, Value: ":4317"},
 				{Name: envRecorderRecordAndReplayFile, Value: defaultRecorderRecordAndReplayPath},

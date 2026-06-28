@@ -122,9 +122,10 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: podLabels}
 		deploy.Spec.Template.ObjectMeta.Labels = podLabels
 		if otelInjectionEnabled(st) {
-			deploy.Spec.Template.ObjectMeta.Annotations = mergeAnnotations(
+			deploy.Spec.Template.ObjectMeta.Annotations = sanitizeOtelInjectionAnnotations(
 				deploy.Spec.Template.ObjectMeta.Annotations,
-				otelPodAnnotations(st, image),
+				st,
+				image,
 			)
 		}
 		cmName := envoyConfigMapName(st, role)
@@ -138,10 +139,11 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 				},
 			},
 		}
-		beruAddr := beruGRPCAddressFor(st)
-		baseEnv := append(append([]corev1.EnvVar{}, env...), dependencyEnvVarsForRole(st, shadowNS, role)...)
+		beruAddr := beruGRPCAddressFor(st, shadowNS)
+		baseEnv := append([]corev1.EnvVar{}, env...)
+		baseEnv = append(baseEnv, dependencyEnvVarsForRole(st, shadowNS, role)...)
 		if otelInjectionEnabled(st) {
-			baseEnv = append(baseEnv, otelEnvVars(st, role, image)...)
+			baseEnv = overwriteEnvByName(baseEnv, otelEnvVars(st, shadowNS, role, image)...)
 		}
 		appEnv := appEnvWithEgressProxy(st, baseEnv)
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{

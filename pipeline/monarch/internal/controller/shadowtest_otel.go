@@ -35,7 +35,13 @@ const (
 )
 
 func otelInjectionEnabled(st *enginev1alpha1.ShadowTest) bool {
-	return st != nil
+	if st == nil {
+		return false
+	}
+	if st.Spec.OtelInjection == nil || st.Spec.OtelInjection.Enabled == nil {
+		return true
+	}
+	return *st.Spec.OtelInjection.Enabled
 }
 
 func otelLanguageFromSpec(st *enginev1alpha1.ShadowTest) string {
@@ -68,19 +74,32 @@ func detectOtelLanguage(image, specLang string) string {
 	}
 }
 
-func otelPodAnnotations(st *enginev1alpha1.ShadowTest, appImage string) map[string]string {
-	ann := map[string]string{
-		annotationOtelInjectSDK:                            "true",
-		annotationOtelContainerNames:                       containerApp,
-		annotationOtelInjectPrefix + "sdk-container-names": containerApp,
+// sanitizeOtelInjectionAnnotations strips prod OTel operator keys and binds shadow pods to our CR.
+func sanitizeOtelInjectionAnnotations(ann map[string]string, st *enginev1alpha1.ShadowTest, appImage string) map[string]string {
+	if ann == nil {
+		ann = make(map[string]string)
 	}
+	for k := range ann {
+		if strings.HasPrefix(k, annotationOtelInjectPrefix) {
+			delete(ann, k)
+		}
+	}
+	delete(ann, annotationOtelInjectSDK)
+
 	if lang := detectOtelLanguage(appImage, otelLanguageFromSpec(st)); lang != "" {
-		ann[annotationOtelInjectPrefix+lang] = "true"
+		// ponytail: one inject-<lang> per pod — dual python+nodejs annotations make the webhook
+		// mount /otel-auto-instrumentation twice (FailedCreate: mountPath must be unique).
+		ann[annotationOtelInjectPrefix+lang] = otelInstrumentationName
 		if key := otelLanguageContainerNamesAnnotation(lang); key != "" {
 			ann[key] = containerApp
 		}
 	}
+	ann[annotationOtelContainerNames] = containerApp
 	return ann
+}
+
+func otelPodAnnotations(st *enginev1alpha1.ShadowTest, appImage string) map[string]string {
+	return sanitizeOtelInjectionAnnotations(nil, st, appImage)
 }
 
 func otelLanguageContainerNamesAnnotation(lang string) string {
@@ -110,31 +129,31 @@ func otelNoneExporterEnv(name string) []corev1.EnvVar {
 	}
 }
 
-func otelOTLPHttpExporterEnv(name string) []corev1.EnvVar {
+func otelOTLPHttpExporterEnv(st *enginev1alpha1.ShadowTest, shadowNS, name string) []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{Name: envOtelTracesExporter, Value: "otlp"},
 		{Name: envOtelMetricsExporter, Value: "none"},
 		{Name: envOtelLogsExporter, Value: "none"},
 		{Name: envOtelServiceName, Value: name},
 		{Name: envOtelPropagators, Value: "tracecontext"},
-		{Name: envOtelExporterOTLPEndpoint, Value: defaultBeruOTLPHTTPEndpoint},
+		{Name: envOtelExporterOTLPEndpoint, Value: beruOTLPHTTPEndpointFor(st, shadowNS)},
 		{Name: envOtelExporterOTLPProtocol, Value: "http/protobuf"},
 		{Name: envOtelExporterOTLPTracesProtocol, Value: "http/protobuf"},
 	}
 }
 
-func otelEnvVars(st *enginev1alpha1.ShadowTest, role, appImage string) []corev1.EnvVar {
+func otelEnvVars(st *enginev1alpha1.ShadowTest, shadowNS, role, appImage string) []corev1.EnvVar {
 	name := st.Name + "-" + role
 	if !otelInjectionEnabled(st) {
 		return nil
 	}
 	lang := detectOtelLanguage(appImage, otelLanguageFromSpec(st))
 	if hasMongoDependency(st) {
-		endpoint := defaultBeruOTLPEndpoint
+		endpoint := beruOTLPEndpointFor(st, shadowNS)
 		protocol := "grpc"
 		tracesProtocol := "grpc"
 		if lang == "python" {
-			endpoint = defaultBeruOTLPHTTPEndpoint
+			endpoint = beruOTLPHTTPEndpointFor(st, shadowNS)
 			protocol = "http/protobuf"
 			tracesProtocol = "http/protobuf"
 		}
@@ -173,7 +192,7 @@ func otelEnvVars(st *enginev1alpha1.ShadowTest, role, appImage string) []corev1.
 	// amqplib propagates with exporter=none — HTTP→RMQ Python needs flask,pika on pod env
 	// because Monarch reconcile overwrites the Instrumentation CR env on the Deployment.
 	if lang == "python" && hasRabbitMQBrokerDependency(st) {
-		envs := otelOTLPHttpExporterEnv(name)
+		envs := otelOTLPHttpExporterEnv(st, shadowNS, name)
 		envs = append(envs, corev1.EnvVar{
 			Name: envOtelPythonEnabledInstrumentations, Value: "flask,pika",
 		})
@@ -185,6 +204,25 @@ func otelEnvVars(st *enginev1alpha1.ShadowTest, role, appImage string) []corev1.
 		})
 	}
 	return otelNoneExporterEnv(name)
+}
+
+// overwriteEnvByName replaces or appends env vars by name (last writer wins).
+func overwriteEnvByName(base []corev1.EnvVar, overrides ...corev1.EnvVar) []corev1.EnvVar {
+	out := append([]corev1.EnvVar{}, base...)
+	for _, o := range overrides {
+		replaced := false
+		for i := range out {
+			if out[i].Name == o.Name {
+				out[i] = o
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 func mergeAnnotations(base, extra map[string]string) map[string]string {

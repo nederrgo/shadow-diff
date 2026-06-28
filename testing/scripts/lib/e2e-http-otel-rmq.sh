@@ -79,28 +79,41 @@ http_otel_rmq_upgrade_crd() {
   kubectl wait --for=condition=Established crd/shadowtests.engine.shadow-diff.io --timeout=120s 2>/dev/null || true
 }
 
+http_otel_rmq_dump_shadowtest_blockers() {
+  local shadow_ns="$1"
+  [[ -n "$shadow_ns" ]] || return 0
+  echo "==> Shadow namespace deployments:" >&2
+  kubectl get deploy -n "$shadow_ns" 2>/dev/null >&2 || true
+  echo "==> Pods not Running:" >&2
+  kubectl get pods -n "$shadow_ns" --field-selector=status.phase!=Running 2>/dev/null >&2 || true
+}
+
 http_otel_rmq_wait_shadowtest() {
   local shadowtest="$1" shadowtest_ns="$2" relay_deploy="$3"
-  local shadow_ns="" i phase relay_ok avail
-  for i in $(seq 1 60); do
+  local shadow_ns="" i phase relay_ok avail msg
+  local wait_loops="${HTTP_OTEL_RMQ_SHADOW_WAIT:-60}"
+  for i in $(seq 1 "$wait_loops"); do
     phase=$(kubectl get shadowtest "$shadowtest" -n "$shadowtest_ns" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+    msg=$(kubectl get shadowtest "$shadowtest" -n "$shadowtest_ns" -o jsonpath='{.status.message}' 2>/dev/null || true)
     shadow_ns=$(kubectl get shadowtest "$shadowtest" -n "$shadowtest_ns" -o jsonpath='{.status.shadowNamespace}' 2>/dev/null || true)
     relay_ok=0
     if [[ -n "$shadow_ns" ]] && kubectl get deploy "$relay_deploy" -n "$shadow_ns" >/dev/null 2>&1; then
       avail=$(kubectl get deploy "$relay_deploy" -n "$shadow_ns" -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo "0")
       [[ "${avail:-0}" -ge 1 ]] && relay_ok=1
     fi
-    echo "    phase=${phase:-<none>} shadowNS=${shadow_ns:-<pending>} egress-relay-ready=${relay_ok} (${i}/60)" >&2
+    echo "    phase=${phase:-<none>} msg=${msg:-<none>} shadowNS=${shadow_ns:-<pending>} egress-relay-ready=${relay_ok} (${i}/${wait_loops})" >&2
     if [[ "$phase" == "Ready" && -n "$shadow_ns" && "$relay_ok" == "1" ]]; then
       echo "$shadow_ns"
       return 0
     fi
     if [[ "$phase" == "Failed" ]]; then
       kubectl get shadowtest "$shadowtest" -n "$shadowtest_ns" -o yaml | tail -30 >&2
+      http_otel_rmq_dump_shadowtest_blockers "$shadow_ns"
       return 1
     fi
     sleep 5
   done
+  http_otel_rmq_dump_shadowtest_blockers "$shadow_ns"
   return 1
 }
 
@@ -125,34 +138,39 @@ http_otel_rmq_verify_firehose() {
   done
 }
 
+http_otel_rmq_wait_local_beru() {
+  wait_local_beru_rollout "$1" "${2:-120s}"
+}
+
 http_otel_rmq_beru_pod_name() {
-  kubectl get pods -n beru-system -l app.kubernetes.io/name=beru \
+  local shadow_ns="$1"
+  kubectl get pods -n "$shadow_ns" -l app=beru-local \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null \
-    || kubectl get pods -n beru-system --no-headers 2>/dev/null | awk '/^beru-/{print $1; exit}'
+    || kubectl get pods -n "$shadow_ns" --no-headers 2>/dev/null | awk '/^beru-local-/{print $1; exit}'
 }
 
 # ponytail: poll one Beru log line; ingress must run before slow app/egress waits (tail window).
 http_otel_rmq_wait_beru_message() {
-  local label="$1" want_msg="$2" timeout_msg="$3" wait_secs="$4" trace_hex="$5"
+  local shadow_ns="$1" label="$2" want_msg="$3" timeout_msg="$4" wait_secs="$5" trace_hex="$6"
   local beru_pod logs i
-  beru_pod=$(http_otel_rmq_beru_pod_name)
+  beru_pod=$(http_otel_rmq_beru_pod_name "$shadow_ns")
   if [[ -z "$beru_pod" ]]; then
-    log_fail "Beru pod not found in beru-system"
+    log_fail "Beru pod not found in ${shadow_ns}"
     return 1
   fi
   echo "==> Wait for Beru ${label} (up to ${wait_secs}s): ${want_msg}"
   for i in $(seq 1 "$wait_secs"); do
-    beru_pod=$(http_otel_rmq_beru_pod_name)
-    logs=$(kubectl logs -n beru-system "$beru_pod" --tail=500 2>/dev/null || true)
+    beru_pod=$(http_otel_rmq_beru_pod_name "$shadow_ns")
+    logs=$(kubectl logs -n "$shadow_ns" "$beru_pod" --tail=500 2>/dev/null || true)
     if grep -qF "$want_msg" <<<"$logs"; then
       log_success "Beru: ${want_msg}"
       return 0
     fi
     if [[ -n "$timeout_msg" ]] && grep -qF "$timeout_msg" <<<"$logs"; then
       log_fail "Beru: ${timeout_msg}"
-      kubectl logs -n beru-system "$beru_pod" --tail=120 2>&1 \
+      kubectl logs -n "$shadow_ns" "$beru_pod" --tail=120 2>&1 \
         | grep -E "${trace_hex}|INGRESS|regression|payload not JSON" >&2 \
-        || kubectl logs -n beru-system "$beru_pod" --tail=40 >&2 || true
+        || kubectl logs -n "$shadow_ns" "$beru_pod" --tail=40 >&2 || true
       return 1
     fi
     if [[ "$i" -lt "$wait_secs" ]]; then
@@ -161,9 +179,9 @@ http_otel_rmq_wait_beru_message() {
     fi
   done
   log_fail "Beru logs missing '${want_msg}' after ${wait_secs}s"
-  kubectl logs -n beru-system "$beru_pod" --tail=120 2>&1 \
+  kubectl logs -n "$shadow_ns" "$beru_pod" --tail=120 2>&1 \
     | grep -E "${trace_hex}|INGRESS|regression|payload not JSON" >&2 \
-    || kubectl logs -n beru-system "$beru_pod" --tail=40 >&2 || true
+    || kubectl logs -n "$shadow_ns" "$beru_pod" --tail=40 >&2 || true
   return 1
 }
 
@@ -213,7 +231,7 @@ http_otel_rmq_run_test() {
   ingress_timeout_msg="Timed out waiting for Trace ${trace_hex} (INGRESS)"
 
   # Ingress diff completes on HTTP response — poll before slow RMQ app log wait scrolls Beru tail.
-  http_otel_rmq_wait_beru_message "HTTP ingress" "$ingress_msg" "$ingress_timeout_msg" \
+  http_otel_rmq_wait_beru_message "$shadow_ns" "HTTP ingress" "$ingress_msg" "$ingress_timeout_msg" \
     "$ingress_wait" "$trace_hex" || return 1
 
   echo "==> Wait for shadow apps to publish egress"
@@ -267,9 +285,9 @@ http_otel_rmq_run_test() {
     done
     local mongo_egress_msg="No egress regression for Trace ${trace_hex} (mongodb)"
     local mongo_wait="${HTTP_OTEL_RMQ_MONGO_WAIT_SECS:-45}"
-    http_otel_rmq_wait_beru_message "MongoDB egress" "$mongo_egress_msg" "" "$mongo_wait" "$trace_hex" || return 1
+    http_otel_rmq_wait_beru_message "$shadow_ns" "MongoDB egress" "$mongo_egress_msg" "" "$mongo_wait" "$trace_hex" || return 1
   fi
 
-  http_otel_rmq_wait_beru_message "RabbitMQ egress" "$egress_msg" "" "$egress_wait" "$trace_hex" || return 1
+  http_otel_rmq_wait_beru_message "$shadow_ns" "RabbitMQ egress" "$egress_msg" "" "$egress_wait" "$trace_hex" || return 1
   return 0
 }

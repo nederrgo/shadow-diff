@@ -105,6 +105,13 @@ PROD_ROUTING_KEY="${PROD_ROUTING_KEY:-order.created}"
 MANIFEST_DIR="$REPO/testing/scripts/manifests/rabbitmq-otel-e2e"
 SHADOW_WAIT_LOOPS="${SHADOW_WAIT_LOOPS:-90}"
 
+hybrid_beru_pod_name() {
+  local shadow_ns="$1"
+  kubectl get pods -n "$shadow_ns" -l app=beru-local \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null \
+    || kubectl get pods -n "$shadow_ns" --no-headers 2>/dev/null | awk '/^beru-local-/{print $1; exit}'
+}
+
 upgrade_crd() {
   make -C "$REPO/pipeline/monarch" install
 }
@@ -125,11 +132,6 @@ if [[ "$SKIP_OTEL_BOOTSTRAP" != "1" ]]; then
     echo "==> OpenTelemetry Operator already installed"
   fi
 fi
-
-kubectl get deploy -n beru-system beru >/dev/null 2>&1 || {
-  log_fail "Beru not deployed — run: ./testing/scripts/e2e-reset-minikube.sh or e2e-reset-kind.sh"
-  exit 1
-}
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
   if [[ "$E2E_CLUSTER" == minikube && "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
@@ -180,19 +182,14 @@ fi
 
 if [[ "$SKIP_MONARCH_DEPLOY" != "1" ]]; then
   make -C "$REPO/pipeline/monarch" deploy IMG="$MONARCH_IMG"
-  kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev
+  kubectl set env deployment/monarch-controller-manager -n monarch-system \
+    MONARCH_MODE=dev BERU_IMAGE="$BERU_IMG"
   if [[ "$SKIP_LOAD" != "1" ]]; then
     echo "==> Restart Monarch manager (pick up re-loaded ${MONARCH_IMG})"
     kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
   fi
   kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
 fi
-
-kubectl apply -f "$REPO/pipeline/beru/deploy/deployment.yaml"
-kubectl set image deployment/beru -n beru-system beru="$BERU_IMG" --record=false 2>/dev/null || true
-e2e_load_image "$BERU_IMG"
-kubectl rollout restart deployment/beru -n beru-system 2>/dev/null || true
-kubectl rollout status deployment/beru -n beru-system --timeout=120s 2>/dev/null || true
 
 upgrade_crd
 
@@ -212,9 +209,6 @@ kubectl wait --for=condition=Available deployment/mongo-prod -n default --timeou
 kubectl wait --for=condition=Available deployment/user-service -n prod --timeout=180s
 kubectl wait --for=condition=Available deployment/python-prod-worker -n default --timeout=180s
 
-echo "==> Pre-provision Instrumentation CR in ${SHADOW_NS}"
-bash "$REPO/testing/scripts/lib/apply-otel-instrumentation.sh" "$SHADOW_NS"
-
 wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
 kubectl delete shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --ignore-not-found --wait=true 2>/dev/null || true
 wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
@@ -226,6 +220,7 @@ SHADOW_NS=""
 shadow_ready=0
 for i in $(seq 1 "$SHADOW_WAIT_LOOPS"); do
   phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+  message=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.message}' 2>/dev/null || true)
   queue=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.amqpQueueName}' 2>/dev/null || true)
   actual_ns=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.shadowNamespace}' 2>/dev/null || true)
   siphon=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.siphonPhase}' 2>/dev/null || true)
@@ -244,7 +239,7 @@ for i in $(seq 1 "$SHADOW_WAIT_LOOPS"); do
     avail=$(kubectl get deploy rabbitmq-control-a -n "$actual_ns" -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo "0")
     [[ "${avail:-0}" -ge 1 ]] && rabbitmq_ok=1
   fi
-  echo "    phase=${phase:-<none>} queue=${queue:-<none>} siphon=${siphon:-<none>} shadowNS=${actual_ns:-<pending>} relay=${relay_ok} mongo=${mongo_ok} rabbitmq=${rabbitmq_ok} (${i}/${SHADOW_WAIT_LOOPS})"
+  echo "    phase=${phase:-<none>} msg=${message:-<none>} queue=${queue:-<none>} siphon=${siphon:-<none>} shadowNS=${actual_ns:-<pending>} relay=${relay_ok} mongo=${mongo_ok} rabbitmq=${rabbitmq_ok} (${i}/${SHADOW_WAIT_LOOPS})"
   if [[ "$phase" == "Ready" && -n "$queue" && "$relay_ok" == "1" && "$mongo_ok" == "1" && "$rabbitmq_ok" == "1" && "$siphon" == "Ready" ]]; then
     SHADOW_NS="$actual_ns"
     shadow_ready=1
@@ -267,19 +262,7 @@ if [[ -z "$SHADOW_NS" || "$shadow_ready" != "1" || "$phase" != "Ready" ]]; then
 fi
 log_success "ShadowTest Ready namespace=${SHADOW_NS} siphonPhase=Ready"
 
-echo "==> Apply Instrumentation CR in ${SHADOW_NS} (post-create)"
-bash "$REPO/testing/scripts/lib/apply-otel-instrumentation.sh" "$SHADOW_NS"
-
-echo "==> Restart shadow apps for OTel webhook injection"
-for role in control-a control-b candidate; do
-  kubectl wait --for=condition=Available "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS" --timeout=300s
-done
-for role in control-a control-b candidate; do
-  kubectl rollout restart "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS"
-done
-for role in control-a control-b candidate; do
-  kubectl rollout status "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS" --timeout=180s
-done
+wait_local_beru_rollout "$SHADOW_NS"
 
 chmod +x "$REPO/testing/scripts/assert-otel-injected.sh"
 for role in control-a control-b candidate; do
@@ -387,12 +370,9 @@ for role in control-a control-b candidate; do
 done
 
 echo "==> Wait for Beru dual count regressions (up to ${WAIT_SECS}s)"
-beru_pod=$(kubectl get pods -n beru-system -l app.kubernetes.io/name=beru -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+beru_pod=$(hybrid_beru_pod_name "$SHADOW_NS")
 if [[ -z "$beru_pod" ]]; then
-  beru_pod=$(kubectl get pods -n beru-system --no-headers 2>/dev/null | awk '/^beru-/{print $1; exit}')
-fi
-if [[ -z "$beru_pod" ]]; then
-  log_fail "Beru pod not found"
+  log_fail "beru-local pod not found in ${SHADOW_NS}"
   exit 1
 fi
 
@@ -400,8 +380,8 @@ mongo_count_msg="Egress count regression for Trace ${TRACE_HEX} (mongodb): expec
 rmq_count_msg="Egress count regression for Trace ${TRACE_HEX} (rabbitmq): expected 1 message but got 2"
 
 for i in $(seq 1 "$WAIT_SECS"); do
-  beru_pod=$(kubectl get pods -n beru-system -l app.kubernetes.io/name=beru -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || beru_pod)
-  logs=$(kubectl logs -n beru-system "$beru_pod" --tail=400 2>/dev/null || true)
+  beru_pod=$(hybrid_beru_pod_name "$SHADOW_NS")
+  logs=$(kubectl logs -n "$SHADOW_NS" "$beru_pod" --tail=400 2>/dev/null || true)
   mongo_ok=0
   rmq_ok=0
   grep -qF "$mongo_count_msg" <<<"$logs" && mongo_ok=1
@@ -409,8 +389,9 @@ for i in $(seq 1 "$WAIT_SECS"); do
   if [[ "$mongo_ok" == "1" && "$rmq_ok" == "1" ]]; then
     log_success "Beru flagged Mongo count regression for trace ${TRACE_HEX}"
     log_success "Beru flagged RabbitMQ count regression for trace ${TRACE_HEX}"
-    trap - EXIT
     log_success "Python hybrid E2E passed (trace ${TRACE_HEX})"
+    echo "==> Left ShadowTest ${SHADOWTEST_NS}/${SHADOWTEST} (shadow namespace ${SHADOW_NS}) for inspection"
+    echo "    Remove via Monarch: ./testing/scripts/delete-shadowtest.sh ${SHADOWTEST} ${SHADOWTEST_NS}"
     exit 0
   fi
   echo "    waiting (${i}/${WAIT_SECS}) mongo=${mongo_ok} rabbitmq=${rmq_ok}"
@@ -418,5 +399,5 @@ for i in $(seq 1 "$WAIT_SECS"); do
 done
 
 log_fail "Beru logs missing dual count regressions after ${WAIT_SECS}s"
-kubectl logs -n beru-system "$beru_pod" --tail=80 2>&1 | grep -E "${TRACE_HEX}|mongodb|rabbitmq|count regression|OTLP|Ingested" || kubectl logs -n beru-system "$beru_pod" --tail=40
+kubectl logs -n "$SHADOW_NS" "$beru_pod" --tail=80 2>&1 | grep -E "${TRACE_HEX}|mongodb|rabbitmq|count regression|OTLP|Ingested" || kubectl logs -n "$SHADOW_NS" "$beru_pod" --tail=40
 exit 1

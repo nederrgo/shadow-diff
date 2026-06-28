@@ -18,7 +18,7 @@ e2e_reset_deploy_stack() {
   echo "==> Monarch operator"
   make -C pipeline/monarch deploy IMG="$MONARCH_IMG"
   kubectl set env deployment/monarch-controller-manager -n monarch-system \
-    MONARCH_MODE=dev
+    MONARCH_MODE=dev BERU_IMAGE="$BERU_IMG"
   # Same :dev tag does not change Deployment spec after image rebuild; restart picks up new layers.
   if [[ "${SKIP_LOAD:-0}" -eq 0 ]]; then
     echo "==> Restart Monarch manager (pick up re-loaded ${MONARCH_IMG})"
@@ -26,10 +26,7 @@ e2e_reset_deploy_stack() {
   fi
   kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
 
-  echo "==> Beru"
-  kubectl apply -f pipeline/beru/deploy/
-  kubectl set image deployment/beru beru="$BERU_IMG" -n beru-system
-  kubectl rollout status deployment/beru -n beru-system --timeout=120s
+  echo "==> Beru image loaded for Monarch-provisioned beru-local (no beru-system deploy)"
 
   echo "==> Siphon RBAC (per-shadow OTLP receiver; Monarch writes PixieStreamRule)"
   kubectl apply -f pipeline/siphon/deploy/rbac.yaml
@@ -91,6 +88,10 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
     wait_shadow_siphon_otlp "$SHADOW_NS"
   fi
 
+  if [[ -n "${SHADOW_NS:-}" ]]; then
+    wait_local_beru_rollout "$SHADOW_NS"
+  fi
+
   echo "==> Wait for Recorder rollout (Monarch resolves recorder:dev via MONARCH_MODE=dev)"
   if [[ -n "${SHADOW_NS:-}" ]]; then
     wait_recorder_rollout "$SHADOWTEST" "$SHADOWTEST_NS" "$SHADOW_NS" "$RECORDER_IMG" 120s
@@ -116,6 +117,7 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
   echo "  Prod IP:          ${prod_ip:-<pending>}"
   echo "  Capture labels:   $(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.captureTargets}' 2>/dev/null || echo '<pending>')"
   echo "  Pixie export:     siphon.${SHADOW_NS}.svc.cluster.local:4317"
+  echo "  Beru (local):     beru-local.${SHADOW_NS}.svc.cluster.local:50051"
   echo "  (ingress capture requires Pixie — ./testing/scripts/setup-local-pixie.sh)"
   echo ""
   echo "Run ingress test:  ./testing/scripts/e2e-pipeline-test.sh"

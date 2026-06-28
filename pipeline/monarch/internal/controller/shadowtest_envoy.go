@@ -45,7 +45,7 @@ func isMongoDependency(dep enginev1alpha1.DependencySpec) bool {
 }
 
 func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (string, error) {
-	beruAddr := beruGRPCAddressFor(st)
+	beruAddr := beruGRPCAddressFor(st, shadowNS)
 	beruHost, beruPort, err := parseBeruHostPort(beruAddr)
 	if err != nil {
 		return "", fmt.Errorf("invalid beruGRPCAddress %q: %w", beruAddr, err)

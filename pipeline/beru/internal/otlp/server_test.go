@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -209,6 +211,9 @@ func TestExport_mongoSpanIngested(t *testing.T) {
 	if string(r.PayloadBytes) != string(wantPayload) {
 		t.Fatalf("PayloadBytes = %s, want %s", r.PayloadBytes, wantPayload)
 	}
+	if r.Signature != "mongodb:insert:collection" {
+		t.Fatalf("Signature = %q, want mongodb:insert:collection", r.Signature)
+	}
 }
 
 func TestExport_mongoSpanStableSemconv(t *testing.T) {
@@ -241,6 +246,9 @@ func TestExport_mongoSpanStableSemconv(t *testing.T) {
 	reports := rec.snapshot()
 	if len(reports) != 1 || reports[0].ShadowRole != "candidate" {
 		t.Fatalf("got reports: %+v", reports)
+	}
+	if reports[0].Signature != "mongodb:insert:items" {
+		t.Fatalf("Signature = %q", reports[0].Signature)
 	}
 }
 
@@ -401,5 +409,81 @@ func TestHandleHTTP_mongoSpan(t *testing.T) {
 	waitForReports(t, rec, 1)
 	if len(rec.snapshot()) != 1 {
 		t.Fatalf("expected 1 report, got %+v", rec.snapshot())
+	}
+}
+
+func TestExport_mongoSpanStableAttrsOnly(t *testing.T) {
+	rec := &routeRecorder{}
+	client := startTestServer(t, &Server{Log: slog.Default(), Router: testRouter(rec)})
+
+	req := &coltracepb.ExportTraceServiceRequest{
+		ResourceSpans: []*tracepb.ResourceSpans{{
+			Resource: &resourcepb.Resource{
+				Attributes: []*commonpb.KeyValue{kvString(attrShadowRole, "control-a")},
+			},
+			ScopeSpans: []*tracepb.ScopeSpans{{
+				Spans: []*tracepb.Span{{
+					TraceId: bytes.Repeat([]byte{0x08}, 16),
+					Attributes: []*commonpb.KeyValue{
+						kvString(attrDBSystemName, "mongodb"),
+						kvString(attrDBOperationName, "insert"),
+						kvString(attrDBCollectionName, "orders"),
+					},
+				}},
+			}},
+		}},
+	}
+	if _, err := client.Export(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	waitForReports(t, rec, 1)
+	if rec.snapshot()[0].Signature != "mongodb:insert:orders" {
+		t.Fatalf("Signature = %q", rec.snapshot()[0].Signature)
+	}
+}
+
+func TestExport_mongoSpanFixtures(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "mongo_spans.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures []struct {
+		Name          string            `json:"name"`
+		Attrs         map[string]string `json:"attrs"`
+		WantSignature string            `json:"want_signature"`
+	}
+	if err := json.Unmarshal(data, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, fx := range fixtures {
+		rec := &routeRecorder{}
+		client := startTestServer(t, &Server{Log: slog.Default(), Router: testRouter(rec)})
+
+		attrs := make([]*commonpb.KeyValue, 0, len(fx.Attrs))
+		for k, v := range fx.Attrs {
+			attrs = append(attrs, kvString(k, v))
+		}
+		traceByte := byte(i + 1)
+		req := &coltracepb.ExportTraceServiceRequest{
+			ResourceSpans: []*tracepb.ResourceSpans{{
+				Resource: &resourcepb.Resource{
+					Attributes: []*commonpb.KeyValue{kvString(attrShadowRole, "control-a")},
+				},
+				ScopeSpans: []*tracepb.ScopeSpans{{
+					Spans: []*tracepb.Span{{
+						TraceId:    bytes.Repeat([]byte{traceByte}, 16),
+						Attributes: attrs,
+					}},
+				}},
+			}},
+		}
+		if _, err := client.Export(context.Background(), req); err != nil {
+			t.Fatalf("%s: %v", fx.Name, err)
+		}
+		waitForReports(t, rec, 1)
+		if got := rec.snapshot()[0].Signature; got != fx.WantSignature {
+			t.Fatalf("%s: signature = %q, want %q", fx.Name, got, fx.WantSignature)
+		}
 	}
 }
