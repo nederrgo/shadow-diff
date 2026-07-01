@@ -52,8 +52,6 @@ Because Shadow-Diff replays real production traffic, it inherently processes liv
 * **Why this matters**: If a tool forces complex manual encryption keys or rigid token workflows onto a startup, they will turn it off. Instead, we use a zero-configuration isolation design:
   * **Network Sandboxing**: All shadow pods, mirrored databases, and internal analysis queues are locked down inside an isolated Kubernetes namespace using strict network policies. Real user data is captured out-of-band, replayed inside the sandbox, and can never leak back out into the public internet or production state.
   * **Strict Egress Mocking**: Envoy intercepts and strictly overrides outbound network connections. Live application containers inside the shadow test can never accidentally trigger real side effects against third-party production APIs (like Stripe or SendGrid) containing real customer information.
-  * **The Future Roadmap**: Future structural iterations will natively support automated PII obfuscation and data-masking rules directly at the capture layer, stripping identifying values from payloads before they ever cross into the shadow network environment.
-
 ---
 
 ## The Decision-Making Compass

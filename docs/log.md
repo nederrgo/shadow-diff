@@ -9,6 +9,12 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-06-30]
+### Added
+* testing/nodejs-hybrid-worker: add undici dep, lazy-load for HTTP_PROXY only
+* testing/e2e-nodejs-hybrid-test.sh: minikube-only (drop kind)
+* testing: Node.js hybrid E2E (RMQ ingress + mongo + HTTP replay + RMQ egress)
+
 ## [2026-06-28]
 ### Added
 * pipeline/monarch: wrapper.js resolves OTel SDK from operator node_modules path

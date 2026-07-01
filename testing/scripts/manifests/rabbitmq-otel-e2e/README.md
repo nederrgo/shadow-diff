@@ -24,6 +24,13 @@ Standalone (after reset):
 ./testing/scripts/e2e-otel-rabbitmq-test.sh
 ```
 
+Node.js hybrid (RabbitMQ ingress + Mongo OTLP + HTTP replay + RMQ Firehose — **minikube only**):
+
+```bash
+./testing/scripts/e2e-reset-minikube.sh   # if cluster not up
+./testing/scripts/e2e-nodejs-hybrid-test.sh
+```
+
 ## What it proves
 
 1. Prod message published with **only** W3C `traceparent` (no `x-shadow-trace-id`) via RabbitMQ Management HTTP API
@@ -51,6 +58,8 @@ No egress regression for Trace <32-hex-trace-id> (rabbitmq)
 | File | Purpose |
 |------|---------|
 | `prod-target-nodejs.yaml` | Prod deployment env for egress exchange/routing (no manual trace flag) |
+| `prod-nodejs-worker.yaml` | Prod worker for `nodejs-hybrid-shadow` hybrid E2E |
 | `shadowtest-otel-rmq.yaml` | ShadowTest with `rabbitmq_message` input, `otelInjection.language: nodejs` (helper images resolved by Monarch) |
+| `shadowtest-nodejs-hybrid.yaml` | Node.js hybrid ShadowTest (RMQ ingress + mongo + record/replay) |
 
 Shadow namespace (deterministic): `shadow-default-otel-rmq-test-shadow`
