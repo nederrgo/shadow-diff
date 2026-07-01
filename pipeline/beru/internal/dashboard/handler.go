@@ -70,6 +70,10 @@ func (h *Handler) staticHandler() http.Handler {
 	return http.FileServer(http.FS(sub))
 }
 
-func traceDetailURL(traceID, protocol string) string {
-	return "/dashboard/traces/" + traceID + "?protocol=" + protocol
+func traceDetailURL(traceID, protocol string, direction v2storage.PayloadDirection) string {
+	u := "/dashboard/traces/" + traceID + "?protocol=" + protocol
+	if protocol == "http" && direction != "" {
+		u += "&direction=" + string(direction)
+	}
+	return u
 }

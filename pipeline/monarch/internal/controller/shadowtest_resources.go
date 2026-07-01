@@ -98,7 +98,6 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS, role, image string,
 	env []corev1.EnvVar,
-	target *appsv1.Deployment,
 ) error {
 	deployName := sanitizeForDNS(fmt.Sprintf("%s-%s", st.Name, role))
 	podLabels := deploymentPodLabels(st, role)
@@ -122,13 +121,6 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 		deploy.Spec.Replicas = &replicas
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: podLabels}
 		deploy.Spec.Template.ObjectMeta.Labels = podLabels
-		if otelInjectionEnabled(st) {
-			deploy.Spec.Template.ObjectMeta.Annotations = sanitizeOtelInjectionAnnotations(
-				deploy.Spec.Template.ObjectMeta.Annotations,
-				st,
-				image,
-			)
-		}
 		cmName := envoyConfigMapName(st, role)
 		deploy.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
@@ -143,9 +135,6 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 		beruAddr := beruGRPCAddressFor(st, shadowNS)
 		baseEnv := append([]corev1.EnvVar{}, env...)
 		baseEnv = append(baseEnv, dependencyEnvVarsForRole(st, shadowNS, role)...)
-		if otelInjectionEnabled(st) {
-			baseEnv = overwriteEnvByName(baseEnv, otelEnvVars(st, shadowNS, role, image)...)
-		}
 		appEnv := appEnvWithEgressProxy(st, baseEnv)
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{
 			{
@@ -162,19 +151,13 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 				Ports:           envoyContainerPorts(st),
 				Env: []corev1.EnvVar{
 					{Name: envShadowRole, Value: role},
+					{Name: envShadowTestName, Value: st.Name},
 					{Name: envBeruGRPCAddress, Value: beruAddr},
 				},
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: volumeNameEnvoyConfig, MountPath: "/etc/envoy", ReadOnly: true},
 				},
 			},
-		}
-		if nodeJSEntrypointWrapperEnabled(st, image) {
-			applyNodeJSEntrypointWrapper(
-				&deploy.Spec.Template.Spec,
-				&deploy.Spec.Template.Spec.Containers[0],
-				resolveNodeEntrypointModule(targetPrimaryContainer(target)),
-			)
 		}
 		return nil
 	})

@@ -23,8 +23,6 @@ spec:
   siphon:
     enabled: false
 
-  language: nodejs
-
   dependencies:
     - name: rabbitmq
       type: rabbitmq

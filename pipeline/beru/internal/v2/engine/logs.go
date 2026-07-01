@@ -20,6 +20,12 @@ func mirrorLegacyLogs(traceID string, history []storage.RawReport, verdict *stor
 			continue
 		}
 		subset := filterHistoryByProtocol(history, protocol)
+		if isIngressProtocol(protocol) {
+			subset = filterHistoryByDirection(subset, storage.DirectionIngress)
+			if len(subset) == 0 || !protocolHasAllRoles(subset, protocol) {
+				continue
+			}
+		}
 		pv := diff.EvaluateTraceHistory(subset)
 		if isIngressProtocol(protocol) {
 			mirrorIngressLogs(log, traceID, pv)
@@ -97,6 +103,16 @@ func filterHistoryByProtocol(history []storage.RawReport, protocol string) []sto
 	var out []storage.RawReport
 	for _, r := range history {
 		if r.Protocol == protocol {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func filterHistoryByDirection(history []storage.RawReport, direction storage.PayloadDirection) []storage.RawReport {
+	var out []storage.RawReport
+	for _, r := range history {
+		if r.Direction == direction {
 			out = append(out, r)
 		}
 	}

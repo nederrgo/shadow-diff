@@ -68,14 +68,18 @@ func TestTransformInjectsTraceparent(t *testing.T) {
 func TestParseMetadataFromTraceparentOnly(t *testing.T) {
 	t.Parallel()
 	d := New(testMaxBodySize)
+	inbound := "01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set(trace.HeaderTraceparent, "01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
+	req.Header.Set(trace.HeaderTraceparent, inbound)
 	meta, err := d.ParseMetadata(&Session{Request: req})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if meta.TraceID != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Fatalf("trace id = %q", meta.TraceID)
+	}
+	if meta.Traceparent != inbound {
+		t.Fatalf("traceparent = %q, want literal preserved", meta.Traceparent)
 	}
 	msg, err := d.Transform(&Session{Request: req}, meta)
 	if err != nil {
@@ -84,6 +88,9 @@ func TestParseMetadataFromTraceparentOnly(t *testing.T) {
 	hm := msg.(*message)
 	if got := hm.headers.Get(HeaderShadowTraceID); got != meta.TraceID {
 		t.Fatalf("x-shadow-trace-id = %q", got)
+	}
+	if got := hm.headers.Get(trace.HeaderTraceparent); got != inbound {
+		t.Fatalf("traceparent = %q, want %q", got, inbound)
 	}
 }
 
@@ -97,13 +104,19 @@ func TestTransformInjectsTraceID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if meta.TraceID == "trace-abc" {
+		t.Fatal("non-hex shadow id must not be preserved")
+	}
 	msg, err := d.Transform(sess, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
 	hm := msg.(*message)
-	if got := hm.headers.Get(HeaderShadowTraceID); got != "trace-abc" {
-		t.Fatalf("header trace = %q, want trace-abc", got)
+	if got := hm.headers.Get(HeaderShadowTraceID); got != meta.TraceID {
+		t.Fatalf("header trace = %q, meta = %q", got, meta.TraceID)
+	}
+	if _, ok := trace.ParseTraceparent(hm.headers.Get(trace.HeaderTraceparent)); !ok {
+		t.Fatalf("invalid traceparent %q", hm.headers.Get(trace.HeaderTraceparent))
 	}
 }
 
@@ -111,10 +124,11 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 	t.Parallel()
 
 	type captured struct {
-		method     string
-		requestURI string
-		body       string
-		traceID    string
+		method      string
+		requestURI  string
+		body        string
+		traceID     string
+		traceparent string
 	}
 	var mu sync.Mutex
 	captures := make([]captured, 0, 3)
@@ -125,10 +139,11 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 			b, _ := io.ReadAll(r.Body)
 			mu.Lock()
 			captures = append(captures, captured{
-				method:     r.Method,
-				requestURI: r.URL.RequestURI(),
-				body:       string(b),
-				traceID:    r.Header.Get(HeaderShadowTraceID),
+				method:      r.Method,
+				requestURI:  r.URL.RequestURI(),
+				body:        string(b),
+				traceID:     r.Header.Get(HeaderShadowTraceID),
+				traceparent: r.Header.Get(trace.HeaderTraceparent),
 			})
 			mu.Unlock()
 			w.WriteHeader(http.StatusOK)
@@ -141,8 +156,9 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 	hub := core.NewHub(cfg, slog.Default())
 
 	rec := httptest.NewRecorder()
+	wantTraceID := strings.Repeat("f", 32)
 	req := httptest.NewRequest(http.MethodPost, "/api/items?q=1", bytes.NewReader([]byte(`{"ok":true}`)))
-	req.Header.Set(HeaderShadowTraceID, "trace-fixed")
+	req.Header.Set(HeaderShadowTraceID, wantTraceID)
 	body, _ := io.ReadAll(req.Body)
 	_ = req.Body.Close()
 	if err := hub.HandleAtomic(New(testMaxBodySize), &Session{Request: req, Body: body, Writer: rec}); err != nil {
@@ -155,10 +171,18 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 	if len(captures) != 3 {
 		t.Fatalf("got %d captures, want 3", len(captures))
 	}
-	trace := "trace-fixed"
+	wantTP := ""
 	for _, c := range captures {
-		if c.traceID != trace {
-			t.Fatalf("mismatched trace ids: %q vs %q", c.traceID, trace)
+		if c.traceID != wantTraceID {
+			t.Fatalf("mismatched trace ids: %q vs %q", c.traceID, wantTraceID)
+		}
+		if wantTP == "" {
+			wantTP = c.traceparent
+		} else if c.traceparent != wantTP {
+			t.Fatalf("mismatched traceparent: %q vs %q", c.traceparent, wantTP)
+		}
+		if _, ok := trace.ParseTraceparent(c.traceparent); !ok {
+			t.Fatalf("invalid traceparent %q", c.traceparent)
 		}
 		if c.method != http.MethodPost {
 			t.Fatalf("method = %q", c.method)
@@ -166,6 +190,65 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 		if c.requestURI != "/api/items?q=1" {
 			t.Fatalf("uri = %q", c.requestURI)
 		}
+	}
+}
+
+func TestMulticastPreservesInboundTraceparentLiteral(t *testing.T) {
+	t.Parallel()
+	inbound := "01-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01"
+	var mu sync.Mutex
+	var traceparents []string
+	servers := make([]*httptest.Server, 3)
+	for i := range servers {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			traceparents = append(traceparents, r.Header.Get(trace.HeaderTraceparent))
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+		}))
+		servers[i] = srv
+		defer srv.Close()
+	}
+	hub := core.NewHub(testConfig(servers...), slog.Default())
+	req := httptest.NewRequest(http.MethodGet, "/t", nil)
+	req.Header.Set(trace.HeaderTraceparent, inbound)
+	rec := httptest.NewRecorder()
+	if err := hub.HandleAtomic(New(testMaxBodySize), &Session{Request: req, Writer: rec}); err != nil {
+		t.Fatal(err)
+	}
+	hub.WaitPendingAtomic()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(traceparents) != 3 {
+		t.Fatalf("got %d backends", len(traceparents))
+	}
+	for i, tp := range traceparents {
+		if tp != inbound {
+			t.Fatalf("backend %d traceparent = %q, want %q", i, tp, inbound)
+		}
+	}
+}
+
+func TestTransformDeletesDuplicateCasedTraceHeaders(t *testing.T) {
+	t.Parallel()
+	d := New(testMaxBodySize)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header["Traceparent"] = []string{"01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"}
+	req.Header["traceparent"] = []string{"01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"}
+	meta, err := d.ParseMetadata(&Session{Request: req})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := d.Transform(&Session{Request: req}, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hm := msg.(*message)
+	if len(hm.headers.Values(trace.HeaderTraceparent)) != 1 {
+		t.Fatalf("want one traceparent, got %v", hm.headers.Values(trace.HeaderTraceparent))
+	}
+	if len(hm.headers.Values(HeaderShadowTraceID)) != 1 {
+		t.Fatalf("want one shadow trace id, got %v", hm.headers.Values(HeaderShadowTraceID))
 	}
 }
 

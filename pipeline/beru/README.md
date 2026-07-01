@@ -201,7 +201,7 @@ Protobuf: `[api/proto/beru/v1/traffic.proto](api/proto/beru/v1/traffic.proto)` (
 
 **Egress (OTLP):** trace id from the span's W3C trace id bytes. Shadow role from `shadow_role` resource attribute, or parsed from `service.name` suffix (`<shadowtest>-control-a`, etc.). Each span is appended immediately; late spans trigger re-diff.
 
-**Egress (egress-relay-rabbitmq):** trace id from AMQP message headers (`traceparent` or `x-shadow-trace-id`). Payload is the message body JSON; routing metadata is not yet included (signatures may show `rabbitmq:unknown:…` until relay enrichment lands).
+**Egress (egress-relay-rabbitmq):** trace id from AMQP message headers (`traceparent` or `x-shadow-trace-id`). Payload includes `exchange`, `routing_key`, and `body` (message JSON) for signatures like `rabbitmq:publish:egress-events:order.shipped`.
 
 ### MongoDB egress (OTLP)
 

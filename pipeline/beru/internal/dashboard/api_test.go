@@ -133,9 +133,58 @@ func TestSaveAndViewTraceIngress(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/traces/"+traceID+"?protocol=http", nil)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/traces/"+traceID+"?protocol=http&direction=ingress", nil)
 	h.handleTrace(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.Bytes()
+	if !bytes.Contains(body, []byte("Ingress response")) {
+		t.Fatal("missing ingress response section")
+	}
+}
+
+func TestListTraceSummariesHTTPSplitByDirection(t *testing.T) {
+	h := testHandler(t)
+	ctx := t.Context()
+	traceID := "http-split"
+	now := time.Now().UTC()
+	for _, rep := range []v2storage.RawReport{
+		{TraceID: traceID, ShadowRole: "control-a", ShadowTestName: "default", Protocol: "http", Direction: v2storage.DirectionIngress, Signature: "http:POST:/work", PayloadBytes: []byte(`{"ok":true}`), CapturedAt: now},
+		{TraceID: traceID, ShadowRole: "control-b", ShadowTestName: "default", Protocol: "http", Direction: v2storage.DirectionIngress, Signature: "http:POST:/work", PayloadBytes: []byte(`{"ok":true}`), CapturedAt: now},
+		{TraceID: traceID, ShadowRole: "candidate", ShadowTestName: "default", Protocol: "http", Direction: v2storage.DirectionIngress, Signature: "http:POST:/work", PayloadBytes: []byte(`{"ok":true}`), CapturedAt: now},
+		{TraceID: traceID, ShadowRole: "control-a", ShadowTestName: "default", Protocol: "http", Direction: v2storage.DirectionEgress, Signature: "http:GET:/api", PayloadBytes: []byte(`{"out":1}`), CapturedAt: now},
+		{TraceID: traceID, ShadowRole: "control-b", ShadowTestName: "default", Protocol: "http", Direction: v2storage.DirectionEgress, Signature: "http:GET:/api", PayloadBytes: []byte(`{"out":1}`), CapturedAt: now},
+		{TraceID: traceID, ShadowRole: "candidate", ShadowTestName: "default", Protocol: "http", Direction: v2storage.DirectionEgress, Signature: "http:GET:/api", PayloadBytes: []byte(`{"out":1}`), CapturedAt: now},
+	} {
+		if _, err := h.Repo.AppendReport(ctx, &rep); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	summaries, err := listTraceSummaries(ctx, h.Repo, "default", "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ingress, egress bool
+	for _, s := range summaries {
+		if s.TraceID != traceID || s.Protocol != "http" {
+			continue
+		}
+		switch s.Direction {
+		case v2storage.DirectionIngress:
+			ingress = true
+			if s.Signatures != "http:POST:/work" {
+				t.Fatalf("ingress signatures = %q", s.Signatures)
+			}
+		case v2storage.DirectionEgress:
+			egress = true
+			if s.Signatures != "http:GET:/api" {
+				t.Fatalf("egress signatures = %q", s.Signatures)
+			}
+		}
+	}
+	if !ingress || !egress {
+		t.Fatalf("want ingress and egress rows, got ingress=%v egress=%v summaries=%+v", ingress, egress, summaries)
 	}
 }

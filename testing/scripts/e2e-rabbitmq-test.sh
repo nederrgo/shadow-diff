@@ -14,7 +14,8 @@ EGRESS_RELAY_RABBITMQ_IMG="${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:de
 RECORDER_IMG="${RECORDER_IMG:-recorder:dev}"
 MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
 KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
-TRACE_ID="${TRACE_ID:-rmq-e2e-$(date +%s)}"
+TRACE_HEX="${TRACE_HEX:-$(openssl rand -hex 16)}"
+TRACE_ID="${TRACE_ID:-$TRACE_HEX}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 SKIP_LOAD="${SKIP_LOAD:-0}"
 SKIP_MONARCH_BUILD="${SKIP_MONARCH_BUILD:-0}"
@@ -32,7 +33,7 @@ upgrade_crd() {
   kubectl wait --for=condition=Established crd/shadowtests.engine.shadow-diff.io --timeout=120s
 }
 
-echo "==> RabbitMQ E2E (trace ${TRACE_ID})"
+echo "==> RabbitMQ E2E (trace ${TRACE_HEX})"
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   (cd "$REPO/testing/example-apps/rmq-test-worker" && make docker-build RMQ_TEST_WORKER_IMG="$RMQ_WORKER_IMG")
@@ -141,7 +142,7 @@ echo "==> Declare prod exchange and publish trigger message"
 kubectl exec -n default deploy/rmq-prod-broker -- sh -c "
   rabbitmqadmin declare exchange name=${PROD_EXCHANGE} type=topic durable=true 2>/dev/null || true
   rabbitmqadmin publish exchange=${PROD_EXCHANGE} routing_key=${PROD_ROUTING_KEY} \
-    payload='{\"e2e\":\"rmq\"}' properties='{\"headers\":{\"x-shadow-trace-id\":\"${TRACE_ID}\"}}'
+    payload='{\"e2e\":\"rmq\"}' properties='{\"headers\":{\"x-shadow-trace-id\":\"${TRACE_HEX}\"}}'
 "
 
 echo "==> Seed Beru egress mock for httpbin GET"
@@ -164,48 +165,48 @@ for role in control-a control-b candidate; do
     log_fail "no shadow worker pod for role ${role} (expected deploy ${SHADOWTEST}-${role})"
     exit 1
   fi
-  if ! kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=80 2>/dev/null | grep -q "trace=${TRACE_ID}"; then
-    log_fail "no log for trace ${TRACE_ID} on role ${role} (pod=${pod})"
+  if ! kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=80 2>/dev/null | grep -q "trace=${TRACE_HEX}"; then
+    log_fail "no log for trace ${TRACE_HEX} on role ${role} (pod=${pod})"
     kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=40 >&2 || true
     exit 1
   fi
-  log_success "${role} processed trace ${TRACE_ID}"
+  log_success "${role} processed trace ${TRACE_HEX}"
 done
 
 echo "==> Verify Beru ingress diff"
-if ! kubectl logs -n beru-system deploy/beru --tail=150 2>/dev/null | grep -q "No regression for Trace ${TRACE_ID}"; then
-  log_fail "Beru missing 'No regression for Trace ${TRACE_ID}'"
+if ! kubectl logs -n beru-system deploy/beru --tail=150 2>/dev/null | grep -q "No regression for Trace ${TRACE_HEX}"; then
+  log_fail "Beru missing 'No regression for Trace ${TRACE_HEX}'"
   kubectl logs -n beru-system deploy/beru --tail=40 >&2 || true
   exit 1
 fi
-log_success "Beru reported no regression for trace ${TRACE_ID}"
+log_success "Beru reported no regression for trace ${TRACE_HEX}"
 
 echo "==> Publish traceparent-only message (W3C ingress parity)"
-TRACE_HEX="${TRACE_HEX:-$(openssl rand -hex 16)}"
+TRACE_HEX_W3C="${TRACE_HEX_W3C:-$(openssl rand -hex 16)}"
 SPAN_HEX="$(openssl rand -hex 8)"
-TRACE_TP="00-${TRACE_HEX}-${SPAN_HEX}-01"
+TRACE_TP="00-${TRACE_HEX_W3C}-${SPAN_HEX}-01"
 kubectl exec -n default deploy/rmq-prod-broker -- sh -c "
   rabbitmqadmin publish exchange=${PROD_EXCHANGE} routing_key=${PROD_ROUTING_KEY} \
     payload='{\"e2e\":\"rmq-w3c\"}' properties='{\"headers\":{\"traceparent\":\"${TRACE_TP}\"}}'
 "
 sleep 8
 
-echo "==> Verify shadow workers processed W3C trace ${TRACE_HEX}"
+echo "==> Verify shadow workers processed W3C trace ${TRACE_HEX_W3C}"
 for role in control-a control-b candidate; do
   pod=$(shadow_app_pod_for_role "$SHADOW_NS" "$SHADOWTEST" "$role")
-  if ! kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=120 2>/dev/null | grep -q "trace=${TRACE_HEX}"; then
-    log_fail "no log for W3C trace ${TRACE_HEX} on role ${role}"
+  if ! kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=120 2>/dev/null | grep -q "trace=${TRACE_HEX_W3C}"; then
+    log_fail "no log for W3C trace ${TRACE_HEX_W3C} on role ${role}"
     exit 1
   fi
-  log_success "${role} processed W3C trace ${TRACE_HEX}"
+  log_success "${role} processed W3C trace ${TRACE_HEX_W3C}"
 done
 
-if ! kubectl logs -n beru-system deploy/beru --tail=200 2>/dev/null | grep -q "No regression for Trace ${TRACE_HEX}"; then
-  log_fail "Beru missing 'No regression for Trace ${TRACE_HEX}' (traceparent-only)"
+if ! kubectl logs -n beru-system deploy/beru --tail=200 2>/dev/null | grep -q "No regression for Trace ${TRACE_HEX_W3C}"; then
+  log_fail "Beru missing 'No regression for Trace ${TRACE_HEX_W3C}' (traceparent-only)"
   kubectl logs -n beru-system deploy/beru --tail=40 >&2 || true
   exit 1
 fi
-log_success "Beru reported no regression for W3C trace ${TRACE_HEX}"
+log_success "Beru reported no regression for W3C trace ${TRACE_HEX_W3C}"
 
 echo ""
-log_success "RabbitMQ E2E passed (trace ${TRACE_ID}, W3C trace ${TRACE_HEX})"
+log_success "RabbitMQ E2E passed (trace ${TRACE_HEX}, W3C trace ${TRACE_HEX_W3C})"

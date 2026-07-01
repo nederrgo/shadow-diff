@@ -9,7 +9,7 @@ The goal of this refactor is to replace Beru’s volatile in-memory trace correl
 Instead of waiting for a single, immutable snapshot via network timers (`BERU_EGRESS_WAIT`) and freezing a verdict, the database (SQLite in WAL mode) becomes the live source of truth. Every inbound event across any transport protocol is saved to the database immediately. Its arrival triggers a complete timeline re-evaluation for that `trace_id`, dynamically catching late-arriving messages and N+1 regressions.
 
 [Ingress / Egress Sources]
-(HTTP ext_proc, OTLP Spans, RabbitMQ Relay, Future Kafka)
+(HTTP ext_proc, Wire Ingest, RabbitMQ Relay, Future Kafka)
 │
 ▼
 ┌──────────────────────────────┐
@@ -45,9 +45,10 @@ No matter the network transport layer, all handlers normalize incoming data into
 
 ### Data Source Flow
 1. **HTTP Ingress (Envoy `ext_proc`)**: Extracts trace variables, formats payload → `RawReport{Protocol: "http", Direction: "ingress"}`
-2. **MongoDB Egress (OTel Agent)**: Parses `db.statement` span strings → `RawReport{Protocol: "mongodb", Direction: "egress"}`
-3. **RabbitMQ Egress (relay-rabbitmq)**: Captures AMQP publish firehose frames → `RawReport{Protocol: "rabbitmq", Direction: "egress"}`
-4. **Future Extensions (Kafka Streams)**: Listens to event topics → `RawReport{Protocol: "kafka", Direction: "egress"}`
+2. **HTTP Egress (Envoy Lua → wire ingest)**: Sidecar captures request/response bodies + `traceparent` → `POST /api/v1/ingest/wire` → `RawReport{Protocol: "http", Direction: "egress"}`
+3. **MongoDB Egress (wire ingest)**: `NetworkEventEnvelope` with BSON command + metadata → `RawReport{Protocol: "mongodb", Direction: "egress"}` (OTLP Mongo export deprecated)
+4. **RabbitMQ Egress (relay-rabbitmq)**: Captures AMQP publish firehose frames → `RawReport{Protocol: "rabbitmq", Direction: "egress"}`
+5. **Future Extensions (Kafka Streams)**: Listens to event topics → `RawReport{Protocol: "kafka", Direction: "egress"}`
 
 ---
 

@@ -29,12 +29,14 @@ type runView struct {
 }
 
 type traceView struct {
-	TraceID   string
-	Protocol  string
-	Status    string
-	Timestamp string
-	Signature string
-	DetailURL string
+	TraceID       string
+	Protocol      string
+	ProtocolLabel string
+	Direction     string
+	Status        string
+	Timestamp     string
+	Signature     string
+	DetailURL     string
 }
 
 type tracePage struct {
@@ -137,15 +139,24 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 
 	traceID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/dashboard/traces/"), "/")
 	protocol := r.URL.Query().Get("protocol")
+	direction := normalizeHTTPDirection(protocol, r.URL.Query().Get("direction"))
 	if traceID == "" || protocol == "" {
 		http.NotFound(w, r)
 		return
 	}
 
-	reports, err := h.Repo.ListReports(r.Context(), traceID, protocol)
-	if err != nil || len(reports) == 0 {
+	allReports, err := h.Repo.ListReports(r.Context(), traceID, protocol)
+	if err != nil || len(allReports) == 0 {
 		http.NotFound(w, r)
 		return
+	}
+	reports := allReports
+	if protocol == "http" {
+		reports = filterByProtocolAndDirection(allReports, protocol, v2storage.PayloadDirection(direction))
+		if len(reports) == 0 {
+			http.NotFound(w, r)
+			return
+		}
 	}
 
 	shadowTestName := reports[0].ShadowTestName
@@ -156,17 +167,20 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 	summaries, _ := listTraceSummaries(r.Context(), h.Repo, shadowTestName, "", 500)
 	var current traceView
 	for _, s := range summaries {
-		if s.TraceID == traceID && s.Protocol == protocol {
+		if sameTraceView(traceID, protocol, direction, s) {
 			current = summaryToView(s)
 			break
 		}
 	}
 	if current.TraceID == "" {
+		dir := v2storage.PayloadDirection(direction)
 		current = traceView{
-			TraceID:   traceID,
-			Protocol:  protocol,
-			Signature: signaturesFromReports(reports),
-			DetailURL: traceDetailURL(traceID, protocol),
+			TraceID:       traceID,
+			Protocol:      protocol,
+			ProtocolLabel: protocolViewLabel(protocol, dir),
+			Direction:     direction,
+			Signature:     signaturesFromReports(reports),
+			DetailURL:       traceDetailURL(traceID, protocol, dir),
 		}
 	}
 
@@ -178,7 +192,7 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 	verdict, _ := h.Repo.GetVerdict(r.Context(), traceID)
 	page.Mismatches = mismatchesForProtocol(verdict, protocol)
 
-	if isEgressProtocol(protocol) {
+	if isEgressView(protocol, direction) {
 		page.SequenceSteps = buildSequenceStepsFromReports(protocol, reports)
 	} else {
 		bodyA, bodyC := ingressBodies(reports)
@@ -186,7 +200,7 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, s := range summaries {
-		if s.TraceID == traceID && s.Protocol != protocol {
+		if s.TraceID == traceID && !sameTraceView(traceID, protocol, direction, s) {
 			page.Related = append(page.Related, summaryToView(s))
 		}
 	}
@@ -199,12 +213,14 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 
 func summaryToView(s v2storage.TraceSummary) traceView {
 	return traceView{
-		TraceID:   s.TraceID,
-		Protocol:  s.Protocol,
-		Status:    s.Status,
-		Timestamp: s.LastCapturedAt,
-		Signature: s.Signatures,
-		DetailURL: traceDetailURL(s.TraceID, s.Protocol),
+		TraceID:       s.TraceID,
+		Protocol:      s.Protocol,
+		ProtocolLabel: protocolViewLabel(s.Protocol, s.Direction),
+		Direction:     string(s.Direction),
+		Status:        s.Status,
+		Timestamp:     s.LastCapturedAt,
+		Signature:     s.Signatures,
+		DetailURL:     traceDetailURL(s.TraceID, s.Protocol, s.Direction),
 	}
 }
 
@@ -220,7 +236,7 @@ func isEgressProtocol(protocol string) bool {
 func ingressBodies(reports []v2storage.RawReport) ([]byte, []byte) {
 	var bodyA, bodyC []byte
 	for _, rep := range reports {
-		if rep.Protocol != "http" {
+		if rep.Protocol != "http" || rep.Direction != v2storage.DirectionIngress {
 			continue
 		}
 		switch rep.ShadowRole {

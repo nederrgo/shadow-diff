@@ -22,12 +22,13 @@ type RawReport struct {
 
 // TraceSummary is one dashboard row: a trace plus protocol with diff status.
 type TraceSummary struct {
-	TraceID        string `json:"trace_id"`
-	Protocol       string `json:"protocol"`
-	ShadowTestName string `json:"shadow_test_name"`
-	LastCapturedAt string `json:"last_captured_at"`
-	Status         string `json:"status"`
-	Signatures     string `json:"signatures"`
+	TraceID        string           `json:"trace_id"`
+	Protocol       string           `json:"protocol"`
+	Direction      PayloadDirection `json:"direction,omitempty"` // set for http ingress vs egress rows
+	ShadowTestName string           `json:"shadow_test_name"`
+	LastCapturedAt string           `json:"last_captured_at"`
+	Status         string           `json:"status"`
+	Signatures     string           `json:"signatures"`
 }
 
 type VerdictState struct {

@@ -1,0 +1,30 @@
+# HTTP ingress (igris-http) + Mongo write + RMQ egress — no OTel, no Siphon.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: http-mongo-test-shadow
+  namespace: default
+spec:
+  targetDeployment: http-mongo-prod-target
+
+  oldImage: http-mongo-worker:dev
+  newImage: http-mongo-worker:dev
+
+  servicePort: 8888
+  applicationPort: 8080
+
+  inputs:
+    - port: 8888
+      driver: http_request
+
+  siphon:
+    enabled: false
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

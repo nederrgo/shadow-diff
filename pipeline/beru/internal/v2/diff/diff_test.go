@@ -127,3 +127,17 @@ func TestEvaluateTraceHistory_payloadMismatch(t *testing.T) {
 		t.Fatalf("summary = %q, want payload mismatch detail", verdict.SummaryDetails)
 	}
 }
+
+func TestEvaluateTraceHistory_wireHTTPMatch(t *testing.T) {
+	t0 := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	payload := []byte(`{"request":"{}","response":"{}"}`)
+	sig := "http:POST:/v1/charges"
+	history := []storage.RawReport{
+		{TraceID: "abc", ShadowRole: "control-a", Protocol: "http", Signature: sig, PayloadBytes: payload, CapturedAt: t0},
+		{TraceID: "abc", ShadowRole: "candidate", Protocol: "http", Signature: sig, PayloadBytes: payload, CapturedAt: t0},
+	}
+	verdict := EvaluateTraceHistory(history)
+	if verdict.Status != "MATCH" {
+		t.Fatalf("status = %q, want MATCH", verdict.Status)
+	}
+}

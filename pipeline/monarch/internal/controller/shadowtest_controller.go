@@ -28,7 +28,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	otelv1alpha1 "github.com/open-telemetry/opentelemetry-operator/apis/v1alpha1"
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
@@ -108,23 +107,6 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			_ = r.patchStatus(ctx, &shadowTest, "Progressing",
 				"Local analytics backend is booting up (beru-local)", shadowNS)
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-	}
-
-	if err := r.reconcileOTelInstrumentation(ctx, &shadowTest, shadowNS); err != nil {
-		log.Error(err, "Failed to reconcile OpenTelemetry Instrumentation")
-		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-		return ctrl.Result{}, err
-	}
-	if otelInjectionEnabled(&shadowTest) {
-		otelCheck := &otelv1alpha1.Instrumentation{}
-		if err := r.Get(ctx, types.NamespacedName{Name: otelInstrumentationName, Namespace: shadowNS}, otelCheck); err != nil {
-			if apierrors.IsNotFound(err) {
-				_ = r.patchStatus(ctx, &shadowTest, "Progressing",
-					"waiting for OpenTelemetry Instrumentation CR", shadowNS)
-				return ctrl.Result{RequeueAfter: time.Second}, nil
-			}
-			return ctrl.Result{}, err
 		}
 	}
 
@@ -306,7 +288,7 @@ func (r *ShadowTestReconciler) reconcileShadowWorkloads(
 		if err := r.reconcileEnvoyConfigMap(ctx, st, shadowNS, step.role); err != nil {
 			return false, err
 		}
-		if err := r.reconcileShadowDeployment(ctx, st, shadowNS, step.role, step.image, env, target); err != nil {
+		if err := r.reconcileShadowDeployment(ctx, st, shadowNS, step.role, step.image, env); err != nil {
 			return false, err
 		}
 		if err := r.reconcileShadowService(ctx, st, shadowNS, step.role); err != nil {

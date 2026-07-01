@@ -19,6 +19,31 @@ func listTraceSummaries(ctx context.Context, repo v2storage.TraceRepository, sha
 		if err != nil {
 			return nil, err
 		}
+		if g.Protocol == "http" {
+			for _, dir := range []v2storage.PayloadDirection{v2storage.DirectionIngress, v2storage.DirectionEgress} {
+				subset := filterByProtocolAndDirection(reports, g.Protocol, dir)
+				if len(subset) == 0 || !protocolHasAllRoles(subset, g.Protocol) {
+					continue
+				}
+				status := v2diff.EvaluateTraceHistory(subset).Status
+				if statusFilter != "" && status != statusFilter {
+					continue
+				}
+				out = append(out, v2storage.TraceSummary{
+					TraceID:        g.TraceID,
+					Protocol:       g.Protocol,
+					Direction:      dir,
+					ShadowTestName: shadowTestName,
+					LastCapturedAt: g.LastCapturedAt,
+					Status:         status,
+					Signatures:     signaturesFromReports(subset),
+				})
+				if len(out) >= limit {
+					return out, nil
+				}
+			}
+			continue
+		}
 		if !protocolHasAllRoles(reports, g.Protocol) {
 			continue
 		}

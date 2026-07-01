@@ -17,8 +17,6 @@ spec:
     - port: 8888
       driver: http_request
 
-  language: nodejs
-
   dependencies:
     - name: rabbitmq
       type: rabbitmq

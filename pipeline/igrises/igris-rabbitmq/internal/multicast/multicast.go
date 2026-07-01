@@ -12,6 +12,11 @@ import (
 	"github.com/shadow-diff/igris-rabbitmq/internal/trace"
 )
 
+type multicastPublisher interface {
+	PublishAll(msg amqp.Delivery, headers amqp.Table) error
+	Close()
+}
+
 type ShadowPublisher struct {
 	exchange     string
 	exchangeType string
@@ -86,7 +91,7 @@ func (p *ShadowPublisher) PublishAll(msg amqp.Delivery, headers amqp.Table) erro
 
 type Runner struct {
 	cfg       config.Config
-	publisher *ShadowPublisher
+	publisher multicastPublisher
 	wg        sync.WaitGroup
 }
 

@@ -51,6 +51,12 @@ func TestLocalBeruAddressHelpers(t *testing.T) {
 		t.Fatalf("beruHTTPHostFor = %q, want %q", httpHost, wantHTTP)
 	}
 
+	ingest := beruIngestAddressFor(st, shadowNS)
+	wantIngest := "beru-local.shadow-default-http-otel-rmq-nodejs-shadow.svc.cluster.local:8080"
+	if ingest != wantIngest {
+		t.Fatalf("beruIngestAddressFor = %q, want %q", ingest, wantIngest)
+	}
+
 	otlp := beruOTLPEndpointFor(st, shadowNS)
 	wantOTLP := "http://beru-local.shadow-default-http-otel-rmq-nodejs-shadow.svc.cluster.local:4317"
 	if otlp != wantOTLP {

@@ -21,8 +21,6 @@ spec:
   recordAndReplay:
     - host: user-service.prod.internal:8080
 
-  language: nodejs
-
   dependencies:
     - name: rabbitmq
       type: rabbitmq

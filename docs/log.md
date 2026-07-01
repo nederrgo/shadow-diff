@@ -9,6 +9,19 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-01]
+### Added
+* 'pipeline/beru/internal/dashboard': Split HTTP trace rows by ingress vs egress direction so Igris ingress diffs are visible separately from wire egress
+* 'testing/scripts/e2e-http-mongo-test.sh': HTTP ingress + mongo write + RMQ egress E2E (igris-http, no OTel)
+* 'pipeline/egress-relay-rabbitmq/internal/firehose/parse.go': enrich Beru egress payload with exchange + routing_key from Firehose
+* 'testing/scripts/e2e-rmq-mongo-test.sh': assert RabbitMQ egress on beru-local (Monarch default egress-relay target)
+* 'testing/scripts/e2e-rmq-mongo-test.sh': minikube/Kind auto-detect via e2e_load_image; deploy beru-system if missing
+* 'pipeline/monarch/internal/controller/shadowtest_envoy.go': remove invalid HCM max_request_bytes (Envoy v1.26); Lua 64KB truncation remains
+* 'testing/scripts/e2e-rmq-mongo-test.sh': Kind E2E for RMQ ingress + mongo write + RMQ egress with W3C traceparent
+* 'pipeline/igrises': Phase 3 Igris traceparent multicast — ResolveContext, literal preserve, integration tests
+* 'pipeline/beru, pipeline/monarch': Phase 2 wire ingest — POST /api/v1/ingest/wire, NetworkEventEnvelope, Lua httpCall to beru_ingest, OTLP Mongo deprecated
+* 'pipeline/monarch': Plan 1 telemetry-dependent realignment — remove OTel/language injection, always-on Envoy egress with Lua/mongo_proxy, beru_ingest cluster forward ref
+
 ## [2026-06-30]
 ### Added
 * testing/nodejs-hybrid-worker: add undici dep, lazy-load for HTTP_PROXY only

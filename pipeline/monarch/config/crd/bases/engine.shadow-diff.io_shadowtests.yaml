@@ -56,6 +56,10 @@ spec:
               beruGRPCTimeout:
                 description: BeruGRPCTimeout is the ext_proc gRPC timeout (e.g. "2s").
                 type: string
+              beruIngestAddress:
+                description: BeruIngestAddress is the host:port of the Beru wire-payload
+                  ingest service (HTTP).
+                type: string
               dependencies:
                 description: Dependencies lists ephemeral backing services (e.g. Redis)
                   provisioned once per shadow role.
@@ -372,17 +376,6 @@ spec:
                       type: integer
                   type: object
                 type: array
-              language:
-                description: |-
-                  Language declares the application's runtime language (e.g. nodejs, python, java).
-                  Monarch uses this to automatically inject the correct OpenTelemetry Operator agents.
-                enum:
-                - java
-                - python
-                - nodejs
-                - dotnet
-                - go
-                type: string
               newImage:
                 description: NewImage is the container image for the Candidate pod.
                 type: string
@@ -390,16 +383,6 @@ spec:
                 description: OldImage is the container image for Control-A and Control-B
                   pods.
                 type: string
-              otelInjection:
-                description: OtelInjection configures OpenTelemetry Operator auto-instrumentation
-                  (default on).
-                properties:
-                  enabled:
-                    default: true
-                    description: Enabled toggles OTel operator injection (default
-                      true when unset).
-                    type: boolean
-                type: object
               recordAndReplay:
                 description: RecordAndReplay lists outbound hosts trapped by the egress
                   proxy for strict replay.

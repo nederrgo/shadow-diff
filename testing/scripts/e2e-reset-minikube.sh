@@ -61,13 +61,15 @@ RUN_DEPENDENCY_TEST=0
 RUN_RABBITMQ_TEST=0
 RUN_OTEL_RABBITMQ_TEST=0
 RUN_OTLP_INGRESS_TEST=0
+RUN_RMQ_MONGO_TEST=0
+RUN_HTTP_MONGO_TEST=0
 SETUP_PIXIE=1
 SKIP_PIXIE=0
 SKIP_OTEL_BOOTSTRAP=0
 
 usage() {
   sed -n '2,22p' "$0"
-  echo "Flags: --skip-build --skip-load --no-reset --skip-otel-bootstrap --skip-pixie --setup-pixie --run-test --run-egress-test --run-record-replay --run-dependency-test --run-rabbitmq-test --run-otel-rabbitmq-test --run-otlp-ingress-test -h"
+  echo "Flags: --skip-build --skip-load --no-reset --skip-otel-bootstrap --skip-pixie --setup-pixie --run-test --run-egress-test --run-record-replay --run-dependency-test --run-rabbitmq-test --run-otel-rabbitmq-test --run-otlp-ingress-test --run-rmq-mongo-test --run-http-mongo-test -h"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -82,6 +84,8 @@ while [[ $# -gt 0 ]]; do
     --run-rabbitmq-test) RUN_RABBITMQ_TEST=1 ;;
     --run-otel-rabbitmq-test) RUN_OTEL_RABBITMQ_TEST=1 ;;
     --run-otlp-ingress-test) RUN_OTLP_INGRESS_TEST=1 ;;
+    --run-rmq-mongo-test) RUN_RMQ_MONGO_TEST=1 ;;
+    --run-http-mongo-test) RUN_HTTP_MONGO_TEST=1 ;;
     --setup-pixie) SETUP_PIXIE=1 ;;
     --skip-pixie)  SKIP_PIXIE=1; SETUP_PIXIE=0 ;;
     --skip-otel-bootstrap) SKIP_OTEL_BOOTSTRAP=1 ;;
@@ -92,7 +96,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 export SKIP_BUILD SKIP_LOAD NO_RESET RUN_TEST RUN_EGRESS_TEST RUN_RECORD_REPLAY
-export RUN_DEPENDENCY_TEST RUN_RABBITMQ_TEST RUN_OTEL_RABBITMQ_TEST RUN_OTLP_INGRESS_TEST SETUP_PIXIE SKIP_PIXIE
+export RUN_DEPENDENCY_TEST RUN_RABBITMQ_TEST RUN_OTEL_RABBITMQ_TEST RUN_OTLP_INGRESS_TEST RUN_RMQ_MONGO_TEST RUN_HTTP_MONGO_TEST SETUP_PIXIE SKIP_PIXIE
 export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG IGRIS_IMG SIPHON_IMG RECORDER_IMG
 
 # Pixie HTTP ingress: VM driver + flannel CNI (avoid calico/flannel mix on same profile).

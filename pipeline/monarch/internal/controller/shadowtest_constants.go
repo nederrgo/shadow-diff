@@ -25,19 +25,23 @@ const (
 	containerEnvoySidecar = "envoy-sidecar"
 	containerApp          = "app"
 	envShadowRole         = "SHADOW_ROLE"
+	envShadowTestName     = "SHADOW_TEST_NAME"
 	envoyImage            = "envoyproxy/envoy:v1.26-latest"
 	configMapKeyEnvoyYAML = "envoy.yaml"
 	volumeNameEnvoyConfig = "envoy-config"
 
 	defaultBeruGRPCAddress = "beru.beru-system.svc.cluster.local:50051"
 	defaultBeruHTTPAddress = "beru.beru-system.svc.cluster.local:8080"
+	defaultBeruOTLPEndpoint     = "http://beru.beru-system.svc.cluster.local:4317"
+	defaultBeruOTLPHTTPEndpoint = "http://beru.beru-system.svc.cluster.local:8080"
+	defaultBeruIngestAddress    = "beru-ingest.shadow-system.svc.cluster.local:8080"
 	defaultBeruGRPCTimeout = "2s"
 	beruSystemNamespace    = "beru-system"
 	beruServiceName        = "beru"
 	envBeruGRPCAddress     = "BERU_GRPC_ADDRESS"
 
-	egressProxyPort int32  = 15001
-	egressProxyURL  string = "http://127.0.0.1:15001"
+	egressProxyPort int32  = 10001
+	egressProxyURL  string = "http://127.0.0.1:10001"
 
 	mongoProxyPort       int32  = 27017
 	shadowMongoProxyURL  string = "mongodb://127.0.0.1:27017"
@@ -45,7 +49,9 @@ const (
 	envHTTPProxy         string = "HTTP_PROXY"
 	envHTTPSProxy        string = "HTTPS_PROXY"
 	envNoProxy           string = "NO_PROXY"
-	defaultNoProxyValue  string = "127.0.0.1,localhost,.cluster.local,.svc"
+	defaultNoProxyValue  string = "127.0.0.1,localhost,beru-ingest.shadow-system.svc.cluster.local,.cluster.local,.svc"
+
+	beruIngestCluster = "beru_ingest"
 
 	containerIgris               = "igris"
 	configMapKeyListenersJSON    = "listeners.json"

@@ -47,7 +47,7 @@ Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that w
 └───────────────────────────────────┬─────────────────────────────────────────┘
                                     │
 ┌───────────────────────────────────▼─────────────────────────────────────────┐
-│  L3  Shadow stack   Three Deployments × (app + Envoy + OTel agent) + deps   │
+│  L3  Shadow stack   Three Deployments × (app + Envoy sidecar) + deps          │
 │                     control-a, control-b (oldImage), candidate (newImage) │
 └───────────────────────────────────┬─────────────────────────────────────────┘
                                     │
@@ -57,8 +57,8 @@ Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that w
 │  L4a  Analysis ingest          │   │  L4b  Egress record/replay (optional) │
 │  HTTP ingress: Envoy ext_proc  │   │  Shadow HTTP replay: HTTP_PROXY →      │
 │  → Beru diff-of-diffs          │   │  Envoy :15001 → Beru mock lookup       │
-│  DB egress: OTel agent OTLP    │   │  Prod HTTP record: Pixie OTLP →        │
-│  → Beru egress diff            │   │  Recorder :4317 → Beru mock store      │
+│  DB egress: Envoy Lua wire ingest │   │  Prod HTTP record: Pixie OTLP →        │
+│  → Beru egress diff             │   │  Recorder :4317 → Beru mock store      │
 │  AMQP egress: egress-relay-    │   │                                        │
 │  rabbitmq → Beru egress diff   │   │                                        │
 └───────────────────┬──────────────┘   └────────────┬──────────────────────────┘
@@ -352,14 +352,12 @@ Beru receives shadow traffic through **complementary ingest paths**:
 | Path | Source | Correlation |
 |------|--------|-------------|
 | **Ingress diff-of-diffs** | Envoy ingress `ext_proc` | Trace id: `x-shadow-trace-id` → W3C `traceparent` → Envoy `x-request-id`; role from `x-shadow-role` |
-| **Egress diff (MongoDB)** | OTel agent → Beru OTLP (`:4317` gRPC or `:8080/v1/traces` HTTP) | Trace id from span; role from `OTEL_SERVICE_NAME` suffix (`-control-a`, `-control-b`, `-candidate`) |
+| **Egress diff (HTTP/MongoDB)** | Envoy egress Lua → Beru `POST /api/v1/ingest/wire` | Trace id from W3C `traceparent`; role from `SHADOW_ROLE` |
 | **Egress diff (AMQP)** | egress-relay-rabbitmq | Trace id from message headers (`traceparent` or `x-shadow-trace-id`) |
 
-**Ingress multicast.** Igris and igris-rabbitmq inject W3C **`traceparent`** on cloned traffic (and echo **`x-shadow-trace-id`** for backward compatibility). Envoy forwards these headers unchanged and reports ingress responses to Beru — apps usually need no trace code on the HTTP ingress path.
+**Ingress multicast.** **Igris** and **igris-rabbitmq** are the unified trace context source at ingress: `ResolveContext` runs once per event, then the **same** W3C `traceparent` (literal when inbound) and `x-shadow-trace-id` are stamped on all three shadow clones. Envoy forwards these headers unchanged; Beru correlates via `traceparent` on ingress (`ext_proc`) and egress (wire ingest).
 
-**OpenTelemetry sidecar.** When `spec.otelInjection` is enabled (default), Monarch reconciles an `Instrumentation/shadow-diff-telemetry` CR in the shadow namespace (exporter → Beru OTLP), gates on CR visibility before creating shadow app pods, sanitizes any production `instrumentation.opentelemetry.io/*` annotations, and force-overwrites `OTEL_*` env vars so hardcoded SDKs cannot dial prod collectors. Monarch annotates shadow app pods to bind the OpenTelemetry Operator to that CR, which injects a language-specific auto-instrumentation agent. The agent extracts inbound W3C context from Igris/AMQP headers, propagates `tracecontext` on instrumented outbound calls, and — when a Mongo dependency is declared — exports MongoDB client spans (`db.statement`) directly to Beru OTLP. Monarch sets `OTEL_EXPORTER_OTLP_ENDPOINT` to Beru; Python uses HTTP/protobuf, Node/Java use gRPC.
-
-Manual copying of `traceparent` / `x-shadow-trace-id` in application code is **no longer the primary model** — it remains as a fallback for untracked goroutines, disabled OTel injection, or libraries the agent cannot instrument. Python `pika` auto-instrumentation is enabled; **egress-relay-rabbitmq** deduplicates duplicate Firehose publishes from OTel double-wrap within a short window.
+Applications should propagate `traceparent` on outbound HTTP and Mongo `$comment` where needed; Monarch does not inject language agents on shadow pods.
 
 When trace context is missing entirely, Beru can fall back to sequence-based diffing.
 
@@ -373,7 +371,7 @@ Kubebuilder operator in `monarch-system`. Reads `ShadowTest` and materializes th
 
 ### Igris (HTTP/TCP)
 
-Pluggable ingress hub. **HTTP driver** accepts atomic requests, returns 202 immediately, and multicasts clones to three shadow URLs in parallel. **TCP driver** relays streaming connections to three shadow hosts. Monarch writes listener config from the ShadowTest inputs.
+Pluggable ingress hub. **HTTP driver** accepts atomic requests, resolves W3C trace context once (`ResolveContext`), returns 202 immediately, and multicasts clones with identical `traceparent` to three shadow URLs in parallel. **TCP driver** relays streaming connections to three shadow hosts. Monarch writes listener config from the ShadowTest inputs.
 
 ### igris-rabbitmq
 

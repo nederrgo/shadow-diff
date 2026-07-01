@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 func (h *Handler) handleAPIShadowTests(w http.ResponseWriter, r *http.Request) {
@@ -73,14 +75,23 @@ func (h *Handler) handleAPITraceByID(w http.ResponseWriter, r *http.Request) {
 	}
 	traceID := traceIDFromAPIPath(r.URL.Path)
 	protocol := r.URL.Query().Get("protocol")
+	direction := normalizeHTTPDirection(protocol, r.URL.Query().Get("direction"))
 	if traceID == "" || protocol == "" {
 		http.Error(w, "trace id and protocol are required", http.StatusBadRequest)
 		return
 	}
-	reports, err := h.Repo.ListReports(r.Context(), traceID, protocol)
-	if err != nil || len(reports) == 0 {
+	allReports, err := h.Repo.ListReports(r.Context(), traceID, protocol)
+	if err != nil || len(allReports) == 0 {
 		http.Error(w, "Trace not found", http.StatusNotFound)
 		return
+	}
+	reports := allReports
+	if protocol == "http" {
+		reports = filterByProtocolAndDirection(allReports, protocol, v2storage.PayloadDirection(direction))
+		if len(reports) == 0 {
+			http.Error(w, "Trace not found", http.StatusNotFound)
+			return
+		}
 	}
 	verdict, _ := h.Repo.GetVerdict(r.Context(), traceID)
 	resp := map[string]any{
@@ -89,7 +100,10 @@ func (h *Handler) handleAPITraceByID(w http.ResponseWriter, r *http.Request) {
 		"reports":  reports,
 		"verdict":  verdict,
 	}
-	if isEgressProtocol(protocol) {
+	if direction != "" {
+		resp["direction"] = direction
+	}
+	if isEgressView(protocol, direction) {
 		resp["sequence_steps"] = buildSequenceStepsFromReports(protocol, reports)
 	} else {
 		bodyA, bodyC := ingressBodies(reports)

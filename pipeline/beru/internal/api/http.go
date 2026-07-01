@@ -54,6 +54,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("/v1/seed_mock", s.handleSeedMock)
 	mux.HandleFunc("/v1/record_egress", s.handleRecordEgress)
 	mux.HandleFunc("/api/v1/egress/diff", s.handleEgressDiff)
+	mux.HandleFunc("/api/v1/ingest/wire", s.handleWireIngest)
 	if s.OTLP != nil {
 		mux.HandleFunc("/v1/traces", s.OTLP.HandleHTTP)
 	}
@@ -136,6 +137,43 @@ func (s *Server) handleEgressDiff(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
+	}
+	s.Router.Route(rawReport)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]struct{}{})
+}
+
+func (s *Server) handleWireIngest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.Router == nil {
+		http.Error(w, "Wire ingest not configured", http.StatusServiceUnavailable)
+		return
+	}
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	var env v2report.NetworkEventEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	if env.ShadowTestName == "" && s.DB != nil {
+		env.ShadowTestName = s.DB.DefaultShadowTestName()
+	}
+	rawReport, err := v2report.FromWireEnvelope(&env)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	if rawReport.ShadowTestName == "" && s.DB != nil {
+		rawReport.ShadowTestName = s.DB.DefaultShadowTestName()
 	}
 	s.Router.Route(rawReport)
 

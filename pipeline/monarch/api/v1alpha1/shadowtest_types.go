@@ -165,14 +165,6 @@ type IgrisSpec struct {
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-// OtelInjectionSpec configures OpenTelemetry Operator auto-instrumentation for shadow pods.
-type OtelInjectionSpec struct {
-	// Enabled toggles OTel operator injection (default true when unset).
-	// +kubebuilder:default=true
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-}
-
 // ShadowTestSpec defines the desired state of ShadowTest.
 type ShadowTestSpec struct {
 	// TargetDeployment is the name of the production Deployment whose pod template
@@ -212,6 +204,10 @@ type ShadowTestSpec struct {
 	// +optional
 	BeruGRPCTimeout string `json:"beruGRPCTimeout,omitempty"`
 
+	// BeruIngestAddress is the host:port of the Beru wire-payload ingest service (HTTP).
+	// +optional
+	BeruIngestAddress string `json:"beruIngestAddress,omitempty"`
+
 	// Inputs defines Igris listener ports and drivers. When empty, Monarch defaults to
 	// a single HTTP listener on servicePort.
 	// +optional
@@ -244,16 +240,6 @@ type ShadowTestSpec struct {
 	// Dependencies lists ephemeral backing services (e.g. Redis) provisioned once per shadow role.
 	// +optional
 	Dependencies []DependencySpec `json:"dependencies,omitempty"`
-
-	// Language declares the application's runtime language (e.g. nodejs, python, java).
-	// Monarch uses this to automatically inject the correct OpenTelemetry Operator agents.
-	// +kubebuilder:validation:Enum=java;python;nodejs;dotnet;go
-	// +optional
-	Language string `json:"language,omitempty"`
-
-	// OtelInjection configures OpenTelemetry Operator auto-instrumentation (default on).
-	// +optional
-	OtelInjection *OtelInjectionSpec `json:"otelInjection,omitempty"`
 }
 
 // ShadowTestStatus defines the observed state of ShadowTest.

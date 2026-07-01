@@ -130,7 +130,7 @@ func (r *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 		log.Printf("workload=%s skip firehose message routing_key=%s: %v", r.Workload, msg.RoutingKey, err)
 		return
 	}
-	payload, err := firehose.PayloadJSON(msg.Body)
+	payload, err := firehose.BeruEgressPayload(msg.Headers, msg.RoutingKey, msg.Body)
 	if err != nil {
 		log.Printf("workload=%s skip firehose message trace=%s: %v", r.Workload, traceID, err)
 		return

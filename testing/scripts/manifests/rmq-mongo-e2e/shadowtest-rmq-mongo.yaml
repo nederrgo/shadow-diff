@@ -1,0 +1,34 @@
+# RMQ ingress + Mongo write + RMQ egress (no OTel, no HTTP record/replay).
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: rmq-mongo-test-shadow
+  namespace: default
+spec:
+  targetDeployment: rmq-mongo-prod-target
+
+  oldImage: rmq-mongo-worker:dev
+  newImage: rmq-mongo-worker:dev
+
+  servicePort: 8888
+  applicationPort: 8080
+
+  inputs:
+    - driver: rabbitmq_message
+      amqp:
+        prodUrl: amqp://guest:guest@rmq-prod-broker.default.svc.cluster.local:5672/
+        exchange: orders
+        routingKey: order.created
+        targetDependency: rabbitmq
+
+  siphon:
+    enabled: false
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

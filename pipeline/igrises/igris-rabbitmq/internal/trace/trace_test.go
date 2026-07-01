@@ -10,22 +10,6 @@ import (
 
 var traceparentRE = regexp.MustCompile(`^00-[a-f0-9]{32}-[a-f0-9]{16}-01$`)
 
-func TestEnsureTraceHeadersPreservesShadowID(t *testing.T) {
-	t.Parallel()
-	h := amqp.Table{HeaderShadowTraceID: "existing-trace"}
-	got, err := EnsureTraceHeaders(h)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got[HeaderShadowTraceID] != "existing-trace" {
-		t.Fatalf("shadow id = %v", got[HeaderShadowTraceID])
-	}
-	tp, ok := got[HeaderTraceparent].(string)
-	if !ok || !strings.Contains(tp, "existing-trace") {
-		t.Fatalf("traceparent = %v", got[HeaderTraceparent])
-	}
-}
-
 func TestEnsureTraceHeadersFromTraceparentOnly(t *testing.T) {
 	t.Parallel()
 	tp := "01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
@@ -72,11 +56,44 @@ func TestEnsureTraceHeadersPreservesInboundTraceparent(t *testing.T) {
 	}
 }
 
+func TestEnsureTraceHeadersIgnoresNonHexShadowID(t *testing.T) {
+	t.Parallel()
+	got, err := EnsureTraceHeaders(amqp.Table{HeaderShadowTraceID: "existing-trace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, ok := got[HeaderShadowTraceID].(string)
+	if !ok || len(id) != 32 {
+		t.Fatalf("expected generated 32-hex id, got %v", got[HeaderShadowTraceID])
+	}
+	tp, ok := got[HeaderTraceparent].(string)
+	if !ok || !strings.HasPrefix(tp, "00-"+id) {
+		t.Fatalf("traceparent = %v", got[HeaderTraceparent])
+	}
+}
+
+func TestEnsureTraceHeadersFromValidShadowID(t *testing.T) {
+	t.Parallel()
+	id := strings.Repeat("c", 32)
+	got, err := EnsureTraceHeaders(amqp.Table{HeaderShadowTraceID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[HeaderShadowTraceID] != id {
+		t.Fatalf("shadow id = %v", got[HeaderShadowTraceID])
+	}
+	tp, ok := got[HeaderTraceparent].(string)
+	if !ok || !strings.Contains(tp, id) {
+		t.Fatalf("traceparent = %v", tp)
+	}
+}
+
 func TestEnsureTraceIDPreservesExisting(t *testing.T) {
 	t.Parallel()
-	h := amqp.Table{HeaderShadowTraceID: "existing-trace"}
+	id := strings.Repeat("d", 32)
+	h := amqp.Table{HeaderShadowTraceID: id}
 	got := EnsureTraceID(h)
-	if got[HeaderShadowTraceID] != "existing-trace" {
+	if got[HeaderShadowTraceID] != id {
 		t.Fatalf("got %v", got[HeaderShadowTraceID])
 	}
 }

@@ -4,9 +4,10 @@ import "fmt"
 
 // Metadata is protocol-neutral request metadata for logging and early responses.
 type Metadata struct {
-	TraceID string
-	SpanID  string
-	Fields  map[string]string
+	TraceID     string
+	Traceparent string
+	SpanID      string // deprecated: use Traceparent; kept for callers that read SpanID
+	Fields      map[string]string
 }
 
 // EarlyResponse is returned to the caller when RespondEarly is true.

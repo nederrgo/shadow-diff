@@ -3,7 +3,7 @@
   <div class="flex items-center justify-between">
     <div>
       <h2 class="text-lg font-semibold">Trace {{.Trace.TraceID}}</h2>
-      <p class="text-sm text-slate-500">{{.Trace.Protocol}} · {{.Trace.Timestamp}}{{if .Trace.Signature}} · <span class="font-mono">{{.Trace.Signature}}</span>{{end}}</p>
+      <p class="text-sm text-slate-500">{{if .Trace.ProtocolLabel}}{{.Trace.ProtocolLabel}}{{else}}{{.Trace.Protocol}}{{end}} · {{.Trace.Timestamp}}{{if .Trace.Signature}} · <span class="font-mono">{{.Trace.Signature}}</span>{{end}}</p>
     </div>
     <a href="/dashboard" class="text-sm text-blue-600 hover:underline">Back to timeline</a>
   </div>
@@ -41,7 +41,9 @@
     {{end}}
   </section>
   {{else}}
-  <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  <section class="space-y-2">
+    <h3 class="text-sm font-semibold text-slate-700">Ingress response</h3>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
       <div class="px-4 py-2 border-b border-slate-200 bg-slate-50 text-sm font-medium">Expected (Control-A)</div>
       <pre class="p-4 text-xs font-mono overflow-x-auto leading-5">{{range .LeftLines}}<span class="{{.Class}} block whitespace-pre">{{.Text}}</span>{{end}}</pre>
@@ -49,6 +51,7 @@
     <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
       <div class="px-4 py-2 border-b border-slate-200 bg-slate-50 text-sm font-medium">Actual (Candidate)</div>
       <pre class="p-4 text-xs font-mono overflow-x-auto leading-5">{{range .RightLines}}<span class="{{.Class}} block whitespace-pre">{{.Text}}</span>{{end}}</pre>
+    </div>
     </div>
   </section>
   {{end}}
@@ -59,14 +62,14 @@
     <ul class="space-y-2 text-sm">
       {{range .Related}}
       <li class="flex flex-wrap items-center gap-3">
-        <span class="font-medium">{{.Protocol}}</span>
+        <span class="font-medium">{{if .ProtocolLabel}}{{.ProtocolLabel}}{{else}}{{.Protocol}}{{end}}</span>
         {{if .Signature}}<span class="font-mono text-xs text-slate-600">{{.Signature}}</span>{{end}}
         {{if eq .Status "MISMATCH"}}
         <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">MISMATCH</span>
         {{else}}
         <span class="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">MATCH</span>
         {{end}}
-        {{if ne .Protocol $.Trace.Protocol}}
+        {{if ne .DetailURL $.Trace.DetailURL}}
         <a class="text-blue-600 hover:underline text-xs" href="{{.DetailURL}}">Open</a>
         {{else}}
         <span class="text-slate-400 text-xs">viewing</span>

@@ -74,10 +74,7 @@ func envFromTarget(dep *appsv1.Deployment) ([]corev1.EnvVar, string) {
 	return out, warn
 }
 
-func appEnvWithEgressProxy(st *enginev1alpha1.ShadowTest, base []corev1.EnvVar) []corev1.EnvVar {
-	if len(st.Spec.RecordAndReplay) == 0 {
-		return base
-	}
+func appEnvWithEgressProxy(_ *enginev1alpha1.ShadowTest, base []corev1.EnvVar) []corev1.EnvVar {
 	out := append([]corev1.EnvVar{}, base...)
 	out = append(out,
 		corev1.EnvVar{Name: envHTTPProxy, Value: egressProxyURL},
@@ -90,11 +87,7 @@ func appEnvWithEgressProxy(st *enginev1alpha1.ShadowTest, base []corev1.EnvVar) 
 func envoyContainerPorts(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort {
 	ports := []corev1.ContainerPort{
 		{Name: "ingress", ContainerPort: servicePortFor(st), Protocol: corev1.ProtocolTCP},
-	}
-	if len(st.Spec.RecordAndReplay) > 0 {
-		ports = append(ports, corev1.ContainerPort{
-			Name: "egress", ContainerPort: egressProxyPort, Protocol: corev1.ProtocolTCP,
-		})
+		{Name: "egress", ContainerPort: egressProxyPort, Protocol: corev1.ProtocolTCP},
 	}
 	if hasMongoDependency(st) {
 		ports = append(ports, corev1.ContainerPort{
@@ -165,6 +158,20 @@ func beruGRPCTimeoutFor(st *enginev1alpha1.ShadowTest) string {
 		return st.Spec.BeruGRPCTimeout
 	}
 	return defaultBeruGRPCTimeout
+}
+
+func beruIngestAddressFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+	if st.Spec.BeruIngestAddress != "" {
+		return st.Spec.BeruIngestAddress
+	}
+	if st.Spec.BeruGRPCAddress != "" {
+		return defaultBeruIngestAddress
+	}
+	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
+}
+
+func parseBeruIngestHostPort(st *enginev1alpha1.ShadowTest, shadowNS string) (host string, port int32, err error) {
+	return parseHostPort(beruIngestAddressFor(st, shadowNS))
 }
 
 func parseBeruHostPort(address string) (host string, port int32, err error) {

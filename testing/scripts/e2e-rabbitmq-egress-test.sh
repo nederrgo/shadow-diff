@@ -14,7 +14,8 @@ EGRESS_RELAY_RABBITMQ_IMG="${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:de
 BERU_IMG="${BERU_IMG:-beru:dev}"
 MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
 KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
-TRACE_ID="${TRACE_ID:-rmq-egress-e2e-$(date +%s)}"
+TRACE_HEX="${TRACE_HEX:-$(openssl rand -hex 16)}"
+TRACE_ID="${TRACE_ID:-$TRACE_HEX}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 SKIP_LOAD="${SKIP_LOAD:-0}"
 SKIP_MONARCH_BUILD="${SKIP_MONARCH_BUILD:-0}"
@@ -47,7 +48,7 @@ upgrade_crd() {
 
 trap '[[ $? -ne 0 ]] && log_fail "RabbitMQ egress E2E failed (see above)"' EXIT
 
-echo "==> RabbitMQ egress E2E (trace ${TRACE_ID})"
+echo "==> RabbitMQ egress E2E (trace ${TRACE_HEX})"
 require_kubectl_cluster
 if [[ "$SKIP_BUILD" != "1" || "$SKIP_LOAD" != "1" ]]; then
   require_docker
@@ -190,9 +191,9 @@ echo "==> Declare prod exchange and publish ingress trigger"
 kubectl exec -n default deploy/rmq-prod-broker -- sh -c "
   rabbitmqadmin declare exchange name=${PROD_EXCHANGE} type=topic durable=true 2>/dev/null || true
   rabbitmqadmin publish exchange=${PROD_EXCHANGE} routing_key=${PROD_ROUTING_KEY} \
-    payload='{\"e2e\":\"rmq-egress\"}' properties='{\"headers\":{\"x-shadow-trace-id\":\"${TRACE_ID}\"}}'
+    payload='{\"e2e\":\"rmq-egress\"}' properties='{\"headers\":{\"x-shadow-trace-id\":\"${TRACE_HEX}\"}}'
 "
-log_success "published prod message trace=${TRACE_ID}"
+log_success "published prod message trace=${TRACE_HEX}"
 
 echo "==> Wait for shadow workers, egress-relay, and Beru diff"
 sleep 15
@@ -203,8 +204,8 @@ for role in control-a control-b candidate; do
     log_fail "no shadow worker pod for role ${role}"
     exit 1
   fi
-  if ! kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=100 2>/dev/null | grep -q "trace=${TRACE_ID}"; then
-    log_fail "${role} app logs missing trace=${TRACE_ID}"
+  if ! kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=100 2>/dev/null | grep -q "trace=${TRACE_HEX}"; then
+    log_fail "${role} app logs missing trace=${TRACE_HEX}"
     kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=40 >&2 || true
     exit 1
   fi
@@ -213,7 +214,7 @@ for role in control-a control-b candidate; do
     kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=40 >&2 || true
     exit 1
   fi
-  log_success "${role} consumed and published RabbitMQ egress trace=${TRACE_ID}"
+  log_success "${role} consumed and published RabbitMQ egress trace=${TRACE_HEX}"
 done
 
 relay_pod=$(kubectl get pods -n "$SHADOW_NS" -l "app.kubernetes.io/name=egress-relay-rabbitmq" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
@@ -227,17 +228,17 @@ if [[ -z "$beru_pod" ]]; then
   log_fail "Beru pod not found in beru-system"
   exit 1
 fi
-if ! kubectl logs -n beru-system "$beru_pod" --tail=200 | grep -q "No egress regression for Trace ${TRACE_ID} (rabbitmq)"; then
-  log_fail "Beru logs missing 'No egress regression for Trace ${TRACE_ID} (rabbitmq)'"
+if ! kubectl logs -n beru-system "$beru_pod" --tail=200 | grep -q "No egress regression for Trace ${TRACE_HEX} (rabbitmq)"; then
+  log_fail "Beru logs missing 'No egress regression for Trace ${TRACE_HEX} (rabbitmq)'"
   kubectl logs -n beru-system "$beru_pod" --tail=80 >&2 || true
   exit 1
 fi
-log_success "Beru reported no RabbitMQ egress regression for trace ${TRACE_ID}"
+log_success "Beru reported no RabbitMQ egress regression for trace ${TRACE_HEX}"
 
 echo "==> W3C traceparent-only RabbitMQ egress (no x-shadow-trace-id on egress publish)"
-TRACE_HEX="${TRACE_HEX:-$(openssl rand -hex 16)}"
+TRACE_HEX_W3C="${TRACE_HEX_W3C:-$(openssl rand -hex 16)}"
 SPAN_HEX="$(openssl rand -hex 8)"
-TRACE_TP="00-${TRACE_HEX}-${SPAN_HEX}-01"
+TRACE_TP="00-${TRACE_HEX_W3C}-${SPAN_HEX}-01"
 
 kubectl set env deployment/rmq-prod-target -n default RMQ_EGRESS_TRACEPARENT_ONLY=1 >/dev/null 2>&1 || true
 for role in control-a control-b candidate; do
@@ -249,7 +250,7 @@ kubectl exec -n default deploy/rmq-prod-broker -- sh -c "
   rabbitmqadmin publish exchange=${PROD_EXCHANGE} routing_key=${PROD_ROUTING_KEY} \
     payload='{\"e2e\":\"rmq-egress-w3c\"}' properties='{\"headers\":{\"traceparent\":\"${TRACE_TP}\"}}'
 "
-log_success "published traceparent-only prod message trace_hex=${TRACE_HEX}"
+log_success "published traceparent-only prod message trace_hex=${TRACE_HEX_W3C}"
 sleep 15
 
 for role in control-a control-b candidate; do
@@ -258,8 +259,8 @@ for role in control-a control-b candidate; do
     log_fail "no shadow worker pod for role ${role}"
     exit 1
   fi
-  if ! kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=120 2>/dev/null | grep -q "trace=${TRACE_HEX}"; then
-    log_fail "${role} app logs missing trace=${TRACE_HEX} (W3C consume)"
+  if ! kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=120 2>/dev/null | grep -q "trace=${TRACE_HEX_W3C}"; then
+    log_fail "${role} app logs missing trace=${TRACE_HEX_W3C} (W3C consume)"
     kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=40 >&2 || true
     exit 1
   fi
@@ -268,15 +269,15 @@ for role in control-a control-b candidate; do
     kubectl logs -n "$SHADOW_NS" "$pod" -c app --tail=40 >&2 || true
     exit 1
   fi
-  log_success "${role} consumed W3C trace and published traceparent-only egress trace=${TRACE_HEX}"
+  log_success "${role} consumed W3C trace and published traceparent-only egress trace=${TRACE_HEX_W3C}"
 done
 
-if ! kubectl logs -n beru-system "$beru_pod" --tail=300 | grep -q "No egress regression for Trace ${TRACE_HEX} (rabbitmq)"; then
-  log_fail "Beru logs missing 'No egress regression for Trace ${TRACE_HEX} (rabbitmq)' (traceparent-only egress)"
+if ! kubectl logs -n beru-system "$beru_pod" --tail=300 | grep -q "No egress regression for Trace ${TRACE_HEX_W3C} (rabbitmq)"; then
+  log_fail "Beru logs missing 'No egress regression for Trace ${TRACE_HEX_W3C} (rabbitmq)' (traceparent-only egress)"
   kubectl logs -n beru-system "$beru_pod" --tail=80 >&2 || true
   exit 1
 fi
-log_success "Beru reported no RabbitMQ egress regression for W3C trace ${TRACE_HEX}"
+log_success "Beru reported no RabbitMQ egress regression for W3C trace ${TRACE_HEX_W3C}"
 
 trap - EXIT
-log_success "RabbitMQ egress E2E passed (trace ${TRACE_ID}, W3C trace ${TRACE_HEX})"
+log_success "RabbitMQ egress E2E passed (trace ${TRACE_HEX}, W3C trace ${TRACE_HEX_W3C})"

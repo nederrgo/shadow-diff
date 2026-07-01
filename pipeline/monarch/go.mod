@@ -5,7 +5,6 @@ go 1.26.0
 require (
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
-	github.com/open-telemetry/opentelemetry-operator/apis v0.153.0
 	github.com/rabbitmq/amqp091-go v1.10.0
 	k8s.io/api v0.35.4
 	k8s.io/apimachinery v0.35.4

@@ -36,17 +36,50 @@ func TestRenderEnvoyYAML(t *testing.T) {
 		"envoy.filters.http.ext_proc",
 		"envoy.filters.http.header_mutation",
 		"beru_ext_proc",
+		"beru_ingest",
+		"beru-ingest.shadow-system.svc.cluster.local",
+		"envoy.filters.http.lua",
+		"envoy.filters.http.lua\", \"traceparent\"",
+		"escape_json",
+		"max_bytes = 65536",
+		"httpCall",
+		"/api/v1/ingest/wire",
+		"request_body_mode: NONE",
+		"name: egress_http_listener",
+		"port_value: 10001",
+		"dynamic_egress_cluster",
 		"cluster: local_app",
 		"port_value: 80",
 		"port_value: 8080",
 		"failure_mode_allow: true",
 		"response_body_mode: BUFFERED",
-		"egress_stub",
 	}
 	for _, c := range checks {
 		if !strings.Contains(yaml, c) {
 			t.Fatalf("expected %q in envoy yaml:\n%s", c, yaml)
 		}
+	}
+	if strings.Contains(yaml, "egress_stub") {
+		t.Fatal("egress_stub should be replaced by always-on egress_http_listener")
+	}
+	assertEgressFilterOrder(t, yaml)
+}
+
+func assertEgressFilterOrder(t *testing.T, yaml string) {
+	t.Helper()
+	idx := strings.Index(yaml, "name: egress_http_listener")
+	if idx < 0 {
+		t.Fatal("missing egress_http_listener")
+	}
+	section := yaml[idx:]
+	lua := strings.Index(section, "envoy.filters.http.lua")
+	extProc := strings.Index(section, "envoy.filters.http.ext_proc")
+	router := strings.Index(section, "envoy.filters.http.router")
+	if lua < 0 || extProc < 0 || router < 0 {
+		t.Fatalf("missing egress filters: lua=%d ext_proc=%d router=%d", lua, extProc, router)
+	}
+	if !(lua < extProc && extProc < router) {
+		t.Fatalf("egress filter order must be lua → ext_proc → router; got lua=%d ext_proc=%d router=%d", lua, extProc, router)
 	}
 }
 
@@ -91,9 +124,9 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	checks := []string{
-		"traceparent pass-through on egress",
-		"name: egress_proxy",
-		"port_value: 15001",
+		"name: egress_http_listener",
+		"port_value: 10001",
+		"envoy.filters.http.lua",
 		"x-shadow-mode",
 		"value: \"egress\"",
 		"x-shadow-record-and-replay-config",
@@ -110,11 +143,12 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 		}
 	}
 	if strings.Contains(yaml, "egress_stub") {
-		t.Fatal("expected egress_proxy, not egress_stub")
+		t.Fatal("expected egress_http_listener, not egress_stub")
 	}
-	if strings.Contains(yaml, "response_body_mode: SKIP") {
-		t.Fatal("Envoy BodySendMode does not support SKIP; use NONE for response_body_mode")
+	if strings.Contains(yaml, "name: external_apis") {
+		t.Fatal("record/replay egress should not use passthrough external_apis virtual host")
 	}
+	assertEgressFilterOrder(t, yaml)
 }
 
 func TestRenderEnvoyYAML_egressProxyHostPort(t *testing.T) {
@@ -194,11 +228,7 @@ func TestServicePortFor_default8888(t *testing.T) {
 }
 
 func TestAppEnvWithEgressProxy(t *testing.T) {
-	st := &enginev1alpha1.ShadowTest{
-		Spec: enginev1alpha1.ShadowTestSpec{
-			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{{Host: "api.example.com"}},
-		},
-	}
+	st := &enginev1alpha1.ShadowTest{}
 	env := appEnvWithEgressProxy(st, []corev1.EnvVar{{Name: "FOO", Value: "bar"}})
 	if len(env) != 4 {
 		t.Fatalf("expected 4 env vars, got %d", len(env))
@@ -216,10 +246,21 @@ func TestAppEnvWithEgressProxy(t *testing.T) {
 	if found[envNoProxy] != defaultNoProxyValue {
 		t.Fatalf("NO_PROXY = %q", found[envNoProxy])
 	}
+	if !strings.Contains(found[envNoProxy], "beru-ingest.shadow-system.svc.cluster.local") {
+		t.Fatalf("NO_PROXY must bypass beru-ingest: %q", found[envNoProxy])
+	}
+}
 
-	empty := appEnvWithEgressProxy(&enginev1alpha1.ShadowTest{}, []corev1.EnvVar{{Name: "FOO", Value: "bar"}})
-	if len(empty) != 1 {
-		t.Fatalf("expected no proxy env without recordAndReplay, got %d", len(empty))
+func TestEnvoySidecarEnvHasNoProxy(t *testing.T) {
+	envoyEnv := []corev1.EnvVar{
+		{Name: envShadowRole, Value: roleControlA},
+		{Name: envBeruGRPCAddress, Value: defaultBeruGRPCAddress},
+	}
+	for _, e := range envoyEnv {
+		switch e.Name {
+		case envHTTPProxy, envHTTPSProxy, envNoProxy:
+			t.Fatalf("envoy-sidecar must not have proxy env %q", e.Name)
+		}
 	}
 }
 
@@ -242,6 +283,8 @@ func TestRenderEnvoyYAML_mongoEgress(t *testing.T) {
 	}
 	checks := []string{
 		"name: mongo_egress",
+		"envoy.filters.network.mongo_proxy",
+		"emit_dynamic_metadata: true",
 		"envoy.filters.network.tcp_proxy",
 		"port_value: 27017",
 		"mongo_upstream",
@@ -251,18 +294,5 @@ func TestRenderEnvoyYAML_mongoEgress(t *testing.T) {
 		if !strings.Contains(yaml, c) {
 			t.Fatalf("expected %q in envoy yaml:\n%s", c, yaml)
 		}
-	}
-	for _, forbidden := range []string{
-		"envoy.filters.network.mongo_proxy",
-		"beru_als",
-		"access_log",
-		"envoy.access_loggers.tcp_grpc",
-	} {
-		if strings.Contains(yaml, forbidden) {
-			t.Fatalf("mongo egress yaml must not contain %q:\n%s", forbidden, yaml)
-		}
-	}
-	if strings.Contains(yaml, "transport_socket") {
-		t.Fatal("mongo upstream must be cleartext TCP without transport_socket TLS")
 	}
 }

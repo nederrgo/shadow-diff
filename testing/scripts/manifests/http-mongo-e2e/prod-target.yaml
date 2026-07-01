@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http-mongo-prod-target
+  namespace: default
+  labels:
+    app: http-mongo-prod-target
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: http-mongo-prod-target
+  template:
+    metadata:
+      labels:
+        app: http-mongo-prod-target
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["sh", "-c", "sleep infinity"]
+          env:
+            - name: HTTP_PORT
+              value: "8080"
+            - name: RMQ_EGRESS_EXCHANGE
+              value: "egress-events"
+            - name: RMQ_EGRESS_ROUTING_KEY
+              value: "order.shipped"

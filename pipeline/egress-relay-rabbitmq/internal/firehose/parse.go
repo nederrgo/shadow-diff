@@ -101,6 +101,59 @@ func TraceIDFromFirehose(traceHeaders amqp.Table) (string, error) {
 	return traceID, err
 }
 
+// RoutingKeyFromPublish reads the first routing key from Firehose metadata.
+func RoutingKeyFromPublish(traceHeaders amqp.Table) string {
+	if rk, ok := getStringHeader(traceHeaders, "routing_key"); ok {
+		return rk
+	}
+	v, ok := traceHeaders["routing_keys"]
+	if !ok {
+		return ""
+	}
+	switch arr := v.(type) {
+	case []interface{}:
+		return firstNonEmptyString(arr)
+	case []string:
+		if len(arr) > 0 {
+			return strings.TrimSpace(arr[0])
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyString(arr []interface{}) string {
+	for _, item := range arr {
+		switch s := item.(type) {
+		case string:
+			if t := strings.TrimSpace(s); t != "" {
+				return t
+			}
+		case []byte:
+			if t := strings.TrimSpace(string(s)); t != "" {
+				return t
+			}
+		}
+	}
+	return ""
+}
+
+// BeruEgressPayload wraps the published body with exchange + routing_key for Beru signatures.
+func BeruEgressPayload(traceHeaders amqp.Table, firehoseRoutingKey string, body []byte) (json.RawMessage, error) {
+	bodyJSON, err := PayloadJSON(body)
+	if err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(map[string]any{
+		"exchange":    ExchangeNameFromPublish(traceHeaders, firehoseRoutingKey),
+		"routing_key": RoutingKeyFromPublish(traceHeaders),
+		"body":        json.RawMessage(bodyJSON),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal beru egress payload: %w", err)
+	}
+	return json.RawMessage(out), nil
+}
+
 // PayloadJSON validates and returns the original message body as JSON.
 func PayloadJSON(body []byte) (json.RawMessage, error) {
 	if len(body) == 0 {

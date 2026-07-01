@@ -35,7 +35,6 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	otelv1alpha1 "github.com/open-telemetry/opentelemetry-operator/apis/v1alpha1"
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 	"github.com/shadow-diff/monarch/internal/controller"
 	// +kubebuilder:scaffold:imports
@@ -50,7 +49,6 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(enginev1alpha1.AddToScheme(scheme))
-	utilruntime.Must(otelv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 

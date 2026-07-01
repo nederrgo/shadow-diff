@@ -169,4 +169,16 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
     chmod +x testing/scripts/e2e-siphon-otlp-ingress-test.sh
     ./testing/scripts/e2e-siphon-otlp-ingress-test.sh
   fi
+
+  if [[ "${RUN_RMQ_MONGO_TEST:-0}" -eq 1 ]]; then
+    echo ""
+    chmod +x testing/scripts/e2e-rmq-mongo-test.sh
+    ./testing/scripts/e2e-rmq-mongo-test.sh
+  fi
+
+  if [[ "${RUN_HTTP_MONGO_TEST:-0}" -eq 1 ]]; then
+    echo ""
+    chmod +x testing/scripts/e2e-http-mongo-test.sh
+    ./testing/scripts/e2e-http-mongo-test.sh
+  fi
 }

@@ -152,6 +152,41 @@ func TestTraceIDFromFirehose_missingHeadersNoPanic(t *testing.T) {
 	}
 }
 
+func TestRoutingKeyFromPublish(t *testing.T) {
+	headers := amqp.Table{
+		"routing_keys": []interface{}{"order.shipped", "cc-key"},
+	}
+	if got := RoutingKeyFromPublish(headers); got != "order.shipped" {
+		t.Fatalf("routing key = %q", got)
+	}
+	headers = amqp.Table{"routing_key": "order.created"}
+	if got := RoutingKeyFromPublish(headers); got != "order.created" {
+		t.Fatalf("routing_key header = %q", got)
+	}
+}
+
+func TestBeruEgressPayload(t *testing.T) {
+	headers := amqp.Table{
+		"exchange_name": "egress-events",
+		"routing_keys":  []interface{}{"order.shipped"},
+	}
+	raw, err := BeruEgressPayload(headers, "publish.egress-events", []byte(`{"order_id":"e2e"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatal(err)
+	}
+	if obj["exchange"] != "egress-events" || obj["routing_key"] != "order.shipped" {
+		t.Fatalf("metadata = %#v", obj)
+	}
+	body, ok := obj["body"].(map[string]any)
+	if !ok || body["order_id"] != "e2e" {
+		t.Fatalf("body = %#v", obj["body"])
+	}
+}
+
 func TestPayloadJSON(t *testing.T) {
 	raw, err := PayloadJSON([]byte(`{"order":1}`))
 	if err != nil {

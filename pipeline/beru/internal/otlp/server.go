@@ -37,7 +37,7 @@ type Server struct {
 	DefaultShadowTest string
 }
 
-// Export receives OTLP span batches and routes MongoDB egress spans to the state engine.
+// Export receives OTLP span batches. MongoDB egress via OTLP is deprecated; use wire ingest.
 func (s *Server) Export(ctx context.Context, req *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
 	log := s.Log
 	if log == nil {
@@ -56,50 +56,18 @@ func (s *Server) Export(ctx context.Context, req *coltracepb.ExportTraceServiceR
 		log.Debug("OTLP trace export received", "resourceSpans", n, "spans", spanCount)
 	}
 
-	var mongoSpans int
-	var totalSpans int
+	var mongoSkipped int
 	for _, rs := range req.GetResourceSpans() {
-		shadowRole := shadowRoleFromResource(rs.GetResource())
-		if shadowRole == "" {
-			log.Debug("Skipping resource spans without shadow role")
-			continue
-		}
 		for _, ss := range rs.GetScopeSpans() {
 			for _, span := range ss.GetSpans() {
-				totalSpans++
-				if !isMongoSpan(span) {
-					continue
+				if isMongoSpan(span) {
+					mongoSkipped++
 				}
-				traceID, ok := traceIDHex(span.GetTraceId())
-				if !ok {
-					log.Debug("Skipping mongo span with invalid trace id")
-					continue
-				}
-				stmt := mongoDBStatement(span)
-				hints := mongoHintsFromSpan(span)
-				var payload []byte
-				var err error
-				if stmt != "" {
-					payload, err = ParseMongoStatement(stmt)
-					if err != nil {
-						log.Debug("Skipping mongo span with unparseable db.statement", "err", err)
-						continue
-					}
-				} else {
-					payload = []byte("{}")
-				}
-				if raw, err := v2report.FromMongoEgress(traceID, shadowRole, s.DefaultShadowTest, payload, hints); err == nil {
-					s.Router.Route(raw)
-				}
-				log.Info("Ingested OTLP MongoDB egress span", "trace", traceID, "role", shadowRole)
-				mongoSpans++
 			}
 		}
 	}
-	if mongoSpans > 0 {
-		log.Debug("OTLP export processed mongo spans", "count", mongoSpans)
-	} else if totalSpans > 0 {
-		log.Debug("OTLP export received non-mongo spans", "spans", totalSpans)
+	if mongoSkipped > 0 {
+		log.Debug("OTLP Mongo egress deprecated; use POST /api/v1/ingest/wire", "spans", mongoSkipped)
 	}
 	_ = ctx
 	return &coltracepb.ExportTraceServiceResponse{}, nil

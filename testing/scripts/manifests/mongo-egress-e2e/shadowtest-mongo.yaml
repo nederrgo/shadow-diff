@@ -21,8 +21,6 @@ spec:
   siphon:
     enabled: false
 
-  language: nodejs
-
   dependencies:
     - name: mongo
       type: mongodb

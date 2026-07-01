@@ -59,7 +59,7 @@ No egress regression for Trace <32-hex-trace-id> (rabbitmq)
 |------|---------|
 | `prod-target-nodejs.yaml` | Prod deployment env for egress exchange/routing (no manual trace flag) |
 | `prod-nodejs-worker.yaml` | Prod worker for `nodejs-hybrid-shadow` hybrid E2E |
-| `shadowtest-otel-rmq.yaml` | ShadowTest with `rabbitmq_message` input, `otelInjection.language: nodejs` (helper images resolved by Monarch) |
+| `shadowtest-otel-rmq.yaml` | ShadowTest with `rabbitmq_message` input (apps must propagate `traceparent` without Monarch OTel injection) |
 | `shadowtest-nodejs-hybrid.yaml` | Node.js hybrid ShadowTest (RMQ ingress + mongo + record/replay) |
 
 Shadow namespace (deterministic): `shadow-default-otel-rmq-test-shadow`
