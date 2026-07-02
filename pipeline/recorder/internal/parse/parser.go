@@ -3,7 +3,6 @@ package parse
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"io"
 	"log"
 	"net"
@@ -36,7 +35,6 @@ func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, recordAndRe
 			}
 			return
 		}
-		reqBody, _ := io.ReadAll(req.Body)
 		_, _ = io.Copy(io.Discard, req.Body)
 		req.Body.Close()
 
@@ -59,8 +57,9 @@ func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, recordAndRe
 		if path == "" {
 			path = "/"
 		}
-		log.Printf("recorder parser: matched request method=%s host=%q path=%s reqBodyLen=%d",
-			req.Method, NormalizeHTTPHost(host), path, len(reqBody))
+		traceID := traceIDFromTraceparent(req.Header.Get("traceparent"))
+		log.Printf("recorder parser: matched request method=%s host=%q path=%s traceID=%s",
+			req.Method, NormalizeHTTPHost(host), path, traceID)
 
 		resp, err := http.ReadResponse(resReader, req)
 		if err != nil {
@@ -80,11 +79,10 @@ func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, recordAndRe
 		}
 
 		record := beru.RecordPayload{
-			Method:      req.Method,
-			Host:        NormalizeHTTPHost(host),
-			Path:        path,
-			Body:        JSONRawBody(reqBody),
-			IgnorePaths: IgnorePathsForHost(host, recordAndReplay),
+			TraceID: traceID,
+			Method:  req.Method,
+			Host:    NormalizeHTTPHost(host),
+			Path:    path,
 			Response: beru.RecordResponse{
 				Status:  resp.StatusCode,
 				Headers: headers,
@@ -122,27 +120,17 @@ func NormalizeHTTPHost(host string) string {
 	return host
 }
 
-// IgnorePathsForHost returns ignore_paths for a matching downstream host.
-func IgnorePathsForHost(host string, recordAndReplay []config.RecordAndReplayHost) []string {
-	host = NormalizeHTTPHost(host)
-	for _, d := range recordAndReplay {
-		if NormalizeHTTPHost(d.Host) == host {
-			return d.IgnorePaths
-		}
+// traceIDFromTraceparent extracts the 32-char trace ID from a W3C traceparent header.
+// Returns empty string if the header is absent or malformed.
+func traceIDFromTraceparent(v string) string {
+	if v == "" {
+		return ""
 	}
-	return nil
-}
-
-// JSONRawBody normalizes a request body for JSON encoding.
-func JSONRawBody(body []byte) json.RawMessage {
-	if len(body) == 0 {
-		return json.RawMessage("null")
+	parts := strings.SplitN(v, "-", 3)
+	if len(parts) >= 2 && len(parts[1]) == 32 {
+		return parts[1]
 	}
-	if json.Valid(body) {
-		return json.RawMessage(body)
-	}
-	quoted, _ := json.Marshal(string(body))
-	return json.RawMessage(quoted)
+	return ""
 }
 
 func discardHTTPResponse(resReader *bufio.Reader, req *http.Request) {

@@ -26,12 +26,11 @@ type Server struct {
 }
 
 type seedMockRequest struct {
-	Method      string           `json:"method"`
-	Host        string           `json:"host"`
-	Path        string           `json:"path"`
-	Body        json.RawMessage  `json:"body"`
-	IgnorePaths []string         `json:"ignore_paths"`
-	Response    seedMockResponse `json:"response"`
+	TraceID  string           `json:"trace_id"`
+	Method   string           `json:"method"`
+	Host     string           `json:"host"`
+	Path     string           `json:"path"`
+	Response seedMockResponse `json:"response"`
 }
 
 type seedMockResponse struct {
@@ -193,6 +192,10 @@ func (s *Server) putMockFromRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
+	if req.TraceID == "" {
+		http.Error(w, "trace_id is required", http.StatusBadRequest)
+		return
+	}
 	if req.Method == "" || req.Host == "" || req.Path == "" {
 		http.Error(w, "method, host, and path are required", http.StatusBadRequest)
 		return
@@ -202,23 +205,13 @@ func (s *Server) putMockFromRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body := []byte(req.Body)
-	if len(body) == 0 {
-		body = []byte{}
-	}
-
-	hash, err := replay.HashRequest(req.Method, req.Host, req.Path, body, req.IgnorePaths)
-	if err != nil {
-		http.Error(w, "Could not hash request", http.StatusBadRequest)
-		return
-	}
-
-	s.Mocks.Put(hash, replay.EarlyResponse{
+	key := replay.TraceKey(req.TraceID, req.Method, req.Host, req.Path)
+	s.Mocks.Put(key, replay.EarlyResponse{
 		StatusCode: req.Response.Status,
 		Headers:    req.Response.Headers,
 		Body:       []byte(req.Response.Body),
 	})
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"hash": hash})
+	_ = json.NewEncoder(w).Encode(map[string]string{"hash": key})
 }

@@ -1,9 +1,7 @@
 package envoyextproc
 
 import (
-	"encoding/json"
 	"net"
-	"strings"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -13,28 +11,20 @@ import (
 )
 
 const (
-	headerShadowMode            = "x-shadow-mode"
-	headerShadowRecordAndReplayConf = "x-shadow-record-and-replay-config"
-	shadowModeEgress            = "egress"
-	egressRegressionBody        = "Egress Regression"
-	egressMissStatus            = 599
+	headerShadowMode     = "x-shadow-mode"
+	shadowModeEgress     = "egress"
+	egressRegressionBody = "Egress Regression"
+	egressMissStatus     = 599
 )
 
-// RecordAndReplayHostConfig mirrors Monarch RecordAndReplayHostSpec for ext_proc metadata.
-type RecordAndReplayHostConfig struct {
-	Host               string   `json:"host"`
-	IgnoreRequestPaths []string `json:"ignoreRequestPaths"`
-}
-
 type egressState struct {
-	role                    string
-	traceID                 string
-	method                  string
-	host                    string
-	path                    string
-	body                    []byte
-	recordAndReplayConfigs  []RecordAndReplayHostConfig
-	endOfStreamHeaders      bool
+	role               string
+	traceID            string
+	method             string
+	host               string
+	path               string
+	body               []byte
+	endOfStreamHeaders bool
 }
 
 func (s *Server) handleEgressRequest(state *egressState, req *extprocv3.ProcessingRequest) *extprocv3.ProcessingResponse {
@@ -77,21 +67,18 @@ func (s *Server) egressImmediateFromState(state *egressState) *extprocv3.Process
 	if s.Mocks == nil {
 		return immediateResponse(egressMissStatus, nil, []byte(egressRegressionBody), "egress mock store unavailable")
 	}
-
-	hostKey := hostWithoutPort(state.host)
-	ignorePaths := ignorePathsForHost(state.recordAndReplayConfigs, hostKey)
-
-	hash, err := replay.HashRequest(state.method, hostKey, state.path, state.body, ignorePaths)
-	if err != nil {
-		s.Log.Warn("Could not hash egress request", "err", err, "host", hostKey, "path", state.path)
-		return immediateResponse(egressMissStatus, nil, []byte(egressRegressionBody), "egress hash error")
+	if state.traceID == "" {
+		s.Log.Info("Egress Regression: no trace ID", "method", state.method, "host", state.host, "path", state.path)
+		return immediateResponse(egressMissStatus, nil, []byte(egressRegressionBody), "egress no trace id")
 	}
 
-	if mock, ok := s.Mocks.Get(hash); ok {
+	hostKey := hostWithoutPort(state.host)
+	key := replay.TraceKey(state.traceID, state.method, hostKey, state.path)
+	if mock, ok := s.Mocks.Get(key); ok {
 		return immediateResponse(mock.StatusCode, mock.Headers, mock.Body, "egress mock hit")
 	}
 
-	s.Log.Info("Egress Regression", "trace_id", state.traceID, "hash", hash, "method", state.method, "host", hostKey, "path", state.path)
+	s.Log.Info("Egress Regression", "trace_id", state.traceID, "method", state.method, "host", hostKey, "path", state.path)
 	return immediateResponse(egressMissStatus, nil, []byte(egressRegressionBody), "egress regression")
 }
 
@@ -103,27 +90,6 @@ func hostWithoutPort(host string) string {
 		return h
 	}
 	return host
-}
-
-func ignorePathsForHost(configs []RecordAndReplayHostConfig, host string) []string {
-	host = strings.ToLower(host)
-	for _, c := range configs {
-		if strings.EqualFold(c.Host, host) {
-			return c.IgnoreRequestPaths
-		}
-	}
-	return nil
-}
-
-func parseRecordAndReplayConfigs(raw string) []RecordAndReplayHostConfig {
-	if raw == "" {
-		return nil
-	}
-	var configs []RecordAndReplayHostConfig
-	if err := json.Unmarshal([]byte(raw), &configs); err != nil {
-		return nil
-	}
-	return configs
 }
 
 func immediateResponse(statusCode int, headers map[string]string, body []byte, details string) *extprocv3.ProcessingResponse {

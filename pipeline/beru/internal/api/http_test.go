@@ -72,12 +72,12 @@ func TestSeedMock_roundTrip(t *testing.T) {
 	mocks := replay.NewMockStore()
 	s := &Server{Log: slog.Default(), Mocks: mocks}
 
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 	payload := map[string]any{
-		"method": "POST",
-		"host":   "api.example.com",
-		"path":   "/v1/orders",
-		"body":   map[string]any{"amount": 100, "timestamp": "ignore"},
-		"ignore_paths": []string{"$.timestamp"},
+		"trace_id": traceID,
+		"method":   "POST",
+		"host":     "api.example.com",
+		"path":     "/v1/orders",
 		"response": map[string]any{
 			"status":  200,
 			"headers": map[string]string{"content-type": "application/json"},
@@ -100,8 +100,35 @@ func TestSeedMock_roundTrip(t *testing.T) {
 	if out.Hash == "" {
 		t.Fatal("expected hash in response")
 	}
+	// Key must use the trace-ID format.
+	expectedKey := replay.TraceKey(traceID, "POST", "api.example.com", "/v1/orders")
+	if out.Hash != expectedKey {
+		t.Fatalf("expected key %q, got %q", expectedKey, out.Hash)
+	}
 	if _, ok := mocks.Get(out.Hash); !ok {
 		t.Fatal("mock not stored")
+	}
+}
+
+func TestSeedMock_missingTraceID(t *testing.T) {
+	mocks := replay.NewMockStore()
+	s := &Server{Log: slog.Default(), Mocks: mocks}
+
+	payload := map[string]any{
+		"method": "POST",
+		"host":   "api.example.com",
+		"path":   "/v1/orders",
+		"response": map[string]any{
+			"status": 200,
+			"body":   `{"ok":true}`,
+		},
+	}
+	raw, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/seed_mock", bytes.NewReader(raw))
+	rec := httptest.NewRecorder()
+	s.handleSeedMock(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when trace_id absent, got %d", rec.Code)
 	}
 }
 
@@ -109,11 +136,12 @@ func TestRecordEgress_roundTrip(t *testing.T) {
 	mocks := replay.NewMockStore()
 	s := &Server{Log: slog.Default(), Mocks: mocks}
 
+	const traceID = "aabbccddeeff00112233445566778899"
 	payload := map[string]any{
-		"method": "POST",
-		"host":   "httpbin.org",
-		"path":   "/post",
-		"body":   map[string]any{"e2e_record": 1},
+		"trace_id": traceID,
+		"method":   "POST",
+		"host":     "httpbin.org",
+		"path":     "/post",
 		"response": map[string]any{
 			"status":  200,
 			"headers": map[string]string{"content-type": "application/json"},
@@ -133,11 +161,12 @@ func TestRecordEgress_roundTrip(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Hash == "" {
-		t.Fatal("expected hash in response")
+	expectedKey := replay.TraceKey(traceID, "POST", "httpbin.org", "/post")
+	if out.Hash != expectedKey {
+		t.Fatalf("expected trace key %q, got %q", expectedKey, out.Hash)
 	}
 	if _, ok := mocks.Get(out.Hash); !ok {
-		t.Fatal("mock not stored")
+		t.Fatal("mock not stored under trace key")
 	}
 }
 

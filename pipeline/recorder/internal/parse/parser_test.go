@@ -15,12 +15,15 @@ import (
 	"github.com/shadow-diff/recorder/internal/config"
 )
 
+const keepAliveTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+
 func keepAliveFixture() (reqBytes, resBytes string) {
 	reqBytes = strings.Join([]string{
 		"POST /first HTTP/1.1\r\n",
 		"Host: api.example.com\r\n",
 		"Content-Length: 2\r\n",
 		"Connection: keep-alive\r\n",
+		"Traceparent: 00-" + keepAliveTraceID + "-00f067aa0ba902b7-01\r\n",
 		"\r\n",
 		"{}",
 		"POST /second HTTP/1.1\r\n",
@@ -107,24 +110,36 @@ func TestRunBidirectional_keepAlive(t *testing.T) {
 	if len(records) != 2 {
 		t.Fatalf("record count: got %d want 2", len(records))
 	}
-	byPath := map[string]int{}
+	byPath := map[string]beru.RecordPayload{}
 	for _, rec := range records {
-		byPath[rec.Path] = rec.Response.Status
+		byPath[rec.Path] = rec
 	}
-	if byPath["/first"] != 200 || byPath["/second"] != 201 {
+	if byPath["/first"].Response.Status != 200 || byPath["/second"].Response.Status != 201 {
 		t.Fatalf("records by path: %+v", byPath)
 	}
-	if records[0].IgnorePaths == nil || records[0].IgnorePaths[0] != "$.timestamp" {
-		// any record should carry ignore_paths from downstream config
-		found := false
-		for _, rec := range records {
-			if len(rec.IgnorePaths) > 0 && rec.IgnorePaths[0] == "$.timestamp" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("expected ignore_paths on a record")
+	// The first request had a traceparent header — verify trace ID was extracted.
+	if byPath["/first"].TraceID != keepAliveTraceID {
+		t.Fatalf("expected traceID %q on /first, got %q", keepAliveTraceID, byPath["/first"].TraceID)
+	}
+	// The second request had no traceparent — trace ID should be empty.
+	if byPath["/second"].TraceID != "" {
+		t.Fatalf("expected empty traceID on /second, got %q", byPath["/second"].TraceID)
+	}
+}
+
+func TestTraceIDFromTraceparent(t *testing.T) {
+	cases := []struct {
+		header string
+		want   string
+	}{
+		{"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", "4bf92f3577b34da6a3ce929d0e0e4736"},
+		{"", ""},
+		{"bad", ""},
+		{"00-short-00f067aa0ba902b7-01", ""},
+	}
+	for _, tc := range cases {
+		if got := traceIDFromTraceparent(tc.header); got != tc.want {
+			t.Errorf("traceIDFromTraceparent(%q) = %q, want %q", tc.header, got, tc.want)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package receiver
 
 import (
 	"context"
+	"encoding/hex"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -129,15 +130,21 @@ func parseEgressRecordFromSpan(
 		}
 	}
 
-	bodyStr := firstAttr(attrs, "http.request.body")
 	respBody := firstAttr(attrs, "http.response.body")
 
+	// Prefer the W3C traceparent attribute stamped by the PxL script; fall
+	// back to the Pixie-generated span.TraceId (which won't match the shadow
+	// workers' traceparent and will cause a 599 regression).
+	traceID := traceIDFromTraceparent(firstAttr(attrs, "traceparent"))
+	if traceID == "" {
+		traceID = hex.EncodeToString(span.TraceId)
+	}
+
 	return beru.RecordPayload{
-		Method:      method,
-		Host:        host,
-		Path:        path,
-		Body:        parse.JSONRawBody([]byte(bodyStr)),
-		IgnorePaths: parse.IgnorePathsForHost(host, hosts),
+		TraceID: traceID,
+		Method:  method,
+		Host:    host,
+		Path:    path,
 		Response: beru.RecordResponse{
 			Status:  status,
 			Headers: map[string]string{},
@@ -182,6 +189,16 @@ func firstAttr(attrs map[string]string, keys ...string) string {
 		if v := strings.TrimSpace(attrs[k]); v != "" {
 			return v
 		}
+	}
+	return ""
+}
+
+// traceIDFromTraceparent extracts the 32-char trace ID from a W3C traceparent header.
+// Returns empty string if the value is absent or malformed.
+func traceIDFromTraceparent(v string) string {
+	parts := strings.SplitN(v, "-", 4)
+	if len(parts) >= 2 && len(parts[1]) == 32 {
+		return parts[1]
 	}
 	return ""
 }

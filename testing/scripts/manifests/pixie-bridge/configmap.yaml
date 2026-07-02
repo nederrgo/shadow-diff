@@ -98,6 +98,8 @@ data:
     __EXCLUDE_PATH_FILTERS__
 
     df.end_time = df.time_ + df.latency
+    # Extract W3C traceparent so the Recorder can key the mock by trace ID.
+    df.traceparent = px.pluck(df.req_headers, 'traceparent')
 
     px.export(df, px.otel.Data(
       endpoint=px.otel.Endpoint(
@@ -121,6 +123,7 @@ data:
             'http.request.body': df.req_body,
             'http.response.status_code': df.resp_status,
             'http.response.body': df.resp_body,
+            'traceparent': df.traceparent,
           },
         ),
       ],
