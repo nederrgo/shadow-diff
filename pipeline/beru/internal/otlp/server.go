@@ -143,9 +143,30 @@ func (s *Server) routeMongoSpan(log *slog.Logger, resource *resourcepb.Resource,
 	hints := mongoHintsFromSpan(span)
 
 	// Pixie mongodb_events.req_body concatenates the command BSON and document BSON
-	// as two separate JSON objects: "{command} {document}". Extract only the first
-	// JSON object so signature derivation can find "insert"/"orders" etc.
-	payload := extractFirstJSONObject(rawPayload)
+	// as two separate JSON objects: "{command} {document}".
+	// The command doc drives signature derivation (insert:orders); the document body
+	// is the actual record being written and is what the diff engine should compare.
+	cmdDoc := extractFirstJSONObject(rawPayload)
+	docBody := extractSecondJSONObject(rawPayload)
+
+	// Pre-populate hints from the command doc so MongoSignature can produce a valid
+	// signature even when the comparison payload is the document body (which has no
+	// command keys like "insert"/"find").
+	if len(cmdDoc) > 0 && hints.Operation == "" {
+		if sig := v2report.MongoSignature(cmdDoc, v2report.MongoHints{}); sig != "" {
+			if parts := strings.SplitN(sig, ":", 3); len(parts) == 3 && parts[0] == "mongodb" && parts[1] != "unknown" {
+				hints.Operation = parts[1]
+				hints.Collection = parts[2]
+			}
+		}
+	}
+
+	// Use document body as comparison payload; fall back to command doc when there
+	// is no second object (e.g. find/count commands that carry no document body).
+	payload := docBody
+	if len(payload) == 0 {
+		payload = cmdDoc
+	}
 	if len(payload) == 0 && rawPayload != "" {
 		payload = []byte(rawPayload)
 	}
@@ -266,6 +287,24 @@ func extractFirstJSONObject(s string) []byte {
 		return nil
 	}
 	return []byte(raw)
+}
+
+// extractSecondJSONObject reads the second JSON object from a concatenated payload
+// such as the one Pixie produces for mongodb_events.req_body: "{command} {document}".
+func extractSecondJSONObject(s string) []byte {
+	if s == "" {
+		return nil
+	}
+	dec := json.NewDecoder(strings.NewReader(s))
+	var first json.RawMessage
+	if err := dec.Decode(&first); err != nil {
+		return nil
+	}
+	var second json.RawMessage
+	if err := dec.Decode(&second); err != nil {
+		return nil
+	}
+	return []byte(second)
 }
 
 func stringAttrFirst(attrs []*commonpb.KeyValue, keys ...string) string {

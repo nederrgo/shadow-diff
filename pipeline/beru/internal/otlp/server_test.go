@@ -208,6 +208,55 @@ func TestExport_deduplicatesPixieReExports(t *testing.T) {
 	}
 }
 
+func TestExport_mongoSpanPixieTwoObjects(t *testing.T) {
+	rec := &routeRecorder{}
+	client := startTestServer(t, &Server{Log: slog.Default(), Router: testRouter(rec), DefaultShadowTest: "mytest"})
+
+	traceHex := "aabbccdd11223344aabbccdd11223344"
+	spanHex := "aabbccdd11223344"
+	traceparent := "00-" + traceHex + "-" + spanHex + "-01"
+	// Two-object format: command doc + document body (as Pixie produces for mongodb_events.req_body)
+	rawPayload := `{"insert":"orders","comment":"` + traceparent + `","$db":"test"} {"_id":"abc123","order_id":"e2e-1","status":"processed"}`
+
+	req := &coltracepb.ExportTraceServiceRequest{
+		ResourceSpans: []*tracepb.ResourceSpans{{
+			Resource: &resourcepb.Resource{
+				Attributes: []*commonpb.KeyValue{
+					kvString(attrK8sPodName, "mytest-control-a-6c8f9d-x7k2p"),
+				},
+			},
+			ScopeSpans: []*tracepb.ScopeSpans{{
+				Spans: []*tracepb.Span{{
+					TraceId: bytes.Repeat([]byte{0xaa}, 16),
+					Attributes: []*commonpb.KeyValue{
+						kvString(attrDBSystem, "mongodb"),
+						kvString(attrDBRawPayload, rawPayload),
+					},
+				}},
+			}},
+		}},
+	}
+	if _, err := client.Export(context.Background(), req); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if len(rec.reports) != 1 {
+		t.Fatalf("Pixie two-object: expected 1 routed report, got %d", len(rec.reports))
+	}
+	r := rec.reports[0]
+	if r.TraceID != traceHex {
+		t.Fatalf("expected traceID=%q, got %q", traceHex, r.TraceID)
+	}
+	if r.Signature != "mongodb:insert:orders" {
+		t.Fatalf("expected signature=mongodb:insert:orders, got %q", r.Signature)
+	}
+	// PayloadBytes must be the document body (second object), not the command doc.
+	wantPayload := `{"_id":"abc123","order_id":"e2e-1","status":"processed"}`
+	if string(r.PayloadBytes) != wantPayload {
+		t.Fatalf("expected PayloadBytes=%q, got %q", wantPayload, string(r.PayloadBytes))
+	}
+}
+
 func TestExport_skipsNonMongoSpan(t *testing.T) {
 	rec := &routeRecorder{}
 	client := startTestServer(t, &Server{Log: slog.Default(), Router: testRouter(rec)})
