@@ -3,8 +3,17 @@ package otlp
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+var traceparentRE = regexp.MustCompile(`00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}`)
+
+// ExtractTraceparentFromRaw searches for a W3C traceparent embedded in raw MongoDB wire bytes.
+// Pixie captures raw TCP payload; the traceparent appears as ASCII text in the BSON $comment field.
+func ExtractTraceparentFromRaw(raw string) string {
+	return traceparentRE.FindString(raw)
+}
 
 // ParseMongoStatement normalizes an OpenTelemetry db.statement value to canonical JSON bytes.
 func ParseMongoStatement(statement string) ([]byte, error) {

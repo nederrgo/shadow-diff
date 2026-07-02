@@ -26,7 +26,7 @@ const (
 )
 
 func pixieCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) bool {
-	return siphonEnabled(st, target) || egressRecordingEnabled(st)
+	return siphonEnabled(st, target) || egressRecordingEnabled(st) || hasMongoDependency(st)
 }
 
 func targetPrimaryContainerPorts(target *appsv1.Deployment) map[int32]bool {
@@ -177,6 +177,10 @@ func buildPixieStreamRuleSpec(
 			}
 		}
 	}
+	if hasMongoDependency(st) {
+		spec.ShadowNamespace = shadowNS
+		spec.MongoOTelEndpoint = fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruOTLPPort)
+	}
 	return spec
 }
 
@@ -245,8 +249,12 @@ func (r *ShadowTestReconciler) reconcilePixieStreamRule(
 	if err := r.Get(ctx, pixieStreamRuleKey(st), rule); err != nil {
 		return err
 	}
+	if rule.Status.Phase == "Active" {
+		return nil
+	}
+	base := rule.DeepCopy()
 	rule.Status.Phase = "Active"
-	return r.Status().Update(ctx, rule)
+	return r.Status().Patch(ctx, rule, client.MergeFrom(base))
 }
 
 func (r *ShadowTestReconciler) deactivatePixieStreamRule(ctx context.Context, st *enginev1alpha1.ShadowTest) error {

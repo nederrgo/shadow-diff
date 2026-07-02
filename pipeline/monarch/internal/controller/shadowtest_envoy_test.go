@@ -281,18 +281,10 @@ func TestRenderEnvoyYAML_mongoEgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checks := []string{
-		"name: mongo_egress",
-		"envoy.filters.network.mongo_proxy",
-		"emit_dynamic_metadata: true",
-		"envoy.filters.network.tcp_proxy",
-		"port_value: 27017",
-		"mongo_upstream",
-		"mongo-control-a.shadow-default-test.svc.cluster.local",
-	}
-	for _, c := range checks {
-		if !strings.Contains(yaml, c) {
-			t.Fatalf("expected %q in envoy yaml:\n%s", c, yaml)
+	for _, forbidden := range []string{"mongo_egress", "mongo_proxy", "mongo_upstream"} {
+		if strings.Contains(yaml, forbidden) {
+			t.Fatalf("envoy yaml must not contain %q (L4 MongoDB removed):\n%s", forbidden, yaml)
 		}
 	}
 }
+

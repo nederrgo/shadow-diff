@@ -18,32 +18,6 @@ func envoyConfigMapName(st *enginev1alpha1.ShadowTest, role string) string {
 	return sanitizeForDNS(fmt.Sprintf("%s-%s-envoy", st.Name, role))
 }
 
-func hasMongoDependency(st *enginev1alpha1.ShadowTest) bool {
-	for _, dep := range st.Spec.Dependencies {
-		if isMongoDependency(dep) {
-			return true
-		}
-	}
-	return false
-}
-
-func mongoDependency(st *enginev1alpha1.ShadowTest) (enginev1alpha1.DependencySpec, bool) {
-	for _, dep := range st.Spec.Dependencies {
-		if isMongoDependency(dep) {
-			return dep, true
-		}
-	}
-	return enginev1alpha1.DependencySpec{}, false
-}
-
-func isMongoDependency(dep enginev1alpha1.DependencySpec) bool {
-	if isMongoDependencyType(dep) {
-		return true
-	}
-	_, port := resolveDependencyDefaults(dep)
-	return port == mongoProxyPort
-}
-
 func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (string, error) {
 	beruAddr := beruGRPCAddressFor(st, shadowNS)
 	beruHost, beruPort, err := parseBeruHostPort(beruAddr)
@@ -66,15 +40,6 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (stri
 
 	extraListeners := egressListener
 	extraClusters := buildDynamicForwardProxyClusterYAML()
-	if hasMongoDependency(st) {
-		dep, ok := mongoDependency(st)
-		if !ok {
-			return "", fmt.Errorf("mongo dependency expected but not found")
-		}
-		_, mongoPort := resolveDependencyDefaults(dep)
-		extraListeners += buildMongoEgressListenerYAML()
-		extraClusters += buildMongoEgressClustersYAML(shadowNS, dep, role, mongoPort)
-	}
 
 	return fmt.Sprintf(envoyYAMLTemplate,
 		ingressPort,
@@ -89,47 +54,6 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (stri
 		ingestPort,
 		extraClusters,
 	), nil
-}
-
-func buildMongoEgressListenerYAML() string {
-	var b strings.Builder
-	b.WriteString("  - name: mongo_egress\n")
-	b.WriteString("    address:\n")
-	b.WriteString("      socket_address:\n")
-	b.WriteString("        address: 127.0.0.1\n")
-	fmt.Fprintf(&b, "        port_value: %d\n", mongoProxyPort)
-	b.WriteString("    filter_chains:\n")
-	b.WriteString("    - filters:\n")
-	b.WriteString("      - name: envoy.filters.network.mongo_proxy\n")
-	b.WriteString("        typed_config:\n")
-	b.WriteString("          \"@type\": type.googleapis.com/envoy.extensions.filters.network.mongo_proxy.v3.MongoProxy\n")
-	b.WriteString("          stat_prefix: shadow_mongo\n")
-	b.WriteString("          emit_dynamic_metadata: true\n")
-	b.WriteString("      - name: envoy.filters.network.tcp_proxy\n")
-	b.WriteString("        typed_config:\n")
-	b.WriteString("          \"@type\": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy\n")
-	b.WriteString("          stat_prefix: mongo_egress\n")
-	fmt.Fprintf(&b, "          cluster: %s\n", mongoUpstreamCluster)
-	return b.String()
-}
-
-func buildMongoEgressClustersYAML(shadowNS string, dep enginev1alpha1.DependencySpec, role string, port int32) string {
-	upstreamHost := dependencyEndpoint(shadowNS, dep.Name, role, port)
-	var host string
-	var clusterPort int32 = port
-	if h, p, err := parseHostPort(upstreamHost); err == nil {
-		host, clusterPort = h, p
-	} else {
-		host = upstreamHost
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "  - name: %s\n", mongoUpstreamCluster)
-	b.WriteString("    type: STRICT_DNS\n")
-	b.WriteString("    connect_timeout: 5s\n")
-	fmt.Fprintf(&b, "    load_assignment:\n      cluster_name: %s\n", mongoUpstreamCluster)
-	b.WriteString("      endpoints:\n      - lb_endpoints:\n        - endpoint:\n            address:\n              socket_address:\n")
-	fmt.Fprintf(&b, "                address: %s\n                port_value: %d\n", host, clusterPort)
-	return b.String()
 }
 
 func parseHostPort(endpoint string) (host string, port int32, err error) {
@@ -186,7 +110,7 @@ func recordAndReplayConfigJSON(st *enginev1alpha1.ShadowTest) (string, error) {
 }
 
 const (
-	dynamicForwardProxyCluster = "dynamic_egress_cluster"
+	dynamicForwardProxyCluster  = "dynamic_egress_cluster"
 	dynamicForwardProxyDNSCache = "dynamic_forward_proxy_cache"
 
 	envoyLuaEgressScript = `local max_bytes = 65536

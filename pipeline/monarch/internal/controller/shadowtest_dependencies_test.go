@@ -47,7 +47,7 @@ var _ = Describe("shadow dependencies", func() {
 		Expect(env[0].Value).To(Equal("redis-control-a.shadow-default-mytest.svc.cluster.local:6379"))
 	})
 
-	It("injects cleartext MONGO_URL for mongodb type", func() {
+	It("injects direct service MONGO_URL for mongodb type", func() {
 		mongo := &enginev1alpha1.ShadowTest{
 			Spec: enginev1alpha1.ShadowTestSpec{
 				Dependencies: []enginev1alpha1.DependencySpec{{
@@ -57,7 +57,7 @@ var _ = Describe("shadow dependencies", func() {
 		}
 		env := dependencyEnvVarsForRole(mongo, shadowNS, roleControlA)
 		Expect(env[0].Name).To(Equal("MONGO_URL"))
-		Expect(env[0].Value).To(Equal(shadowMongoProxyURL))
+		Expect(env[0].Value).To(Equal("mongodb://mongo-control-a." + shadowNS + ".svc.cluster.local:27017"))
 		Expect(env[0].Value).NotTo(ContainSubstring("tls"))
 		Expect(env[0].Value).NotTo(ContainSubstring("mongodb+srv"))
 	})

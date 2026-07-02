@@ -85,16 +85,10 @@ func appEnvWithEgressProxy(_ *enginev1alpha1.ShadowTest, base []corev1.EnvVar) [
 }
 
 func envoyContainerPorts(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort {
-	ports := []corev1.ContainerPort{
+	return []corev1.ContainerPort{
 		{Name: "ingress", ContainerPort: servicePortFor(st), Protocol: corev1.ProtocolTCP},
 		{Name: "egress", ContainerPort: egressProxyPort, Protocol: corev1.ProtocolTCP},
 	}
-	if hasMongoDependency(st) {
-		ports = append(ports, corev1.ContainerPort{
-			Name: "mongo-egress", ContainerPort: mongoProxyPort, Protocol: corev1.ProtocolTCP,
-		})
-	}
-	return ports
 }
 
 const defaultServicePort int32 = 8888
@@ -264,4 +258,21 @@ func isMongoDependencyType(dep enginev1alpha1.DependencySpec) bool {
 	default:
 		return false
 	}
+}
+
+func isMongoDependency(dep enginev1alpha1.DependencySpec) bool {
+	if isMongoDependencyType(dep) {
+		return true
+	}
+	_, port := resolveDependencyDefaults(dep)
+	return port == 27017
+}
+
+func hasMongoDependency(st *enginev1alpha1.ShadowTest) bool {
+	for _, dep := range st.Spec.Dependencies {
+		if isMongoDependency(dep) {
+			return true
+		}
+	}
+	return false
 }

@@ -47,6 +47,42 @@ data:
         ),
       ],
     ))
+  mongodb-export.pxl.tmpl: |
+    import px
+
+    df = px.DataFrame(table='mongodb_events', start_time='-30s', end_time=px.now())
+
+    df.namespace = df.ctx['namespace']
+    df.pod       = df.ctx['pod']
+    df.service   = df.ctx['service']
+
+    df = df[df.namespace == '__SHADOW_NAMESPACE__']
+    df = df[df.trace_role == 2]
+    df = df[px.contains(df.req_body, '"comment"')]
+
+    df.end_time  = df.time_ + df.latency
+    df.span_name = 'mongodb.egress'
+    df.db_system = 'mongodb'
+
+    px.export(df, px.otel.Data(
+      endpoint=px.otel.Endpoint(url='__MONGO_OTEL_ENDPOINT__', insecure=True),
+      resource={
+        'service.name': df.service,
+        'k8s.pod.name': df.pod,
+        'k8s.namespace.name': df.namespace,
+      },
+      data=[
+        px.otel.trace.Span(
+          name=df.span_name,
+          start_time=df.time_,
+          end_time=df.end_time,
+          attributes={
+            'db.system':      df.db_system,
+            'db.raw_payload': df.req_body,
+          },
+        ),
+      ],
+    ))
   http-egress-export.pxl.tmpl: |
     import px
 

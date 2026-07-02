@@ -127,6 +127,7 @@ func (r *ShadowTestReconciler) reconcileLocalBeru(
 				{Name: "BERU_OTLP_GRPC_ADDR", Value: ":4317"},
 				{Name: "BERU_HTTP_ADDR", Value: ":8080"},
 				{Name: "BERU_DB_PATH", Value: "/data/beru.db"},
+				{Name: "BERU_SHADOW_TEST_NAME", Value: st.Name},
 			},
 			Resources: corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{

@@ -37,6 +37,21 @@ func TestParseMongoStatement_nonJSONWrapped(t *testing.T) {
 	}
 }
 
+func TestExtractTraceparentFromRaw(t *testing.T) {
+	traceHex := "aabbccdd11223344aabbccdd11223344"
+	spanHex := "aabbccdd11223344"
+	tp := "00-" + traceHex + "-" + spanHex + "-01"
+
+	raw := "\x00\x00$comment" + tp + "\x00insert\x00"
+	got := ExtractTraceparentFromRaw(raw)
+	if got != tp {
+		t.Fatalf("expected %q, got %q", tp, got)
+	}
+	if got2 := ExtractTraceparentFromRaw("no traceparent here"); got2 != "" {
+		t.Fatalf("expected empty, got %q", got2)
+	}
+}
+
 func TestParseMongoStatement_oidNormalized(t *testing.T) {
 	got, err := ParseMongoStatement(`{"insert":"c","documents":[{"_id":{"$oid":"507f1f77bcf86cd799439011"}}]}`)
 	if err != nil {

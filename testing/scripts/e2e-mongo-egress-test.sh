@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# E2E: MongoDB egress diffing — OTel Node auto-instrumentation → Beru OTLP → diff-of-diffs.
+# E2E: MongoDB egress diffing — Pixie eBPF tcp_events → Beru OTLP → diff-of-diffs.
+# Requires Minikube with a VM driver (kvm2/virtualbox) + Pixie Vizier + pixie-stream-bridge running.
+# Set SKIP_BERU_MONGO_DIFF=1 to skip the Pixie/Beru assertion on Kind clusters.
 set -euo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 # shellcheck source=testing/scripts/lib/e2e-helpers.sh
 source "$REPO/testing/scripts/lib/e2e-helpers.sh"
-# shellcheck source=testing/scripts/lib/otel-bootstrap.sh
-source "$REPO/testing/scripts/lib/otel-bootstrap.sh"
 
 SHADOWTEST="${SHADOWTEST:-mongo-test-shadow}"
 SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
@@ -21,7 +21,7 @@ SKIP_LOAD="${SKIP_LOAD:-0}"
 SKIP_MONARCH_BUILD="${SKIP_MONARCH_BUILD:-0}"
 SKIP_MONARCH_DEPLOY="${SKIP_MONARCH_DEPLOY:-0}"
 SKIP_BERU_BUILD="${SKIP_BERU_BUILD:-0}"
-SKIP_OTEL_BOOTSTRAP="${SKIP_OTEL_BOOTSTRAP:-0}"
+SKIP_BERU_MONGO_DIFF="${SKIP_BERU_MONGO_DIFF:-0}"
 MONGO_IMAGE="${MONGO_IMAGE:-mongo:4.4}"
 
 need() { require_cmd "$1"; }
@@ -58,19 +58,10 @@ in_cluster_curl() {
 
 trap '[[ $? -ne 0 ]] && log_fail "mongo egress E2E failed (see above)"' EXIT
 
-echo "==> Mongo egress E2E (OTLP)"
+echo "==> Mongo egress E2E (Pixie eBPF → Beru OTLP)"
 need kubectl
 need docker
 need openssl
-
-if [[ "$SKIP_OTEL_BOOTSTRAP" != "1" ]]; then
-  if ! otel_operator_ready 2>/dev/null; then
-    echo "==> OpenTelemetry Operator not ready — running otel-bootstrap"
-    install_otel_stack
-  else
-    echo "==> OpenTelemetry Operator already installed"
-  fi
-fi
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
   echo "==> Build mongo-test-app image"
@@ -129,9 +120,6 @@ kubectl wait --for=condition=Established crd/shadowtests.engine.shadow-diff.io -
 kubectl apply -f "$REPO/testing/scripts/manifests/mongo-egress-e2e/prod-mongo-app.yaml"
 kubectl rollout status deployment/mongo-test-prod -n default --timeout=180s
 
-echo "==> Pre-provision Instrumentation CR in ${SHADOW_NS} (before ShadowTest creates pods)"
-bash "$REPO/testing/scripts/lib/apply-otel-instrumentation.sh" "$SHADOW_NS"
-
 wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
 kubectl delete shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --ignore-not-found --wait=true 2>/dev/null || true
 wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
@@ -162,76 +150,34 @@ if [[ -z "$SHADOW_NS" ]]; then
 fi
 log_success "ShadowTest Ready namespace=${SHADOW_NS}"
 
-echo "==> Apply Instrumentation CR in ${SHADOW_NS} (namespace is recreated on ShadowTest delete)"
-bash "$REPO/testing/scripts/lib/apply-otel-instrumentation.sh" "$SHADOW_NS"
-
-echo "==> Verify Envoy mongo_egress tcp_proxy config"
+echo "==> Verify Envoy config has no L4 MongoDB listener (HTTP-only sidecar)"
 for role in control-a control-b candidate; do
   cm="${SHADOWTEST}-${role}-envoy"
   yaml=$(kubectl get cm "$cm" -n "$SHADOW_NS" -o jsonpath='{.data.envoy\.yaml}' 2>/dev/null || true)
-  for token in mongo_egress envoy.filters.network.tcp_proxy mongo_upstream port_value: 27017; do
-    if [[ "$yaml" != *"$token"* ]]; then
-      log_fail "Envoy CM ${cm} missing ${token}"
-      exit 1
-    fi
-  done
-  for forbidden in mongo_proxy beru_als access_log; do
+  for forbidden in mongo_egress mongo_upstream mongo_proxy; do
     if [[ "$yaml" == *"$forbidden"* ]]; then
-      log_fail "Envoy CM ${cm} must not contain ${forbidden}"
+      log_fail "Envoy CM ${cm} must not contain ${forbidden} (L4 MongoDB removed)"
       exit 1
     fi
   done
-  if [[ "$yaml" == *transport_socket* ]]; then
-    log_fail "Envoy CM ${cm} must not configure TLS transport_socket on mongo upstream"
-    exit 1
-  fi
+  log_success "Envoy CM ${cm}: no L4 MongoDB listener"
 done
-log_success "Envoy mongo_egress tcp_proxy configured"
 
-echo "==> Verify cleartext MONGO_URL and OTLP export env on shadow apps"
+echo "==> Verify shadow apps get direct-service MONGO_URL (no Envoy proxy)"
 for role in control-a control-b candidate; do
   got=$(kubectl get deploy "${SHADOWTEST}-${role}" -n "$SHADOW_NS" \
     -o jsonpath='{.spec.template.spec.containers[?(@.name=="app")].env[?(@.name=="MONGO_URL")].value}')
-  if [[ "$got" != "mongodb://127.0.0.1:27017" ]]; then
-    log_fail "${SHADOWTEST}-${role}: expected MONGO_URL=mongodb://127.0.0.1:27017, got ${got:-<unset>}"
+  expected_prefix="mongodb://mongo-${role}.${SHADOW_NS}.svc.cluster.local:"
+  if [[ "$got" != "${expected_prefix}"* ]]; then
+    log_fail "${SHADOWTEST}-${role}: expected MONGO_URL starting with ${expected_prefix}, got ${got:-<unset>}"
     exit 1
   fi
-  exporter=$(kubectl get deploy "${SHADOWTEST}-${role}" -n "$SHADOW_NS" \
-    -o jsonpath='{.spec.template.spec.containers[?(@.name=="app")].env[?(@.name=="OTEL_TRACES_EXPORTER")].value}')
-  if [[ "$exporter" != "otlp" ]]; then
-    log_fail "${SHADOWTEST}-${role}: expected OTEL_TRACES_EXPORTER=otlp, got ${exporter:-<unset>}"
-    exit 1
-  fi
-  log_success "${SHADOWTEST}-${role} MONGO_URL=${got} OTEL_TRACES_EXPORTER=${exporter}"
+  log_success "${SHADOWTEST}-${role} MONGO_URL=${got}"
 done
 
 kubectl rollout status "deployment/${SHADOWTEST}-igris" -n "$SHADOW_NS" --timeout=120s
 
-echo "==> Restart shadow apps so OTel webhook injects after Instrumentation CR exists"
-for role in control-a control-b candidate; do
-  kubectl rollout restart "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS"
-done
-for role in control-a control-b candidate; do
-  kubectl rollout status "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS" --timeout=180s
-done
-
-echo "==> Assert OTel injection on shadow app pods"
-chmod +x "$REPO/testing/scripts/assert-otel-injected.sh"
-for role in control-a control-b candidate; do
-  "$REPO/testing/scripts/assert-otel-injected.sh" "$SHADOW_NS" "$role" "$SHADOWTEST"
-done
-
 IGRIS_URL="http://${SHADOWTEST}-igris.${SHADOW_NS}.svc.cluster.local:8888"
-echo "==> Warm up OTel auto-instrumentation (post-restart startup export)"
-WARM_TP="00-$(openssl rand -hex 16)-$(openssl rand -hex 8)-01"
-warm_out=$(in_cluster_curl "mongo-e2e-warm-${RANDOM}" \
-  curl -sS -w '__HTTP_CODE__%{http_code}' -o /dev/null \
-  -X POST "${IGRIS_URL}/write" \
-  -H "Content-Type: application/json" \
-  -H "traceparent: ${WARM_TP}" \
-  -d '{"id":"warmup","name":"warmup"}')
-echo "    warmup: $warm_out"
-sleep 20
 
 TRACE_HEX="$(openssl rand -hex 16)"
 SPAN_HEX="$(openssl rand -hex 8)"
@@ -263,7 +209,16 @@ for role in control-a control-b candidate; do
   log_success "${role} mongo insert ok"
 done
 
-echo "==> Wait for Beru OTLP mongo egress diff (up to ${WAIT_SECS}s)"
+if [[ "$SKIP_BERU_MONGO_DIFF" == "1" ]]; then
+  echo "==> SKIP_BERU_MONGO_DIFF=1: skipping Pixie→Beru OTLP wait (Kind cluster)"
+  echo "    To enable: run on Minikube with kvm2 driver + Pixie Vizier + pixie-stream-bridge"
+  trap - EXIT
+  log_success "Mongo egress E2E passed (structural checks only — Beru diff skipped)"
+  exit 0
+fi
+
+echo "==> Wait for Beru OTLP mongo egress diff via Pixie (up to ${WAIT_SECS}s)"
+echo "    Requires: pixie-stream-bridge running, PixieStreamRule active for ${SHADOW_NS}"
 beru_pod=$(kubectl get pods -n beru-system -l app.kubernetes.io/name=beru -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
 if [[ -z "$beru_pod" ]]; then
   beru_pod=$(kubectl get pods -n beru-system --no-headers 2>/dev/null | awk '/^beru-/{print $1; exit}')
@@ -274,10 +229,9 @@ if [[ -z "$beru_pod" ]]; then
 fi
 
 success_msg="No egress regression for Trace ${TRACE_HEX} (mongodb)"
-timeout_msg="Timed out waiting for Trace ${TRACE_HEX} (mongodb egress)"
 
 for i in $(seq 1 "$WAIT_SECS"); do
-  beru_pod=$(kubectl get pods -n beru-system -l app.kubernetes.io/name=beru -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || beru_pod)
+  beru_pod=$(kubectl get pods -n beru-system -l app.kubernetes.io/name=beru -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "$beru_pod")
   logs=$(kubectl logs -n beru-system "$beru_pod" --tail=300 2>/dev/null || true)
   if grep -qF "$success_msg" <<<"$logs"; then
     log_success "Beru reported no mongo egress regression for trace ${TRACE_HEX}"
@@ -285,14 +239,11 @@ for i in $(seq 1 "$WAIT_SECS"); do
     log_success "Mongo egress E2E passed (trace ${TRACE_HEX})"
     exit 0
   fi
-  if grep -qF "Timed out waiting for Trace ${TRACE_HEX} (mongodb egress)" <<<"$logs"; then
-    log_fail "Beru timed out waiting for mongo OTLP spans"
-    kubectl logs -n beru-system "$beru_pod" --tail=40 2>&1 | grep -E "${TRACE_HEX}|mongodb|OTLP|Ingested" || kubectl logs -n beru-system "$beru_pod" --tail=20
-    exit 1
-  fi
   sleep 1
 done
 
 log_fail "Beru logs missing '${success_msg}' after ${WAIT_SECS}s"
-kubectl logs -n beru-system "$beru_pod" --tail=80 2>&1 | grep -E "${TRACE_HEX}|mongodb|OTLP|Ingested" || kubectl logs -n beru-system "$beru_pod" --tail=30
+echo "    Hint: verify pixie-stream-bridge is running and PixieStreamRule has mongoOtelEndpoint set"
+kubectl get pixiestreamrule -A 2>/dev/null | grep -v "^NAME" || true
+kubectl logs -n beru-system "$beru_pod" --tail=80 2>&1 | grep -E "${TRACE_HEX}|mongodb|OTLP|Ingested" || kubectl logs -n beru-system "$beru_pod" --tail=20
 exit 1

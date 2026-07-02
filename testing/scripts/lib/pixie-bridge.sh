@@ -285,6 +285,7 @@ pixie_pxl_template() {
   case "$kind" in
     ingress) marker='http-ingress-export.pxl.tmpl' ;;
     egress) marker='http-egress-export.pxl.tmpl' ;;
+    mongo) marker='mongodb-export.pxl.tmpl' ;;
     *) echo "ERROR: unknown PxL template kind: $kind" >&2; return 1 ;;
   esac
   if [[ -n "${PIXIE_PXL_TEMPLATE:-}" ]]; then
@@ -343,6 +344,27 @@ render_pixie_ingress_pxl() {
 
 render_pixie_egress_pxl() {
   _render_pixie_pxl "$1" "$2" egress
+}
+
+render_pixie_mongo_pxl() {
+  local rule_json="$1" out="$2" tpl tmp_rule
+  tpl=$(pixie_pxl_template mongo)
+  mkdir -p "$(dirname "$out")"
+  tmp_rule=$(mktemp)
+  printf '%s' "$rule_json" >"$tmp_rule"
+  PIXL_TPL="$tpl" python3 - "$tmp_rule" "$out" <<'PY'
+import json, sys, os
+rule_path, out = sys.argv[1], sys.argv[2]
+with open(rule_path) as f:
+    rule = json.load(f)
+spec = rule.get('spec', {})
+tpl = os.environ['PIXL_TPL']
+text = tpl.replace('__SHADOW_NAMESPACE__', spec.get('shadowNamespace', ''))
+text = text.replace('__MONGO_OTEL_ENDPOINT__', spec.get('mongoOtelEndpoint', ''))
+with open(out, 'w') as f:
+    f.write(text)
+PY
+  rm -f "$tmp_rule"
 }
 
 # ponytail: legacy name — ingress export only
@@ -423,7 +445,7 @@ pixie_egress_host_filter_lines() {
 
 patch_pixie_stream_rule_status() {
   local ns="$1" name="$2" phase="$3" msg="${4:-}"
-  kubectl patch pixiestreamrule "$name" -n "$ns" --type=merge \
+  kubectl patch pixiestreamrule "$name" -n "$ns" --type=merge --subresource=status \
     -p "{\"status\":{\"phase\":\"${phase}\",\"message\":\"${msg}\"}}" 2>/dev/null || true
 }
 
@@ -458,8 +480,14 @@ start_pixie_stream_bridge_background() {
   PIXIE_BRIDGE_STATE_DIR="${PIXIE_BRIDGE_STATE_DIR:-${repo}/.cache/pixie-bridge}"
   mkdir -p "$PIXIE_BRIDGE_STATE_DIR"
   pid_file="${PIXIE_BRIDGE_STATE_DIR}/bridge.pid"
-  if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
-    echo "pixie-stream-bridge already running pid=$(cat "$pid_file")"
+  local existing_pid=""
+  if [[ -f "$pid_file" ]]; then
+    existing_pid=$(cat "$pid_file" 2>/dev/null || true)
+  fi
+  # Verify the PID is actually our bridge script, not a coincidentally-reused PID.
+  if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null && \
+     grep -q "pixie-stream-bridge" "/proc/${existing_pid}/cmdline" 2>/dev/null; then
+    echo "pixie-stream-bridge already running pid=${existing_pid}"
     return 0
   fi
   nohup "${repo}/testing/scripts/pixie-stream-bridge.sh" >"${PIXIE_BRIDGE_STATE_DIR}/bridge.log" 2>&1 &

@@ -37,7 +37,7 @@ echo "==> PixieStreamRule bridge (export interval=${PIXIE_EXPORT_INTERVAL_SEC}s,
 
 reconcile_rules() {
   local rules_json rule_count i name ns active rule_json
-  local otel_ep recorder_ep ingress_pxl egress_pxl ok failed
+  local otel_ep recorder_ep mongo_ep ingress_pxl egress_pxl mongo_pxl ok failed
   rules_json=$(kubectl get pixiestreamrules -A -o json 2>/dev/null || echo '{"items":[]}')
   rule_count=$(echo "$rules_json" | jq -r '.items | length' 2>/dev/null || echo 0)
   rule_count=${rule_count//[^0-9]/}
@@ -50,8 +50,10 @@ reconcile_rules() {
     ns=$(echo "$rule_json" | jq -r '.metadata.namespace')
     otel_ep=$(echo "$rule_json" | jq -r '.spec.otelEndpoint // ""')
     recorder_ep=$(echo "$rule_json" | jq -r '.spec.recorderOtelEndpoint // ""')
+    mongo_ep=$(echo "$rule_json" | jq -r '.spec.mongoOtelEndpoint // ""')
     ingress_pxl="${PIXIE_BRIDGE_STATE_DIR}/${ns}-${name}-ingress.pxl"
     egress_pxl="${PIXIE_BRIDGE_STATE_DIR}/${ns}-${name}-egress.pxl"
+    mongo_pxl="${PIXIE_BRIDGE_STATE_DIR}/${ns}-${name}-mongo.pxl"
     if [[ "$active" == "true" ]]; then
       ok=0
       failed=""
@@ -75,7 +77,17 @@ reconcile_rules() {
       else
         rm -f "$egress_pxl"
       fi
-      if [[ -z "$otel_ep" && -z "$recorder_ep" ]]; then
+      if [[ -n "$mongo_ep" ]]; then
+        render_pixie_mongo_pxl "$rule_json" "$mongo_pxl"
+        if run_pixie_export_once "$mongo_pxl"; then
+          ok=1
+        else
+          failed="${failed:+$failed+}mongo"
+        fi
+      else
+        rm -f "$mongo_pxl"
+      fi
+      if [[ -z "$otel_ep" && -z "$recorder_ep" && -z "$mongo_ep" ]]; then
         patch_pixie_stream_rule_status "$ns" "$name" "Inactive" "no export endpoints"
       elif [[ -n "$failed" ]]; then
         patch_pixie_stream_rule_status "$ns" "$name" "Error" "px.export failed ($failed)"

@@ -43,9 +43,19 @@ type PixieStreamRuleSpec struct {
 	// +optional
 	OTelEndpoint string `json:"otelEndpoint,omitempty"`
 
+	// ShadowNamespace is the shadow namespace containing shadow app pods.
+	// Used by the MongoDB PxL script to filter traffic by shadow pods, not prod pods.
+	// +optional
+	ShadowNamespace string `json:"shadowNamespace,omitempty"`
+
 	// RecorderOTelEndpoint is gRPC OTLP export for egress spans (client or in-cluster server-side).
 	// +optional
 	RecorderOTelEndpoint string `json:"recorderOtelEndpoint,omitempty"`
+
+	// MongoOTelEndpoint is the gRPC OTLP export destination for MongoDB egress spans.
+	// Non-empty activates the mongodb-export PxL script (tcp_events on port 27017).
+	// +optional
+	MongoOTelEndpoint string `json:"mongoOtelEndpoint,omitempty"`
 
 	// RecordAndReplayHosts are downstream hostnames for egress PxL Host-header filtering.
 	// +optional

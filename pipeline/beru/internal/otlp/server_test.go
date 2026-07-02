@@ -92,9 +92,9 @@ func TestExport_acceptsEmptyRequest(t *testing.T) {
 	}
 }
 
-func TestExport_mongoSpanDeprecated(t *testing.T) {
+func TestExport_mongoSpanRouted(t *testing.T) {
 	rec := &routeRecorder{}
-	client := startTestServer(t, &Server{Log: slog.Default(), Router: testRouter(rec)})
+	client := startTestServer(t, &Server{Log: slog.Default(), Router: testRouter(rec), DefaultShadowTest: "mytest"})
 
 	stmt := `{"insert": "collection", "documents": [{"id": 123}]}`
 	req := &coltracepb.ExportTraceServiceRequest{
@@ -119,8 +119,92 @@ func TestExport_mongoSpanDeprecated(t *testing.T) {
 		t.Fatalf("Export: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
-	if len(rec.reports) != 0 {
-		t.Fatalf("OTLP Mongo deprecated: expected 0 reports, got %d", len(rec.reports))
+	if len(rec.reports) != 1 {
+		t.Fatalf("OTLP Mongo: expected 1 routed report, got %d", len(rec.reports))
+	}
+	if rec.reports[0].Protocol != "mongodb" {
+		t.Fatalf("expected protocol=mongodb, got %q", rec.reports[0].Protocol)
+	}
+}
+
+func TestExport_mongoSpanPixie(t *testing.T) {
+	rec := &routeRecorder{}
+	client := startTestServer(t, &Server{Log: slog.Default(), Router: testRouter(rec)})
+
+	traceHex := "aabbccdd11223344aabbccdd11223344"
+	spanHex := "aabbccdd11223344"
+	traceparent := "00-" + traceHex + "-" + spanHex + "-01"
+	rawPayload := `\x00\x00$comment` + traceparent + `\x00insert\x00orders\x00`
+
+	req := &coltracepb.ExportTraceServiceRequest{
+		ResourceSpans: []*tracepb.ResourceSpans{{
+			Resource: &resourcepb.Resource{
+				Attributes: []*commonpb.KeyValue{
+					kvString(attrK8sPodName, "mytest-control-b-6c8f9d-x7k2p"),
+				},
+			},
+			ScopeSpans: []*tracepb.ScopeSpans{{
+				Spans: []*tracepb.Span{{
+					TraceId: bytes.Repeat([]byte{0xff}, 16),
+					Attributes: []*commonpb.KeyValue{
+						kvString(attrDBSystem, "mongodb"),
+						kvString(attrDBRawPayload, rawPayload),
+					},
+				}},
+			}},
+		}},
+	}
+	if _, err := client.Export(context.Background(), req); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if len(rec.reports) != 1 {
+		t.Fatalf("Pixie Mongo: expected 1 routed report, got %d", len(rec.reports))
+	}
+	r := rec.reports[0]
+	if r.TraceID != traceHex {
+		t.Fatalf("expected traceID=%q, got %q", traceHex, r.TraceID)
+	}
+	if r.ShadowRole != "control-b" {
+		t.Fatalf("expected role=control-b, got %q", r.ShadowRole)
+	}
+	if r.ShadowTestName != "mytest" {
+		t.Fatalf("expected shadowTestName=mytest, got %q", r.ShadowTestName)
+	}
+}
+
+func TestExport_deduplicatesPixieReExports(t *testing.T) {
+	rec := &routeRecorder{}
+	client := startTestServer(t, &Server{Log: slog.Default(), Router: testRouter(rec), DefaultShadowTest: "mytest"})
+
+	stmt := `{"insert": "orders", "documents": [{"id": 1}]}`
+	startNs := uint64(1720000000000000000)
+	span := &tracepb.Span{
+		TraceId:           bytes.Repeat([]byte{0x04}, 16),
+		StartTimeUnixNano: startNs,
+		Attributes: []*commonpb.KeyValue{
+			kvString(attrDBSystem, "mongodb"),
+			kvString(attrDBStatement, stmt),
+		},
+	}
+	req := &coltracepb.ExportTraceServiceRequest{
+		ResourceSpans: []*tracepb.ResourceSpans{{
+			Resource: &resourcepb.Resource{
+				Attributes: []*commonpb.KeyValue{kvString(attrShadowRole, "control-a")},
+			},
+			ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{span}}},
+		}},
+	}
+
+	// Export the same span twice (simulating Pixie's rolling window re-export).
+	for i := 0; i < 2; i++ {
+		if _, err := client.Export(context.Background(), req); err != nil {
+			t.Fatalf("Export %d: %v", i, err)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	if len(rec.reports) != 1 {
+		t.Fatalf("dedup: expected 1 report after 2 exports of the same span, got %d", len(rec.reports))
 	}
 }
 

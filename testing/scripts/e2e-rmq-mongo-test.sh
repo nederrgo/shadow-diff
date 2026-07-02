@@ -14,7 +14,7 @@ IGRIS_RABBITMQ_IMG="${IGRIS_RABBITMQ_IMG:-igris-rabbitmq:dev}"
 EGRESS_RELAY_RABBITMQ_IMG="${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:dev}"
 BERU_IMG="${BERU_IMG:-beru:dev}"
 MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
-KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
+KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1 || true)}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 SKIP_LOAD="${SKIP_LOAD:-0}"
 SKIP_MONARCH_BUILD="${SKIP_MONARCH_BUILD:-0}"
@@ -170,6 +170,11 @@ for role in control-a control-b candidate; do
   kubectl rollout status "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS" --timeout=180s
 done
 
+echo "==> Wait for Pixie CS_HEALTHY before sending traffic"
+# shellcheck source=testing/scripts/lib/pixie-bridge.sh
+source "$REPO/testing/scripts/lib/pixie-bridge.sh"
+wait_pixie_vizier_healthy 180
+
 TRACE_HEX="$(openssl rand -hex 16)"
 SPAN_HEX="$(openssl rand -hex 8)"
 TRACE_TP="00-${TRACE_HEX}-${SPAN_HEX}-01"
@@ -225,6 +230,18 @@ if ! wait_beru_log "$SHADOW_NS" "$beru_local" "$egress_msg" 90; then
   exit 1
 fi
 log_success "Beru egress: ${egress_msg}"
+
+mongo_msg="No egress regression for Trace ${TRACE_HEX} (mongodb)"
+echo "==> Verify Beru MongoDB egress (beru-local; Pixie eBPF → OTLP :4317)"
+if ! wait_beru_log "$SHADOW_NS" "$beru_local" "$mongo_msg" 120; then
+  log_fail "Beru missing '${mongo_msg}' in ${SHADOW_NS}"
+  echo "==> beru-local logs (last 80):" >&2
+  kubectl logs -n "$SHADOW_NS" "$beru_local" --tail=80 >&2 || true
+  echo "==> pixie-stream-bridge log:" >&2
+  kubectl logs -n monarch-system -l app=pixie-stream-bridge --tail=40 >&2 || true
+  exit 1
+fi
+log_success "Beru egress: ${mongo_msg}"
 
 trap - EXIT
 log_success "RMQ+Mongo E2E passed (trace ${TRACE_HEX})"
