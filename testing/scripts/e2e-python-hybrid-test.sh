@@ -48,7 +48,7 @@ BERU_IMG="${BERU_IMG:-beru:dev}"
 MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
 KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
 MONGO_IMAGE="${MONGO_IMAGE:-mongo:4.4}"
-WAIT_SECS="${WAIT_SECS:-45}"
+WAIT_SECS="${WAIT_SECS:-120}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 SKIP_LOAD="${SKIP_LOAD:-0}"
 SKIP_MONARCH_BUILD="${SKIP_MONARCH_BUILD:-0}"
@@ -207,7 +207,8 @@ kubectl apply -f "$MANIFEST_DIR/prod-python-worker.yaml"
 kubectl wait --for=condition=Available deployment/rmq-prod-broker -n default --timeout=180s
 kubectl wait --for=condition=Available deployment/mongo-prod -n default --timeout=180s
 kubectl wait --for=condition=Available deployment/user-service -n prod --timeout=180s
-kubectl wait --for=condition=Available deployment/python-prod-worker -n default --timeout=180s
+kubectl rollout restart deployment/python-prod-worker -n default >/dev/null
+kubectl rollout status deployment/python-prod-worker -n default --timeout=120s
 
 wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
 kubectl delete shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --ignore-not-found --wait=true 2>/dev/null || true
@@ -264,11 +265,6 @@ log_success "ShadowTest Ready namespace=${SHADOW_NS} siphonPhase=Ready"
 
 wait_local_beru_rollout "$SHADOW_NS"
 
-chmod +x "$REPO/testing/scripts/assert-otel-injected.sh"
-for role in control-a control-b candidate; do
-  "$REPO/testing/scripts/assert-otel-injected.sh" "$SHADOW_NS" "$role" "$SHADOWTEST"
-done
-
 if [[ "$USE_PIXIE" == "1" ]]; then
   echo "==> HTTP egress record: Pixie OTLP -> Recorder"
 else
@@ -281,10 +277,18 @@ if [[ "$USE_PIXIE" == "1" ]]; then
   wait_pixie_vizier_healthy 120
   wait_pixie_http_events_ready 180
   wait_pixie_stream_rule "$SHADOWTEST" "$SHADOWTEST_NS" 120
-  if ! pgrep -f pixie-stream-bridge.sh >/dev/null 2>&1; then
-    start_pixie_stream_bridge_background
+  # Restart the bridge so it runs with the current REPO (worktree) and picks up
+  # the updated configmap.yaml that includes the traceparent PxL attribute.
+  if pgrep -f pixie-stream-bridge.sh >/dev/null 2>&1; then
+    echo "==> Restarting pixie-stream-bridge to pick up updated PxL template"
+    pkill -f pixie-stream-bridge.sh 2>/dev/null || true
+    sleep 2
   fi
-  kubectl apply -k "$REPO/testing/scripts/manifests/pixie-bridge/" >/dev/null
+  start_pixie_stream_bridge_background
+  # Wait one full px run cycle so the egress PxL has run at least once before
+  # we publish the test message. The px run window is 30s; allow 35s for margin.
+  echo "==> Waiting 35s for bridge first export cycle before publishing"
+  sleep 35
 fi
 
 relay_deploy="${SHADOWTEST}-egress-relay-rabbitmq"

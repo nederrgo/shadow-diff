@@ -152,9 +152,6 @@ func (r *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 
 // StartAll launches one reconnect loop per configured broker URL.
 func StartAll(ctx context.Context, cfg config.Config, beruClient *beru.Client) {
-	dedup := newPublishDedup()
-	dedup.startPruner(ctx)
-
 	workers := []struct {
 		workload string
 		url      string
@@ -165,6 +162,11 @@ func StartAll(ctx context.Context, cfg config.Config, beruClient *beru.Client) {
 	}
 	for _, w := range workers {
 		w := w
+		// Each workload gets its own dedup map so that identical messages from
+		// different shadow brokers (same trace+span+payload) don't cross-block
+		// each other — dedup only filters the Firehose's own double-delivery.
+		dedup := newPublishDedup()
+		dedup.startPruner(ctx)
 		runner := &Runner{
 			Workload:       w.workload,
 			URL:            w.url,

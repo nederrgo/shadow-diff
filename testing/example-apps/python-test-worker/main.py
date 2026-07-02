@@ -40,7 +40,13 @@ def normalize_amqp_url(raw: str) -> str:
 
 
 def is_candidate() -> bool:
-    return "candidate" in env_or("OTEL_SERVICE_NAME", "")
+    # OTEL_SERVICE_NAME was set by OTel auto-injection (now removed). Fall back to
+    # AMQP_URL which contains the shadow role name (rabbitmq-candidate / rabbitmq-control-a/b).
+    for key in ("OTEL_SERVICE_NAME", "AMQP_URL", "HOSTNAME"):
+        if "candidate" in env_or(key, ""):
+            return True
+    return False
+
 
 
 def parse_order_id(body: bytes) -> str:
@@ -93,11 +99,14 @@ def handle_message(ch, method, properties, body, mongo_coll):
     # store lookup (keyed by trace ID) works in the shadow stack.
     traceparent = (properties.headers or {}).get("traceparent") if properties else None
 
-    mongo_coll.insert_one({"order_id": order_id, "status": "processed"})
+    # Pass traceparent as MongoDB comment so Pixie eBPF captures the trace ID
+    # in the raw wire bytes for Beru's MongoDB egress correlation.
+    mongo_kwargs = {"comment": traceparent} if traceparent else {}
+    mongo_coll.insert_one({"order_id": order_id, "status": "processed"}, **mongo_kwargs)
     print("mongo insert ok", flush=True)
 
     if is_candidate():
-        mongo_coll.insert_one({"order_id": order_id, "audit": "candidate_n1_loop"})
+        mongo_coll.insert_one({"order_id": order_id, "audit": "candidate_n1_loop"}, **mongo_kwargs)
         print("mongo candidate n+1 insert ok", flush=True)
 
     try:
@@ -120,9 +129,11 @@ def handle_message(ch, method, properties, body, mongo_coll):
         return
 
     shipped = {"order_id": order_id, "status": "shipped"}
+    rmq_headers = {"traceparent": traceparent} if traceparent else {}
     props = pika.BasicProperties(
         content_type="application/json",
         delivery_mode=2,
+        headers=rmq_headers,
     )
     ch.basic_publish(
         exchange=EGRESS_EXCHANGE,
@@ -141,6 +152,7 @@ def handle_message(ch, method, properties, body, mongo_coll):
             properties=pika.BasicProperties(
                 content_type="application/json",
                 delivery_mode=2,
+                headers=rmq_headers,
             ),
         )
         print("rmq candidate n+1 publish ok", flush=True)
