@@ -2,6 +2,7 @@ package receiver
 
 import (
 	"context"
+	"encoding/hex"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -129,15 +130,14 @@ func parseEgressRecordFromSpan(
 		}
 	}
 
-	bodyStr := firstAttr(attrs, "http.request.body")
 	respBody := firstAttr(attrs, "http.response.body")
+	traceID := hex.EncodeToString(span.TraceId)
 
 	return beru.RecordPayload{
-		Method:      method,
-		Host:        host,
-		Path:        path,
-		Body:        parse.JSONRawBody([]byte(bodyStr)),
-		IgnorePaths: parse.IgnorePathsForHost(host, hosts),
+		TraceID: traceID,
+		Method:  method,
+		Host:    host,
+		Path:    path,
 		Response: beru.RecordResponse{
 			Status:  status,
 			Headers: map[string]string{},

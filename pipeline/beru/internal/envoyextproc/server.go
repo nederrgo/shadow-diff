@@ -48,7 +48,6 @@ type streamState struct {
 func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
 	role := s.Role
 	mode := ""
-	var recordAndReplayConfigs []RecordAndReplayHostConfig
 	if md, ok := metadata.FromIncomingContext(stream.Context()); ok {
 		if v := md.Get(headerShadowRole); len(v) > 0 && v[0] != "" {
 			role = v[0]
@@ -56,13 +55,10 @@ func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error
 		if v := md.Get(headerShadowMode); len(v) > 0 {
 			mode = v[0]
 		}
-		if v := md.Get(headerShadowRecordAndReplayConf); len(v) > 0 && v[0] != "" {
-			recordAndReplayConfigs = parseRecordAndReplayConfigs(v[0])
-		}
 	}
 
 	if mode == shadowModeEgress {
-		egress := &egressState{role: role, recordAndReplayConfigs: recordAndReplayConfigs}
+		egress := &egressState{role: role}
 		for {
 			req, err := stream.Recv()
 			if err == io.EOF {

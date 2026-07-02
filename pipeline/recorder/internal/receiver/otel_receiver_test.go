@@ -32,12 +32,13 @@ func kvInt(key string, val int64) *commonpb.KeyValue {
 
 func TestParseEgressRecordFromSpan_hostAllowlist(t *testing.T) {
 	hosts := []config.RecordAndReplayHost{{Host: "egress-httpbin.default.svc.cluster.local"}}
+	traceIDBytes := []byte{0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36}
 	span := &tracepb.Span{
+		TraceId: traceIDBytes,
 		Attributes: []*commonpb.KeyValue{
 			kvString("http.request.method", "GET"),
 			kvString("url.path", "/get"),
 			kvString("http.host", "egress-httpbin.default.svc.cluster.local"),
-			kvString("http.request.body", `{"a":1}`),
 			kvInt("http.response.status_code", 200),
 			kvString("http.response.body", "ok"),
 		},
@@ -54,6 +55,10 @@ func TestParseEgressRecordFromSpan_hostAllowlist(t *testing.T) {
 	}
 	if rec.Response.Status != 200 || rec.Response.Body != "ok" {
 		t.Fatalf("response %+v", rec.Response)
+	}
+	// Verify the span's trace ID bytes are hex-encoded into TraceID.
+	if rec.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("trace ID %q", rec.TraceID)
 	}
 }
 

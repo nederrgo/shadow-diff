@@ -3,7 +3,6 @@ package beru
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -12,12 +11,11 @@ import (
 
 // RecordPayload is the JSON body for POST /v1/record_egress.
 type RecordPayload struct {
-	Method      string          `json:"method"`
-	Host        string          `json:"host"`
-	Path        string          `json:"path"`
-	Body        json.RawMessage `json:"body"`
-	IgnorePaths []string        `json:"ignore_paths,omitempty"`
-	Response    RecordResponse  `json:"response"`
+	TraceID  string         `json:"trace_id"`
+	Method   string         `json:"method"`
+	Host     string         `json:"host"`
+	Path     string         `json:"path"`
+	Response RecordResponse `json:"response"`
 }
 
 // RecordResponse is the recorded HTTP response half.
@@ -47,31 +45,7 @@ func (c *Client) PostAsync(record RecordPayload) {
 }
 
 func (c *Client) post(record RecordPayload) {
-	body := record.Body
-	if len(body) == 0 {
-		body = json.RawMessage("null")
-	}
-	if !json.Valid(body) {
-		body = json.RawMessage(fmt.Sprintf("%q", string(body)))
-	}
-
-	payload := struct {
-		Method      string          `json:"method"`
-		Host        string          `json:"host"`
-		Path        string          `json:"path"`
-		Body        json.RawMessage `json:"body"`
-		IgnorePaths []string        `json:"ignore_paths,omitempty"`
-		Response    RecordResponse  `json:"response"`
-	}{
-		Method:      record.Method,
-		Host:        record.Host,
-		Path:        record.Path,
-		Body:        body,
-		IgnorePaths: record.IgnorePaths,
-		Response:    record.Response,
-	}
-
-	raw, err := json.Marshal(payload)
+	raw, err := json.Marshal(record)
 	if err != nil {
 		log.Printf("beru client: marshal error: %v", err)
 		return
