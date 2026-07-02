@@ -89,6 +89,10 @@ def handle_message(ch, method, properties, body, mongo_coll):
     order_id = parse_order_id(body)
     print(f"consumed routing_key={method.routing_key} order_id={order_id}", flush=True)
 
+    # Propagate W3C traceparent from AMQP headers to HTTP egress so the mock
+    # store lookup (keyed by trace ID) works in the shadow stack.
+    traceparent = (properties.headers or {}).get("traceparent") if properties else None
+
     mongo_coll.insert_one({"order_id": order_id, "status": "processed"})
     print("mongo insert ok", flush=True)
 
@@ -98,6 +102,8 @@ def handle_message(ch, method, properties, body, mongo_coll):
 
     try:
         url, headers = http_egress_target()
+        if traceparent:
+            headers["traceparent"] = traceparent
         via = "replay" if uses_egress_proxy() else "record"
         resp = http_post(
             url,
