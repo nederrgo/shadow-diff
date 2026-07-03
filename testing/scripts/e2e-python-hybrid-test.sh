@@ -46,7 +46,7 @@ EGRESS_RELAY_RABBITMQ_IMG="${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:de
 RECORDER_IMG="${RECORDER_IMG:-recorder:dev}"
 BERU_IMG="${BERU_IMG:-beru:dev}"
 MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
-KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1)}"
+KIND_CLUSTER="${KIND_CLUSTER:-$(kind get clusters 2>/dev/null | head -1 || true)}"
 MONGO_IMAGE="${MONGO_IMAGE:-mongo:4.4}"
 WAIT_SECS="${WAIT_SECS:-120}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
@@ -309,10 +309,10 @@ kubectl exec -n default deploy/rmq-prod-broker -- sh -c "
 "
 log_success "published traceparent-only message order_id=${ORDER_ID}"
 
-RECORD_MARKER="beru client: recorded POST ${HTTP_RECORD_HOST}${HTTP_RECORD_PATH}"
+RECORD_MARKER="shop client: recorded POST ${HTTP_RECORD_HOST}${HTTP_RECORD_PATH}"
 egress_pxl="${PIXIE_BRIDGE_STATE_DIR:-${REPO}/.cache/pixie-bridge}/${SHADOWTEST_NS}-pixie-${SHADOWTEST}-egress.pxl"
 
-echo "==> Wait for prod HTTP record (Recorder -> Beru; host=${HTTP_RECORD_HOST})"
+echo "==> Wait for prod HTTP record (Recorder -> Shop; host=${HTTP_RECORD_HOST})"
 RECORDER_NS="$SHADOW_NS"
 for i in $(seq 1 60); do
   if [[ "$USE_PIXIE" == "1" ]] && [[ -f "$egress_pxl" ]] && pixie_vizier_healthy; then
@@ -320,11 +320,11 @@ for i in $(seq 1 60); do
   fi
   if kubectl logs -n "$RECORDER_NS" "deploy/${SHADOWTEST}-recorder" --tail=200 2>/dev/null \
     | grep -Fq "$RECORD_MARKER"; then
-    log_success "Recorder seeded Beru mock for ${HTTP_RECORD_HOST}${HTTP_RECORD_PATH}"
+    log_success "Recorder seeded Shop mock for ${HTTP_RECORD_HOST}${HTTP_RECORD_PATH}"
     break
   fi
   if [[ "$i" -eq 60 ]]; then
-    log_fail "Recorder did not log HTTP seed (need Pixie egress or manual Beru seed)"
+    log_fail "Recorder did not log HTTP seed (need Pixie egress or manual Shop seed)"
     kubectl logs -n "$RECORDER_NS" "deploy/${SHADOWTEST}-recorder" --tail=40 >&2 || true
     if [[ "$USE_PIXIE" == "1" ]]; then
       px get viziers 2>&1 | sed 's/^/       /' >&2 || true

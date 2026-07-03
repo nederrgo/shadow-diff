@@ -8,35 +8,19 @@ import (
 
 	"github.com/shadow-diff/beru/internal/dashboard"
 	"github.com/shadow-diff/beru/internal/otlp"
-	"github.com/shadow-diff/beru/internal/replay"
 	"github.com/shadow-diff/beru/internal/roles"
 	"github.com/shadow-diff/beru/internal/storage"
 	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
 	v2report "github.com/shadow-diff/beru/internal/v2/report"
 )
 
-// Server exposes HTTP endpoints for egress replay testing and the dashboard.
+// Server exposes HTTP endpoints for egress diff ingest and the dashboard.
 type Server struct {
-	Log        *slog.Logger
-	Mocks     *replay.MockStore
+	Log       *slog.Logger
 	Router    *v2engine.TraceRouter
-	OTLP       *otlp.Server
-	DB         *storage.DB
-	Dashboard  *dashboard.Handler
-}
-
-type seedMockRequest struct {
-	TraceID  string           `json:"trace_id"`
-	Method   string           `json:"method"`
-	Host     string           `json:"host"`
-	Path     string           `json:"path"`
-	Response seedMockResponse `json:"response"`
-}
-
-type seedMockResponse struct {
-	Status  int               `json:"status"`
-	Headers map[string]string `json:"headers"`
-	Body    string            `json:"body"`
+	OTLP      *otlp.Server
+	DB        *storage.DB
+	Dashboard *dashboard.Handler
 }
 
 type egressDiffRequest struct {
@@ -50,8 +34,6 @@ type egressDiffRequest struct {
 func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleHealthz)
-	mux.HandleFunc("/v1/seed_mock", s.handleSeedMock)
-	mux.HandleFunc("/v1/record_egress", s.handleRecordEgress)
 	mux.HandleFunc("/api/v1/egress/diff", s.handleEgressDiff)
 	mux.HandleFunc("/api/v1/ingest/wire", s.handleWireIngest)
 	if s.OTLP != nil {
@@ -78,22 +60,6 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
-func (s *Server) handleSeedMock(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	s.putMockFromRequest(w, r)
-}
-
-func (s *Server) handleRecordEgress(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	s.putMockFromRequest(w, r)
 }
 
 func (s *Server) handleEgressDiff(w http.ResponseWriter, r *http.Request) {
@@ -179,39 +145,4 @@ func (s *Server) handleWireIngest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]struct{}{})
-}
-
-func (s *Server) putMockFromRequest(w http.ResponseWriter, r *http.Request) {
-	raw, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-	var req seedMockRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-	if req.TraceID == "" {
-		http.Error(w, "trace_id is required", http.StatusBadRequest)
-		return
-	}
-	if req.Method == "" || req.Host == "" || req.Path == "" {
-		http.Error(w, "method, host, and path are required", http.StatusBadRequest)
-		return
-	}
-	if req.Response.Status == 0 {
-		http.Error(w, "response.status is required", http.StatusBadRequest)
-		return
-	}
-
-	key := replay.TraceKey(req.TraceID, req.Method, req.Host, req.Path)
-	s.Mocks.Put(key, replay.EarlyResponse{
-		StatusCode: req.Response.Status,
-		Headers:    req.Response.Headers,
-		Body:       []byte(req.Response.Body),
-	})
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"hash": key})
 }

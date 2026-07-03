@@ -8,7 +8,7 @@ import (
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
-	"github.com/shadow-diff/recorder/internal/beru"
+	"github.com/shadow-diff/recorder/internal/shop"
 	"github.com/shadow-diff/recorder/internal/config"
 )
 
@@ -101,8 +101,8 @@ func TestParseEgressRecordFromSpan_dropsIPHost(t *testing.T) {
 }
 
 func TestExportTraces_enqueuesAllowedHost(t *testing.T) {
-	ch := make(chan beru.RecordPayload, 1)
-	client := beru.NewClient("http://127.0.0.1:9")
+	ch := make(chan shop.RecordPayload, 1)
+	client := shop.NewClient("http://127.0.0.1:9")
 	r := NewOTLPReceiver(client, []config.RecordAndReplayHost{
 		{Host: "egress-httpbin.default.svc.cluster.local"},
 	}, 1, 1, nil)

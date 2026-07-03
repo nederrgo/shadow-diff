@@ -4,11 +4,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shadow-diff/recorder/internal/beru"
+	"github.com/shadow-diff/recorder/internal/shop"
 )
 
 func TestSessionStore_pairTimeoutEviction(t *testing.T) {
-	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), nil, 50*time.Millisecond, DefaultMaxFrame)
+	store := NewSessionStore(shop.NewClient("http://127.0.0.1:1"), nil, 50*time.Millisecond, DefaultMaxFrame)
 	defer store.Stop()
 
 	connID := store.RegisterConn()
@@ -23,7 +23,7 @@ func TestSessionStore_pairTimeoutEviction(t *testing.T) {
 }
 
 func TestSessionStore_orphanResponseBufferedUntilRequest(t *testing.T) {
-	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), nil, 30*time.Second, DefaultMaxFrame)
+	store := NewSessionStore(shop.NewClient("http://127.0.0.1:1"), nil, 30*time.Second, DefaultMaxFrame)
 	defer store.Stop()
 
 	connID := store.RegisterConn()

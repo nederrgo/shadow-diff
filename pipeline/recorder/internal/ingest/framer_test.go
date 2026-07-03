@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shadow-diff/recorder/internal/beru"
+	"github.com/shadow-diff/recorder/internal/shop"
 	"github.com/shadow-diff/recorder/internal/config"
 )
 
@@ -27,7 +27,7 @@ func writeFrame(w io.Writer, dir byte, payload []byte) error {
 
 func TestHandleConn_unexpectedEOF_noPanic(t *testing.T) {
 	client, server := net.Pipe()
-	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), nil, 30*time.Second, DefaultMaxFrame)
+	store := NewSessionStore(shop.NewClient("http://127.0.0.1:1"), nil, 30*time.Second, DefaultMaxFrame)
 	defer store.Stop()
 
 	connID := store.RegisterConn()
@@ -49,7 +49,7 @@ func TestHandleConn_unexpectedEOF_noPanic(t *testing.T) {
 
 func TestHandleConn_truncatedPayload_discards(t *testing.T) {
 	client, server := net.Pipe()
-	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), nil, 30*time.Second, DefaultMaxFrame)
+	store := NewSessionStore(shop.NewClient("http://127.0.0.1:1"), nil, 30*time.Second, DefaultMaxFrame)
 	defer store.Stop()
 
 	connID := store.RegisterConn()
@@ -68,7 +68,7 @@ func TestHandleConn_truncatedPayload_discards(t *testing.T) {
 
 func TestHandleConn_bothLegs_parses(t *testing.T) {
 	client, server := net.Pipe()
-	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), []config.RecordAndReplayHost{{Host: "httpbin.org"}}, 30*time.Second, DefaultMaxFrame)
+	store := NewSessionStore(shop.NewClient("http://127.0.0.1:1"), []config.RecordAndReplayHost{{Host: "httpbin.org"}}, 30*time.Second, DefaultMaxFrame)
 	defer store.Stop()
 
 	connID := store.RegisterConn()
@@ -97,7 +97,7 @@ func TestHandleConn_bothLegs_parses(t *testing.T) {
 
 func TestHandleConn_requestOnlyThenClose(t *testing.T) {
 	client, server := net.Pipe()
-	store := NewSessionStore(beru.NewClient("http://127.0.0.1:1"), []config.RecordAndReplayHost{{Host: "api.example.com"}}, 30*time.Second, DefaultMaxFrame)
+	store := NewSessionStore(shop.NewClient("http://127.0.0.1:1"), []config.RecordAndReplayHost{{Host: "api.example.com"}}, 30*time.Second, DefaultMaxFrame)
 	defer store.Stop()
 
 	connID := store.RegisterConn()

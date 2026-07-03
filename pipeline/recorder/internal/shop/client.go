@@ -1,4 +1,4 @@
-package beru
+package shop
 
 import (
 	"bytes"
@@ -25,13 +25,13 @@ type RecordResponse struct {
 	Body    string            `json:"body"`
 }
 
-// Client posts egress records to Beru.
+// Client posts egress records to Shop.
 type Client struct {
 	baseURL string
 	http    *http.Client
 }
 
-// NewClient creates a Beru HTTP client. baseURL is e.g. http://beru.beru-system.svc.cluster.local:8080.
+// NewClient creates a Shop HTTP client. baseURL is e.g. http://shop.<shadow-ns>.svc.cluster.local:8080.
 func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
@@ -47,20 +47,20 @@ func (c *Client) PostAsync(record RecordPayload) {
 func (c *Client) post(record RecordPayload) {
 	raw, err := json.Marshal(record)
 	if err != nil {
-		log.Printf("beru client: marshal error: %v", err)
+		log.Printf("shop client: marshal error: %v", err)
 		return
 	}
 
 	url := c.baseURL + "/v1/record_egress"
 	resp, err := c.http.Post(url, "application/json", bytes.NewReader(raw))
 	if err != nil {
-		log.Printf("beru client: POST %s error: %v", url, err)
+		log.Printf("shop client: POST %s error: %v", url, err)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		log.Printf("beru client: POST %s returned %s", url, resp.Status)
+		log.Printf("shop client: POST %s returned %s", url, resp.Status)
 		return
 	}
-	log.Printf("beru client: recorded %s %s%s -> %d", record.Method, record.Host, record.Path, record.Response.Status)
+	log.Printf("shop client: recorded %s %s%s -> %d", record.Method, record.Host, record.Path, record.Response.Status)
 }

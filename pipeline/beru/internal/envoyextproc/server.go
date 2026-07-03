@@ -8,7 +8,6 @@ import (
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"github.com/shadow-diff/beru/internal/replay"
 	"github.com/shadow-diff/beru/internal/trace"
 	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
 	v2report "github.com/shadow-diff/beru/internal/v2/report"
@@ -23,12 +22,11 @@ const (
 	headerRequestID     = "x-request-id"
 )
 
-// Server implements Envoy external processing (observe-only, non-blocking).
+// Server implements Envoy external processing for ingress diff-of-diffs.
 type Server struct {
 	extprocv3.UnimplementedExternalProcessorServer
 	Log               *slog.Logger
 	Router            *v2engine.TraceRouter
-	Mocks             *replay.MockStore
 	Role              string
 	DefaultShadowTest string
 }
@@ -44,33 +42,12 @@ type streamState struct {
 	contentType     string
 }
 
-// Process handles the ext_proc bidirectional stream.
+// Process handles the ext_proc bidirectional stream (ingress diff-of-diffs only).
 func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
 	role := s.Role
-	mode := ""
 	if md, ok := metadata.FromIncomingContext(stream.Context()); ok {
 		if v := md.Get(headerShadowRole); len(v) > 0 && v[0] != "" {
 			role = v[0]
-		}
-		if v := md.Get(headerShadowMode); len(v) > 0 {
-			mode = v[0]
-		}
-	}
-
-	if mode == shadowModeEgress {
-		egress := &egressState{role: role}
-		for {
-			req, err := stream.Recv()
-			if err == io.EOF {
-				return nil
-			}
-			if err != nil {
-				return status.Errorf(codes.Unknown, "recv: %v", err)
-			}
-			resp := s.handleEgressRequest(egress, req)
-			if err := stream.Send(resp); err != nil {
-				return status.Errorf(codes.Unknown, "send: %v", err)
-			}
 		}
 	}
 

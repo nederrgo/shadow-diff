@@ -136,6 +136,7 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 		"response_body_mode: NONE",
 		"failure_mode_allow: false",
 		"egress_blackhole",
+		"shop_ext_proc",
 	}
 	for _, c := range checks {
 		if !strings.Contains(yaml, c) {
@@ -287,4 +288,3 @@ func TestRenderEnvoyYAML_mongoEgress(t *testing.T) {
 		}
 	}
 }
-

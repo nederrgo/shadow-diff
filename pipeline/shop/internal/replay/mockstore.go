@@ -2,7 +2,7 @@ package replay
 
 import "sync"
 
-// MockStore holds egress replay responses keyed by fuzzed hash.
+// MockStore holds egress replay responses keyed by trace-based key.
 type MockStore struct {
 	mu   sync.RWMutex
 	data map[string]EarlyResponse

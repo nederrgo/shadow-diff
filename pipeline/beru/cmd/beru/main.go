@@ -19,7 +19,6 @@ import (
 	"github.com/shadow-diff/beru/internal/dashboard"
 	"github.com/shadow-diff/beru/internal/envoyextproc"
 	"github.com/shadow-diff/beru/internal/otlp"
-	"github.com/shadow-diff/beru/internal/replay"
 	"github.com/shadow-diff/beru/internal/server"
 	"github.com/shadow-diff/beru/internal/storage"
 	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
@@ -57,7 +56,6 @@ func main() {
 	}
 	router := v2engine.NewTraceRouter(8, v2Repo, db)
 
-	mocks := replay.NewMockStore()
 	defaultTest := db.DefaultShadowTestName()
 
 	otlpSrv := &otlp.Server{Log: log, Router: router, DefaultShadowTest: defaultTest}
@@ -69,7 +67,7 @@ func main() {
 	}
 
 	httpAddr := envOr("BERU_HTTP_ADDR", ":8080")
-	httpSrv := &api.Server{Log: log, Mocks: mocks, Router: router, OTLP: otlpSrv, DB: db, Dashboard: dash}
+	httpSrv := &api.Server{Log: log, Router: router, OTLP: otlpSrv, DB: db, Dashboard: dash}
 	go func() {
 		if err := httpSrv.Start(httpAddr); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server stopped", "err", err)
@@ -82,7 +80,7 @@ func main() {
 		Log: log, Router: router, DefaultShadowTest: defaultTest,
 	})
 	extprocv3.RegisterExternalProcessorServer(grpcServerBeru, &envoyextproc.Server{
-		Log: log, Router: router, Mocks: mocks, Role: envoyextproc.RoleFromEnv(),
+		Log: log, Router: router, Role: envoyextproc.RoleFromEnv(),
 		DefaultShadowTest: defaultTest,
 	})
 

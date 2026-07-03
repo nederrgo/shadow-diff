@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/shadow-diff/recorder/internal/beru"
 	"github.com/shadow-diff/recorder/internal/config"
+	"github.com/shadow-diff/recorder/internal/shop"
 )
 
 // RunBidirectional reads paired HTTP transactions from pipe readers and posts to Beru.
-func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, recordAndReplay []config.RecordAndReplayHost, client *beru.Client) {
+func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, recordAndReplay []config.RecordAndReplayHost, client *shop.Client) {
 	defer reqR.Close()
 	defer resR.Close()
 
@@ -78,12 +78,12 @@ func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, recordAndRe
 			}
 		}
 
-		record := beru.RecordPayload{
+		record := shop.RecordPayload{
 			TraceID: traceID,
 			Method:  req.Method,
 			Host:    NormalizeHTTPHost(host),
 			Path:    path,
-			Response: beru.RecordResponse{
+			Response: shop.RecordResponse{
 				Status:  resp.StatusCode,
 				Headers: headers,
 				Body:    string(respBody),

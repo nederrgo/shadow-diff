@@ -38,8 +38,14 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (stri
 		return "", fmt.Errorf("invalid beruIngestAddress: %w", err)
 	}
 
+	shopAddr := shopGRPCAddressFor(shadowNS)
+	shopHost, shopPort, err := parseHostPort(shopAddr)
+	if err != nil {
+		return "", fmt.Errorf("invalid shopGRPCAddress %q: %w", shopAddr, err)
+	}
+
 	extraListeners := egressListener
-	extraClusters := buildDynamicForwardProxyClusterYAML()
+	extraClusters := buildShopExtProcClusterYAML(shopHost, shopPort) + buildDynamicForwardProxyClusterYAML()
 
 	return fmt.Sprintf(envoyYAMLTemplate,
 		ingressPort,
@@ -54,6 +60,28 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (stri
 		ingestPort,
 		extraClusters,
 	), nil
+}
+
+func buildShopExtProcClusterYAML(host string, port int32) string {
+	var b strings.Builder
+	b.WriteString("  - name: shop_ext_proc\n")
+	b.WriteString("    type: STRICT_DNS\n")
+	b.WriteString("    connect_timeout: 5s\n")
+	b.WriteString("    typed_extension_protocol_options:\n")
+	b.WriteString("      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:\n")
+	b.WriteString("        \"@type\": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions\n")
+	b.WriteString("        explicit_http_config:\n")
+	b.WriteString("          http2_protocol_options: {}\n")
+	b.WriteString("    load_assignment:\n")
+	b.WriteString("      cluster_name: shop_ext_proc\n")
+	b.WriteString("      endpoints:\n")
+	b.WriteString("      - lb_endpoints:\n")
+	b.WriteString("        - endpoint:\n")
+	b.WriteString("            address:\n")
+	b.WriteString("              socket_address:\n")
+	fmt.Fprintf(&b, "                address: %s\n", host)
+	fmt.Fprintf(&b, "                port_value: %d\n", port)
+	return b.String()
 }
 
 func parseHostPort(endpoint string) (host string, port int32, err error) {
@@ -280,7 +308,7 @@ func appendEgressExtProcFilterYAML(b *strings.Builder, role, beruTimeout, record
 	b.WriteString("              \"@type\": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor\n")
 	b.WriteString("              grpc_service:\n")
 	b.WriteString("                envoy_grpc:\n")
-	b.WriteString("                  cluster_name: beru_ext_proc\n")
+	b.WriteString("                  cluster_name: shop_ext_proc\n")
 	fmt.Fprintf(b, "                timeout: %s\n", beruTimeout)
 	b.WriteString("                initial_metadata:\n")
 	b.WriteString("                - key: x-shadow-mode\n")

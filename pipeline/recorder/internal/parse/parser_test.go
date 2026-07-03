@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shadow-diff/recorder/internal/beru"
+	"github.com/shadow-diff/recorder/internal/shop"
 	"github.com/shadow-diff/recorder/internal/config"
 )
 
@@ -51,14 +51,14 @@ func keepAliveFixture() (reqBytes, resBytes string) {
 func TestRunBidirectional_keepAlive(t *testing.T) {
 	var (
 		mu      sync.Mutex
-		records []beru.RecordPayload
+		records []shop.RecordPayload
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/record_egress" {
 			http.NotFound(w, r)
 			return
 		}
-		var rec beru.RecordPayload
+		var rec shop.RecordPayload
 		if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -71,7 +71,7 @@ func TestRunBidirectional_keepAlive(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := beru.NewClient(srv.URL)
+	client := shop.NewClient(srv.URL)
 	recordAndReplay := []config.RecordAndReplayHost{
 		{Host: "api.example.com", IgnorePaths: []string{"$.timestamp"}},
 	}
@@ -110,7 +110,7 @@ func TestRunBidirectional_keepAlive(t *testing.T) {
 	if len(records) != 2 {
 		t.Fatalf("record count: got %d want 2", len(records))
 	}
-	byPath := map[string]beru.RecordPayload{}
+	byPath := map[string]shop.RecordPayload{}
 	for _, rec := range records {
 		byPath[rec.Path] = rec
 	}

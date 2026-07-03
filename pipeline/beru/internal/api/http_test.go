@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shadow-diff/beru/internal/replay"
 	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
 	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
@@ -65,108 +64,6 @@ func TestHealthz_methodNotAllowed(t *testing.T) {
 	handleHealthz(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status %d, want 405", rec.Code)
-	}
-}
-
-func TestSeedMock_roundTrip(t *testing.T) {
-	mocks := replay.NewMockStore()
-	s := &Server{Log: slog.Default(), Mocks: mocks}
-
-	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
-	payload := map[string]any{
-		"trace_id": traceID,
-		"method":   "POST",
-		"host":     "api.example.com",
-		"path":     "/v1/orders",
-		"response": map[string]any{
-			"status":  200,
-			"headers": map[string]string{"content-type": "application/json"},
-			"body":    `{"ok":true}`,
-		},
-	}
-	raw, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/v1/seed_mock", bytes.NewReader(raw))
-	rec := httptest.NewRecorder()
-	s.handleSeedMock(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
-	}
-	var out struct {
-		Hash string `json:"hash"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatal(err)
-	}
-	if out.Hash == "" {
-		t.Fatal("expected hash in response")
-	}
-	// Key must use the trace-ID format.
-	expectedKey := replay.TraceKey(traceID, "POST", "api.example.com", "/v1/orders")
-	if out.Hash != expectedKey {
-		t.Fatalf("expected key %q, got %q", expectedKey, out.Hash)
-	}
-	if _, ok := mocks.Get(out.Hash); !ok {
-		t.Fatal("mock not stored")
-	}
-}
-
-func TestSeedMock_missingTraceID(t *testing.T) {
-	mocks := replay.NewMockStore()
-	s := &Server{Log: slog.Default(), Mocks: mocks}
-
-	payload := map[string]any{
-		"method": "POST",
-		"host":   "api.example.com",
-		"path":   "/v1/orders",
-		"response": map[string]any{
-			"status": 200,
-			"body":   `{"ok":true}`,
-		},
-	}
-	raw, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/v1/seed_mock", bytes.NewReader(raw))
-	rec := httptest.NewRecorder()
-	s.handleSeedMock(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 when trace_id absent, got %d", rec.Code)
-	}
-}
-
-func TestRecordEgress_roundTrip(t *testing.T) {
-	mocks := replay.NewMockStore()
-	s := &Server{Log: slog.Default(), Mocks: mocks}
-
-	const traceID = "aabbccddeeff00112233445566778899"
-	payload := map[string]any{
-		"trace_id": traceID,
-		"method":   "POST",
-		"host":     "httpbin.org",
-		"path":     "/post",
-		"response": map[string]any{
-			"status":  200,
-			"headers": map[string]string{"content-type": "application/json"},
-			"body":    `{"recorded":true}`,
-		},
-	}
-	raw, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/v1/record_egress", bytes.NewReader(raw))
-	rec := httptest.NewRecorder()
-	s.handleRecordEgress(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
-	}
-	var out struct {
-		Hash string `json:"hash"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatal(err)
-	}
-	expectedKey := replay.TraceKey(traceID, "POST", "httpbin.org", "/post")
-	if out.Hash != expectedKey {
-		t.Fatalf("expected trace key %q, got %q", expectedKey, out.Hash)
-	}
-	if _, ok := mocks.Get(out.Hash); !ok {
-		t.Fatal("mock not stored under trace key")
 	}
 }
 

@@ -7,6 +7,7 @@ use (
 	./pipeline/igrises/igris-rabbitmq
 	./pipeline/monarch
 	./pipeline/recorder
+	./pipeline/shop
 	./pipeline/siphon
 	./testing/example-apps/db-test-app
 	./testing/example-apps/rmq-test-worker

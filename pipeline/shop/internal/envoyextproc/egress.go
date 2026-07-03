@@ -1,24 +1,22 @@
 package envoyextproc
 
 import (
+	"log/slog"
 	"net"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
-	"github.com/shadow-diff/beru/internal/replay"
-	"github.com/shadow-diff/beru/internal/trace"
+	"github.com/shadow-diff/shop/internal/replay"
+	"github.com/shadow-diff/shop/internal/trace"
 )
 
 const (
-	headerShadowMode     = "x-shadow-mode"
-	shadowModeEgress     = "egress"
 	egressRegressionBody = "Egress Regression"
 	egressMissStatus     = 599
 )
 
 type egressState struct {
-	role               string
 	traceID            string
 	method             string
 	host               string
@@ -68,7 +66,7 @@ func (s *Server) egressImmediateFromState(state *egressState) *extprocv3.Process
 		return immediateResponse(egressMissStatus, nil, []byte(egressRegressionBody), "egress mock store unavailable")
 	}
 	if state.traceID == "" {
-		s.Log.Info("Egress Regression: no trace ID", "method", state.method, "host", state.host, "path", state.path)
+		slog.Info("Egress Regression: no trace ID", "method", state.method, "host", state.host, "path", state.path)
 		return immediateResponse(egressMissStatus, nil, []byte(egressRegressionBody), "egress no trace id")
 	}
 
@@ -78,7 +76,7 @@ func (s *Server) egressImmediateFromState(state *egressState) *extprocv3.Process
 		return immediateResponse(mock.StatusCode, mock.Headers, mock.Body, "egress mock hit")
 	}
 
-	s.Log.Info("Egress Regression", "trace_id", state.traceID, "method", state.method, "host", hostKey, "path", state.path)
+	slog.Info("Egress Regression", "trace_id", state.traceID, "method", state.method, "host", hostKey, "path", state.path)
 	return immediateResponse(egressMissStatus, nil, []byte(egressRegressionBody), "egress regression")
 }
 
@@ -112,14 +110,6 @@ func immediateResponse(statusCode int, headers map[string]string, body []byte, d
 				},
 				Details: details,
 			},
-		},
-	}
-}
-
-func requestBodyContinueResponse() *extprocv3.ProcessingResponse {
-	return &extprocv3.ProcessingResponse{
-		Response: &extprocv3.ProcessingResponse_RequestBody{
-			RequestBody: &extprocv3.BodyResponse{Response: continueCommon()},
 		},
 	}
 }

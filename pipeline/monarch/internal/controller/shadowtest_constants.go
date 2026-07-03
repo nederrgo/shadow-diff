@@ -30,23 +30,23 @@ const (
 	configMapKeyEnvoyYAML = "envoy.yaml"
 	volumeNameEnvoyConfig = "envoy-config"
 
-	defaultBeruGRPCAddress = "beru.beru-system.svc.cluster.local:50051"
-	defaultBeruHTTPAddress = "beru.beru-system.svc.cluster.local:8080"
+	defaultBeruGRPCAddress      = "beru.beru-system.svc.cluster.local:50051"
+	defaultBeruHTTPAddress      = "beru.beru-system.svc.cluster.local:8080"
 	defaultBeruOTLPEndpoint     = "http://beru.beru-system.svc.cluster.local:4317"
 	defaultBeruOTLPHTTPEndpoint = "http://beru.beru-system.svc.cluster.local:8080"
 	defaultBeruIngestAddress    = "beru-ingest.shadow-system.svc.cluster.local:8080"
-	defaultBeruGRPCTimeout = "10s"
-	beruSystemNamespace    = "beru-system"
-	beruServiceName        = "beru"
-	envBeruGRPCAddress     = "BERU_GRPC_ADDRESS"
+	defaultBeruGRPCTimeout      = "10s"
+	beruSystemNamespace         = "beru-system"
+	beruServiceName             = "beru"
+	envBeruGRPCAddress          = "BERU_GRPC_ADDRESS"
 
 	egressProxyPort int32  = 10001
 	egressProxyURL  string = "http://127.0.0.1:10001"
 
-	envHTTPProxy         string = "HTTP_PROXY"
-	envHTTPSProxy        string = "HTTPS_PROXY"
-	envNoProxy           string = "NO_PROXY"
-	defaultNoProxyValue  string = "127.0.0.1,localhost,beru-ingest.shadow-system.svc.cluster.local,.cluster.local,.svc"
+	envHTTPProxy        string = "HTTP_PROXY"
+	envHTTPSProxy       string = "HTTPS_PROXY"
+	envNoProxy          string = "NO_PROXY"
+	defaultNoProxyValue string = "127.0.0.1,localhost,beru-ingest.shadow-system.svc.cluster.local,.cluster.local,.svc"
 
 	beruIngestCluster = "beru_ingest"
 
@@ -69,11 +69,17 @@ const (
 	envRecorderListenAddr              = "RECORDER_LISTEN_ADDR"
 	envRecorderOTLPGRPCAddr            = "RECORDER_OTLP_GRPC_ADDR"
 	envRecorderRecordAndReplayFile     = "RECORDER_RECORD_AND_REPLAY_FILE"
+	envShopHTTPURL                     = "SHOP_HTTP_URL"
 	envBeruHTTPURL                     = "BERU_HTTP_URL"
 	defaultRecorderRecordAndReplayPath = "/etc/recorder/recordAndReplay.json"
-	defaultBeruHTTPURL                 = "http://beru.beru-system.svc.cluster.local:8080"
 	recorderServicePort                = int32(8080)
 	recorderOTLPPort                   = int32(4317)
+
+	shopName        = "shop"
+	shopGRPCPort    = int32(50051)
+	shopHTTPPort    = int32(8080)
+	envShopGRPCAddr = "SHOP_GRPC_ADDR"
+	envShopHTTPAddr = "SHOP_HTTP_ADDR"
 
 	volumeNameLocalBeruData = "beru-sqlite-data"
 )

@@ -13,12 +13,14 @@ const (
 	imageBaseEgressRelayRabbitMQ = "egress-relay-rabbitmq"
 	imageBaseRecorder            = "recorder"
 	imageBaseBeru                = "beru"
+	imageBaseShop                = "shop"
 
 	envIgrisHTTPImage           = "IGRIS_HTTP_IMAGE"
 	envIgrisRabbitMQImage       = "IGRIS_RABBITMQ_IMAGE"
 	envEgressRelayRabbitMQImage = "EGRESS_RELAY_RABBITMQ_IMAGE"
 	envRecorderImage            = "RECORDER_IMAGE"
 	envBeruImage                = "BERU_IMAGE"
+	envShopImage                = "SHOP_IMAGE"
 )
 
 func monarchImageTagSuffix() string {
@@ -74,4 +76,8 @@ func recorderImageFor(st *enginev1alpha1.ShadowTest) string {
 
 func beruImageFor(st *enginev1alpha1.ShadowTest) string {
 	return resolveHelperImage(imageBaseBeru, "", envBeruImage)
+}
+
+func shopImageFor(st *enginev1alpha1.ShadowTest) string {
+	return resolveHelperImage(imageBaseShop, "", envShopImage)
 }
