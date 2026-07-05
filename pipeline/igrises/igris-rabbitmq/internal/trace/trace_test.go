@@ -2,7 +2,6 @@ package trace
 
 import (
 	"regexp"
-	"strings"
 	"testing"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -17,23 +16,16 @@ func TestEnsureTraceHeadersFromTraceparentOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got[HeaderShadowTraceID] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
-		t.Fatalf("shadow id = %v", got[HeaderShadowTraceID])
-	}
 	if got[HeaderTraceparent] != tp {
 		t.Fatalf("traceparent overwritten: %v", got[HeaderTraceparent])
 	}
 }
 
-func TestEnsureTraceHeadersGeneratesBoth(t *testing.T) {
+func TestEnsureTraceHeadersGeneratesTraceparent(t *testing.T) {
 	t.Parallel()
 	got, err := EnsureTraceHeaders(nil)
 	if err != nil {
 		t.Fatal(err)
-	}
-	id, ok := got[HeaderShadowTraceID].(string)
-	if !ok || len(id) != 32 {
-		t.Fatalf("trace id = %v", got[HeaderShadowTraceID])
 	}
 	tp, ok := got[HeaderTraceparent].(string)
 	if !ok || !traceparentRE.MatchString(tp) {
@@ -51,49 +43,13 @@ func TestEnsureTraceHeadersPreservesInboundTraceparent(t *testing.T) {
 	if got[HeaderTraceparent] != inbound {
 		t.Fatalf("got %v", got[HeaderTraceparent])
 	}
-	if got[HeaderShadowTraceID] != "4bf92f3577b34da6a3ce929d0e0e4736" {
-		t.Fatalf("shadow id = %v", got[HeaderShadowTraceID])
-	}
 }
 
-func TestEnsureTraceHeadersIgnoresNonHexShadowID(t *testing.T) {
+func TestEnsureTraceIDDelegatesToHeaders(t *testing.T) {
 	t.Parallel()
-	got, err := EnsureTraceHeaders(amqp.Table{HeaderShadowTraceID: "existing-trace"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, ok := got[HeaderShadowTraceID].(string)
-	if !ok || len(id) != 32 {
-		t.Fatalf("expected generated 32-hex id, got %v", got[HeaderShadowTraceID])
-	}
-	tp, ok := got[HeaderTraceparent].(string)
-	if !ok || !strings.HasPrefix(tp, "00-"+id) {
-		t.Fatalf("traceparent = %v", got[HeaderTraceparent])
-	}
-}
-
-func TestEnsureTraceHeadersFromValidShadowID(t *testing.T) {
-	t.Parallel()
-	id := strings.Repeat("c", 32)
-	got, err := EnsureTraceHeaders(amqp.Table{HeaderShadowTraceID: id})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got[HeaderShadowTraceID] != id {
-		t.Fatalf("shadow id = %v", got[HeaderShadowTraceID])
-	}
-	tp, ok := got[HeaderTraceparent].(string)
-	if !ok || !strings.Contains(tp, id) {
-		t.Fatalf("traceparent = %v", tp)
-	}
-}
-
-func TestEnsureTraceIDPreservesExisting(t *testing.T) {
-	t.Parallel()
-	id := strings.Repeat("d", 32)
-	h := amqp.Table{HeaderShadowTraceID: id}
-	got := EnsureTraceID(h)
-	if got[HeaderShadowTraceID] != id {
-		t.Fatalf("got %v", got[HeaderShadowTraceID])
+	inbound := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	got := EnsureTraceID(amqp.Table{HeaderTraceparent: inbound})
+	if got[HeaderTraceparent] != inbound {
+		t.Fatalf("got %v", got[HeaderTraceparent])
 	}
 }

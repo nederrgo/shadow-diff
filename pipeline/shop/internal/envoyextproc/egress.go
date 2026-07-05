@@ -17,22 +17,20 @@ const (
 )
 
 type egressState struct {
-	traceID            string
-	method             string
-	host               string
-	path               string
-	body               []byte
-	endOfStreamHeaders bool
+	traceID string
+	method  string
+	host    string
+	path    string
+	body    []byte
 }
 
 func (s *Server) handleEgressRequest(state *egressState, req *extprocv3.ProcessingRequest) *extprocv3.ProcessingResponse {
 	switch v := req.Request.(type) {
 	case *extprocv3.ProcessingRequest_RequestHeaders:
 		s.captureEgressRequestHeaders(state, v.RequestHeaders)
-		if state.endOfStreamHeaders {
-			return s.egressImmediateFromState(state)
-		}
-		return requestHeaderContinueResponse()
+		// Trace ID and host are in headers; body is not needed for mock lookup.
+		// request_body_mode=NONE means the body case never fires anyway.
+		return s.egressImmediateFromState(state)
 	case *extprocv3.ProcessingRequest_RequestBody:
 		if v.RequestBody != nil {
 			state.body = append(state.body, v.RequestBody.GetBody()...)
@@ -50,9 +48,8 @@ func (s *Server) captureEgressRequestHeaders(state *egressState, hdrs *extprocv3
 	if hdrs == nil {
 		return
 	}
-	state.endOfStreamHeaders = hdrs.GetEndOfStream()
 	headers := hdrs.GetHeaders()
-	state.traceID = trace.ShadowTraceIDFromMap(headers, headerValue)
+	state.traceID = trace.TraceIDFromMap(headers, headerValue)
 	state.method = headerValue(headers, ":method")
 	state.host = headerValue(headers, ":authority")
 	if state.host == "" {

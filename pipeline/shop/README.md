@@ -34,7 +34,7 @@ Each stored mock is keyed by:
 trace:<traceID>:<METHOD>:<host>:<path>
 ```
 
-- `traceID` — the W3C trace ID from the `x-shadow-trace-id` or `traceparent` header, injected by Igris before multicasting. All three shadow roles for the same prod request share the same trace ID.
+- `traceID` — the W3C trace ID from the `traceparent` or `traceparent` header, injected by Igris before multicasting. All three shadow roles for the same prod request share the same trace ID.
 - `METHOD` — HTTP method (e.g. `POST`)
 - `host` — request `Host` header (e.g. `user-service.prod.internal:8080`)
 - `path` — URL path (e.g. `/v1/log`)

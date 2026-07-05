@@ -218,7 +218,7 @@ func (r *ShadowTestReconciler) reconcileIngressRelays(
 		if _, err := r.ensureProdShadowQueue(ctx, st); err != nil {
 			return false, err
 		}
-		if err := r.refreshShadowTest(ctx, req.NamespacedName, st); err != nil {
+		if err := r.Get(ctx, req.NamespacedName, st); err != nil {
 			return false, err
 		}
 		if err := r.reconcileIgrisRabbitMQStack(ctx, st, shadowNS); err != nil {

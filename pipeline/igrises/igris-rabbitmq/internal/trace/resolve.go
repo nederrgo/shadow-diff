@@ -14,25 +14,13 @@ type ResolvedContext struct {
 }
 
 // ResolveContext reads inbound AMQP headers and returns the trace context to stamp on all clones.
+// Inbound traceparent is preserved literally; otherwise a new W3C pair is generated.
 func ResolveContext(headers amqp.Table) (ResolvedContext, error) {
 	inboundTP, _ := extractAMQPString(headers, HeaderTraceparent)
 	if inboundTP != "" {
 		if tid, ok := ParseTraceparent(inboundTP); ok {
 			return ResolvedContext{TraceID: tid, Traceparent: inboundTP}, nil
 		}
-	}
-
-	shadowID, _ := extractAMQPString(headers, HeaderShadowTraceID)
-	if isValidTraceID(shadowID) {
-		spanID, err := GenerateSpanID()
-		if err != nil {
-			return ResolvedContext{}, fmt.Errorf("generate span id: %w", err)
-		}
-		tid := strings.ToLower(shadowID)
-		return ResolvedContext{
-			TraceID:     tid,
-			Traceparent: FormatTraceparent(tid, spanID),
-		}, nil
 	}
 
 	traceID, err := GenerateTraceID()
@@ -67,8 +55,7 @@ func isValidTraceID(s string) bool {
 
 func deleteTraceKeys(table amqp.Table) {
 	for k := range table {
-		kl := strings.ToLower(k)
-		if kl == "traceparent" || kl == "x-shadow-trace-id" {
+		if strings.ToLower(k) == "traceparent" {
 			delete(table, k)
 		}
 	}

@@ -111,7 +111,7 @@ k6 run -e DURATION=30s \
 | `noise_generator` | 5 VUs | Random `timestamp` / `uuid` per request |
 | `large_payload` | 1 VU | **1MB** body — Igris returns **413** (over 512KiB ingress limit) |
 | `limit_payload` | 1 req / 10s | **450KB** body — Igris **202**; shadows **200**; Beru (`k6-limit-...`) |
-| `orphaned_traces` | 5 VUs | Hits control-a only with `x-shadow-trace-id: k6-orphan-...` |
+| `orphaned_traces` | 5 VUs | Hits control-a only with `traceparent: k6-orphan-...` |
 | `beru_health` | 1 req / 5s | `GET /healthz`; metric `beru_health_success` must stay **100%** |
 
 ### Body limit boundary test only

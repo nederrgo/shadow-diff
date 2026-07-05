@@ -12,10 +12,7 @@ import (
 	"time"
 )
 
-const (
-	headerShadowTraceID = "x-shadow-trace-id"
-	headerTraceparent   = "traceparent"
-)
+const headerTraceparent = "traceparent"
 
 // Client POSTs parsed HTTP records to igris-http.
 type Client struct {
@@ -83,9 +80,6 @@ func (c *Client) Forward(ctx context.Context, record HTTPRecord) error {
 	if host := strings.TrimSpace(record.Host); host != "" {
 		req.Host = host
 		req.Header.Set("Host", host)
-	}
-	if id := strings.TrimSpace(record.ShadowTraceID); id != "" {
-		req.Header.Set(headerShadowTraceID, id)
 	}
 	if tp := strings.TrimSpace(record.Traceparent); tp != "" {
 		req.Header.Set(headerTraceparent, tp)

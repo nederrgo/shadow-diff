@@ -10,5 +10,4 @@ use (
 	./pipeline/shop
 	./pipeline/siphon
 	./testing/example-apps/db-test-app
-	./testing/example-apps/rmq-test-worker
 )

@@ -40,15 +40,19 @@ const (
 	beruServiceName             = "beru"
 	envBeruGRPCAddress          = "BERU_GRPC_ADDRESS"
 
-	egressProxyPort int32  = 10001
-	egressProxyURL  string = "http://127.0.0.1:10001"
+	egressProxyPort int32 = 10001
 
-	envHTTPProxy        string = "HTTP_PROXY"
-	envHTTPSProxy       string = "HTTPS_PROXY"
-	envNoProxy          string = "NO_PROXY"
-	defaultNoProxyValue string = "127.0.0.1,localhost,beru-ingest.shadow-system.svc.cluster.local,.cluster.local,.svc"
-
-	beruIngestCluster = "beru_ingest"
+	containerIptablesSetup = "iptables-setup"
+	// debian:bookworm-slim ships both iptables (nft backend) and iptables-legacy so
+	// the probe below works on any kernel: modern clusters (GKE COS, EKS Bottlerocket,
+	// OpenShift 4.x) have nf_tables loaded; minikube kvm2 / older kubeadm nodes have
+	// only x_tables (legacy) loaded.
+	iptablesInitImage = "debian:bookworm-slim"
+	iptablesSetupScript = `apt-get update -qq && apt-get install -yqq --no-install-recommends iptables 2>/dev/null
+if iptables -t nat -L >/dev/null 2>&1; then IPT=iptables; else IPT=iptables-legacy; fi
+$IPT -t nat -A OUTPUT -p tcp -d 127.0.0.1/8 -j RETURN
+$IPT -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 10001
+$IPT -t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-port 10001`
 
 	containerIgris               = "igris"
 	configMapKeyListenersJSON    = "listeners.json"

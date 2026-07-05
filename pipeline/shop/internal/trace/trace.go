@@ -7,9 +7,8 @@ import (
 )
 
 const (
-	HeaderShadowTraceID = "x-shadow-trace-id"
-	HeaderTraceparent   = "traceparent"
-	HeaderRequestID     = "x-request-id"
+	HeaderTraceparent = "traceparent"
+	HeaderRequestID   = "x-request-id"
 )
 
 // ParseTraceparent extracts the trace id from a W3C traceparent value.
@@ -40,13 +39,11 @@ func isHex(s string) bool {
 	return true
 }
 
-// ShadowTraceIDFromMap returns the shadow trace id from a header map using headerValue lookup.
-func ShadowTraceIDFromMap(headers *corev3.HeaderMap, headerValue func(*corev3.HeaderMap, string) string) string {
+// TraceIDFromMap returns the trace id from a header map using headerValue lookup.
+// Resolution order: W3C traceparent → x-request-id.
+func TraceIDFromMap(headers *corev3.HeaderMap, headerValue func(*corev3.HeaderMap, string) string) string {
 	if headers == nil {
 		return ""
-	}
-	if id := strings.TrimSpace(headerValue(headers, HeaderShadowTraceID)); id != "" {
-		return id
 	}
 	if tp := strings.TrimSpace(headerValue(headers, HeaderTraceparent)); tp != "" {
 		if tid, ok := ParseTraceparent(tp); ok {

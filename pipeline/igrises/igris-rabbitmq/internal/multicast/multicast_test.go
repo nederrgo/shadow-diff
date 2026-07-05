@@ -31,13 +31,9 @@ func assertIdenticalTraceHeaders(t *testing.T, tables []amqp.Table) {
 		t.Fatalf("got %d publishes, want 3", len(tables))
 	}
 	wantTP := tables[0][trace.HeaderTraceparent]
-	wantID := tables[0][trace.HeaderShadowTraceID]
 	for i, h := range tables {
 		if h[trace.HeaderTraceparent] != wantTP {
 			t.Fatalf("publish %d traceparent = %v, want %v", i, h[trace.HeaderTraceparent], wantTP)
-		}
-		if h[trace.HeaderShadowTraceID] != wantID {
-			t.Fatalf("publish %d shadow id = %v, want %v", i, h[trace.HeaderShadowTraceID], wantID)
 		}
 	}
 }
@@ -67,18 +63,18 @@ func TestHandleDelivery_multicastTraceIdentity_traceparentOnly(t *testing.T) {
 	}
 }
 
-func TestHandleDelivery_multicastTraceIdentity_nonHexShadowID(t *testing.T) {
+func TestHandleDelivery_multicastTraceIdentity_noTraceparent(t *testing.T) {
 	t.Parallel()
 	rec := &recordingPublisher{}
 	r := &Runner{publisher: rec}
 	msg := amqp.Delivery{
 		Body:    []byte(`{}`),
-		Headers: amqp.Table{trace.HeaderShadowTraceID: "not-hex"},
+		Headers: amqp.Table{},
 	}
 	r.handleDelivery(msg)
 	assertIdenticalTraceHeaders(t, rec.headers)
-	id, ok := rec.headers[0][trace.HeaderShadowTraceID].(string)
-	if !ok || len(id) != 32 {
-		t.Fatalf("expected generated id, got %v", rec.headers[0][trace.HeaderShadowTraceID])
+	tp, ok := rec.headers[0][trace.HeaderTraceparent].(string)
+	if !ok || len(tp) == 0 {
+		t.Fatalf("expected generated traceparent, got %v", rec.headers[0][trace.HeaderTraceparent])
 	}
 }

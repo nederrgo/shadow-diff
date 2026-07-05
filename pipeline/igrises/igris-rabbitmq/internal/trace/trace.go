@@ -6,9 +6,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-const HeaderShadowTraceID = "x-shadow-trace-id"
-
-// EnsureTraceHeaders ensures outbound AMQP headers carry x-shadow-trace-id and traceparent.
+// EnsureTraceHeaders ensures outbound AMQP headers carry a W3C traceparent.
 func EnsureTraceHeaders(headers amqp.Table) (amqp.Table, error) {
 	resolved, err := ResolveContext(headers)
 	if err != nil {
@@ -18,11 +16,7 @@ func EnsureTraceHeaders(headers amqp.Table) (amqp.Table, error) {
 	for k, v := range headers {
 		out[k] = v
 	}
-	if out == nil {
-		out = amqp.Table{}
-	}
 	deleteTraceKeys(out)
-	out[HeaderShadowTraceID] = resolved.TraceID
 	out[HeaderTraceparent] = resolved.Traceparent
 	return out, nil
 }

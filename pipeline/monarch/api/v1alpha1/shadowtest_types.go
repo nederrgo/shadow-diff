@@ -120,6 +120,20 @@ type RecorderSpec struct {
 	Image string `json:"image,omitempty"`
 }
 
+// BeruSpec overrides the beru-local analytics backend workload.
+type BeruSpec struct {
+	// Image overrides the default Beru container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+}
+
+// ShopSpec overrides the Shop mock-store workload.
+type ShopSpec struct {
+	// Image overrides the default Shop container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+}
+
 // EgressRelayRabbitMQSpec overrides the egress-relay-rabbitmq workload for AMQP-only ShadowTests.
 type EgressRelayRabbitMQSpec struct {
 	// Image overrides the default egress-relay-rabbitmq container image.
@@ -232,6 +246,14 @@ type ShadowTestSpec struct {
 	// Recorder overrides the Recorder image when spec.recordAndReplay enables egress recording.
 	// +optional
 	Recorder *RecorderSpec `json:"recorder,omitempty"`
+
+	// Beru overrides the beru-local image when spec.beruGRPCAddress is unset.
+	// +optional
+	Beru *BeruSpec `json:"beru,omitempty"`
+
+	// Shop overrides the Shop mock-store image when spec.recordAndReplay is non-empty.
+	// +optional
+	Shop *ShopSpec `json:"shop,omitempty"`
 
 	// RecordAndReplay lists outbound hosts trapped by the egress proxy for strict replay.
 	// +optional

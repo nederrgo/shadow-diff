@@ -87,7 +87,7 @@ Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that w
 | Step | Layer | Component | What happens |
 |------|-------|-----------|--------------|
 | 1 | Production | Target pods | Real clients hit prod (e.g. `my-prod-app` Service) |
-| 2 | Capture | **Pixie PEM** + **pixie-stream-bridge** | eBPF `http_events`; `px.export` OTLP traces with `x-shadow-trace-id` |
+| 2 | Capture | **Pixie PEM** + **pixie-stream-bridge** | eBPF `http_events`; `px.export` OTLP traces with `traceparent` |
 | 3 | Capture | **Siphon** | OTLP gRPC `:4317` → parse span attrs → HTTP POST to Igris |
 | 4 | Ingress hub | **Igris** | Accepts replayed traffic; **202** + `traceparent`; clones to three shadow Services |
 | 5 | Shadow stack | App + **Envoy** | App handles request; `traceparent` propagated in headers; Envoy observes ingress response |
@@ -306,7 +306,7 @@ sequenceDiagram
     P->>Pix: HTTP to prod pod
     Pix->>Br: http_events query
     Br->>S: px.export OTLP traces
-    S->>I: HTTP POST (x-shadow-trace-id)
+    S->>I: HTTP POST (traceparent)
   end
   opt Direct or synthetic test
     P->>I: HTTP request
@@ -374,12 +374,12 @@ Beru and Shop receive shadow traffic through **complementary ingest paths**:
 
 | Path | Source | Sink | Correlation |
 |------|--------|------|-------------|
-| **Ingress diff-of-diffs** | Envoy ingress `beru_ext_proc` | **Beru** | Trace id: `x-shadow-trace-id` → W3C `traceparent` → Envoy `x-request-id`; role from `x-shadow-role` |
+| **Ingress diff-of-diffs** | Envoy ingress `beru_ext_proc` | **Beru** | Trace id: `traceparent` → W3C `traceparent` → Envoy `x-request-id`; role from `x-shadow-role` |
 | **Egress diff (MongoDB)** | Pixie eBPF `mongodb_events` → beru-local OTLP | **Beru** | Trace id from `$comment` field in MongoDB wire payload; role from MongoDB pod name pattern |
-| **Egress diff (AMQP)** | egress-relay-rabbitmq | **Beru** | Trace id from message headers (`traceparent` or `x-shadow-trace-id`) |
+| **Egress diff (AMQP)** | egress-relay-rabbitmq | **Beru** | Trace id from message headers (`traceparent` or `traceparent`) |
 | **Egress replay (HTTP)** | Envoy egress `shop_ext_proc` gRPC | **Shop** | Trace id from W3C `traceparent` in Envoy request headers; mock key includes `traceID:METHOD:host:path` |
 
-**Ingress multicast.** **Igris** and **igris-rabbitmq** are the unified trace context source at ingress: `ResolveContext` runs once per event, then the **same** W3C `traceparent` and `x-shadow-trace-id` are stamped on all three shadow clones. Applications propagate `traceparent` on outbound MongoDB writes via the `$comment` field; Pixie captures the wire bytes and beru-local extracts the trace id server-side.
+**Ingress multicast.** **Igris** and **igris-rabbitmq** are the unified trace context source at ingress: `ResolveContext` runs once per event, then the **same** W3C `traceparent` and `traceparent` are stamped on all three shadow clones. Applications propagate `traceparent` on outbound MongoDB writes via the `$comment` field; Pixie captures the wire bytes and beru-local extracts the trace id server-side.
 
 ---
 
@@ -399,7 +399,7 @@ AMQP ingress hub. Consumes the prod shadow queue, injects W3C `traceparent` on m
 
 ### Siphon
 
-Per-shadow-namespace **OTLP gRPC receiver** on `:4317`. Accepts gzip-compressed OTLP traces from Pixie `px.export` (via **pixie-stream-bridge**), parses HTTP fields from span attributes (`url.path`, `x-shadow-trace-id`, `http.request.method`, `http.request.body`), and **HTTP POST**s to **igris-http**. Monarch reconciles the cluster DNS target (`Service/siphon`) and `PixieStreamRule`; you deploy the Siphon Deployment with `SIPHON_IGRIS_BASE_URL` pointing at the shadow Igris Service.
+Per-shadow-namespace **OTLP gRPC receiver** on `:4317`. Accepts gzip-compressed OTLP traces from Pixie `px.export` (via **pixie-stream-bridge**), parses HTTP fields from span attributes (`url.path`, `traceparent`, `http.request.method`, `http.request.body`), and **HTTP POST**s to **igris-http**. Monarch reconciles the cluster DNS target (`Service/siphon`) and `PixieStreamRule`; you deploy the Siphon Deployment with `SIPHON_IGRIS_BASE_URL` pointing at the shadow Igris Service.
 
 ### Recorder
 
@@ -414,7 +414,7 @@ Per-ShadowTest **in-memory mock store** deployed by Monarch into the shadow name
 | `:8080` | HTTP | `POST /v1/record_egress` seeded by Recorder; `GET /healthz` |
 | `:50051` | gRPC | `shop_ext_proc` — Envoy egress ext_proc stream; returns recorded response or `PERMISSION_DENIED` / **599** on miss |
 
-Mock key: `trace:<traceID>:<METHOD>:<host>:<path>`. The trace ID comes from the `x-shadow-trace-id` / `traceparent` header injected by Igris before multicasting to shadow pods. All state lives in memory (`sync.RWMutex` map) — state is lost on pod restart.
+Mock key: `trace:<traceID>:<METHOD>:<host>:<path>`. The trace ID comes from the `traceparent` / `traceparent` header injected by Igris before multicasting to shadow pods. All state lives in memory (`sync.RWMutex` map) — state is lost on pod restart.
 
 ### egress-relay-rabbitmq
 

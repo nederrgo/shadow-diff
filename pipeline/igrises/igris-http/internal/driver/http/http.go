@@ -15,10 +15,7 @@ import (
 	"github.com/shadow-diff/igris/internal/trace"
 )
 
-const (
-	HeaderShadowTraceID = "x-shadow-trace-id"
-	driverName          = "http_request"
-)
+const driverName = "http_request"
 
 // Driver implements the HTTP request input driver.
 type Driver struct {
@@ -147,8 +144,7 @@ func (d *Driver) handler(h driver.Handler) http.HandlerFunc {
 
 func deleteTraceHeaders(h http.Header) {
 	for k := range h {
-		kl := strings.ToLower(k)
-		if kl == "traceparent" || kl == "x-shadow-trace-id" {
+		if strings.ToLower(k) == "traceparent" {
 			h.Del(k)
 		}
 	}
@@ -183,7 +179,6 @@ func (d *Driver) Transform(sess driver.Session, meta driver.Metadata) (payload.M
 	headers.Del("Cookie")
 	headers.Del("Proxy-Authorization")
 	deleteTraceHeaders(headers)
-	headers.Set(HeaderShadowTraceID, meta.TraceID)
 	headers.Set(trace.HeaderTraceparent, meta.Traceparent)
 
 	return &message{
@@ -199,7 +194,6 @@ func (d *Driver) RespondEarly(meta driver.Metadata) (driver.EarlyResponse, bool)
 	return driver.EarlyResponse{
 		StatusCode: http.StatusAccepted,
 		Headers: map[string]string{
-			HeaderShadowTraceID:     meta.TraceID,
 			trace.HeaderTraceparent: meta.Traceparent,
 		},
 	}, true

@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-const HeaderShadowTraceID = "x-shadow-trace-id"
-
 // ResolvedContext is computed once before any multicast fan-out.
 type ResolvedContext struct {
 	TraceID     string
@@ -15,25 +13,13 @@ type ResolvedContext struct {
 }
 
 // ResolveContext reads inbound HTTP headers and returns the trace context to stamp on all clones.
+// Inbound traceparent is preserved literally; otherwise a new W3C pair is generated.
 func ResolveContext(headers http.Header) (ResolvedContext, error) {
 	inboundTP := strings.TrimSpace(headers.Get(HeaderTraceparent))
 	if inboundTP != "" {
 		if tid, ok := ParseTraceparent(inboundTP); ok {
 			return ResolvedContext{TraceID: tid, Traceparent: inboundTP}, nil
 		}
-	}
-
-	shadowID := strings.TrimSpace(headers.Get(HeaderShadowTraceID))
-	if isValidTraceID(shadowID) {
-		spanID, err := GenerateSpanID()
-		if err != nil {
-			return ResolvedContext{}, fmt.Errorf("generate span id: %w", err)
-		}
-		tid := strings.ToLower(shadowID)
-		return ResolvedContext{
-			TraceID:     tid,
-			Traceparent: FormatTraceparent(tid, spanID),
-		}, nil
 	}
 
 	traceID, err := GenerateTraceID()

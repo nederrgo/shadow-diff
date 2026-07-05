@@ -122,6 +122,18 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: podLabels}
 		deploy.Spec.Template.ObjectMeta.Labels = podLabels
 		cmName := envoyConfigMapName(st, role)
+		deploy.Spec.Template.Spec.InitContainers = []corev1.Container{
+			{
+				Name:  containerIptablesSetup,
+				Image: iptablesInitImage,
+				SecurityContext: &corev1.SecurityContext{
+					Capabilities: &corev1.Capabilities{
+						Add: []corev1.Capability{"NET_ADMIN"},
+					},
+				},
+				Command: []string{"/bin/sh", "-c", iptablesSetupScript},
+			},
+		}
 		deploy.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
 				Name: volumeNameEnvoyConfig,

@@ -197,11 +197,11 @@ Protobuf: `[api/proto/beru/v1/traffic.proto](api/proto/beru/v1/traffic.proto)` (
 
 ### Trace correlation
 
-**Ingress (Envoy ext_proc):** trace id resolution order — `x-shadow-trace-id` → W3C `traceparent` → Envoy `x-request-id`. Shadow role from `x-shadow-role` (Envoy metadata or `SHADOW_ROLE` env).
+**Ingress (Envoy ext_proc):** trace id resolution order — `traceparent` → W3C `traceparent` → Envoy `x-request-id`. Shadow role from `x-shadow-role` (Envoy metadata or `SHADOW_ROLE` env).
 
 **Egress (OTLP):** trace id from the span's W3C trace id bytes. Shadow role from `shadow_role` resource attribute, or parsed from `service.name` suffix (`<shadowtest>-control-a`, etc.). Each span is appended immediately; late spans trigger re-diff.
 
-**Egress (egress-relay-rabbitmq):** trace id from AMQP message headers (`traceparent` or `x-shadow-trace-id`). Payload includes `exchange`, `routing_key`, and `body` (message JSON) for signatures like `rabbitmq:publish:egress-events:order.shipped`.
+**Egress (egress-relay-rabbitmq):** trace id from AMQP message headers (`traceparent` or `traceparent`). Payload includes `exchange`, `routing_key`, and `body` (message JSON) for signatures like `rabbitmq:publish:egress-events:order.shipped`.
 
 ### MongoDB egress (OTLP)
 
@@ -295,7 +295,7 @@ Root Makefile aliases: `make beru-build`, `make beru-test`, and Monarch's `make 
 
 Enable OTel injection via `spec.otelInjection` on ShadowTest + OpenTelemetry Operator + `Instrumentation` CR. Monarch sets `OTEL_EXPORTER_OTLP_ENDPOINT` to Beru when a Mongo dependency is declared. See `./testing/scripts/e2e-python-hybrid-test.sh`, `./testing/scripts/e2e-otel-rabbitmq-test.sh`, and [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) Phase 5_OTel.
 
-Manual propagation (`x-shadow-trace-id` / `traceparent` copying) remains supported for libraries the agent cannot instrument — see `testing/example-apps/rmq-test-worker` with `RMQ_WORKER_MANUAL_TRACE=1`. Python `pika` is auto-instrumented when OTel injection is enabled; egress-relay deduplicates duplicate Firehose publishes.
+Manual propagation (`traceparent` / `traceparent` copying) remains supported for libraries the agent cannot instrument — see `testing/example-apps/rmq-test-worker` with `RMQ_WORKER_MANUAL_TRACE=1`. Python `pika` is auto-instrumented when OTel injection is enabled; egress-relay deduplicates duplicate Firehose publishes.
 
 ---
 

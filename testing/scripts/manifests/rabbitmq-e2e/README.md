@@ -1,6 +1,6 @@
 # RabbitMQ E2E (Phase 5b)
 
-Verifies Monarch prod shadow queue provisioning, `igris-rabbitmq` multicast (W3C **`traceparent`** + **`x-shadow-trace-id`**), shadow worker consumption, and Beru ingress/egress correlation.
+Verifies Monarch prod shadow queue provisioning, `igris-rabbitmq` multicast (W3C **`traceparent`** + **`traceparent`**), shadow worker consumption, and Beru ingress/egress correlation.
 
 ## Prerequisites
 
@@ -40,6 +40,6 @@ Or:
 ## Verify
 
 - `igris-rabbitmq` logs show multicast without trace header errors
-- Worker logs: `trace=<legacy-id>` after publish with `x-shadow-trace-id`
+- Worker logs: `trace=<legacy-id>` after publish with `traceparent`
 - Worker logs: `trace=<32-hex>` after traceparent-only publish
 - Beru: `No regression for Trace <legacy-id>` and `No regression for Trace <32-hex>`

@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -28,15 +27,7 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (stri
 	ingressPort := servicePortFor(st)
 	beruTimeout := beruGRPCTimeoutFor(st)
 
-	egressListener, err := buildEgressHTTPListenerYAML(st, role, beruTimeout)
-	if err != nil {
-		return "", err
-	}
-
-	ingestHost, ingestPort, err := parseBeruIngestHostPort(st, shadowNS)
-	if err != nil {
-		return "", fmt.Errorf("invalid beruIngestAddress: %w", err)
-	}
+	egressListener := buildEgressHTTPListenerYAML(role, beruTimeout)
 
 	shopAddr := shopGRPCAddressFor(shadowNS)
 	shopHost, shopPort, err := parseHostPort(shopAddr)
@@ -45,7 +36,7 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (stri
 	}
 
 	extraListeners := egressListener
-	extraClusters := buildShopExtProcClusterYAML(shopHost, shopPort) + buildDynamicForwardProxyClusterYAML()
+	extraClusters := buildShopExtProcClusterYAML(shopHost, shopPort)
 
 	return fmt.Sprintf(envoyYAMLTemplate,
 		ingressPort,
@@ -56,8 +47,6 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (stri
 		appPort,
 		beruHost,
 		beruPort,
-		ingestHost,
-		ingestPort,
 		extraClusters,
 	), nil
 }
@@ -96,142 +85,12 @@ func parseHostPort(endpoint string) (host string, port int32, err error) {
 	return h, int32(portNum), nil
 }
 
-// egressVirtualHostDomains returns Envoy virtual_host domains for downstream hosts.
-// Each host is listed bare and with :* so :authority values with explicit ports match.
-func egressVirtualHostDomains(hosts []string) []string {
-	seen := make(map[string]struct{}, len(hosts)*2)
-	var domains []string
-	for _, host := range hosts {
-		host = strings.TrimSpace(host)
-		if host == "" {
-			continue
-		}
-		for _, d := range []string{host, host + ":*"} {
-			if _, ok := seen[d]; ok {
-				continue
-			}
-			seen[d] = struct{}{}
-			domains = append(domains, d)
-		}
-	}
-	return domains
-}
-
-func recordAndReplayConfigJSON(st *enginev1alpha1.ShadowTest) (string, error) {
-	type entry struct {
-		Host               string   `json:"host"`
-		IgnoreRequestPaths []string `json:"ignoreRequestPaths,omitempty"`
-	}
-	entries := make([]entry, 0, len(st.Spec.RecordAndReplay))
-	for _, d := range st.Spec.RecordAndReplay {
-		host, _, ignorePaths := recordAndReplayEntry(d)
-		entries = append(entries, entry{
-			Host:               host,
-			IgnoreRequestPaths: ignorePaths,
-		})
-	}
-	raw, err := json.Marshal(entries)
-	if err != nil {
-		return "", err
-	}
-	return string(raw), nil
-}
-
-const (
-	dynamicForwardProxyCluster  = "dynamic_egress_cluster"
-	dynamicForwardProxyDNSCache = "dynamic_forward_proxy_cache"
-
-	envoyLuaEgressScript = `local max_bytes = 65536
-
-local function escape_json(s)
-  if s == nil then return "" end
-  s = tostring(s)
-  s = s:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n"):gsub("\r", "\\r")
-  return s
-end
-
-local function read_body(handle, truncated_suffix)
-  local body = handle:body()
-  if body == nil then return "" end
-  local len = body:length()
-  if len == 0 then return "" end
-  local n = len
-  if n > max_bytes then n = max_bytes end
-  local chunk = body:getBytes(0, n)
-  if len > max_bytes then
-    return chunk .. truncated_suffix
-  end
-  return chunk
-end
-
-function envoy_on_request(request_handle)
-  local traceparent = request_handle:headers():get("traceparent")
-  if traceparent then
-    request_handle:streamInfo():dynamicMetadata():set("envoy.filters.http.lua", "traceparent", traceparent)
-  end
-  local method = request_handle:headers():get(":method") or ""
-  local path = request_handle:headers():get(":path") or "/"
-  request_handle:streamInfo():dynamicMetadata():set("envoy.filters.http.lua", "http_method", method)
-  request_handle:streamInfo():dynamicMetadata():set("envoy.filters.http.lua", "http_path", path)
-  local req_body = read_body(request_handle, "\n[TRUNCATED BY ENVOY PROXY]")
-  request_handle:streamInfo():dynamicMetadata():set("envoy.filters.http.lua", "req_body", req_body)
-end
-
-function envoy_on_response(response_handle)
-  local meta = response_handle:streamInfo():dynamicMetadata():get("envoy.filters.http.lua")
-  local traceparent = ""
-  local method = ""
-  local path = "/"
-  local req_body = ""
-  if meta then
-    traceparent = meta["traceparent"] or ""
-    method = meta["http_method"] or ""
-    path = meta["http_path"] or "/"
-    req_body = meta["req_body"] or ""
-  end
-  local resp_body = read_body(response_handle, "\n[TRUNCATED BY ENVOY PROXY]")
-  local metadata_json = string.format('{"method":"%s","path":"%s"}', escape_json(method), escape_json(path))
-  local json_payload = string.format(
-    '{"trace_id":"%s","pod_role":"%s","shadow_test_name":"%s","protocol":"http","direction":"egress","raw_request":"%s","raw_response":"%s","metadata":"%s"}',
-    escape_json(traceparent),
-    escape_json(os.getenv("SHADOW_ROLE") or ""),
-    escape_json(os.getenv("SHADOW_TEST_NAME") or ""),
-    escape_json(req_body),
-    escape_json(resp_body),
-    escape_json(metadata_json)
-  )
-  local headers, body = response_handle:httpCall(
-    "POST",
-    "beru_ingest",
-    "/api/v1/ingest/wire",
-    json_payload,
-    5000)
-  if headers == nil then
-    response_handle:logInfo("beru_ingest httpCall failed")
-  end
-end
-`
-)
-
-func buildEgressHTTPListenerYAML(st *enginev1alpha1.ShadowTest, role, beruTimeout string) (string, error) {
-	recordAndReplayJSON := "[]"
-	if len(st.Spec.RecordAndReplay) > 0 {
-		raw, err := recordAndReplayConfigJSON(st)
-		if err != nil {
-			return "", err
-		}
-		recordAndReplayJSON = raw
-	}
-	domains := recordAndReplayEgressDomains(st)
-	return renderEgressHTTPListenerYAML(role, beruTimeout, domains, recordAndReplayJSON, len(st.Spec.RecordAndReplay) > 0), nil
-}
-
-func renderEgressHTTPListenerYAML(role, beruTimeout string, recordDomains []string, recordAndReplayJSON string, hasRecordAndReplay bool) string {
+func buildEgressHTTPListenerYAML(role, beruTimeout string) string {
 	var b strings.Builder
 	b.WriteString("  - name: egress_http_listener\n")
 	b.WriteString("    address:\n")
 	b.WriteString("      socket_address:\n")
-	b.WriteString("        address: 127.0.0.1\n")
+	b.WriteString("        address: 0.0.0.0\n")
 	fmt.Fprintf(&b, "        port_value: %d\n", egressProxyPort)
 	b.WriteString("    filter_chains:\n")
 	b.WriteString("    - filters:\n")
@@ -242,67 +101,24 @@ func renderEgressHTTPListenerYAML(role, beruTimeout string, recordDomains []stri
 	b.WriteString("          route_config:\n")
 	b.WriteString("            name: outbound_routes\n")
 	b.WriteString("            virtual_hosts:\n")
-	if hasRecordAndReplay && len(recordDomains) > 0 {
-		b.WriteString("            - name: egress_record_and_replay\n")
-		b.WriteString("              domains:\n")
-		for _, d := range recordDomains {
-			fmt.Fprintf(&b, "              - %q\n", d)
-		}
-		b.WriteString("              routes:\n")
-		b.WriteString("              - match:\n")
-		b.WriteString("                  prefix: \"/\"\n")
-		b.WriteString("                route:\n")
-		b.WriteString("                  cluster: egress_blackhole\n")
-		b.WriteString("            - name: egress_reject\n")
-		b.WriteString("              domains: [\"*\"]\n")
-		b.WriteString("              routes:\n")
-		b.WriteString("              - match:\n")
-		b.WriteString("                  prefix: \"/\"\n")
-		b.WriteString("                direct_response:\n")
-		b.WriteString("                  status: 403\n")
-		b.WriteString("                  body:\n")
-		b.WriteString("                    inline_string: \"egress host not configured\"\n")
-	} else {
-		b.WriteString("            - name: external_apis\n")
-		b.WriteString("              domains: [\"*\"]\n")
-		b.WriteString("              routes:\n")
-		b.WriteString("              - match:\n")
-		b.WriteString("                  connect_matcher: {}\n")
-		b.WriteString("                route:\n")
-		fmt.Fprintf(&b, "                  cluster: %s\n", dynamicForwardProxyCluster)
-		b.WriteString("              - match:\n")
-		b.WriteString("                  prefix: \"/\"\n")
-		b.WriteString("                route:\n")
-		fmt.Fprintf(&b, "                  cluster: %s\n", dynamicForwardProxyCluster)
-	}
+	b.WriteString("            - name: egress_passthrough\n")
+	b.WriteString("              domains: [\"*\"]\n")
+	b.WriteString("              routes:\n")
+	b.WriteString("              - match:\n")
+	b.WriteString("                  prefix: \"/\"\n")
+	b.WriteString("                direct_response:\n")
+	b.WriteString("                  status: 502\n")
+	b.WriteString("                  body:\n")
+	b.WriteString("                    inline_string: \"egress: no mock found\"\n")
 	b.WriteString("          http_filters:\n")
-	appendEgressLuaFilterYAML(&b)
-	appendEgressExtProcFilterYAML(&b, role, beruTimeout, recordAndReplayJSON, hasRecordAndReplay)
-	if !hasRecordAndReplay {
-		b.WriteString("          - name: envoy.filters.http.dynamic_forward_proxy\n")
-		b.WriteString("            typed_config:\n")
-		b.WriteString("              \"@type\": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig\n")
-		b.WriteString("              dns_cache_config:\n")
-		fmt.Fprintf(&b, "                name: %s\n", dynamicForwardProxyDNSCache)
-		b.WriteString("                dns_lookup_family: V4_ONLY\n")
-	}
+	appendEgressExtProcFilterYAML(&b, role, beruTimeout)
 	b.WriteString("          - name: envoy.filters.http.router\n")
 	b.WriteString("            typed_config:\n")
 	b.WriteString("              \"@type\": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router\n")
 	return b.String()
 }
 
-func appendEgressLuaFilterYAML(b *strings.Builder) {
-	b.WriteString("          - name: envoy.filters.http.lua\n")
-	b.WriteString("            typed_config:\n")
-	b.WriteString("              \"@type\": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua\n")
-	b.WriteString("              inline_code: |\n")
-	for _, line := range strings.Split(strings.TrimSuffix(envoyLuaEgressScript, "\n"), "\n") {
-		fmt.Fprintf(b, "                %s\n", line)
-	}
-}
-
-func appendEgressExtProcFilterYAML(b *strings.Builder, role, beruTimeout, recordAndReplayJSON string, hasRecordAndReplay bool) {
+func appendEgressExtProcFilterYAML(b *strings.Builder, role, beruTimeout string) {
 	b.WriteString("          - name: envoy.filters.http.ext_proc\n")
 	b.WriteString("            typed_config:\n")
 	b.WriteString("              \"@type\": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor\n")
@@ -315,49 +131,12 @@ func appendEgressExtProcFilterYAML(b *strings.Builder, role, beruTimeout, record
 	b.WriteString("                  value: \"egress\"\n")
 	b.WriteString("                - key: x-shadow-role\n")
 	fmt.Fprintf(b, "                  value: %q\n", role)
-	if hasRecordAndReplay {
-		b.WriteString("                - key: x-shadow-record-and-replay-config\n")
-		fmt.Fprintf(b, "                  value: %q\n", recordAndReplayJSON)
-		b.WriteString("              failure_mode_allow: false\n")
-		b.WriteString("              processing_mode:\n")
-		b.WriteString("                request_header_mode: SEND\n")
-		b.WriteString("                request_body_mode: BUFFERED\n")
-		b.WriteString("                response_header_mode: SKIP\n")
-		b.WriteString("                response_body_mode: NONE\n")
-	} else {
-		b.WriteString("              failure_mode_allow: true\n")
-		b.WriteString("              processing_mode:\n")
-		b.WriteString("                request_header_mode: SEND\n")
-		b.WriteString("                response_header_mode: SKIP\n")
-		b.WriteString("                request_body_mode: NONE\n")
-		b.WriteString("                response_body_mode: NONE\n")
-	}
-}
-
-func buildDynamicForwardProxyClusterYAML() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "  - name: %s\n", dynamicForwardProxyCluster)
-	b.WriteString("    lb_policy: CLUSTER_PROVIDED\n")
-	b.WriteString("    cluster_type:\n")
-	b.WriteString("      name: envoy.clusters.dynamic_forward_proxy\n")
-	b.WriteString("      typed_config:\n")
-	b.WriteString("        \"@type\": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig\n")
-	b.WriteString("        dns_cache_config:\n")
-	fmt.Fprintf(&b, "          name: %s\n", dynamicForwardProxyDNSCache)
-	b.WriteString("          dns_lookup_family: V4_ONLY\n")
-	b.WriteString("    transport_socket:\n")
-	b.WriteString("      name: envoy.transport_sockets.tls\n")
-	b.WriteString("      typed_config:\n")
-	b.WriteString("        \"@type\": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext\n")
-	return b.String()
-}
-
-func renderEgressListenerYAML(st *enginev1alpha1.ShadowTest, role, beruTimeout string) (string, error) {
-	return buildEgressHTTPListenerYAML(st, role, beruTimeout)
-}
-
-func buildEgressProxyListenerYAML(role, beruTimeout string, domains []string, recordAndReplayJSON string) string {
-	return renderEgressHTTPListenerYAML(role, beruTimeout, domains, recordAndReplayJSON, true)
+	b.WriteString("              failure_mode_allow: false\n")
+	b.WriteString("              processing_mode:\n")
+	b.WriteString("                request_header_mode: SEND\n")
+	b.WriteString("                request_body_mode: NONE\n")
+	b.WriteString("                response_header_mode: SKIP\n")
+	b.WriteString("                response_body_mode: NONE\n")
 }
 
 // Ingress and egress HCM forward traceparent by default (no header removal on traceparent).
@@ -400,11 +179,6 @@ static_resources:
                 request_mutations:
                 - append:
                     header:
-                      key: x-shadow-trace-id
-                      value: "%%REQ(x-request-id)%%"
-                    append_action: ADD_IF_ABSENT
-                - append:
-                    header:
                       key: x-shadow-role
                       value: "%s"
           - name: envoy.filters.http.ext_proc
@@ -440,18 +214,6 @@ static_resources:
               socket_address:
                 address: 127.0.0.1
                 port_value: %d
-  - name: egress_blackhole
-    type: STATIC
-    connect_timeout: 1s
-    load_assignment:
-      cluster_name: egress_blackhole
-      endpoints:
-      - lb_endpoints:
-        - endpoint:
-            address:
-              socket_address:
-                address: 127.0.0.1
-                port_value: 1
   - name: beru_ext_proc
     type: STRICT_DNS
     connect_timeout: 5s
@@ -462,18 +224,6 @@ static_resources:
           http2_protocol_options: {}
     load_assignment:
       cluster_name: beru_ext_proc
-      endpoints:
-      - lb_endpoints:
-        - endpoint:
-            address:
-              socket_address:
-                address: %s
-                port_value: %d
-  - name: beru_ingest
-    type: STRICT_DNS
-    connect_timeout: 5s
-    load_assignment:
-      cluster_name: beru_ingest
       endpoints:
       - lb_endpoints:
         - endpoint:

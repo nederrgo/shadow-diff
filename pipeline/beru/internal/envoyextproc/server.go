@@ -17,9 +17,8 @@ import (
 )
 
 const (
-	headerShadowTraceID = "x-shadow-trace-id"
-	headerShadowRole    = "x-shadow-role"
-	headerRequestID     = "x-request-id"
+	headerShadowRole = "x-shadow-role"
+	headerRequestID  = "x-request-id"
 )
 
 // Server implements Envoy external processing for ingress diff-of-diffs.
@@ -87,7 +86,7 @@ func (s *Server) captureRequestHeaders(state *streamState, headers *corev3.Heade
 	if headers == nil {
 		return
 	}
-	state.traceID = trace.ShadowTraceIDFromMap(headers, headerValue)
+	state.traceID = trace.TraceIDFromMap(headers, headerValue)
 	state.method = headerValue(headers, ":method")
 	state.path = headerValue(headers, ":path")
 	if r := headerValue(headers, headerShadowRole); r != "" {

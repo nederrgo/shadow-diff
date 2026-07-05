@@ -10,10 +10,7 @@ import (
 	"github.com/shadow-diff/egress-relay-rabbitmq/internal/trace"
 )
 
-const (
-	headerShadowTraceID = "x-shadow-trace-id"
-	headerTraceparent   = "traceparent"
-)
+const headerTraceparent = "traceparent"
 
 // TraceExchange is the RabbitMQ Firehose topic exchange.
 func TraceExchange() string { return "amq.rabbitmq.trace" }
@@ -82,9 +79,6 @@ func TraceContextFromFirehose(traceHeaders amqp.Table) (traceID, spanID string, 
 	appHeaders, err := OriginalAppHeaders(traceHeaders)
 	if err != nil {
 		return "", "", err
-	}
-	if id, ok := getStringHeader(appHeaders, headerShadowTraceID); ok {
-		return id, "", nil
 	}
 	if tp, ok := getStringHeader(appHeaders, headerTraceparent); ok {
 		if tid, sid, ok := trace.ParseTraceparent(tp); ok {

@@ -1,7 +1,6 @@
 package trace
 
 import (
-	"strings"
 	"testing"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -22,28 +21,16 @@ func TestResolveContext_preservesInboundTraceparentBytes(t *testing.T) {
 	}
 }
 
-func TestResolveContext_ignoresNonHexShadowID(t *testing.T) {
+func TestResolveContext_generatesWhenNoTraceparent(t *testing.T) {
 	t.Parallel()
-	got, err := ResolveContext(amqp.Table{HeaderShadowTraceID: "existing-trace"})
+	got, err := ResolveContext(amqp.Table{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got.TraceID) != 32 {
-		t.Fatalf("expected generated id, got %q", got.TraceID)
+		t.Fatalf("expected generated 32-hex id, got %q", got.TraceID)
 	}
-	if !strings.HasPrefix(got.Traceparent, "00-"+got.TraceID) {
-		t.Fatalf("traceparent %q", got.Traceparent)
-	}
-}
-
-func TestResolveContext_fromValidShadowID(t *testing.T) {
-	t.Parallel()
-	id := strings.Repeat("b", 32)
-	got, err := ResolveContext(amqp.Table{HeaderShadowTraceID: id})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.TraceID != id {
-		t.Fatalf("trace id = %q", got.TraceID)
+	if _, ok := ParseTraceparent(got.Traceparent); !ok {
+		t.Fatalf("invalid traceparent %q", got.Traceparent)
 	}
 }

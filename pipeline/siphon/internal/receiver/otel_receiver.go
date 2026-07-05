@@ -152,12 +152,11 @@ func parseHTTPRecordFromAttrs(attrs map[string]string, logBody []byte) (forwarde
 	}
 
 	return forwarder.HTTPRecord{
-		Method:        method,
-		RequestURI:    requestURI,
-		Host:          firstAttr(attrs, "http.host", "server.address", "url.domain"),
-		Body:          body,
-		ShadowTraceID: firstAttr(attrs, headerShadowTraceID, "http.request.header.x-shadow-trace-id"),
-		Traceparent:   firstAttr(attrs, headerTraceparent, "http.request.header.traceparent"),
+		Method:      method,
+		RequestURI:  requestURI,
+		Host:        firstAttr(attrs, "http.host", "server.address", "url.domain"),
+		Body:        body,
+		Traceparent: firstAttr(attrs, headerTraceparent, "http.request.header.traceparent"),
 	}, true
 }
 
@@ -225,7 +224,4 @@ func firstAttr(attrs map[string]string, keys ...string) string {
 	return ""
 }
 
-const (
-	headerShadowTraceID = "x-shadow-trace-id"
-	headerTraceparent   = "traceparent"
-)
+const headerTraceparent = "traceparent"

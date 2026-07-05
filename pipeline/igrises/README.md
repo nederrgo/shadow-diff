@@ -36,7 +36,7 @@ Pluggable **HTTP and TCP** ingress hub.
 ### HTTP driver (`http_request`)
 
 - Listens on ports defined in `/etc/igris/listeners.json` (Monarch writes this from `ShadowTest.spec.inputs`).
-- Resolves trace context **once** per request via `ResolveContext` (`traceparent` literal preserved when inbound; else valid 32-hex `x-shadow-trace-id`; else generate W3C ids).
+- Resolves trace context **once** per request via `ResolveContext` (`traceparent` literal preserved when inbound; else valid 32-hex `traceparent`; else generate W3C ids).
 - Returns **202 Accepted** immediately with the resolved trace headers (async multicast).
 - Clones method, path, body, and sanitized headers to three shadow URLs in parallel; deletes then re-stamps trace headers on each clone to avoid duplicate casings.
 
@@ -71,7 +71,7 @@ igris-http/
 
 1. Monarch declares a prod broker queue `shadow-diff-<shadowtest-uid>` bound to the prod exchange/routing key from `spec.inputs[].amqp`.
 2. **igris-rabbitmq** consumes that queue on the prod broker.
-3. For each message `ResolveContext` runs **once** before fan-out; outbound AMQP headers always carry matching **`x-shadow-trace-id`** and W3C **`traceparent`** (inbound `traceparent` preserved literally; `string` and `[]byte` header values supported).
+3. For each message `ResolveContext` runs **once** before fan-out; outbound AMQP headers always carry matching **`traceparent`** and W3C **`traceparent`** (inbound `traceparent` preserved literally; `string` and `[]byte` header values supported).
 4. Publishes the same body and routing key to the **`orders`** (or configured) exchange on **each** shadow RabbitMQ broker — one per role.
 
 Shadow worker apps consume from their local broker; trace context must propagate on outbound HTTP (Envoy) and/or AMQP publish (egress-relay Firehose) for Beru to correlate.
@@ -97,10 +97,10 @@ Both variants resolve context once, then stamp **identical** headers on all thre
 
 | Header | Purpose |
 | ------ | ------- |
-| `x-shadow-trace-id` | Beru correlation key (32-char hex; non-hex inbound values are ignored) |
+| `traceparent` | Beru correlation key (32-char hex; non-hex inbound values are ignored) |
 | `traceparent` | W3C Trace Context; **inbound literal preserved** when valid |
 
-**Resolution priority:** inbound `traceparent` (literal) → valid 32-hex `x-shadow-trace-id` → generate new W3C pair.
+**Resolution priority:** inbound `traceparent` (literal) → valid 32-hex `traceparent` → generate new W3C pair.
 
 Downstream shadow apps receive these headers on every cloned request/message. HTTP ingress uses Envoy `ext_proc` (no app trace code required). AMQP workers should copy `traceparent` on outbound HTTP (Envoy wire ingest, Phase 2) or AMQP publish (egress-relay) — see [pipeline/beru/README.md](../beru/README.md).
 

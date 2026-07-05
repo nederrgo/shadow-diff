@@ -20,7 +20,7 @@ data:
     __PORT_FILTERS__
 
     df.body = df.req_body
-    df.trace_hdr = px.pluck(df.req_headers, 'x-shadow-trace-id')
+    df.trace_hdr = px.pluck(df.req_headers, 'traceparent')
     df.end_time = df.time_ + df.latency
 
     px.export(df, px.otel.Data(
@@ -41,7 +41,7 @@ data:
           attributes={
             'http.request.method': df.req_method,
             'url.path': df.req_path,
-            'x-shadow-trace-id': df.trace_hdr,
+            'traceparent': df.trace_hdr,
             'http.request.body': df.body,
           },
         ),
@@ -92,7 +92,9 @@ data:
     df.pod = df.ctx['pod']
     df.service = df.ctx['service']
 
-    # ponytail: in-cluster downstream is trace_role==2 on server pod; external is trace_role==1 on prod client — filter by Host allowlist
+    # ponytail: no trace_role filter — works for both in-cluster and external services.
+    # Shadow worker 599s (from transparent proxy Pixie capture) are suppressed in Shop's
+    # Put() which refuses to overwrite a 2xx mock with a non-2xx.
     df.req_host = px.pluck(df.req_headers, 'Host')
     __EGRESS_HOST_FILTERS__
     __EXCLUDE_PATH_FILTERS__

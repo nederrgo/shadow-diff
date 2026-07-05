@@ -86,35 +86,25 @@ func TestParseMetadataFromTraceparentOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	hm := msg.(*message)
-	if got := hm.headers.Get(HeaderShadowTraceID); got != meta.TraceID {
-		t.Fatalf("x-shadow-trace-id = %q", got)
-	}
 	if got := hm.headers.Get(trace.HeaderTraceparent); got != inbound {
 		t.Fatalf("traceparent = %q, want %q", got, inbound)
 	}
 }
 
-func TestTransformInjectsTraceID(t *testing.T) {
+func TestTransformGeneratesTraceparentWhenNoneProvided(t *testing.T) {
 	t.Parallel()
 	d := New(testMaxBodySize)
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	req.Header.Set(HeaderShadowTraceID, "trace-abc")
 	sess := &Session{Request: req, Body: nil}
 	meta, err := d.ParseMetadata(sess)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if meta.TraceID == "trace-abc" {
-		t.Fatal("non-hex shadow id must not be preserved")
 	}
 	msg, err := d.Transform(sess, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
 	hm := msg.(*message)
-	if got := hm.headers.Get(HeaderShadowTraceID); got != meta.TraceID {
-		t.Fatalf("header trace = %q, meta = %q", got, meta.TraceID)
-	}
 	if _, ok := trace.ParseTraceparent(hm.headers.Get(trace.HeaderTraceparent)); !ok {
 		t.Fatalf("invalid traceparent %q", hm.headers.Get(trace.HeaderTraceparent))
 	}
@@ -127,7 +117,6 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 		method      string
 		requestURI  string
 		body        string
-		traceID     string
 		traceparent string
 	}
 	var mu sync.Mutex
@@ -142,7 +131,6 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 				method:      r.Method,
 				requestURI:  r.URL.RequestURI(),
 				body:        string(b),
-				traceID:     r.Header.Get(HeaderShadowTraceID),
 				traceparent: r.Header.Get(trace.HeaderTraceparent),
 			})
 			mu.Unlock()
@@ -156,9 +144,9 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 	hub := core.NewHub(cfg, slog.Default())
 
 	rec := httptest.NewRecorder()
-	wantTraceID := strings.Repeat("f", 32)
+	inboundTP := "00-" + strings.Repeat("f", 32) + "-" + strings.Repeat("a", 16) + "-01"
 	req := httptest.NewRequest(http.MethodPost, "/api/items?q=1", bytes.NewReader([]byte(`{"ok":true}`)))
-	req.Header.Set(HeaderShadowTraceID, wantTraceID)
+	req.Header.Set(trace.HeaderTraceparent, inboundTP)
 	body, _ := io.ReadAll(req.Body)
 	_ = req.Body.Close()
 	if err := hub.HandleAtomic(New(testMaxBodySize), &Session{Request: req, Body: body, Writer: rec}); err != nil {
@@ -171,18 +159,9 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 	if len(captures) != 3 {
 		t.Fatalf("got %d captures, want 3", len(captures))
 	}
-	wantTP := ""
 	for _, c := range captures {
-		if c.traceID != wantTraceID {
-			t.Fatalf("mismatched trace ids: %q vs %q", c.traceID, wantTraceID)
-		}
-		if wantTP == "" {
-			wantTP = c.traceparent
-		} else if c.traceparent != wantTP {
-			t.Fatalf("mismatched traceparent: %q vs %q", c.traceparent, wantTP)
-		}
-		if _, ok := trace.ParseTraceparent(c.traceparent); !ok {
-			t.Fatalf("invalid traceparent %q", c.traceparent)
+		if c.traceparent != inboundTP {
+			t.Fatalf("traceparent = %q, want %q", c.traceparent, inboundTP)
 		}
 		if c.method != http.MethodPost {
 			t.Fatalf("method = %q", c.method)
@@ -247,9 +226,6 @@ func TestTransformDeletesDuplicateCasedTraceHeaders(t *testing.T) {
 	if len(hm.headers.Values(trace.HeaderTraceparent)) != 1 {
 		t.Fatalf("want one traceparent, got %v", hm.headers.Values(trace.HeaderTraceparent))
 	}
-	if len(hm.headers.Values(HeaderShadowTraceID)) != 1 {
-		t.Fatalf("want one shadow trace id, got %v", hm.headers.Values(HeaderShadowTraceID))
-	}
 }
 
 func TestTransformRedactsHeaders(t *testing.T) {
@@ -285,7 +261,7 @@ func TestHandlerReturns202WithTrace(t *testing.T) {
 	backendTrace := make(chan string, 3)
 	mkBackend := func() *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			backendTrace <- r.Header.Get(HeaderShadowTraceID)
+			backendTrace <- r.Header.Get(trace.HeaderTraceparent)
 			w.WriteHeader(http.StatusOK)
 		}))
 	}
@@ -328,19 +304,16 @@ func TestHandlerReturns202WithTrace(t *testing.T) {
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	respTrace := resp.Header.Get(HeaderShadowTraceID)
-	if respTrace == "" {
-		t.Fatal("missing trace on 202")
-	}
-	if resp.Header.Get(trace.HeaderTraceparent) == "" {
+	respTP := resp.Header.Get(trace.HeaderTraceparent)
+	if respTP == "" {
 		t.Fatal("missing traceparent on 202")
 	}
 	hub.WaitPendingAtomic()
 	for i := 0; i < 3; i++ {
 		select {
 		case got := <-backendTrace:
-			if got != respTrace {
-				t.Fatalf("backend %q != response %q", got, respTrace)
+			if got != respTP {
+				t.Fatalf("backend traceparent %q != response %q", got, respTP)
 			}
 		case <-time.After(2 * time.Second):
 			t.Fatalf("timeout waiting for backend %d", i)
@@ -417,7 +390,7 @@ func TestDispatchUsesDetachedContext(t *testing.T) {
 	msg := &message{
 		method:     http.MethodGet,
 		requestURI: "/test",
-		headers:    http.Header{HeaderShadowTraceID: []string{"t1"}},
+		headers:    http.Header{trace.HeaderTraceparent: []string{"00-" + strings.Repeat("a", 32) + "-" + strings.Repeat("b", 16) + "-01"}},
 		client:     servers[0].Client(),
 	}
 	targets := []payload.Target{

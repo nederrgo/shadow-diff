@@ -29,13 +29,12 @@ func TestResolveIgrisURL_preservesQueryString(t *testing.T) {
 	}
 }
 
-func TestClient_Forward_postsWithTraceHeaders(t *testing.T) {
-	var gotMethod, gotPath, gotTrace, gotTP string
+func TestClient_Forward_postsWithTraceparent(t *testing.T) {
+	var gotMethod, gotPath, gotTP string
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotPath = r.URL.RequestURI()
-		gotTrace = r.Header.Get(headerShadowTraceID)
 		gotTP = r.Header.Get(headerTraceparent)
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusAccepted)
@@ -48,11 +47,10 @@ func TestClient_Forward_postsWithTraceHeaders(t *testing.T) {
 	}
 
 	err = client.Forward(context.Background(), HTTPRecord{
-		Method:        http.MethodPost,
-		RequestURI:    "/echo?active=true",
-		Body:          []byte(`{"ok":true}`),
-		ShadowTraceID: "abc123",
-		Traceparent:   "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		Method:      http.MethodPost,
+		RequestURI:  "/echo?active=true",
+		Body:        []byte(`{"ok":true}`),
+		Traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -63,11 +61,8 @@ func TestClient_Forward_postsWithTraceHeaders(t *testing.T) {
 	if gotPath != "/echo?active=true" {
 		t.Fatalf("path %q", gotPath)
 	}
-	if gotTrace != "abc123" {
-		t.Fatalf("trace %q", gotTrace)
-	}
-	if gotTP == "" {
-		t.Fatal("missing traceparent")
+	if gotTP != "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" {
+		t.Fatalf("traceparent %q", gotTP)
 	}
 	if string(gotBody) != `{"ok":true}` {
 		t.Fatalf("body %q", gotBody)

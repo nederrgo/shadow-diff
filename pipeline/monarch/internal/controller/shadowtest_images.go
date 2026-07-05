@@ -75,9 +75,17 @@ func recorderImageFor(st *enginev1alpha1.ShadowTest) string {
 }
 
 func beruImageFor(st *enginev1alpha1.ShadowTest) string {
-	return resolveHelperImage(imageBaseBeru, "", envBeruImage)
+	cr := ""
+	if st.Spec.Beru != nil {
+		cr = st.Spec.Beru.Image
+	}
+	return resolveHelperImage(imageBaseBeru, cr, envBeruImage)
 }
 
 func shopImageFor(st *enginev1alpha1.ShadowTest) string {
-	return resolveHelperImage(imageBaseShop, "", envShopImage)
+	cr := ""
+	if st.Spec.Shop != nil {
+		cr = st.Spec.Shop.Image
+	}
+	return resolveHelperImage(imageBaseShop, cr, envShopImage)
 }

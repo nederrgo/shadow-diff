@@ -11,8 +11,8 @@
 set -euo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
-# shellcheck source=testing/scripts/lib/pixie-bridge.sh
-source "$REPO/testing/scripts/lib/pixie-bridge.sh"
+# shellcheck source=testing/scripts/helpers/pixie-bridge.sh
+source "$REPO/testing/scripts/helpers/pixie-bridge.sh"
 
 FOREGROUND=1
 while [[ $# -gt 0 ]]; do

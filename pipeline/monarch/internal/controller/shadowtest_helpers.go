@@ -75,13 +75,7 @@ func envFromTarget(dep *appsv1.Deployment) ([]corev1.EnvVar, string) {
 }
 
 func appEnvWithEgressProxy(_ *enginev1alpha1.ShadowTest, base []corev1.EnvVar) []corev1.EnvVar {
-	out := append([]corev1.EnvVar{}, base...)
-	out = append(out,
-		corev1.EnvVar{Name: envHTTPProxy, Value: egressProxyURL},
-		corev1.EnvVar{Name: envHTTPSProxy, Value: egressProxyURL},
-		corev1.EnvVar{Name: envNoProxy, Value: defaultNoProxyValue},
-	)
-	return out
+	return append([]corev1.EnvVar{}, base...)
 }
 
 func envoyContainerPorts(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort {
@@ -164,10 +158,6 @@ func beruIngestAddressFor(st *enginev1alpha1.ShadowTest, shadowNS string) string
 	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
 }
 
-func parseBeruIngestHostPort(st *enginev1alpha1.ShadowTest, shadowNS string) (host string, port int32, err error) {
-	return parseHostPort(beruIngestAddressFor(st, shadowNS))
-}
-
 func parseBeruHostPort(address string) (host string, port int32, err error) {
 	if !strings.Contains(address, ":") {
 		return address, 50051, nil
@@ -204,22 +194,6 @@ func parseRecordAndReplayTarget(rawHost string, defaultPort int32) (host string,
 func recordAndReplayEntry(d enginev1alpha1.RecordAndReplayHostSpec) (host string, port int32, ignorePaths []string) {
 	host, port = parseRecordAndReplayTarget(d.Host, defaultRecordAndReplayPort)
 	return host, port, d.IgnoreRequestPaths
-}
-
-func recordAndReplayEgressDomains(st *enginev1alpha1.ShadowTest) []string {
-	var hosts []string
-	for _, d := range st.Spec.RecordAndReplay {
-		host, port, _ := recordAndReplayEntry(d)
-		if host == "" {
-			continue
-		}
-		if port != defaultRecordAndReplayPort {
-			hosts = append(hosts, fmt.Sprintf("%s:%d", host, port))
-		} else {
-			hosts = append(hosts, host)
-		}
-	}
-	return egressVirtualHostDomains(hosts)
 }
 
 func resolveDependencyDefaults(dep enginev1alpha1.DependencySpec) (image string, port int32) {

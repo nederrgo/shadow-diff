@@ -236,7 +236,6 @@ var _ = Describe("ShadowTest Controller", func() {
 				Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: shadowNS, Name: expectedCM}, &cm)).To(Succeed())
 				Expect(cm.Data[configMapKeyEnvoyYAML]).NotTo(BeEmpty())
 				Expect(cm.Data[configMapKeyEnvoyYAML]).To(ContainSubstring("generate_request_id: true"))
-				Expect(cm.Data[configMapKeyEnvoyYAML]).To(ContainSubstring("x-shadow-trace-id"))
 				Expect(cm.Data[configMapKeyEnvoyYAML]).To(ContainSubstring("envoy.filters.http.ext_proc"))
 				Expect(d.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort).To(Equal(int32(8081)))
 			}

@@ -33,7 +33,7 @@ Beru (L5)
 | 4 | **egress-relay-rabbitmq (L4a)** | Reads Firehose, dedups OTel artifacts, extracts trace id + body, forwards to Beru |
 | 5 | **Beru (L5)** | Compares payloads → `No egress regression for Trace … (rabbitmq)` |
 
-Trace ids are read from the **original application headers** embedded in Firehose metadata: `x-shadow-trace-id` first, then W3C `traceparent` (trace id + span id). Workers propagate context via **OTel auto-instrumentation** (`amqplib`, Python `pika`, etc.) — application code does not need to copy headers. The relay filters known OTel `pika` double-Firehose artifacts so Beru count-diff stays accurate without disabling auto-instrumentation.
+Trace ids are read from the **original application headers** embedded in Firehose metadata: `traceparent` first, then W3C `traceparent` (trace id + span id). Workers propagate context via **OTel auto-instrumentation** (`amqplib`, Python `pika`, etc.) — application code does not need to copy headers. The relay filters known OTel `pika` double-Firehose artifacts so Beru count-diff stays accurate without disabling auto-instrumentation.
 
 ---
 
@@ -54,7 +54,7 @@ Monarch enables Firehose on shadow RabbitMQ dependency pods (`rabbitmqctl trace_
 For each Firehose message with routing key `publish.*`:
 
 1. Parse nested **`properties.headers`** from the trace envelope (original app headers).
-2. Extract **trace id** and **span id** (`x-shadow-trace-id` → span id empty; `traceparent` → both).
+2. Extract **trace id** and **span id** (`traceparent` → span id empty; `traceparent` → both).
 3. Validate message **body** as JSON (the published application payload).
 4. **Surgical dedup** — if span id is present, drop a second Firehose event with the same `(trace_id, span_id, payload hash)` within **100ms** (see below).
 5. POST to Beru:
@@ -76,7 +76,7 @@ Shared in-memory cache across all three broker runners (`internal/consumer/dedup
 
 | Input | Behavior |
 | ----- | -------- |
-| No span id (`x-shadow-trace-id` only) | Forward every event (no dedup) |
+| No span id (`traceparent` only) | Forward every event (no dedup) |
 | `traceparent` present | Key = `trace_id:span_id:sha256(payload)[:8]` |
 | Duplicate key within **100ms** | Discard (OTel artifact) |
 | Same key after 100ms | Forward (stale window expired) |
