@@ -1,0 +1,31 @@
+# Python hybrid E2E fixture — bats-python-hybrid ShadowTest.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-python-hybrid
+  namespace: default
+spec:
+  targetDeployment: python-prod-worker
+
+  oldImage: python-test-worker:dev
+  newImage: python-test-worker:dev
+
+  inputs:
+    - driver: rabbitmq_message
+      amqp:
+        prodUrl: amqp://guest:guest@rmq-prod-broker.default.svc.cluster.local:5672/
+        exchange: orders
+        routingKey: order.created
+        targetDependency: rabbitmq
+
+  recordAndReplay:
+    - host: user-service.prod.internal:8080
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

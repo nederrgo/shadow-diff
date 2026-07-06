@@ -13,5 +13,6 @@ The control plane layer acts as the centralized automation hub of Shadow-Diff. D
 
 ## Document Map
 * [/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md](/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md) - One-time Monarch + Pixie + bridge install; create and delete ShadowTests without resetting Pixie.
+* [/infrastructure/bats-testing-framework.md](/infrastructure/bats-testing-framework.md) - Bats-core harness: shared ShadowTest per file, settlement-based Beru assertions.
 * [/control-plane/monarch-controller.md](/control-plane/monarch-controller.md) - Envoy-only shadow pod injection, egress capture, and CRD reconcile contract (telemetry-dependent architecture).
 * [/control-plane/monarch-security-model.md](/control-plane/monarch-security-model.md) - Deep dive specification regarding role compartmentalization, unprivileged eBPF decoupling boundary rules, and shadow sandboxing network policies.

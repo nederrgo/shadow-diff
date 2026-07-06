@@ -111,6 +111,31 @@ test-all: ## Run Monarch, Beru, Shop, Igris, Siphon, Recorder, igris-rabbitmq, a
 	@$(MAKE) -C $(RECORDER_DIR) test
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
+.PHONY: test-bats test-bats-integration test-bats-e2e
+test-bats-integration: ## Bats integration suite (one ShadowTest per .bats file).
+	@chmod +x testing/bats/run.sh
+	@./testing/bats/run.sh integration
+
+test-bats-e2e: ## Bats E2E suite (shared env per file, multi-@test).
+	@chmod +x testing/bats/run.sh
+	@./testing/bats/run.sh e2e
+
+test-bats: ## Run all Bats integration + E2E suites.
+	@chmod +x testing/bats/run.sh
+	@./testing/bats/run.sh all
+
+# Run one .bats file or filtered @test. Examples:
+#   make test-bats-one FILE=e2e/python_hybrid.bats
+#   make test-bats-one FILE=e2e/python_hybrid.bats FILTER='RabbitMQ egress'
+test-bats-one:
+	@test -n "$(FILE)" || { echo "Usage: make test-bats-one FILE=e2e/python_hybrid.bats [FILTER='regex']"; exit 1; }
+	@chmod +x testing/bats/run-one.sh
+	@if [ -n "$(FILTER)" ]; then \
+	  ./testing/bats/run-one.sh "$(FILE)" -f "$(FILTER)"; \
+	else \
+	  ./testing/bats/run-one.sh "$(FILE)"; \
+	fi
+
 .PHONY: log
 log:
 	@if [ -z "$(MSG)" ]; then echo "Error: Please provide a message. Example: make log MSG='Added service x'"; exit 1; fi

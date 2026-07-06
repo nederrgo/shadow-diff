@@ -16,6 +16,7 @@ siphon/bin/
 Dockerfile.cross
 *minikube-linux-amd64
 .cache/pixie-bridge/
+.cache/shadow-diff-bats/
 
 # Test binary, built with `go test -c`
 *.test

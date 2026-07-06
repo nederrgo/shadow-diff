@@ -11,6 +11,15 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-06]
 ### Added
+* 'testing/bats/lib/shadowtest.bash': Add --require-rmq-egress for HTTP-igris suites without AMQP ingress queue
+* 'testing/bats/e2e': Port nodejs_hybrid and http_otel_rmq Python/Node.js suites to Bats framework
+* 'testing/bats/e2e/python_hybrid.bats': Assert Mongo verdict via Beru API instead of host sqlite3
+* 'testing/bats': Fix worker log grep for multi-test suites; skip mongo-clean test when hybrid has no igris-http
+* 'testing/bats/lib/beru_assert.bash': Add beru_wait_log and log pattern helpers for per-test Beru log assertions
+* 'testing/bats': fix docker-env order, bats_begin_suite early SHADOWTEST, guarded teardown_file
+* 'testing/bats': add load test_helper to .bats files; fix test_helper REPO path from BATS_ROOT_DIR
+* 'testing/bats/run.sh + run-one.sh': drop unsupported --config-file; add run-one helper for filtered single tests
+* 'testing/bats + docs/infrastructure': Bats-core modular testing framework with shared ShadowTest per file, settlement assertions, integration and E2E suites
 * 'testing/scripts/helpers/pixie-bridge.sh', 'siphon-config.sh', 'e2e-http-otel-rmq.sh', E2E scripts: fix pixie-stream-bridge restart race (stop_pixie_stream_bridge), mongo PxL readiness wait, E2E ordering, mongo export nudge
 
 ## [2026-07-01]
