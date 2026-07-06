@@ -3,34 +3,34 @@ package storage
 import (
 	"context"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"testing"
+
+	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
-func TestRetention_pruneOldTraces(t *testing.T) {
+func TestRetention_pruneOldReports(t *testing.T) {
 	db := testDB(t)
+	if _, err := v2storage.NewSQLiteRepository(db.SQL()); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
-	runID, err := db.ensureShadowTest(ctx, "retention-test")
-	if err != nil {
+	if err := db.insertOldReportForTest(ctx, "old-trace", "-10 days"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.insertOldTraceForTest(ctx, runID, "old-trace", "-10 days"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.insertOldTraceForTest(ctx, runID, "new-trace", "-1 days"); err != nil {
+	if err := db.insertOldReportForTest(ctx, "new-trace", "-1 days"); err != nil {
 		t.Fatal(err)
 	}
 	db.retentionDays = 7
 	if err := db.Prune(ctx); err != nil {
 		t.Fatal(err)
 	}
-	n, err := db.countTraces(ctx)
+	n, err := db.countRawReports(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
-		t.Fatalf("traces after prune = %d", n)
+		t.Fatalf("raw_reports after prune = %d", n)
 	}
 }
 
@@ -68,17 +68,5 @@ func TestShadowTestNameFromMetadata(t *testing.T) {
 	got = ShadowTestNameFromMetadata(nil, "fallback")
 	if got != "fallback" {
 		t.Fatalf("got %q", got)
-	}
-}
-
-func TestOpenAt_createsFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "local.db")
-	db, err := OpenAt(slog.Default(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := os.Stat(path); err != nil {
-		t.Fatal(err)
 	}
 }

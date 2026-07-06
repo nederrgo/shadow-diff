@@ -8,69 +8,45 @@ import (
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
-	"github.com/shadow-diff/beru/internal/ingest"
-	"github.com/shadow-diff/beru/internal/replay"
 	"github.com/shadow-diff/beru/internal/trace"
+	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
+	v2report "github.com/shadow-diff/beru/internal/v2/report"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
 const (
-	headerShadowTraceID = "x-shadow-trace-id"
-	headerShadowRole    = "x-shadow-role"
-	headerRequestID     = "x-request-id"
+	headerShadowRole = "x-shadow-role"
+	headerRequestID  = "x-request-id"
 )
 
-// Server implements Envoy external processing (observe-only, non-blocking).
+// Server implements Envoy external processing for ingress diff-of-diffs.
 type Server struct {
 	extprocv3.UnimplementedExternalProcessorServer
-	Log   *slog.Logger
-	Store *ingest.Store
-	Mocks *replay.MockStore
-	Role  string
+	Log               *slog.Logger
+	Router            *v2engine.TraceRouter
+	Role              string
+	DefaultShadowTest string
 }
 
 type streamState struct {
-	traceID        string
-	role           string
-	responseMeta   map[string]string
-	responseStatus string
-	contentType    string
+	traceID         string
+	role            string
+	shadowTestName  string
+	method          string
+	path            string
+	responseMeta    map[string]string
+	responseStatus  string
+	contentType     string
 }
 
-// Process handles the ext_proc bidirectional stream.
+// Process handles the ext_proc bidirectional stream (ingress diff-of-diffs only).
 func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
 	role := s.Role
-	mode := ""
-	var recordAndReplayConfigs []RecordAndReplayHostConfig
 	if md, ok := metadata.FromIncomingContext(stream.Context()); ok {
 		if v := md.Get(headerShadowRole); len(v) > 0 && v[0] != "" {
 			role = v[0]
-		}
-		if v := md.Get(headerShadowMode); len(v) > 0 {
-			mode = v[0]
-		}
-		if v := md.Get(headerShadowRecordAndReplayConf); len(v) > 0 && v[0] != "" {
-			recordAndReplayConfigs = parseRecordAndReplayConfigs(v[0])
-		}
-	}
-
-	if mode == shadowModeEgress {
-		egress := &egressState{role: role, recordAndReplayConfigs: recordAndReplayConfigs}
-		for {
-			req, err := stream.Recv()
-			if err == io.EOF {
-				return nil
-			}
-			if err != nil {
-				return status.Errorf(codes.Unknown, "recv: %v", err)
-			}
-			resp := s.handleEgressRequest(egress, req)
-			if err := stream.Send(resp); err != nil {
-				return status.Errorf(codes.Unknown, "send: %v", err)
-			}
 		}
 	}
 
@@ -110,11 +86,18 @@ func (s *Server) captureRequestHeaders(state *streamState, headers *corev3.Heade
 	if headers == nil {
 		return
 	}
-	state.traceID = trace.ShadowTraceIDFromMap(headers, headerValue)
+	state.traceID = trace.TraceIDFromMap(headers, headerValue)
+	state.method = headerValue(headers, ":method")
+	state.path = headerValue(headers, ":path")
 	if r := headerValue(headers, headerShadowRole); r != "" {
 		state.role = r
 	} else if state.role == "" {
 		state.role = s.Role
+	}
+	if n := headerValue(headers, "x-shadow-test-name"); n != "" {
+		state.shadowTestName = n
+	} else if s.DefaultShadowTest != "" {
+		state.shadowTestName = s.DefaultShadowTest
 	}
 }
 
@@ -145,17 +128,14 @@ func (s *Server) ingestResponseBody(state *streamState, body *extprocv3.HttpBody
 	if state.responseStatus != "" {
 		meta[":status"] = state.responseStatus
 	}
-	report := &beruv1.TrafficReport{
-		TraceId:   state.traceID,
-		Role:      state.role,
-		Direction: beruv1.Direction_INGRESS,
-		Payload: &beruv1.Payload{
-			Metadata:    meta,
-			Body:        append([]byte(nil), data...),
-			ContentType: state.contentType,
-		},
+	if s.Router != nil {
+		if raw, err := v2report.FromHTTPIngress(
+			state.traceID, state.role, state.shadowTestName, state.method, state.path,
+			meta, data, state.contentType,
+		); err == nil {
+			s.Router.Route(raw)
+		}
 	}
-	go s.Store.Handle(report)
 }
 
 func headerValue(headers *corev3.HeaderMap, key string) string {

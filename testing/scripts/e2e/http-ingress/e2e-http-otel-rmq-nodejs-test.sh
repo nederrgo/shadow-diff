@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# E2E: HTTP ingress (igris-http) → OTel → AMQP egress (Firehose) — Node.js zero-touch.
+# Minikube only.
+set -euo pipefail
+
+REPO="${REPO:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
+# shellcheck source=testing/scripts/helpers/e2e-helpers.sh
+source "$REPO/testing/scripts/helpers/e2e-helpers.sh"
+# shellcheck source=testing/scripts/helpers/e2e-http-otel-rmq.sh
+source "$REPO/testing/scripts/helpers/e2e-http-otel-rmq.sh"
+
+SHADOWTEST="${SHADOWTEST:-http-otel-rmq-nodejs-shadow}"
+SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
+SHADOW_NS="${SHADOW_NS:-shadow-default-http-otel-rmq-nodejs-shadow}"
+HTTP_RMQ_TEST_IMG="${HTTP_RMQ_TEST_IMG:-http-rmq-test-app:dev}"
+IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
+EGRESS_RELAY_RABBITMQ_IMG="${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:dev}"
+BERU_IMG="${BERU_IMG:-beru:dev}"
+MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
+SKIP_BUILD="${SKIP_BUILD:-0}"
+SKIP_LOAD="${SKIP_LOAD:-0}"
+SKIP_MONARCH_BUILD="${SKIP_MONARCH_BUILD:-0}"
+SKIP_MONARCH_DEPLOY="${SKIP_MONARCH_DEPLOY:-0}"
+SKIP_BERU_BUILD="${SKIP_BERU_BUILD:-0}"
+USE_PIXIE="${USE_PIXIE:-}"
+
+MONGO_IMAGE="${MONGO_IMAGE:-mongo:4.4}"
+
+MANIFEST_DIR="$REPO/testing/scripts/manifests/http-otel-rmq-e2e"
+RELAY_DEPLOY="${SHADOWTEST}-egress-relay-rabbitmq"
+IGRIS_DEPLOY="${SHADOWTEST}-igris"
+
+echo "==> HTTP OTel RMQ E2E (Node.js)"
+http_otel_rmq_init_cluster "$REPO"
+require_kubectl_cluster
+[[ "$SKIP_BUILD" != "1" || "$SKIP_LOAD" != "1" ]] && require_docker
+
+http_otel_rmq_prepare_docker_build
+
+if [[ "$SKIP_BUILD" != "1" ]]; then
+  make -C "$REPO/testing/example-apps/http-rmq-test-app" docker-build HTTP_RMQ_TEST_IMG="$HTTP_RMQ_TEST_IMG"
+  make -C "$REPO/pipeline/igrises/igris-http" docker-build IGRIS_IMG="$IGRIS_IMG"
+  make -C "$REPO/pipeline/egress-relay-rabbitmq" docker-build EGRESS_RELAY_RABBITMQ_IMG="$EGRESS_RELAY_RABBITMQ_IMG"
+fi
+
+if [[ "$SKIP_BERU_BUILD" != "1" ]]; then
+  make -C "$REPO/pipeline/beru" docker-build BERU_IMG="$BERU_IMG" 2>/dev/null || \
+    bash "$REPO/testing/scripts/helpers/docker.sh" build -t "$BERU_IMG" "$REPO/pipeline/beru"
+fi
+
+if [[ "$SKIP_LOAD" != "1" ]]; then
+  http_otel_rmq_load_image "$HTTP_RMQ_TEST_IMG"
+  http_otel_rmq_load_image "$IGRIS_IMG"
+  http_otel_rmq_load_image "$EGRESS_RELAY_RABBITMQ_IMG"
+  http_otel_rmq_load_image "$BERU_IMG"
+  docker pull rabbitmq:3-management-alpine 2>/dev/null || \
+    bash "$REPO/testing/scripts/helpers/docker.sh" pull rabbitmq:3-management-alpine 2>/dev/null || true
+  http_otel_rmq_load_image rabbitmq:3-management-alpine
+  docker pull "$MONGO_IMAGE" 2>/dev/null || \
+    bash "$REPO/testing/scripts/helpers/docker.sh" pull "$MONGO_IMAGE" 2>/dev/null || true
+  http_otel_rmq_load_image "$MONGO_IMAGE"
+fi
+
+if [[ "$SKIP_MONARCH_BUILD" != "1" ]]; then
+  make -C "$REPO/pipeline/monarch" docker-build IMG="$MONARCH_IMG"
+fi
+
+if [[ "$SKIP_LOAD" != "1" && "$SKIP_MONARCH_BUILD" != "1" ]]; then
+  http_otel_rmq_load_image "$MONARCH_IMG"
+fi
+
+if [[ "$SKIP_MONARCH_DEPLOY" != "1" ]]; then
+  make -C "$REPO/pipeline/monarch" deploy IMG="$MONARCH_IMG"
+  kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev BERU_IMAGE="$BERU_IMG"
+  if [[ "$SKIP_LOAD" != "1" ]]; then
+    kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
+  fi
+  kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
+fi
+
+http_otel_rmq_upgrade_crd "$REPO"
+
+kubectl apply -f "$MANIFEST_DIR/prod-target-nodejs.yaml"
+kubectl rollout status deployment/http-rmq-nodejs-prod -n default --timeout=120s
+
+wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
+kubectl delete shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --ignore-not-found --wait=true 2>/dev/null || true
+wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
+
+kubectl apply -f "$MANIFEST_DIR/shadowtest-nodejs.yaml"
+
+SHADOW_NS=$(http_otel_rmq_wait_shadowtest "$SHADOWTEST" "$SHADOWTEST_NS" "$RELAY_DEPLOY") || {
+  log_fail "ShadowTest did not become Ready with egress-relay"
+  exit 1
+}
+log_success "ShadowTest Ready namespace=${SHADOW_NS}"
+
+http_otel_rmq_wait_local_beru "$SHADOW_NS"
+
+http_otel_rmq_verify_firehose "$SHADOW_NS"
+
+kubectl rollout status "deployment/${RELAY_DEPLOY}" -n "$SHADOW_NS" --timeout=180s
+kubectl rollout status "deployment/${IGRIS_DEPLOY}" -n "$SHADOW_NS" --timeout=120s
+for role in control-a control-b candidate; do
+  kubectl rollout status "deployment/mongodb-${role}" -n "$SHADOW_NS" --timeout=180s
+done
+
+http_otel_rmq_setup_pixie "$REPO" "$SHADOWTEST" "$SHADOWTEST_NS"
+
+for role in control-a control-b candidate; do
+  kubectl rollout status "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS" --timeout=180s
+done
+
+http_otel_rmq_reverify_pixie
+
+TRACE_HEX="$(openssl rand -hex 16)"
+SPAN_HEX="$(openssl rand -hex 8)"
+TRACE_TP="00-${TRACE_HEX}-${SPAN_HEX}-01"
+
+http_otel_rmq_run_test "$SHADOWTEST" "$SHADOW_NS" "$IGRIS_DEPLOY" "$TRACE_HEX" "$TRACE_TP" \
+  "rmq egress published exchange=egress-events"
+
+log_success "HTTP OTel RMQ Node.js E2E passed (trace ${TRACE_HEX})"
+echo "==> Left ShadowTest ${SHADOWTEST_NS}/${SHADOWTEST} (shadow namespace ${SHADOW_NS}) for inspection"
+echo "    Remove via Monarch: ./testing/scripts/setup/delete-shadowtest.sh ${SHADOWTEST} ${SHADOWTEST_NS}"

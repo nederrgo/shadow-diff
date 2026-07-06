@@ -90,6 +90,26 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	if err := r.reconcileLocalBeruIfNeeded(ctx, &shadowTest, shadowNS); err != nil {
+		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+		return ctrl.Result{}, err
+	}
+	if usesLocalBeru(&shadowTest) {
+		ready, reason, err := r.localBeruReady(ctx, shadowNS)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !ready {
+			if reason.terminal {
+				_ = r.patchStatus(ctx, &shadowTest, "Failed", reason.message, shadowNS)
+				return ctrl.Result{}, nil
+			}
+			_ = r.patchStatus(ctx, &shadowTest, "Progressing",
+				"Local analytics backend is booting up (beru-local)", shadowNS)
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+	}
+
 	env, warnMsg := envFromTarget(&target)
 
 	if err := r.reconcileShadowDependencies(ctx, &shadowTest, shadowNS); err != nil {
@@ -116,7 +136,7 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	shadowsReady, err := r.reconcileShadowWorkloads(ctx, &shadowTest, shadowNS, env)
+	shadowsReady, err := r.reconcileShadowWorkloads(ctx, &shadowTest, shadowNS, env, &target)
 	if err != nil {
 		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
 		return ctrl.Result{}, err
@@ -127,6 +147,18 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	if egressRecordingEnabled(&shadowTest) {
+		if err := r.reconcileShopIfNeeded(ctx, &shadowTest, shadowNS); err != nil {
+			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+			return ctrl.Result{}, err
+		}
+		shopReady, err := r.shopDeploymentReady(ctx, shadowNS)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !shopReady {
+			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Shop", shadowNS)
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
 		if err := r.reconcileRecorderStack(ctx, &shadowTest, shadowNS); err != nil {
 			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
 			return ctrl.Result{}, err
@@ -186,7 +218,7 @@ func (r *ShadowTestReconciler) reconcileIngressRelays(
 		if _, err := r.ensureProdShadowQueue(ctx, st); err != nil {
 			return false, err
 		}
-		if err := r.refreshShadowTest(ctx, req.NamespacedName, st); err != nil {
+		if err := r.Get(ctx, req.NamespacedName, st); err != nil {
 			return false, err
 		}
 		if err := r.reconcileIgrisRabbitMQStack(ctx, st, shadowNS); err != nil {
@@ -255,6 +287,7 @@ func (r *ShadowTestReconciler) reconcileShadowWorkloads(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 	env []corev1.EnvVar,
+	target *appsv1.Deployment,
 ) (bool, error) {
 	for _, step := range []struct {
 		role  string

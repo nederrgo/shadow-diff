@@ -6,6 +6,7 @@
   "main": "index.js",
   "dependencies": {
     "amqplib": "^0.10.5",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "mongodb": "4.17.2"
   }
 }

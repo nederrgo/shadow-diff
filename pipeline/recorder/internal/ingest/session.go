@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shadow-diff/recorder/internal/beru"
 	"github.com/shadow-diff/recorder/internal/config"
 	"github.com/shadow-diff/recorder/internal/parse"
+	"github.com/shadow-diff/recorder/internal/shop"
 )
 
 type connSession struct {
@@ -30,7 +30,7 @@ type connSession struct {
 type SessionStore struct {
 	mu              sync.Mutex
 	sessions        map[uint64]*connSession
-	beru            *beru.Client
+	shop            *shop.Client
 	recordAndReplay []config.RecordAndReplayHost
 	pairTimeout     time.Duration
 	maxFrame        int
@@ -39,13 +39,13 @@ type SessionStore struct {
 }
 
 // NewSessionStore creates a store with a background TTL sweeper.
-func NewSessionStore(client *beru.Client, recordAndReplay []config.RecordAndReplayHost, pairTimeout time.Duration, maxFrame int) *SessionStore {
+func NewSessionStore(client *shop.Client, recordAndReplay []config.RecordAndReplayHost, pairTimeout time.Duration, maxFrame int) *SessionStore {
 	if maxFrame <= 0 {
 		maxFrame = DefaultMaxFrame
 	}
 	s := &SessionStore{
 		sessions:        make(map[uint64]*connSession),
-		beru:            client,
+		shop:            client,
 		recordAndReplay: recordAndReplay,
 		pairTimeout:     pairTimeout,
 		maxFrame:        maxFrame,
@@ -175,7 +175,7 @@ func (s *SessionStore) startParser(connID uint64, reqR, resR io.ReadCloser) {
 	sess.parserCancel = cancel
 	sess.parserDone = make(chan struct{})
 	ds := s.recordAndReplay
-	client := s.beru
+	client := s.shop
 	done := sess.parserDone
 	s.mu.Unlock()
 

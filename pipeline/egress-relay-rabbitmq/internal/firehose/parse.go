@@ -10,10 +10,7 @@ import (
 	"github.com/shadow-diff/egress-relay-rabbitmq/internal/trace"
 )
 
-const (
-	headerShadowTraceID = "x-shadow-trace-id"
-	headerTraceparent   = "traceparent"
-)
+const headerTraceparent = "traceparent"
 
 // TraceExchange is the RabbitMQ Firehose topic exchange.
 func TraceExchange() string { return "amq.rabbitmq.trace" }
@@ -83,9 +80,6 @@ func TraceContextFromFirehose(traceHeaders amqp.Table) (traceID, spanID string, 
 	if err != nil {
 		return "", "", err
 	}
-	if id, ok := getStringHeader(appHeaders, headerShadowTraceID); ok {
-		return id, "", nil
-	}
 	if tp, ok := getStringHeader(appHeaders, headerTraceparent); ok {
 		if tid, sid, ok := trace.ParseTraceparent(tp); ok {
 			return tid, sid, nil
@@ -99,6 +93,59 @@ func TraceContextFromFirehose(traceHeaders amqp.Table) (traceID, spanID string, 
 func TraceIDFromFirehose(traceHeaders amqp.Table) (string, error) {
 	traceID, _, err := TraceContextFromFirehose(traceHeaders)
 	return traceID, err
+}
+
+// RoutingKeyFromPublish reads the first routing key from Firehose metadata.
+func RoutingKeyFromPublish(traceHeaders amqp.Table) string {
+	if rk, ok := getStringHeader(traceHeaders, "routing_key"); ok {
+		return rk
+	}
+	v, ok := traceHeaders["routing_keys"]
+	if !ok {
+		return ""
+	}
+	switch arr := v.(type) {
+	case []interface{}:
+		return firstNonEmptyString(arr)
+	case []string:
+		if len(arr) > 0 {
+			return strings.TrimSpace(arr[0])
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyString(arr []interface{}) string {
+	for _, item := range arr {
+		switch s := item.(type) {
+		case string:
+			if t := strings.TrimSpace(s); t != "" {
+				return t
+			}
+		case []byte:
+			if t := strings.TrimSpace(string(s)); t != "" {
+				return t
+			}
+		}
+	}
+	return ""
+}
+
+// BeruEgressPayload wraps the published body with exchange + routing_key for Beru signatures.
+func BeruEgressPayload(traceHeaders amqp.Table, firehoseRoutingKey string, body []byte) (json.RawMessage, error) {
+	bodyJSON, err := PayloadJSON(body)
+	if err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(map[string]any{
+		"exchange":    ExchangeNameFromPublish(traceHeaders, firehoseRoutingKey),
+		"routing_key": RoutingKeyFromPublish(traceHeaders),
+		"body":        json.RawMessage(bodyJSON),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal beru egress payload: %w", err)
+	}
+	return json.RawMessage(out), nil
 }
 
 // PayloadJSON validates and returns the original message body as JSON.
@@ -119,4 +166,16 @@ func ExchangeNameFromTrace(traceHeaders amqp.Table) string {
 		return ""
 	}
 	return name
+}
+
+// ExchangeNameFromPublish resolves the published exchange from Firehose headers or routing key.
+func ExchangeNameFromPublish(traceHeaders amqp.Table, routingKey string) string {
+	if name := ExchangeNameFromTrace(traceHeaders); name != "" {
+		return name
+	}
+	const prefix = "publish."
+	if strings.HasPrefix(routingKey, prefix) {
+		return strings.TrimPrefix(routingKey, prefix)
+	}
+	return ""
 }

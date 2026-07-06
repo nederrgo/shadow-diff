@@ -8,7 +8,7 @@ import (
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
-	"github.com/shadow-diff/recorder/internal/beru"
+	"github.com/shadow-diff/recorder/internal/shop"
 	"github.com/shadow-diff/recorder/internal/config"
 )
 
@@ -32,14 +32,18 @@ func kvInt(key string, val int64) *commonpb.KeyValue {
 
 func TestParseEgressRecordFromSpan_hostAllowlist(t *testing.T) {
 	hosts := []config.RecordAndReplayHost{{Host: "egress-httpbin.default.svc.cluster.local"}}
+	// Pixie-generated trace ID (different from the W3C trace ID below).
+	traceIDBytes := []byte{0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36}
+	const w3cTraceID = "aabb00112233445566778899ccddeeff"
 	span := &tracepb.Span{
+		TraceId: traceIDBytes,
 		Attributes: []*commonpb.KeyValue{
 			kvString("http.request.method", "GET"),
 			kvString("url.path", "/get"),
 			kvString("http.host", "egress-httpbin.default.svc.cluster.local"),
-			kvString("http.request.body", `{"a":1}`),
 			kvInt("http.response.status_code", 200),
 			kvString("http.response.body", "ok"),
+			kvString("traceparent", "00-"+w3cTraceID+"-00f067aa0ba902b7-01"),
 		},
 	}
 	rec, ok := parseEgressRecordFromSpan(span, nil, hosts)
@@ -54,6 +58,32 @@ func TestParseEgressRecordFromSpan_hostAllowlist(t *testing.T) {
 	}
 	if rec.Response.Status != 200 || rec.Response.Body != "ok" {
 		t.Fatalf("response %+v", rec.Response)
+	}
+	// W3C traceparent attribute takes priority over span.TraceId.
+	if rec.TraceID != w3cTraceID {
+		t.Fatalf("trace ID %q, want %q", rec.TraceID, w3cTraceID)
+	}
+}
+
+func TestParseEgressRecordFromSpan_fallsBackToSpanTraceID(t *testing.T) {
+	hosts := []config.RecordAndReplayHost{{Host: "egress-httpbin.default.svc.cluster.local"}}
+	traceIDBytes := []byte{0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36}
+	span := &tracepb.Span{
+		TraceId: traceIDBytes,
+		Attributes: []*commonpb.KeyValue{
+			kvString("http.request.method", "GET"),
+			kvString("url.path", "/get"),
+			kvString("http.host", "egress-httpbin.default.svc.cluster.local"),
+			kvInt("http.response.status_code", 200),
+		},
+	}
+	rec, ok := parseEgressRecordFromSpan(span, nil, hosts)
+	if !ok {
+		t.Fatal("expected record")
+	}
+	// No traceparent attribute — falls back to hex(span.TraceId).
+	if rec.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("trace ID %q", rec.TraceID)
 	}
 }
 
@@ -71,8 +101,8 @@ func TestParseEgressRecordFromSpan_dropsIPHost(t *testing.T) {
 }
 
 func TestExportTraces_enqueuesAllowedHost(t *testing.T) {
-	ch := make(chan beru.RecordPayload, 1)
-	client := beru.NewClient("http://127.0.0.1:9")
+	ch := make(chan shop.RecordPayload, 1)
+	client := shop.NewClient("http://127.0.0.1:9")
 	r := NewOTLPReceiver(client, []config.RecordAndReplayHost{
 		{Host: "egress-httpbin.default.svc.cluster.local"},
 	}, 1, 1, nil)

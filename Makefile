@@ -1,6 +1,7 @@
 # Shadow-Diff monorepo: delegate Monarch (operator) targets to pipeline/monarch/, Beru to pipeline/beru/.
 MONARCH_DIR := pipeline/monarch
 BERU_DIR := pipeline/beru
+SHOP_DIR := pipeline/shop
 IGRIS_DIR := pipeline/igrises/igris-http
 SIPHON_DIR := pipeline/siphon
 RECORDER_DIR := pipeline/recorder
@@ -12,6 +13,7 @@ EGRESS_RELAY_RABBITMQ_IMG ?= egress-relay-rabbitmq:latest
 SIPHON_IMG ?= siphon:latest
 IGRIS_IMG ?= igris-http:latest
 BERU_IMG ?= beru:latest
+SHOP_IMG ?= shop:latest
 IMG ?= controller:latest
 
 MONARCH_TARGETS := all help manifests generate fmt vet test setup-test-e2e test-e2e cleanup-test-e2e \
@@ -34,6 +36,15 @@ beru-test: ## Run Beru unit tests.
 
 beru-build: ## Build Beru binary.
 	@$(MAKE) -C $(BERU_DIR) build
+
+shop-test: ## Run Shop unit tests.
+	@$(MAKE) -C $(SHOP_DIR) test
+
+shop-build: ## Build Shop binary.
+	@$(MAKE) -C $(SHOP_DIR) build
+
+shop-docker-build: ## Build Shop container image.
+	@$(MAKE) -C $(SHOP_DIR) docker-build SHOP_IMG=$(SHOP_IMG)
 
 igris-test: ## Run Igris unit tests.
 	@$(MAKE) -C $(IGRIS_DIR) test
@@ -91,11 +102,16 @@ egress-relay-rabbitmq-build: ## Build egress-relay-rabbitmq binary.
 egress-relay-rabbitmq-docker-build: ## Build egress-relay-rabbitmq container image.
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) docker-build EGRESS_RELAY_RABBITMQ_IMG=$(EGRESS_RELAY_RABBITMQ_IMG)
 
-test-all: ## Run Monarch, Beru, Igris, Siphon, Recorder, igris-rabbitmq, and egress-relay-rabbitmq tests.
+test-all: ## Run Monarch, Beru, Shop, Igris, Siphon, Recorder, igris-rabbitmq, and egress-relay-rabbitmq tests.
 	@$(MAKE) -C $(MONARCH_DIR) test
 	@$(MAKE) -C $(BERU_DIR) test
+	@$(MAKE) -C $(SHOP_DIR) test
 	@$(MAKE) -C $(IGRIS_DIR) test
 	@$(MAKE) -C $(SIPHON_DIR) test
 	@$(MAKE) -C $(RECORDER_DIR) test
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
+.PHONY: log
+log:
+	@if [ -z "$(MSG)" ]; then echo "Error: Please provide a message. Example: make log MSG='Added service x'"; exit 1; fi
+	@python3 scripts/log_change.py "$(MSG)"

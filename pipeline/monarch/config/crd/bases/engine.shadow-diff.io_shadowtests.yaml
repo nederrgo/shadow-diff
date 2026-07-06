@@ -49,12 +49,24 @@ spec:
                 maximum: 65535
                 minimum: 1
                 type: integer
+              beru:
+                description: Beru overrides the beru-local image when spec.beruGRPCAddress
+                  is unset.
+                properties:
+                  image:
+                    description: Image overrides the default Beru container image.
+                    type: string
+                type: object
               beruGRPCAddress:
                 description: BeruGRPCAddress is the host:port of the Beru ext_proc
                   gRPC service.
                 type: string
               beruGRPCTimeout:
                 description: BeruGRPCTimeout is the ext_proc gRPC timeout (e.g. "2s").
+                type: string
+              beruIngestAddress:
+                description: BeruIngestAddress is the host:port of the Beru wire-payload
+                  ingest service (HTTP).
                 type: string
               dependencies:
                 description: Dependencies lists ephemeral backing services (e.g. Redis)
@@ -372,17 +384,6 @@ spec:
                       type: integer
                   type: object
                 type: array
-              language:
-                description: |-
-                  Language declares the application's runtime language (e.g. nodejs, python, java).
-                  Monarch uses this to automatically inject the correct OpenTelemetry Operator agents.
-                enum:
-                - java
-                - python
-                - nodejs
-                - dotnet
-                - go
-                type: string
               newImage:
                 description: NewImage is the container image for the Candidate pod.
                 type: string
@@ -427,6 +428,14 @@ spec:
                 maximum: 65535
                 minimum: 1
                 type: integer
+              shop:
+                description: Shop overrides the Shop mock-store image when spec.recordAndReplay
+                  is non-empty.
+                properties:
+                  image:
+                    description: Image overrides the default Shop container image.
+                    type: string
+                type: object
               siphon:
                 description: Siphon configures kernel-level traffic capture to Igris.
                 properties:

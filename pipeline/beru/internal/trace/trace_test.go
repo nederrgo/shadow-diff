@@ -30,39 +30,26 @@ func TestParseTraceparent_version01(t *testing.T) {
 	}
 }
 
-func TestShadowTraceIDFromMap_priority(t *testing.T) {
-	t.Parallel()
-	hdrs := &corev3.HeaderMap{
-		Headers: []*corev3.HeaderValue{
-			{Key: "x-shadow-trace-id", Value: "custom-id"},
-			{Key: "traceparent", Value: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
-		},
-	}
-	if got := ShadowTraceIDFromMap(hdrs, testHeaderValue); got != "custom-id" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestShadowTraceIDFromMap_traceparentOnly(t *testing.T) {
+func TestTraceIDFromMap_traceparentOnly(t *testing.T) {
 	t.Parallel()
 	hdrs := &corev3.HeaderMap{
 		Headers: []*corev3.HeaderValue{
 			{Key: "traceparent", Value: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
 		},
 	}
-	if got := ShadowTraceIDFromMap(hdrs, testHeaderValue); got != "4bf92f3577b34da6a3ce929d0e0e4736" {
+	if got := TraceIDFromMap(hdrs, testHeaderValue); got != "4bf92f3577b34da6a3ce929d0e0e4736" {
 		t.Fatalf("got %q", got)
 	}
 }
 
-func TestShadowTraceIDFromMap_requestIDFallback(t *testing.T) {
+func TestTraceIDFromMap_requestIDFallback(t *testing.T) {
 	t.Parallel()
 	hdrs := &corev3.HeaderMap{
 		Headers: []*corev3.HeaderValue{
 			{Key: "x-request-id", Value: "req-99"},
 		},
 	}
-	if got := ShadowTraceIDFromMap(hdrs, testHeaderValue); got != "req-99" {
+	if got := TraceIDFromMap(hdrs, testHeaderValue); got != "req-99" {
 		t.Fatalf("got %q", got)
 	}
 }

@@ -15,10 +15,7 @@ import (
 	"github.com/shadow-diff/igris/internal/trace"
 )
 
-const (
-	HeaderShadowTraceID = "x-shadow-trace-id"
-	driverName          = "http_request"
-)
+const driverName = "http_request"
 
 // Driver implements the HTTP request input driver.
 type Driver struct {
@@ -145,33 +142,26 @@ func (d *Driver) handler(h driver.Handler) http.HandlerFunc {
 	}
 }
 
+func deleteTraceHeaders(h http.Header) {
+	for k := range h {
+		if strings.ToLower(k) == "traceparent" {
+			h.Del(k)
+		}
+	}
+}
+
 func (d *Driver) ParseMetadata(sess driver.Session) (driver.Metadata, error) {
 	s, ok := sess.(*Session)
 	if !ok {
 		return driver.Metadata{}, fmt.Errorf("invalid HTTP session type")
 	}
-	traceID := strings.TrimSpace(s.Request.Header.Get(HeaderShadowTraceID))
-	if traceID == "" {
-		if tp := strings.TrimSpace(s.Request.Header.Get(trace.HeaderTraceparent)); tp != "" {
-			if tid, ok := trace.ParseTraceparent(tp); ok {
-				traceID = tid
-			}
-		}
-	}
-	if traceID == "" {
-		var err error
-		traceID, err = trace.GenerateTraceID()
-		if err != nil {
-			return driver.Metadata{}, fmt.Errorf("generate trace id: %w", err)
-		}
-	}
-	spanID, err := trace.GenerateSpanID()
+	resolved, err := trace.ResolveContext(s.Request.Header)
 	if err != nil {
-		return driver.Metadata{}, fmt.Errorf("generate span id: %w", err)
+		return driver.Metadata{}, err
 	}
 	return driver.Metadata{
-		TraceID: traceID,
-		SpanID:  spanID,
+		TraceID:     resolved.TraceID,
+		Traceparent: resolved.Traceparent,
 		Fields: map[string]string{
 			"method": s.Request.Method,
 			"path":   s.Request.URL.Path,
@@ -188,8 +178,8 @@ func (d *Driver) Transform(sess driver.Session, meta driver.Metadata) (payload.M
 	headers.Del("Authorization")
 	headers.Del("Cookie")
 	headers.Del("Proxy-Authorization")
-	headers.Set(HeaderShadowTraceID, meta.TraceID)
-	headers.Set(trace.HeaderTraceparent, trace.FormatTraceparent(meta.TraceID, meta.SpanID))
+	deleteTraceHeaders(headers)
+	headers.Set(trace.HeaderTraceparent, meta.Traceparent)
 
 	return &message{
 		method:     s.Request.Method,
@@ -204,8 +194,7 @@ func (d *Driver) RespondEarly(meta driver.Metadata) (driver.EarlyResponse, bool)
 	return driver.EarlyResponse{
 		StatusCode: http.StatusAccepted,
 		Headers: map[string]string{
-			HeaderShadowTraceID:      meta.TraceID,
-			trace.HeaderTraceparent: trace.FormatTraceparent(meta.TraceID, meta.SpanID),
+			trace.HeaderTraceparent: meta.Traceparent,
 		},
 	}, true
 }

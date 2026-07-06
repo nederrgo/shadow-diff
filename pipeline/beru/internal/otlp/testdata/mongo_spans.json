@@ -1,0 +1,50 @@
+[
+  {
+    "name": "nodejs_legacy",
+    "description": "Node instrumentation-mongodb: db.system + db.statement JSON",
+    "attrs": {
+      "db.system": "mongodb",
+      "db.statement": "{\"insert\":\"orders\",\"documents\":[{\"id\":1}]}"
+    },
+    "want_signature": "mongodb:insert:orders"
+  },
+  {
+    "name": "python_pymongo",
+    "description": "Python pymongo: db.statement=insert, db.mongodb.collection=orders (no db.operation)",
+    "attrs": {
+      "db.system": "mongodb",
+      "db.statement": "insert",
+      "db.mongodb.collection": "orders"
+    },
+    "want_signature": "mongodb:insert:orders"
+  },
+  {
+    "name": "stable_semconv",
+    "description": "Stable attrs: db.system.name + db.query.text",
+    "attrs": {
+      "db.system.name": "mongodb",
+      "db.query.text": "{\"insert\":\"items\",\"documents\":[{\"id\":\"e2e\"}]}"
+    },
+    "want_signature": "mongodb:insert:items"
+  },
+  {
+    "name": "java_meta_only",
+    "description": "Java-style span without db.query.text",
+    "attrs": {
+      "db.system.name": "mongodb",
+      "db.operation.name": "insert",
+      "db.collection.name": "orders"
+    },
+    "want_signature": "mongodb:insert:orders"
+  },
+  {
+    "name": "legacy_operation_attrs",
+    "description": "Legacy db.operation + db.mongodb.collection",
+    "attrs": {
+      "db.system": "mongodb",
+      "db.operation": "find",
+      "db.mongodb.collection": "users"
+    },
+    "want_signature": "mongodb:find:users"
+  }
+]

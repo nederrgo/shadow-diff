@@ -61,9 +61,9 @@ func validateDependencies(st *enginev1alpha1.ShadowTest) error {
 			return fmt.Errorf("duplicate dependency name %q after sanitization", dep.Name)
 		}
 		seen[sanitized] = struct{}{}
-		if port == mongoProxyPort {
+		if port == 27017 {
 			if mongoCount++; mongoCount > 1 {
-				return fmt.Errorf("only one dependency on port %d (MongoDB) is supported", mongoProxyPort)
+				return fmt.Errorf("only one dependency on port %d (MongoDB) is supported", 27017)
 			}
 		}
 
@@ -269,17 +269,13 @@ func (r *ShadowTestReconciler) shadowDependenciesReady(
 
 func dependencyEnvValue(shadowNS string, dep enginev1alpha1.DependencySpec, role string) string {
 	_, port := resolveDependencyDefaults(dep)
-	if usesMongoProxyInjection(dep) {
-		return shadowMongoProxyURL
+	if isMongoDependency(dep) {
+		return "mongodb://" + dependencyEndpoint(shadowNS, dep.Name, role, port)
 	}
 	if usesAMQPURLInjection(dep.EnvVarInjection) {
 		return shadowAMQPURL(shadowNS, dep.Name, role, port)
 	}
 	return dependencyEndpoint(shadowNS, dep.Name, role, port)
-}
-
-func usesMongoProxyInjection(dep enginev1alpha1.DependencySpec) bool {
-	return isMongoDependency(dep)
 }
 
 func usesAMQPURLInjection(envName string) bool {

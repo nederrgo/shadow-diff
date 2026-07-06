@@ -120,6 +120,20 @@ type RecorderSpec struct {
 	Image string `json:"image,omitempty"`
 }
 
+// BeruSpec overrides the beru-local analytics backend workload.
+type BeruSpec struct {
+	// Image overrides the default Beru container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+}
+
+// ShopSpec overrides the Shop mock-store workload.
+type ShopSpec struct {
+	// Image overrides the default Shop container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+}
+
 // EgressRelayRabbitMQSpec overrides the egress-relay-rabbitmq workload for AMQP-only ShadowTests.
 type EgressRelayRabbitMQSpec struct {
 	// Image overrides the default egress-relay-rabbitmq container image.
@@ -204,6 +218,10 @@ type ShadowTestSpec struct {
 	// +optional
 	BeruGRPCTimeout string `json:"beruGRPCTimeout,omitempty"`
 
+	// BeruIngestAddress is the host:port of the Beru wire-payload ingest service (HTTP).
+	// +optional
+	BeruIngestAddress string `json:"beruIngestAddress,omitempty"`
+
 	// Inputs defines Igris listener ports and drivers. When empty, Monarch defaults to
 	// a single HTTP listener on servicePort.
 	// +optional
@@ -229,6 +247,14 @@ type ShadowTestSpec struct {
 	// +optional
 	Recorder *RecorderSpec `json:"recorder,omitempty"`
 
+	// Beru overrides the beru-local image when spec.beruGRPCAddress is unset.
+	// +optional
+	Beru *BeruSpec `json:"beru,omitempty"`
+
+	// Shop overrides the Shop mock-store image when spec.recordAndReplay is non-empty.
+	// +optional
+	Shop *ShopSpec `json:"shop,omitempty"`
+
 	// RecordAndReplay lists outbound hosts trapped by the egress proxy for strict replay.
 	// +optional
 	RecordAndReplay []RecordAndReplayHostSpec `json:"recordAndReplay,omitempty"`
@@ -236,12 +262,6 @@ type ShadowTestSpec struct {
 	// Dependencies lists ephemeral backing services (e.g. Redis) provisioned once per shadow role.
 	// +optional
 	Dependencies []DependencySpec `json:"dependencies,omitempty"`
-
-	// Language declares the application's runtime language (e.g. nodejs, python, java).
-	// Monarch uses this to automatically inject the correct OpenTelemetry Operator agents.
-	// +kubebuilder:validation:Enum=java;python;nodejs;dotnet;go
-	// +optional
-	Language string `json:"language,omitempty"`
 }
 
 // ShadowTestStatus defines the observed state of ShadowTest.

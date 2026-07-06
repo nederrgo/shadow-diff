@@ -78,40 +78,6 @@ func TestTraceContextFromFirehose_traceparent(t *testing.T) {
 	}
 }
 
-func TestTraceContextFromFirehose_shadowTraceID(t *testing.T) {
-	headers := amqp.Table{
-		"properties": amqp.Table{
-			"headers": amqp.Table{
-				"x-shadow-trace-id": "abc123",
-			},
-		},
-	}
-	traceID, spanID, err := TraceContextFromFirehose(headers)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if traceID != "abc123" || spanID != "" {
-		t.Fatalf("trace=%q span=%q", traceID, spanID)
-	}
-}
-
-func TestTraceIDFromFirehose_shadowTraceID(t *testing.T) {
-	headers := amqp.Table{
-		"properties": amqp.Table{
-			"headers": amqp.Table{
-				"x-shadow-trace-id": "abc123",
-			},
-		},
-	}
-	id, err := TraceIDFromFirehose(headers)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id != "abc123" {
-		t.Fatalf("trace id = %q", id)
-	}
-}
-
 func TestTraceIDFromFirehose_defaultExchangePublish(t *testing.T) {
 	headers := amqp.Table{
 		"exchange_name": "",
@@ -136,9 +102,54 @@ func TestTraceIDFromFirehose_defaultExchangePublish(t *testing.T) {
 	}
 }
 
+func TestExchangeNameFromPublish_routingKeyFallback(t *testing.T) {
+	headers := amqp.Table{"exchange_name": ""}
+	if got := ExchangeNameFromPublish(headers, "publish.egress-events"); got != "egress-events" {
+		t.Fatalf("exchange = %q, want egress-events", got)
+	}
+	if got := ExchangeNameFromPublish(amqp.Table{}, "publish.orders"); got != "orders" {
+		t.Fatalf("exchange = %q, want orders", got)
+	}
+}
+
 func TestTraceIDFromFirehose_missingHeadersNoPanic(t *testing.T) {
 	if _, err := TraceIDFromFirehose(amqp.Table{}); err == nil {
 		t.Fatal("expected error for missing headers")
+	}
+}
+
+func TestRoutingKeyFromPublish(t *testing.T) {
+	headers := amqp.Table{
+		"routing_keys": []interface{}{"order.shipped", "cc-key"},
+	}
+	if got := RoutingKeyFromPublish(headers); got != "order.shipped" {
+		t.Fatalf("routing key = %q", got)
+	}
+	headers = amqp.Table{"routing_key": "order.created"}
+	if got := RoutingKeyFromPublish(headers); got != "order.created" {
+		t.Fatalf("routing_key header = %q", got)
+	}
+}
+
+func TestBeruEgressPayload(t *testing.T) {
+	headers := amqp.Table{
+		"exchange_name": "egress-events",
+		"routing_keys":  []interface{}{"order.shipped"},
+	}
+	raw, err := BeruEgressPayload(headers, "publish.egress-events", []byte(`{"order_id":"e2e"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatal(err)
+	}
+	if obj["exchange"] != "egress-events" || obj["routing_key"] != "order.shipped" {
+		t.Fatalf("metadata = %#v", obj)
+	}
+	body, ok := obj["body"].(map[string]any)
+	if !ok || body["order_id"] != "e2e" {
+		t.Fatalf("body = %#v", obj["body"])
 	}
 }
 

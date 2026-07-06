@@ -25,27 +25,34 @@ const (
 	containerEnvoySidecar = "envoy-sidecar"
 	containerApp          = "app"
 	envShadowRole         = "SHADOW_ROLE"
-	envoyImage            = "envoyproxy/envoy:v1.26-latest"
+	envShadowTestName     = "SHADOW_TEST_NAME"
+	envoyImage            = "envoyproxy/envoy:v1.30-latest"
 	configMapKeyEnvoyYAML = "envoy.yaml"
 	volumeNameEnvoyConfig = "envoy-config"
 
-	defaultBeruGRPCAddress = "beru.beru-system.svc.cluster.local:50051"
-	defaultBeruHTTPAddress = "beru.beru-system.svc.cluster.local:8080"
-	defaultBeruGRPCTimeout = "2s"
-	beruSystemNamespace    = "beru-system"
-	beruServiceName        = "beru"
-	envBeruGRPCAddress     = "BERU_GRPC_ADDRESS"
+	defaultBeruGRPCAddress      = "beru.beru-system.svc.cluster.local:50051"
+	defaultBeruHTTPAddress      = "beru.beru-system.svc.cluster.local:8080"
+	defaultBeruOTLPEndpoint     = "http://beru.beru-system.svc.cluster.local:4317"
+	defaultBeruOTLPHTTPEndpoint = "http://beru.beru-system.svc.cluster.local:8080"
+	defaultBeruIngestAddress    = "beru-ingest.shadow-system.svc.cluster.local:8080"
+	defaultBeruGRPCTimeout      = "10s"
+	beruSystemNamespace         = "beru-system"
+	beruServiceName             = "beru"
+	envBeruGRPCAddress          = "BERU_GRPC_ADDRESS"
 
-	egressProxyPort int32  = 15001
-	egressProxyURL  string = "http://127.0.0.1:15001"
+	egressProxyPort int32 = 10001
 
-	mongoProxyPort       int32  = 27017
-	shadowMongoProxyURL  string = "mongodb://127.0.0.1:27017"
-	mongoUpstreamCluster        = "mongo_upstream"
-	envHTTPProxy         string = "HTTP_PROXY"
-	envHTTPSProxy        string = "HTTPS_PROXY"
-	envNoProxy           string = "NO_PROXY"
-	defaultNoProxyValue  string = "127.0.0.1,localhost,.cluster.local,.svc"
+	containerIptablesSetup = "iptables-setup"
+	// debian:bookworm-slim ships both iptables (nft backend) and iptables-legacy so
+	// the probe below works on any kernel: modern clusters (GKE COS, EKS Bottlerocket,
+	// OpenShift 4.x) have nf_tables loaded; minikube kvm2 / older kubeadm nodes have
+	// only x_tables (legacy) loaded.
+	iptablesInitImage = "debian:bookworm-slim"
+	iptablesSetupScript = `apt-get update -qq && apt-get install -yqq --no-install-recommends iptables 2>/dev/null
+if iptables -t nat -L >/dev/null 2>&1; then IPT=iptables; else IPT=iptables-legacy; fi
+$IPT -t nat -A OUTPUT -p tcp -d 127.0.0.1/8 -j RETURN
+$IPT -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 10001
+$IPT -t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-port 10001`
 
 	containerIgris               = "igris"
 	configMapKeyListenersJSON    = "listeners.json"
@@ -66,11 +73,19 @@ const (
 	envRecorderListenAddr              = "RECORDER_LISTEN_ADDR"
 	envRecorderOTLPGRPCAddr            = "RECORDER_OTLP_GRPC_ADDR"
 	envRecorderRecordAndReplayFile     = "RECORDER_RECORD_AND_REPLAY_FILE"
+	envShopHTTPURL                     = "SHOP_HTTP_URL"
 	envBeruHTTPURL                     = "BERU_HTTP_URL"
 	defaultRecorderRecordAndReplayPath = "/etc/recorder/recordAndReplay.json"
-	defaultBeruHTTPURL                 = "http://beru.beru-system.svc.cluster.local:8080"
 	recorderServicePort                = int32(8080)
 	recorderOTLPPort                   = int32(4317)
+
+	shopName        = "shop"
+	shopGRPCPort    = int32(50051)
+	shopHTTPPort    = int32(8080)
+	envShopGRPCAddr = "SHOP_GRPC_ADDR"
+	envShopHTTPAddr = "SHOP_HTTP_ADDR"
+
+	volumeNameLocalBeruData = "beru-sqlite-data"
 )
 
 var envoyImagePullPolicy = corev1.PullIfNotPresent

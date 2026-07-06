@@ -61,9 +61,9 @@ make siphon-docker-build SIPHON_IMG=siphon:dev
 | `SIPHON_WORKER_COUNT` | `8` | Forward worker pool size |
 | `SIPHON_JOB_QUEUE_SIZE` | `1024` | Queue before drop |
 
-OTLP **trace** span attributes (from Pixie PxL): `http.request.method`, `url.path`, `x-shadow-trace-id`, `http.request.body` (string). Siphon forwards `x-shadow-trace-id` to Igris as an HTTP header.
+OTLP **trace** span attributes (from Pixie PxL): `http.request.method`, `url.path`, `traceparent`, `http.request.body` (string). Siphon forwards `traceparent` to Igris as an HTTP header.
 
-**Pixie PxL notes:** use `px.pluck(df.req_headers, 'x-shadow-trace-id')`; filter prod pods with `px.contains(df.pod, '<app>')` (not `df.service`); precompute `df.end_time = df.time_ + df.latency` for `px.otel.trace.Span`. Template: `testing/scripts/manifests/pixie-bridge/configmap.yaml`.
+**Pixie PxL notes:** use `px.pluck(df.req_headers, 'traceparent')`; filter prod pods with `px.contains(df.pod, '<app>')` (not `df.service`); precompute `df.end_time = df.time_ + df.latency` for `px.otel.trace.Span`. Template: `testing/scripts/manifests/pixie-bridge/configmap.yaml`.
 
 ---
 

@@ -56,6 +56,11 @@ spec:
                 description: MaxPayloadSize is the max bytes to parse per HTTP/2 frame.
                 format: int64
                 type: integer
+              mongoOtelEndpoint:
+                description: |-
+                  MongoOTelEndpoint is the gRPC OTLP export destination for MongoDB egress spans.
+                  Non-empty activates the mongodb-export PxL script (tcp_events on port 27017).
+                type: string
               otelEndpoint:
                 description: OTelEndpoint is the gRPC OTLP export destination for
                   ingress (server-side) spans.
@@ -69,6 +74,11 @@ spec:
               recorderOtelEndpoint:
                 description: RecorderOTelEndpoint is gRPC OTLP export for egress spans
                   (client or in-cluster server-side).
+                type: string
+              shadowNamespace:
+                description: |-
+                  ShadowNamespace is the shadow namespace containing shadow app pods.
+                  Used by the MongoDB PxL script to filter traffic by shadow pods, not prod pods.
                 type: string
               shadowTestRef:
                 description: ShadowTestRef is the owning ShadowTest as "<namespace>/<name>".

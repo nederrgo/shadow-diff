@@ -1,4 +1,4 @@
-# HTTP ingress (igris-http) + RabbitMQ egress (Firehose) OTel E2E — Python zero-touch (OTel flask+pika).
+# HTTP ingress (igris-http) + Mongo OTLP + RabbitMQ egress (Firehose) OTel E2E — Python zero-touch (OTel flask+pika+pymongo).
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest
 metadata:
@@ -17,9 +17,11 @@ spec:
     - port: 8888
       driver: http_request
 
-  language: python
-
   dependencies:
     - name: rabbitmq
       type: rabbitmq
       envVarInjection: AMQP_URL
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

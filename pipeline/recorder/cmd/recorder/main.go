@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip" // Pixie px.export sends grpc-encoding: gzip
 
-	"github.com/shadow-diff/recorder/internal/beru"
+	"github.com/shadow-diff/recorder/internal/shop"
 	"github.com/shadow-diff/recorder/internal/config"
 	"github.com/shadow-diff/recorder/internal/ingest"
 	otlprecv "github.com/shadow-diff/recorder/internal/receiver"
@@ -24,7 +24,7 @@ func main() {
 	log.Printf("Recorder starting tcp=%s otlp=%s recordAndReplay=%d",
 		cfg.ListenAddr, cfg.OTLPGRPCAddr, len(cfg.RecordAndReplay))
 
-	client := beru.NewClient(cfg.BeruHTTPURL)
+	client := shop.NewClient(cfg.ShopHTTPURL)
 	store := ingest.NewSessionStore(client, cfg.RecordAndReplay, cfg.PairTimeout, cfg.MaxFrameBytes)
 	defer store.Stop()
 

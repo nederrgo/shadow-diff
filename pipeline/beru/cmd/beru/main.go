@@ -12,17 +12,17 @@ import (
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
+	_ "google.golang.org/grpc/encoding/gzip" // enable gzip decompression for Pixie OTLP exports
 
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
 	"github.com/shadow-diff/beru/internal/api"
 	"github.com/shadow-diff/beru/internal/dashboard"
-	"github.com/shadow-diff/beru/internal/egressdiff"
 	"github.com/shadow-diff/beru/internal/envoyextproc"
-	"github.com/shadow-diff/beru/internal/ingest"
 	"github.com/shadow-diff/beru/internal/otlp"
-	"github.com/shadow-diff/beru/internal/replay"
 	"github.com/shadow-diff/beru/internal/server"
 	"github.com/shadow-diff/beru/internal/storage"
+	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
+	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 func main() {
@@ -49,23 +49,25 @@ func main() {
 	}
 	defer db.Close()
 
-	cfg := ingest.ConfigFromEnv()
-	store := ingest.NewStore(log, cfg)
-	store.Storage = db
-	mocks := replay.NewMockStore()
-	egressStore := egressdiff.NewStore(log, egressdiff.ConfigFromEnv())
-	egressStore.Storage = db
+	v2Repo, err := v2storage.NewSQLiteRepository(db.SQL())
+	if err != nil {
+		slog.Error("Failed to open v2 storage repository", "err", err)
+		os.Exit(1)
+	}
+	router := v2engine.NewTraceRouter(8, v2Repo, db)
 
-	otlpSrv := &otlp.Server{Log: log, EgressStore: egressStore}
+	defaultTest := db.DefaultShadowTestName()
 
-	dash, err := dashboard.NewHandler(db, log)
+	otlpSrv := &otlp.Server{Log: log, Router: router, DefaultShadowTest: defaultTest}
+
+	dash, err := dashboard.NewHandler(db, v2Repo, log)
 	if err != nil {
 		slog.Error("Failed to init dashboard", "err", err)
 		os.Exit(1)
 	}
 
 	httpAddr := envOr("BERU_HTTP_ADDR", ":8080")
-	httpSrv := &api.Server{Log: log, Mocks: mocks, EgressDiff: egressStore, OTLP: otlpSrv, DB: db, Dashboard: dash}
+	httpSrv := &api.Server{Log: log, Router: router, OTLP: otlpSrv, DB: db, Dashboard: dash}
 	go func() {
 		if err := httpSrv.Start(httpAddr); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server stopped", "err", err)
@@ -74,12 +76,12 @@ func main() {
 	}()
 
 	grpcServerBeru := grpc.NewServer()
-	beruv1.RegisterTrafficReporterServer(grpcServerBeru, &server.TrafficReporter{Log: log, Store: store})
+	beruv1.RegisterTrafficReporterServer(grpcServerBeru, &server.TrafficReporter{
+		Log: log, Router: router, DefaultShadowTest: defaultTest,
+	})
 	extprocv3.RegisterExternalProcessorServer(grpcServerBeru, &envoyextproc.Server{
-		Log:   log,
-		Store: store,
-		Mocks: mocks,
-		Role:  envoyextproc.RoleFromEnv(),
+		Log: log, Router: router, Role: envoyextproc.RoleFromEnv(),
+		DefaultShadowTest: defaultTest,
 	})
 
 	grpcServerOTLP := grpc.NewServer()

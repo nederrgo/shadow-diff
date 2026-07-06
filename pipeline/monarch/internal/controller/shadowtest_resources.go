@@ -121,13 +121,19 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 		deploy.Spec.Replicas = &replicas
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: podLabels}
 		deploy.Spec.Template.ObjectMeta.Labels = podLabels
-		if otelInjectionEnabled(st) {
-			deploy.Spec.Template.ObjectMeta.Annotations = mergeAnnotations(
-				deploy.Spec.Template.ObjectMeta.Annotations,
-				otelPodAnnotations(st, image),
-			)
-		}
 		cmName := envoyConfigMapName(st, role)
+		deploy.Spec.Template.Spec.InitContainers = []corev1.Container{
+			{
+				Name:  containerIptablesSetup,
+				Image: iptablesInitImage,
+				SecurityContext: &corev1.SecurityContext{
+					Capabilities: &corev1.Capabilities{
+						Add: []corev1.Capability{"NET_ADMIN"},
+					},
+				},
+				Command: []string{"/bin/sh", "-c", iptablesSetupScript},
+			},
+		}
 		deploy.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
 				Name: volumeNameEnvoyConfig,
@@ -138,15 +144,13 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 				},
 			},
 		}
-		beruAddr := beruGRPCAddressFor(st)
-		baseEnv := append(append([]corev1.EnvVar{}, env...), dependencyEnvVarsForRole(st, shadowNS, role)...)
-		if otelInjectionEnabled(st) {
-			baseEnv = append(baseEnv, otelEnvVars(st, role, image)...)
-		}
+		beruAddr := beruGRPCAddressFor(st, shadowNS)
+		baseEnv := append([]corev1.EnvVar{}, env...)
+		baseEnv = append(baseEnv, dependencyEnvVarsForRole(st, shadowNS, role)...)
 		appEnv := appEnvWithEgressProxy(st, baseEnv)
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{
 			{
-				Name:  "app",
+				Name:  containerApp,
 				Image: image,
 				Ports: appContainerPortsFor(st),
 				Env:   appEnv,
@@ -159,6 +163,7 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 				Ports:           envoyContainerPorts(st),
 				Env: []corev1.EnvVar{
 					{Name: envShadowRole, Value: role},
+					{Name: envShadowTestName, Value: st.Name},
 					{Name: envBeruGRPCAddress, Value: beruAddr},
 				},
 				VolumeMounts: []corev1.VolumeMount{

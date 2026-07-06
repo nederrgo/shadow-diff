@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	amqp "github.com/rabbitmq/amqp091-go"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
@@ -146,9 +145,4 @@ func (r *ShadowTestReconciler) deleteProdShadowQueue(ctx context.Context, st *en
 		return fmt.Errorf("queue delete %q: %w", queueName, err)
 	}
 	return nil
-}
-
-// refreshShadowTest reloads the ShadowTest after status patches (e.g. amqpQueueName).
-func (r *ShadowTestReconciler) refreshShadowTest(ctx context.Context, nn types.NamespacedName, st *enginev1alpha1.ShadowTest) error {
-	return r.Get(ctx, nn, st)
 }

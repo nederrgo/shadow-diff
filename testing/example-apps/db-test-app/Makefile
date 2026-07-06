@@ -14,4 +14,4 @@ tidy:
 	go mod tidy
 
 docker-build:
-	bash "$(REPO_ROOT)/testing/scripts/lib/docker.sh" build -t $(DB_TEST_IMG) .
+	bash "$(REPO_ROOT)/testing/scripts/helpers/docker.sh" build -t $(DB_TEST_IMG) .

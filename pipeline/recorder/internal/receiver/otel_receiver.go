@@ -2,6 +2,7 @@ package receiver
 
 import (
 	"context"
+	"encoding/hex"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -13,23 +14,23 @@ import (
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
-	"github.com/shadow-diff/recorder/internal/beru"
+	"github.com/shadow-diff/recorder/internal/shop"
 	"github.com/shadow-diff/recorder/internal/config"
 	"github.com/shadow-diff/recorder/internal/parse"
 )
 
 // OTLPReceiver ingests Pixie egress OTLP traces and posts to Beru.
 type OTLPReceiver struct {
-	beru            *beru.Client
+	shopClient      *shop.Client
 	recordAndReplay []config.RecordAndReplayHost
-	jobs            chan beru.RecordPayload
+	jobs            chan shop.RecordPayload
 	wg              sync.WaitGroup
 	dropped         atomic.Uint64
 	log             *slog.Logger
 	stopOnce        sync.Once
 }
 
-func NewOTLPReceiver(client *beru.Client, hosts []config.RecordAndReplayHost, workers, queueSize int, log *slog.Logger) *OTLPReceiver {
+func NewOTLPReceiver(client *shop.Client, hosts []config.RecordAndReplayHost, workers, queueSize int, log *slog.Logger) *OTLPReceiver {
 	if workers <= 0 {
 		workers = 4
 	}
@@ -40,9 +41,9 @@ func NewOTLPReceiver(client *beru.Client, hosts []config.RecordAndReplayHost, wo
 		log = slog.Default()
 	}
 	r := &OTLPReceiver{
-		beru:            client,
+		shopClient:      client,
 		recordAndReplay: hosts,
-		jobs:            make(chan beru.RecordPayload, queueSize),
+		jobs:            make(chan shop.RecordPayload, queueSize),
 		log:             log,
 	}
 	for i := 0; i < workers; i++ {
@@ -66,7 +67,7 @@ func (r *OTLPReceiver) Stop() {
 func (r *OTLPReceiver) worker() {
 	defer r.wg.Done()
 	for record := range r.jobs {
-		r.beru.PostAsync(record)
+		r.shopClient.PostAsync(record)
 	}
 }
 
@@ -97,21 +98,21 @@ func parseEgressRecordFromSpan(
 	span *tracepb.Span,
 	res *resourcepb.Resource,
 	hosts []config.RecordAndReplayHost,
-) (beru.RecordPayload, bool) {
+) (shop.RecordPayload, bool) {
 	if span == nil {
-		return beru.RecordPayload{}, false
+		return shop.RecordPayload{}, false
 	}
 	attrs := mergeAttrs(res, span.GetAttributes())
 
 	host := firstAttr(attrs, "http.host", "server.address")
 	if host == "" || !parse.HostMatches(host, hosts) {
-		return beru.RecordPayload{}, false
+		return shop.RecordPayload{}, false
 	}
 	host = parse.NormalizeHTTPHost(host)
 
 	path := firstAttr(attrs, "url.path", "http.target")
 	if path == "" {
-		return beru.RecordPayload{}, false
+		return shop.RecordPayload{}, false
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + strings.TrimPrefix(path, "/")
@@ -129,16 +130,22 @@ func parseEgressRecordFromSpan(
 		}
 	}
 
-	bodyStr := firstAttr(attrs, "http.request.body")
 	respBody := firstAttr(attrs, "http.response.body")
 
-	return beru.RecordPayload{
-		Method:      method,
-		Host:        host,
-		Path:        path,
-		Body:        parse.JSONRawBody([]byte(bodyStr)),
-		IgnorePaths: parse.IgnorePathsForHost(host, hosts),
-		Response: beru.RecordResponse{
+	// Prefer the W3C traceparent attribute stamped by the PxL script; fall
+	// back to the Pixie-generated span.TraceId (which won't match the shadow
+	// workers' traceparent and will cause a 599 regression).
+	traceID := traceIDFromTraceparent(firstAttr(attrs, "traceparent"))
+	if traceID == "" {
+		traceID = hex.EncodeToString(span.TraceId)
+	}
+
+	return shop.RecordPayload{
+		TraceID: traceID,
+		Method:  method,
+		Host:    host,
+		Path:    path,
+		Response: shop.RecordResponse{
 			Status:  status,
 			Headers: map[string]string{},
 			Body:    respBody,
@@ -182,6 +189,16 @@ func firstAttr(attrs map[string]string, keys ...string) string {
 		if v := strings.TrimSpace(attrs[k]); v != "" {
 			return v
 		}
+	}
+	return ""
+}
+
+// traceIDFromTraceparent extracts the 32-char trace ID from a W3C traceparent header.
+// Returns empty string if the value is absent or malformed.
+func traceIDFromTraceparent(v string) string {
+	parts := strings.SplitN(v, "-", 4)
+	if len(parts) >= 2 && len(parts[1]) == 32 {
+		return parts[1]
 	}
 	return ""
 }

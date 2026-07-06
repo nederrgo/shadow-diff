@@ -57,6 +57,7 @@ func (r *ShadowTestReconciler) igrisRabbitMQEnv(st *enginev1alpha1.ShadowTest, s
 	if !ok {
 		return nil, fmt.Errorf("dependency %q not found", amqpSpec.TargetDependency)
 	}
+	_, port := resolveDependencyDefaults(*dep)
 	queueName := st.Status.AmqpQueueName
 	if queueName == "" {
 		queueName = prodShadowQueueName(st)
@@ -66,9 +67,9 @@ func (r *ShadowTestReconciler) igrisRabbitMQEnv(st *enginev1alpha1.ShadowTest, s
 		{Name: envShadowQueueName, Value: queueName},
 		{Name: envShadowPublishExchange, Value: amqpSpec.Exchange},
 		{Name: envShadowPublishExchangeType, Value: amqpExchangeType(amqpSpec)},
-		{Name: envControlAAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlA, dep.Port)},
-		{Name: envControlBAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlB, dep.Port)},
-		{Name: envCandidateAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleCandidate, dep.Port)},
+		{Name: envControlAAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlA, port)},
+		{Name: envControlBAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlB, port)},
+		{Name: envCandidateAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleCandidate, port)},
 	}, nil
 }
 

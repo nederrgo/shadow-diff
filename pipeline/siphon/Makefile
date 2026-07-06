@@ -11,7 +11,7 @@ test:
 	CGO_ENABLED=0 go test ./...
 
 docker-build:
-	bash "$(REPO_ROOT)/testing/scripts/lib/docker.sh" build -t $(SIPHON_IMG) .
+	bash "$(REPO_ROOT)/testing/scripts/helpers/docker.sh" build -t $(SIPHON_IMG) .
 
 run: build
 	SIPHON_IGRIS_BASE_URL=http://127.0.0.1:8080 ./bin/siphon

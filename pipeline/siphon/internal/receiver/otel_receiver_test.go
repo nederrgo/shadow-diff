@@ -25,12 +25,13 @@ func kvString(key, val string) *commonpb.KeyValue {
 }
 
 func TestParseHTTPRecord_attributeFallbacks(t *testing.T) {
+	tp := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 	lr := &logspb.LogRecord{
 		Attributes: []*commonpb.KeyValue{
 			kvString("http.method", "GET"),
 			kvString("url.path", "/v1/users"),
 			kvString("url.query", "active=true"),
-			kvString("x-shadow-trace-id", "trace-1"),
+			kvString("traceparent", tp),
 		},
 		Body: &commonpb.AnyValue{
 			Value: &commonpb.AnyValue_BytesValue{BytesValue: []byte("body")},
@@ -46,8 +47,8 @@ func TestParseHTTPRecord_attributeFallbacks(t *testing.T) {
 	if rec.RequestURI != "/v1/users?active=true" {
 		t.Fatalf("uri %q", rec.RequestURI)
 	}
-	if rec.ShadowTraceID != "trace-1" {
-		t.Fatalf("trace %q", rec.ShadowTraceID)
+	if rec.Traceparent != tp {
+		t.Fatalf("traceparent %q", rec.Traceparent)
 	}
 	if string(rec.Body) != "body" {
 		t.Fatalf("body %q", rec.Body)
@@ -55,12 +56,13 @@ func TestParseHTTPRecord_attributeFallbacks(t *testing.T) {
 }
 
 func TestParseHTTPRecordFromSpan_bodyAttribute(t *testing.T) {
+	tp := "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
 	span := &tracepb.Span{
 		Attributes: []*commonpb.KeyValue{
 			kvString("http.request.method", "POST"),
 			kvString("url.path", "/echo"),
 			kvString("http.request.body", `{"ok":true}`),
-			kvString("x-shadow-trace-id", "pixie-trace"),
+			kvString("traceparent", tp),
 		},
 	}
 	rec, ok := parseHTTPRecordFromSpan(span, nil)
@@ -76,8 +78,8 @@ func TestParseHTTPRecordFromSpan_bodyAttribute(t *testing.T) {
 	if string(rec.Body) != `{"ok":true}` {
 		t.Fatalf("body %q", rec.Body)
 	}
-	if rec.ShadowTraceID != "pixie-trace" {
-		t.Fatalf("trace %q", rec.ShadowTraceID)
+	if rec.Traceparent != tp {
+		t.Fatalf("traceparent %q", rec.Traceparent)
 	}
 }
 
@@ -91,7 +93,7 @@ func TestExportTraces_enqueuesSpan(t *testing.T) {
 				Spans: []*tracepb.Span{{
 					Attributes: []*commonpb.KeyValue{
 						kvString("url.path", "/from-pixie"),
-						kvString("x-shadow-trace-id", "t1"),
+						kvString("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
 					},
 				}},
 			}},

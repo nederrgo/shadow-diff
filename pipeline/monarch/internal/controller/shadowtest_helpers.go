@@ -74,34 +74,15 @@ func envFromTarget(dep *appsv1.Deployment) ([]corev1.EnvVar, string) {
 	return out, warn
 }
 
-func appEnvWithEgressProxy(st *enginev1alpha1.ShadowTest, base []corev1.EnvVar) []corev1.EnvVar {
-	if len(st.Spec.RecordAndReplay) == 0 {
-		return base
-	}
-	out := append([]corev1.EnvVar{}, base...)
-	out = append(out,
-		corev1.EnvVar{Name: envHTTPProxy, Value: egressProxyURL},
-		corev1.EnvVar{Name: envHTTPSProxy, Value: egressProxyURL},
-		corev1.EnvVar{Name: envNoProxy, Value: defaultNoProxyValue},
-	)
-	return out
+func appEnvWithEgressProxy(_ *enginev1alpha1.ShadowTest, base []corev1.EnvVar) []corev1.EnvVar {
+	return append([]corev1.EnvVar{}, base...)
 }
 
 func envoyContainerPorts(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort {
-	ports := []corev1.ContainerPort{
+	return []corev1.ContainerPort{
 		{Name: "ingress", ContainerPort: servicePortFor(st), Protocol: corev1.ProtocolTCP},
+		{Name: "egress", ContainerPort: egressProxyPort, Protocol: corev1.ProtocolTCP},
 	}
-	if len(st.Spec.RecordAndReplay) > 0 {
-		ports = append(ports, corev1.ContainerPort{
-			Name: "egress", ContainerPort: egressProxyPort, Protocol: corev1.ProtocolTCP,
-		})
-	}
-	if hasMongoDependency(st) {
-		ports = append(ports, corev1.ContainerPort{
-			Name: "mongo-egress", ContainerPort: mongoProxyPort, Protocol: corev1.ProtocolTCP,
-		})
-	}
-	return ports
 }
 
 const defaultServicePort int32 = 8888
@@ -128,19 +109,36 @@ func applicationPortFor(st *enginev1alpha1.ShadowTest) int32 {
 	return defaultApplicationPort
 }
 
-func beruGRPCAddressFor(st *enginev1alpha1.ShadowTest) string {
+func beruGRPCAddressFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
 	if st.Spec.BeruGRPCAddress != "" {
 		return st.Spec.BeruGRPCAddress
 	}
-	return defaultBeruGRPCAddress
+	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruGRPCPort)
 }
 
-func beruHTTPHostFor(st *enginev1alpha1.ShadowTest) string {
-	host, _, err := parseBeruHostPort(beruGRPCAddressFor(st))
-	if err != nil || host == "" {
-		return defaultBeruHTTPAddress
+func beruHTTPHostFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+	if st.Spec.BeruGRPCAddress != "" {
+		host, _, err := parseBeruHostPort(st.Spec.BeruGRPCAddress)
+		if err != nil || host == "" {
+			return defaultBeruHTTPAddress
+		}
+		return fmt.Sprintf("%s:8080", host)
 	}
-	return fmt.Sprintf("%s:8080", host)
+	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
+}
+
+func beruOTLPEndpointFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+	if st.Spec.BeruGRPCAddress != "" {
+		return defaultBeruOTLPEndpoint
+	}
+	return fmt.Sprintf("http://%s:%d", localBeruDNSHost(shadowNS), localBeruOTLPPort)
+}
+
+func beruOTLPHTTPEndpointFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+	if st.Spec.BeruGRPCAddress != "" {
+		return defaultBeruOTLPHTTPEndpoint
+	}
+	return fmt.Sprintf("http://%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
 }
 
 func beruGRPCTimeoutFor(st *enginev1alpha1.ShadowTest) string {
@@ -148,6 +146,16 @@ func beruGRPCTimeoutFor(st *enginev1alpha1.ShadowTest) string {
 		return st.Spec.BeruGRPCTimeout
 	}
 	return defaultBeruGRPCTimeout
+}
+
+func beruIngestAddressFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+	if st.Spec.BeruIngestAddress != "" {
+		return st.Spec.BeruIngestAddress
+	}
+	if st.Spec.BeruGRPCAddress != "" {
+		return defaultBeruIngestAddress
+	}
+	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
 }
 
 func parseBeruHostPort(address string) (host string, port int32, err error) {
@@ -188,22 +196,6 @@ func recordAndReplayEntry(d enginev1alpha1.RecordAndReplayHostSpec) (host string
 	return host, port, d.IgnoreRequestPaths
 }
 
-func recordAndReplayEgressDomains(st *enginev1alpha1.ShadowTest) []string {
-	var hosts []string
-	for _, d := range st.Spec.RecordAndReplay {
-		host, port, _ := recordAndReplayEntry(d)
-		if host == "" {
-			continue
-		}
-		if port != defaultRecordAndReplayPort {
-			hosts = append(hosts, fmt.Sprintf("%s:%d", host, port))
-		} else {
-			hosts = append(hosts, host)
-		}
-	}
-	return egressVirtualHostDomains(hosts)
-}
-
 func resolveDependencyDefaults(dep enginev1alpha1.DependencySpec) (image string, port int32) {
 	image = dep.Image
 	port = dep.Port
@@ -240,4 +232,21 @@ func isMongoDependencyType(dep enginev1alpha1.DependencySpec) bool {
 	default:
 		return false
 	}
+}
+
+func isMongoDependency(dep enginev1alpha1.DependencySpec) bool {
+	if isMongoDependencyType(dep) {
+		return true
+	}
+	_, port := resolveDependencyDefaults(dep)
+	return port == 27017
+}
+
+func hasMongoDependency(st *enginev1alpha1.ShadowTest) bool {
+	for _, dep := range st.Spec.Dependencies {
+		if isMongoDependency(dep) {
+			return true
+		}
+	}
+	return false
 }

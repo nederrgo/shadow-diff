@@ -19,9 +19,7 @@ spec:
         targetDependency: rabbitmq
 
   recordAndReplay:
-    - host: user-service.prod:8080
-
-  language: python
+    - host: user-service.prod.internal:8080
 
   dependencies:
     - name: rabbitmq

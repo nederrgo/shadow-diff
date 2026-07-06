@@ -27,7 +27,7 @@ type RecordAndReplayHost struct {
 type Config struct {
 	ListenAddr          string
 	OTLPGRPCAddr        string
-	BeruHTTPURL         string
+	ShopHTTPURL         string
 	RecordAndReplay     []RecordAndReplayHost
 	RecordAndReplayFile string
 	PairTimeout         time.Duration
@@ -39,7 +39,7 @@ func Load() Config {
 	cfg := Config{
 		ListenAddr:          envOr("RECORDER_LISTEN_ADDR", defaultListenAddr),
 		OTLPGRPCAddr:        envOr("RECORDER_OTLP_GRPC_ADDR", defaultOTLPGRPCAddr),
-		BeruHTTPURL:         strings.TrimSpace(os.Getenv("BERU_HTTP_URL")),
+		ShopHTTPURL:         strings.TrimSpace(os.Getenv("SHOP_HTTP_URL")),
 		RecordAndReplayFile: envOr("RECORDER_RECORD_AND_REPLAY_FILE", defaultRecordAndReplayFile),
 		PairTimeout:         defaultPairTimeout,
 		MaxFrameBytes:       defaultMaxFrameBytes,
@@ -63,14 +63,14 @@ func Load() Config {
 	}
 	cfg.RecordAndReplay = hosts
 
-	if cfg.BeruHTTPURL == "" {
-		slog.Error("BERU_HTTP_URL is required")
+	if cfg.ShopHTTPURL == "" {
+		slog.Error("SHOP_HTTP_URL is required")
 		os.Exit(1)
 	}
-	if !strings.HasPrefix(cfg.BeruHTTPURL, "http://") && !strings.HasPrefix(cfg.BeruHTTPURL, "https://") {
-		cfg.BeruHTTPURL = "http://" + cfg.BeruHTTPURL
+	if !strings.HasPrefix(cfg.ShopHTTPURL, "http://") && !strings.HasPrefix(cfg.ShopHTTPURL, "https://") {
+		cfg.ShopHTTPURL = "http://" + cfg.ShopHTTPURL
 	}
-	cfg.BeruHTTPURL = strings.TrimSuffix(cfg.BeruHTTPURL, "/")
+	cfg.ShopHTTPURL = strings.TrimSuffix(cfg.ShopHTTPURL, "/")
 
 	return cfg
 }

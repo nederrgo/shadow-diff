@@ -55,3 +55,4 @@ Thumbs.db
 
 # Ephemeral test pods / debug (optional local files)
 *.log
+.claude/worktrees/

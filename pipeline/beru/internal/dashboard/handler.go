@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/shadow-diff/beru/internal/storage"
+	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 //go:embed embed/*
@@ -16,13 +17,14 @@ var embedFS embed.FS
 
 // Handler serves dashboard pages and static assets.
 type Handler struct {
-	DB  *storage.DB
-	Log *slog.Logger
-	tpl *template.Template
+	DB   *storage.DB
+	Repo v2storage.TraceRepository
+	Log  *slog.Logger
+	tpl  *template.Template
 }
 
 // NewHandler loads embedded templates.
-func NewHandler(db *storage.DB, log *slog.Logger) (*Handler, error) {
+func NewHandler(db *storage.DB, repo v2storage.TraceRepository, log *slog.Logger) (*Handler, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -34,7 +36,7 @@ func NewHandler(db *storage.DB, log *slog.Logger) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Handler{DB: db, Log: log, tpl: tpl}, nil
+	return &Handler{DB: db, Repo: repo, Log: log, tpl: tpl}, nil
 }
 
 // Register mounts dashboard and API routes on mux.
@@ -66,4 +68,12 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) staticHandler() http.Handler {
 	sub, _ := fs.Sub(embedFS, "embed")
 	return http.FileServer(http.FS(sub))
+}
+
+func traceDetailURL(traceID, protocol string, direction v2storage.PayloadDirection) string {
+	u := "/dashboard/traces/" + traceID + "?protocol=" + protocol
+	if protocol == "http" && direction != "" {
+		u += "&direction=" + string(direction)
+	}
+	return u
 }

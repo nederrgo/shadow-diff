@@ -53,10 +53,6 @@ func recorderRecordAndReplayJSON(st *enginev1alpha1.ShadowTest) (string, error) 
 	return string(b), nil
 }
 
-func recorderReplicasFor(st *enginev1alpha1.ShadowTest) int32 {
-	return 1
-}
-
 func egressRecordingEnabled(st *enginev1alpha1.ShadowTest) bool {
 	return len(st.Spec.RecordAndReplay) > 0
 }
@@ -111,7 +107,7 @@ func (r *ShadowTestReconciler) reconcileRecorderDeployment(
 			Name:      name,
 		},
 	}
-	replicas := recorderReplicasFor(st)
+	replicas := int32(1)
 	_, err := ctrl.CreateOrPatch(ctx, r.Client, deploy, func() error {
 		deploy.Labels = labels
 		deploy.Spec.Replicas = &replicas
@@ -135,7 +131,7 @@ func (r *ShadowTestReconciler) reconcileRecorderDeployment(
 				},
 			},
 			Env: []corev1.EnvVar{
-				{Name: envBeruHTTPURL, Value: defaultBeruHTTPURL},
+				{Name: envShopHTTPURL, Value: fmt.Sprintf("http://%s", shopHTTPHostFor(shadowNS))},
 				{Name: envRecorderListenAddr, Value: ":8080"},
 				{Name: envRecorderOTLPGRPCAddr, Value: ":4317"},
 				{Name: envRecorderRecordAndReplayFile, Value: defaultRecorderRecordAndReplayPath},

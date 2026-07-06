@@ -1,6 +1,6 @@
 # HTTP → RabbitMQ OTel E2E
 
-Proves W3C `traceparent` correlation from **igris-http** ingress through OTel sidecar to **RabbitMQ Firehose** egress (egress-relay-rabbitmq → Beru).
+Proves W3C `traceparent` correlation from **igris-http** ingress through OTel sidecar to **MongoDB OTLP** and **RabbitMQ Firehose** egress (egress-relay-rabbitmq → Beru).
 
 Monarch deploys **igris-http** + **egress-relay-rabbitmq** when `inputs: http_request` and `dependencies` includes RabbitMQ (`MONARCH_MODE=dev` resolves helper images).
 
@@ -18,11 +18,12 @@ Prerequisites: `./testing/scripts/e2e-reset-kind.sh` or `./testing/scripts/e2e-r
 ## Expected Beru logs (same trace id)
 
 - `No regression for Trace <32-hex>` — ingress ext_proc
+- `No egress regression for Trace <32-hex> (mongodb)` — OTLP mongo spans
 - `No egress regression for Trace <32-hex> (rabbitmq)` — Firehose relay
 
 ## Apps
 
 | App | Path | OTel |
 | --- | --- | --- |
-| `http-rmq-test-app` | Node Express → `amqplib` publish | `http` + `amqplib` (zero-touch) |
-| `http-rmq-python-worker` | Flask → `pika` publish | `flask` + `pika` (zero-touch; relay dedup) |
+| `http-rmq-test-app` | Node Express → Mongo insert + `amqplib` publish | `http` + `mongodb` + `amqplib` (zero-touch) |
+| `http-rmq-python-worker` | Flask → Mongo insert + `pika` publish | `flask` + `pymongo` + `pika` (zero-touch; relay dedup) |
