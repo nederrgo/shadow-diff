@@ -96,21 +96,55 @@ wait_prod_echo_ready() {
 
 wait_pixie_stream_rule() {
   local shadowtest="$1" shadowtest_ns="$2" max_wait="${3:-120}"
-  local name="pixie-${shadowtest}" i=0 active=""
+  local require_mongo="${4:-0}"
+  local name="pixie-${shadowtest}" i=0 active="" shadow_ns="" mongo_ep=""
   while [[ "$i" -lt "$max_wait" ]]; do
     if kubectl get pixiestreamrule "$name" -n "$shadowtest_ns" >/dev/null 2>&1; then
       active=$(kubectl get pixiestreamrule "$name" -n "$shadowtest_ns" \
         -o jsonpath='{.spec.active}' 2>/dev/null || true)
+      shadow_ns=$(kubectl get pixiestreamrule "$name" -n "$shadowtest_ns" \
+        -o jsonpath='{.spec.shadowNamespace}' 2>/dev/null || true)
+      mongo_ep=$(kubectl get pixiestreamrule "$name" -n "$shadowtest_ns" \
+        -o jsonpath='{.spec.mongoOtelEndpoint}' 2>/dev/null || true)
       if [[ "$active" == "true" ]]; then
-        echo "    PixieStreamRule ${shadowtest_ns}/${name} active"
-        return 0
+        if [[ "$require_mongo" == "1" ]]; then
+          if [[ -n "$shadow_ns" && -n "$mongo_ep" ]]; then
+            echo "    PixieStreamRule ${shadowtest_ns}/${name} active (mongo endpoint set)"
+            return 0
+          fi
+        else
+          echo "    PixieStreamRule ${shadowtest_ns}/${name} active"
+          return 0
+        fi
       fi
     fi
     echo "    waiting for PixieStreamRule ${name} (${i}s/${max_wait}s)"
     sleep 2
     i=$((i + 2))
   done
-  echo "ERROR: PixieStreamRule pixie-${shadowtest} not active" >&2
+  echo "ERROR: PixieStreamRule pixie-${shadowtest} not ready" >&2
+  return 1
+}
+
+wait_pixie_mongo_pxl_ready() {
+  local shadowtest="$1" shadowtest_ns="$2" max_wait="${3:-60}"
+  local name="pixie-${shadowtest}" i=0 shadow_ns="" mongo_pxl repo
+  repo="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+  PIXIE_BRIDGE_STATE_DIR="${PIXIE_BRIDGE_STATE_DIR:-${repo}/.cache/pixie-bridge}"
+  mongo_pxl="${PIXIE_BRIDGE_STATE_DIR}/${shadowtest_ns}-${name}-mongo.pxl"
+  while [[ "$i" -lt "$max_wait" ]]; do
+    shadow_ns=$(kubectl get pixiestreamrule "$name" -n "$shadowtest_ns" \
+      -o jsonpath='{.spec.shadowNamespace}' 2>/dev/null || true)
+    if [[ -n "$shadow_ns" && -f "$mongo_pxl" ]] && grep -qF "$shadow_ns" "$mongo_pxl"; then
+      echo "    mongo PxL ready: ${mongo_pxl} (namespace=${shadow_ns})"
+      return 0
+    fi
+    echo "    waiting for mongo PxL ${mongo_pxl} (${i}s/${max_wait}s)"
+    sleep 2
+    i=$((i + 2))
+  done
+  echo "ERROR: mongo PxL not rendered for ${shadowtest_ns}/${name}" >&2
+  [[ -f "$mongo_pxl" ]] && sed -n '1,20p' "$mongo_pxl" 2>/dev/null | sed 's/^/       /' >&2 || true
   return 1
 }
 

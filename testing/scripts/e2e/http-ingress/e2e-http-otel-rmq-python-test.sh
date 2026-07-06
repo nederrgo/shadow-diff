@@ -99,16 +99,16 @@ http_otel_rmq_wait_local_beru "$SHADOW_NS"
 
 http_otel_rmq_verify_firehose "$SHADOW_NS"
 
-http_otel_rmq_setup_pixie "$REPO" "$SHADOWTEST" "$SHADOWTEST_NS"
-
 kubectl rollout status "deployment/${RELAY_DEPLOY}" -n "$SHADOW_NS" --timeout=180s
 kubectl rollout status "deployment/${IGRIS_DEPLOY}" -n "$SHADOW_NS" --timeout=120s
 for role in control-a control-b candidate; do
-  kubectl rollout status "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS" --timeout=180s
+  kubectl rollout status "deployment/mongodb-${role}" -n "$SHADOW_NS" --timeout=180s
 done
 
+http_otel_rmq_setup_pixie "$REPO" "$SHADOWTEST" "$SHADOWTEST_NS"
+
 for role in control-a control-b candidate; do
-  kubectl rollout status "deployment/mongodb-${role}" -n "$SHADOW_NS" --timeout=180s
+  kubectl rollout status "deployment/${SHADOWTEST}-${role}" -n "$SHADOW_NS" --timeout=180s
 done
 
 http_otel_rmq_reverify_pixie

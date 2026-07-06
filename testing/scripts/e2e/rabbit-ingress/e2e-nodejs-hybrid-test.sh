@@ -272,12 +272,9 @@ if [[ "$USE_PIXIE" == "1" ]]; then
   wait_pixie_vizier_healthy 120
   wait_pixie_http_events_ready 180
   wait_pixie_stream_rule "$SHADOWTEST" "$SHADOWTEST_NS" 120
-  if pgrep -f pixie-stream-bridge.sh >/dev/null 2>&1; then
-    echo "==> Restarting pixie-stream-bridge to pick up current PxL template"
-    pkill -f pixie-stream-bridge.sh 2>/dev/null || true
-    sleep 2
-  fi
-  start_pixie_stream_bridge_background
+  echo "==> Restarting pixie-stream-bridge to pick up current PxL template"
+  stop_pixie_stream_bridge
+  start_pixie_stream_bridge_background 1
   kubectl apply -k "$REPO/testing/scripts/manifests/pixie-bridge/" >/dev/null
   echo "==> Waiting 35s for bridge first export cycle before publishing"
   sleep 35

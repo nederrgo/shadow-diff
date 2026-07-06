@@ -472,25 +472,85 @@ pixie_bridge_start_hint() {
   echo "${repo}/testing/scripts/setup/start-pixie-stream-bridge.sh"
 }
 
+_pixie_bridge_running_pid() {
+  local pid_file="${1:-}"
+  local existing_pid="" p
+  if [[ -n "$pid_file" && -f "$pid_file" ]]; then
+    existing_pid=$(cat "$pid_file" 2>/dev/null || true)
+    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null && \
+       grep -q "pixie-stream-bridge" "/proc/${existing_pid}/cmdline" 2>/dev/null; then
+      echo "$existing_pid"
+      return 0
+    fi
+  fi
+  p=$(pgrep -f "pixie-stream-bridge\.sh" 2>/dev/null | head -1 || true)
+  if [[ -n "$p" ]]; then
+    echo "$p"
+    return 0
+  fi
+  return 1
+}
+
+# ponytail: wait covers one px run cycle (timeout 25s); upgrade path = supervisor with preStop grace
+stop_pixie_stream_bridge() {
+  local repo max_wait="${1:-35}" i=0 pid_file existing_pid
+  repo=$(pixie_bridge_repo)
+  PIXIE_BRIDGE_STATE_DIR="${PIXIE_BRIDGE_STATE_DIR:-${repo}/.cache/pixie-bridge}"
+  pid_file="${PIXIE_BRIDGE_STATE_DIR}/bridge.pid"
+  existing_pid=$(_pixie_bridge_running_pid "$pid_file" 2>/dev/null || true)
+  if [[ -z "$existing_pid" ]]; then
+    rm -f "$pid_file"
+    return 0
+  fi
+  echo "==> Stopping pixie-stream-bridge pid=${existing_pid}"
+  kill -TERM "$existing_pid" 2>/dev/null || true
+  pkill -TERM -f "pixie-stream-bridge\.sh" 2>/dev/null || true
+  while [[ "$i" -lt "$max_wait" ]]; do
+    existing_pid=$(_pixie_bridge_running_pid "$pid_file" 2>/dev/null || true)
+    [[ -z "$existing_pid" ]] && break
+    sleep 1
+    i=$((i + 1))
+  done
+  existing_pid=$(_pixie_bridge_running_pid "$pid_file" 2>/dev/null || true)
+  if [[ -n "$existing_pid" ]]; then
+    echo "WARN: pixie-stream-bridge still running after ${max_wait}s — sending SIGKILL" >&2
+    kill -KILL "$existing_pid" 2>/dev/null || true
+    pkill -KILL -f "pixie-stream-bridge\.sh" 2>/dev/null || true
+    sleep 1
+  fi
+  rm -f "$pid_file"
+}
+
 # mkdir before nohup redirect — shell opens bridge.log before pixie-stream-bridge.sh runs.
 start_pixie_stream_bridge_background() {
-  local repo pid_file
+  local repo pid_file new_pid force="${1:-0}"
   repo=$(pixie_bridge_repo)
   export REPO="$repo"
   PIXIE_BRIDGE_STATE_DIR="${PIXIE_BRIDGE_STATE_DIR:-${repo}/.cache/pixie-bridge}"
   mkdir -p "$PIXIE_BRIDGE_STATE_DIR"
   pid_file="${PIXIE_BRIDGE_STATE_DIR}/bridge.pid"
-  local existing_pid=""
-  if [[ -f "$pid_file" ]]; then
-    existing_pid=$(cat "$pid_file" 2>/dev/null || true)
-  fi
-  # Verify the PID is actually our bridge script, not a coincidentally-reused PID.
-  if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null && \
-     grep -q "pixie-stream-bridge" "/proc/${existing_pid}/cmdline" 2>/dev/null; then
-    echo "pixie-stream-bridge already running pid=${existing_pid}"
-    return 0
+  if [[ "$force" == "1" ]]; then
+    stop_pixie_stream_bridge
+  else
+    local existing_pid=""
+    existing_pid=$(_pixie_bridge_running_pid "$pid_file" 2>/dev/null || true)
+    if [[ -n "$existing_pid" ]]; then
+      echo "pixie-stream-bridge already running pid=${existing_pid}"
+      echo "$existing_pid" >"$pid_file"
+      return 0
+    fi
+    rm -f "$pid_file"
   fi
   nohup "${repo}/testing/scripts/pixie-stream-bridge.sh" >"${PIXIE_BRIDGE_STATE_DIR}/bridge.log" 2>&1 &
-  echo $! >"$pid_file"
-  echo "pixie-stream-bridge started pid=$(cat "$pid_file") log=${PIXIE_BRIDGE_STATE_DIR}/bridge.log"
+  new_pid=$!
+  echo "$new_pid" >"$pid_file"
+  sleep 1
+  if ! kill -0 "$new_pid" 2>/dev/null || \
+     ! grep -q "pixie-stream-bridge" "/proc/${new_pid}/cmdline" 2>/dev/null; then
+    echo "ERROR: pixie-stream-bridge failed to start (pid=${new_pid})" >&2
+    tail -20 "${PIXIE_BRIDGE_STATE_DIR}/bridge.log" 2>/dev/null | sed 's/^/       /' >&2 || true
+    rm -f "$pid_file"
+    return 1
+  fi
+  echo "pixie-stream-bridge started pid=${new_pid} log=${PIXIE_BRIDGE_STATE_DIR}/bridge.log"
 }

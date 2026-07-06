@@ -123,3 +123,22 @@ When `spec.beruGRPCAddress` is unset, Monarch provisions a per-ShadowTest `beru-
 ### CRD types
 
 `ShadowTest` and `PixieStreamRule` are defined in `pipeline/monarch/api/v1alpha1/`. After any struct field change run `make manifests generate` from `pipeline/monarch/`. Plain string fields in specs are covered by the existing `*out = *in` deepcopy; only slice/pointer/map fields need explicit deepcopy code.
+
+---
+
+## Custom Rules Enforcement & Verification Loop
+
+### 1. Mandatory Pre-Execution Directives (CRITICAL)
+- **YOU MUST ALWAYS** fully read and process all rules within `.claude/rules/` (`ponytail.md`, `shadow-diff-core.md`, `shadow-diff-wiki.md`) before editing any files or writing code. 
+- **DO NOT DRIFT:** Never skip documentation out of convenience. You are strictly obligated to update the relevant `index.md` files and specifications synchronously with any structural code modifications.
+
+### 2. Mandatory Verification Step
+- Before declaring a task "done" or concluding a turn, you **MUST EXPLICITLY VERIFY** that you have satisfied the rules. Check your work against this criteria:
+  1. Did I update or create the required architectural specification file in `docs/`?
+  2. Did I incrementally update the sub-directory `index.md` mapping?
+  3. Does all updated documentation strictly match the Google OKF v0.1 frontmatter regex layout (`^---[\s\S]*?---`)?
+
+### 3. Automated Post-Task Ledger Constraint
+- **DO NOT WRITE TO `docs/log.md` MANUALLY.** - Immediately upon completing a task, you **MUST** run the terminal command below as your final action step to update the chronological ledger:
+  ```bash
+  make log MSG="'<file_path_or_scope>': <Clear description of what was added/modified>"

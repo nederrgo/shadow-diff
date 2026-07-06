@@ -127,14 +127,12 @@ http_otel_rmq_setup_pixie() {
   wait_pixie_vizier_pem 120
   wait_pixie_vizier_healthy 120
   wait_pixie_http_events_ready 180
-  wait_pixie_stream_rule "$shadowtest" "$shadowtest_ns" 120
-  if pgrep -f pixie-stream-bridge.sh >/dev/null 2>&1; then
-    echo "==> Restarting pixie-stream-bridge to pick up current PxL template"
-    pkill -f pixie-stream-bridge.sh 2>/dev/null || true
-    sleep 2
-  fi
-  start_pixie_stream_bridge_background
+  wait_pixie_stream_rule "$shadowtest" "$shadowtest_ns" 120 1
+  echo "==> Restarting pixie-stream-bridge to pick up current PxL template"
+  stop_pixie_stream_bridge
+  start_pixie_stream_bridge_background 1
   kubectl apply -k "$repo/testing/scripts/manifests/pixie-bridge/" >/dev/null
+  wait_pixie_mongo_pxl_ready "$shadowtest" "$shadowtest_ns" 60
 
   # Pixie's eBPF probe decodes MongoDB wire protocol only for connections it observes
   # from the initial TCP handshake. Shadow worker pods connect to MongoDB at startup,
@@ -165,6 +163,7 @@ http_otel_rmq_beru_pod_name() {
 
 http_otel_rmq_wait_beru_message() {
   local shadow_ns="$1" label="$2" want_msg="$3" timeout_msg="$4" wait_secs="$5" trace_hex="$6"
+  local pixie_pxl="${7:-}"
   local beru_pod logs i
   beru_pod=$(http_otel_rmq_beru_pod_name "$shadow_ns")
   if [[ -z "$beru_pod" ]]; then
@@ -173,6 +172,9 @@ http_otel_rmq_wait_beru_message() {
   fi
   echo "==> Wait for Beru ${label} (up to ${wait_secs}s): ${want_msg}"
   for i in $(seq 1 "$wait_secs"); do
+    if [[ -n "$pixie_pxl" && "${USE_PIXIE:-0}" == "1" && -f "$pixie_pxl" ]] && pixie_vizier_healthy 2>/dev/null; then
+      run_pixie_export_once "$pixie_pxl" 2>/dev/null || true
+    fi
     beru_pod=$(http_otel_rmq_beru_pod_name "$shadow_ns")
     logs=$(kubectl logs -n "$shadow_ns" "$beru_pod" --tail=500 2>/dev/null || true)
     if grep -qF "$want_msg" <<<"$logs"; then
@@ -279,7 +281,14 @@ http_otel_rmq_run_test() {
     done
     local mongo_egress_msg="No egress regression for Trace ${trace_hex} (mongodb)"
     local mongo_wait="${HTTP_OTEL_RMQ_MONGO_WAIT_SECS:-120}"
-    http_otel_rmq_wait_beru_message "$shadow_ns" "MongoDB egress" "$mongo_egress_msg" "" "$mongo_wait" "$trace_hex" || return 1
+    local mongo_pxl=""
+    if [[ "${USE_PIXIE:-0}" == "1" ]]; then
+      # shellcheck source=testing/scripts/helpers/pixie-bridge.sh
+      source "${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}/testing/scripts/helpers/pixie-bridge.sh"
+      mongo_pxl="${PIXIE_BRIDGE_STATE_DIR:-${REPO:-.}/.cache/pixie-bridge}/${SHADOWTEST_NS:-default}-pixie-${shadowtest}-mongo.pxl"
+    fi
+    http_otel_rmq_wait_beru_message "$shadow_ns" "MongoDB egress" "$mongo_egress_msg" "" \
+      "$mongo_wait" "$trace_hex" "$mongo_pxl" || return 1
   fi
 
   http_otel_rmq_wait_beru_message "$shadow_ns" "RabbitMQ egress" "$egress_msg" "" "$egress_wait" "$trace_hex" || return 1

@@ -9,6 +9,10 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-06]
+### Added
+* 'testing/scripts/helpers/pixie-bridge.sh', 'siphon-config.sh', 'e2e-http-otel-rmq.sh', E2E scripts: fix pixie-stream-bridge restart race (stop_pixie_stream_bridge), mongo PxL readiness wait, E2E ordering, mongo export nudge
+
 ## [2026-07-01]
 ### Added
 * 'pipeline/beru/internal/dashboard': Split HTTP trace rows by ingress vs egress direction so Igris ingress diffs are visible separately from wire egress

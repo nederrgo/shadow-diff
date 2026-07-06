@@ -12,5 +12,6 @@ timestamp: 2026-06-27T19:35:00Z
 The control plane layer acts as the centralized automation hub of Shadow-Diff. Driven by the `Monarch` operator controller, its goal is to abstract infrastructure bootstrapping away from moving developer teams. It reads high-level testing resource declarations and builds out fully-isolated runtime environments without manual operator configuration.
 
 ## Document Map
+* [/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md](/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md) - One-time Monarch + Pixie + bridge install; create and delete ShadowTests without resetting Pixie.
 * [/control-plane/monarch-controller.md](/control-plane/monarch-controller.md) - Envoy-only shadow pod injection, egress capture, and CRD reconcile contract (telemetry-dependent architecture).
 * [/control-plane/monarch-security-model.md](/control-plane/monarch-security-model.md) - Deep dive specification regarding role compartmentalization, unprivileged eBPF decoupling boundary rules, and shadow sandboxing network policies.

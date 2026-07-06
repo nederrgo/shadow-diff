@@ -115,12 +115,7 @@ if [[ "$FOREGROUND_BRIDGE" -eq 1 ]]; then
   exec "$REPO/testing/scripts/pixie-stream-bridge.sh"
 fi
 
-bridge_pid_file="${PIXIE_BRIDGE_STATE_DIR}/bridge.pid"
-if [[ -f "$bridge_pid_file" ]] && kill -0 "$(cat "$bridge_pid_file")" 2>/dev/null; then
-  echo "    bridge already running pid=$(cat "$bridge_pid_file")"
-else
-  start_pixie_stream_bridge_background
-fi
+start_pixie_stream_bridge_background
 
 echo ""
 echo "Pixie local sandbox ready."
