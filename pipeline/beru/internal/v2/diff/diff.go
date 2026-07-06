@@ -15,6 +15,7 @@ const (
 	statusMismatch = "MISMATCH"
 
 	roleControlA  = "control-a"
+	roleControlB  = "control-b"
 	roleCandidate = "candidate"
 )
 
@@ -53,13 +54,15 @@ func EvaluateTraceHistory(history []storage.RawReport) *storage.VerdictState {
 
 	var details []string
 	for _, protocol := range sortedKeys(grouped) {
-		roleMap := grouped[protocol]
-		controlA := roleMap[roleControlA]
-		candidate := roleMap[roleCandidate]
+		rm := grouped[protocol]
+		controlA := rm[roleControlA]
+		controlB := rm[roleControlB] // may be nil if not yet arrived
+		candidate := rm[roleCandidate]
 		for _, signature := range unionSignatures(controlA, candidate) {
 			aSlice := controlA[signature]
+			bSlice := controlB[signature] // nil → noise cancellation skipped
 			cSlice := candidate[signature]
-			details = append(details, compareSignature(protocol, signature, aSlice, cSlice, verdict)...)
+			details = append(details, compareSignature(protocol, signature, aSlice, bSlice, cSlice, verdict)...)
 		}
 	}
 
@@ -70,29 +73,41 @@ func EvaluateTraceHistory(history []storage.RawReport) *storage.VerdictState {
 	return verdict
 }
 
-func compareSignature(protocol, signature string, aSlice, cSlice []storage.RawReport, verdict *storage.VerdictState) []string {
+func compareSignature(protocol, signature string, aSlice, bSlice, cSlice []storage.RawReport, verdict *storage.VerdictState) []string {
 	label := protocol + ":" + signature
 	var details []string
 
-	if len(cSlice) > len(aSlice) {
+	// Count diff-of-diffs: candidate is only a count regression when it exceeds the noise
+	// band established by the delta between the two control replicas.
+	nA, nB, nC := len(aSlice), len(bSlice), len(cSlice)
+	noiseCountDelta := 0
+	if nB > 0 {
+		noiseCountDelta = nB - nA
+	}
+	candidateCountDelta := nC - nA
+	if candidateCountDelta > max(0, noiseCountDelta) {
 		verdict.HasCountRegression = true
 		details = append(details, fmt.Sprintf(
 			"count regression: %s candidate=%d control-a=%d",
-			label, len(cSlice), len(aSlice),
+			label, nC, nA,
 		))
-	} else if len(cSlice) < len(aSlice) {
+	} else if nC < nA {
 		details = append(details, fmt.Sprintf(
 			"count deficit: %s candidate=%d control-a=%d",
-			label, len(cSlice), len(aSlice),
+			label, nC, nA,
 		))
 	}
 
-	pairCount := len(aSlice)
-	if len(cSlice) < pairCount {
-		pairCount = len(cSlice)
-	}
+	// Payload diff-of-diffs: a mismatch between control-a and candidate is a real
+	// regression only when the same position is NOT already noisy in control-b.
+	pairCount := min(nA, nC)
 	for i := 0; i < pairCount; i++ {
 		if payloadsEqual(protocol, aSlice[i].PayloadBytes, cSlice[i].PayloadBytes) {
+			continue
+		}
+		// If control-b exists at this index and already disagrees with control-a,
+		// the field is non-deterministic — not a candidate regression.
+		if i < nB && !payloadsEqual(protocol, aSlice[i].PayloadBytes, bSlice[i].PayloadBytes) {
 			continue
 		}
 		details = append(details, fmt.Sprintf("payload mismatch: %s index=%d", label, i))

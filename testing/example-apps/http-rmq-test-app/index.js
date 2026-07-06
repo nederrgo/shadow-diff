@@ -55,14 +55,17 @@ async function main() {
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const doc = { ...body, source: 'http-rmq-test-app' };
+      const traceparent = req.headers['traceparent'] || null;
       if (collection) {
-        await collection.insertOne({ ...doc });
+        const mongoOpts = traceparent ? { comment: traceparent } : {};
+        await collection.insertOne({ ...doc }, mongoOpts);
         console.log('mongo insert ok');
       }
       const payload = Buffer.from(JSON.stringify(doc));
       await ch.publish(egressExchange, egressRoutingKey, payload, {
         contentType: 'application/json',
         persistent: true,
+        headers: traceparent ? { traceparent } : {},
       });
       console.log(`rmq egress published exchange=${egressExchange} routing_key=${egressRoutingKey}`);
       res.status(200).json({ status: 'ok' });

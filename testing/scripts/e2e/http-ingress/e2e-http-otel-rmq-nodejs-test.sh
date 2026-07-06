@@ -6,8 +6,6 @@ set -euo pipefail
 REPO="${REPO:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
 # shellcheck source=testing/scripts/helpers/e2e-helpers.sh
 source "$REPO/testing/scripts/helpers/e2e-helpers.sh"
-# shellcheck source=testing/scripts/helpers/otel-bootstrap.sh
-source "$REPO/testing/scripts/helpers/otel-bootstrap.sh"
 # shellcheck source=testing/scripts/helpers/e2e-http-otel-rmq.sh
 source "$REPO/testing/scripts/helpers/e2e-http-otel-rmq.sh"
 
@@ -24,7 +22,7 @@ SKIP_LOAD="${SKIP_LOAD:-0}"
 SKIP_MONARCH_BUILD="${SKIP_MONARCH_BUILD:-0}"
 SKIP_MONARCH_DEPLOY="${SKIP_MONARCH_DEPLOY:-0}"
 SKIP_BERU_BUILD="${SKIP_BERU_BUILD:-0}"
-SKIP_OTEL_BOOTSTRAP="${SKIP_OTEL_BOOTSTRAP:-0}"
+USE_PIXIE="${USE_PIXIE:-}"
 
 MONGO_IMAGE="${MONGO_IMAGE:-mongo:4.4}"
 
@@ -36,15 +34,6 @@ echo "==> HTTP OTel RMQ E2E (Node.js)"
 http_otel_rmq_init_cluster "$REPO"
 require_kubectl_cluster
 [[ "$SKIP_BUILD" != "1" || "$SKIP_LOAD" != "1" ]] && require_docker
-
-if [[ "$SKIP_OTEL_BOOTSTRAP" != "1" ]]; then
-  if ! otel_operator_ready 2>/dev/null; then
-    echo "==> OpenTelemetry Operator not ready — running otel-bootstrap"
-    install_otel_stack
-  else
-    echo "==> OpenTelemetry Operator already installed"
-  fi
-fi
 
 http_otel_rmq_prepare_docker_build
 
@@ -110,6 +99,8 @@ http_otel_rmq_wait_local_beru "$SHADOW_NS"
 
 http_otel_rmq_verify_firehose "$SHADOW_NS"
 
+http_otel_rmq_setup_pixie "$REPO" "$SHADOWTEST" "$SHADOWTEST_NS"
+
 kubectl rollout status "deployment/${RELAY_DEPLOY}" -n "$SHADOW_NS" --timeout=180s
 kubectl rollout status "deployment/${IGRIS_DEPLOY}" -n "$SHADOW_NS" --timeout=120s
 for role in control-a control-b candidate; do
@@ -120,17 +111,11 @@ for role in control-a control-b candidate; do
   kubectl rollout status "deployment/mongodb-${role}" -n "$SHADOW_NS" --timeout=180s
 done
 
-echo "==> Assert OTel injection on shadow app pods"
-chmod +x "$REPO/testing/scripts/assert-otel-injected.sh"
-for role in control-a control-b candidate; do
-  "$REPO/testing/scripts/assert-otel-injected.sh" "$SHADOW_NS" "$role" "$SHADOWTEST"
-done
+http_otel_rmq_reverify_pixie
 
 TRACE_HEX="$(openssl rand -hex 16)"
 SPAN_HEX="$(openssl rand -hex 8)"
 TRACE_TP="00-${TRACE_HEX}-${SPAN_HEX}-01"
-
-http_otel_rmq_warmup "$SHADOWTEST" "$SHADOW_NS" "$IGRIS_DEPLOY"
 
 http_otel_rmq_run_test "$SHADOWTEST" "$SHADOW_NS" "$IGRIS_DEPLOY" "$TRACE_HEX" "$TRACE_TP" \
   "rmq egress published exchange=egress-events"

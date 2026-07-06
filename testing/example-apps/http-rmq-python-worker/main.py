@@ -55,9 +55,11 @@ def main() -> None:
     def publish():
         body = request.get_json(silent=True) or {}
         doc = {**body, "source": "http-rmq-python-worker"}
+        traceparent = request.headers.get("traceparent")
         try:
             if mongo_coll is not None:
-                mongo_coll.insert_one({**doc})
+                mongo_opts = {"comment": traceparent} if traceparent else {}
+                mongo_coll.insert_one({**doc}, **mongo_opts)
                 print("mongo insert ok", flush=True)
             ch.basic_publish(
                 exchange=EGRESS_EXCHANGE,
@@ -66,6 +68,7 @@ def main() -> None:
                 properties=pika.BasicProperties(
                     content_type="application/json",
                     delivery_mode=2,
+                    headers={"traceparent": traceparent} if traceparent else {},
                 ),
             )
             print(
