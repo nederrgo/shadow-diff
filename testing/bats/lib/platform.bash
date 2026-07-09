@@ -41,6 +41,7 @@ bats_platform_with_flock() {
   exec 9>"$lock"
   flock 9
   "$fn"
+  exec 9>&-
 }
 
 platform_health_matrix() {
@@ -53,13 +54,13 @@ platform_health_matrix() {
   kubectl cluster-info >/dev/null 2>&1 || { echo "health: kubectl cluster unreachable" >&2; ok=0; }
   kubectl get crd shadowtests.engine.shadow-diff.io >/dev/null 2>&1 || { echo "health: ShadowTest CRD missing" >&2; ok=0; }
   kubectl get deploy monarch-controller-manager -n monarch-system >/dev/null 2>&1 || { echo "health: Monarch deploy missing" >&2; ok=0; }
-  kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=30s >/dev/null 2>&1 || { echo "health: Monarch not ready" >&2; ok=0; }
+  kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=60s >/dev/null 2>&1 || { echo "health: Monarch not ready" >&2; ok=0; }
   kubectl get deploy beru -n beru-system >/dev/null 2>&1 || { echo "health: Beru deploy missing" >&2; ok=0; }
 
   if pixie_vizier_installed; then
     pixie_vizier_healthy || { echo "health: Pixie not CS_HEALTHY" >&2; ok=0; }
   fi
-  _pixie_bridge_running_pid >/dev/null 2>&1 || { echo "health: pixie-stream-bridge not running" >&2; ok=0; }
+  _pixie_bridge_running_pid "${PIXIE_BRIDGE_STATE_DIR}/bridge.pid" >/dev/null 2>&1 || { echo "health: pixie-stream-bridge not running" >&2; ok=0; }
 
   [[ "$ok" == "1" ]]
 }
@@ -104,6 +105,8 @@ _ensure_platform_ready_body() {
     echo "==> [bats] platform already healthy (skip install)"
     return 0
   fi
+  build_test_images_if_needed || return 1
+  load_test_images_if_needed || return 1
   platform_bootstrap_install || return 1
   platform_health_matrix || return 1
   bats_platform_state_write

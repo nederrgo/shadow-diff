@@ -30,6 +30,44 @@ cleanup_on_exit() {
 }
 trap cleanup_on_exit EXIT
 
+# ponytail: rolling semaphore — keeps exactly BATS_PARALLEL_JOBS bats processes live; within-file tests always sequential (shared ShadowTest CR)
+run_e2e_suite() {
+  local jobs="${BATS_PARALLEL_JOBS:-1}"
+  if [[ "$jobs" -le 1 ]]; then
+    "$BATS_BIN" "${BATS_DIR}/e2e"
+    return
+  fi
+  local rc=0 p
+  local files=("${BATS_DIR}/e2e"/*.bats)
+  local i=0
+  local -a pids=()
+
+  while (( i < ${#files[@]} && ${#pids[@]} < jobs )); do
+    "$BATS_BIN" "${files[$i]}" &
+    pids+=($!)
+    (( i += 1 ))
+  done
+
+  while (( ${#pids[@]} > 0 )); do
+    wait -n "${pids[@]}" 2>/dev/null || true
+    local new_pids=()
+    for p in "${pids[@]}"; do
+      if kill -0 "$p" 2>/dev/null; then
+        new_pids+=("$p")
+      else
+        wait "$p" 2>/dev/null || rc=$?
+        if (( i < ${#files[@]} )); then
+          "$BATS_BIN" "${files[$i]}" &
+          new_pids+=($!)
+          (( i += 1 ))
+        fi
+      fi
+    done
+    pids=("${new_pids[@]}")
+  done
+  return "$rc"
+}
+
 main() {
   local suite="${1:-all}"
   need kubectl
@@ -48,11 +86,12 @@ main() {
       "$BATS_BIN" "${BATS_DIR}/integration"
       ;;
     e2e)
-      "$BATS_BIN" "${BATS_DIR}/e2e"
+      run_e2e_suite
       ;;
     all|-h|--help)
       [[ "$suite" == "-h" || "$suite" == "--help" ]] && { usage; exit 0; }
-      "$BATS_BIN" "${BATS_DIR}/integration" "${BATS_DIR}/e2e"
+      "$BATS_BIN" "${BATS_DIR}/integration"
+      run_e2e_suite
       ;;
     *)
       echo "unknown suite: $suite" >&2

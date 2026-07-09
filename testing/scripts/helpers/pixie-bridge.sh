@@ -6,6 +6,18 @@ PIXIE_CLUSTER_NAME="${PIXIE_CLUSTER_NAME:-monarch-local}"
 PIXIE_EXPORT_INTERVAL_SEC="${PIXIE_EXPORT_INTERVAL_SEC:-3}"
 PIXIE_BRIDGE_STATE_DIR="${PIXIE_BRIDGE_STATE_DIR:-${REPO:-.}/.cache/pixie-bridge}"
 
+# ponytail: resolves once per process; restart bridge after cluster recreate
+_PIXIE_RESOLVED_CLUSTER_ID=""
+_resolve_pixie_cluster_id() {
+  if [[ -z "$_PIXIE_RESOLVED_CLUSTER_ID" ]]; then
+    _PIXIE_RESOLVED_CLUSTER_ID=$(px get viziers 2>/dev/null \
+      | grep "CS_HEALTHY" \
+      | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
+      | head -1)
+  fi
+  echo "$_PIXIE_RESOLVED_CLUSTER_ID"
+}
+
 pixie_supported_minikube_driver() {
   case "${1:-}" in
     kvm2|virtualbox|hyperkit) return 0 ;;
@@ -245,7 +257,8 @@ pixie_vizier_healthy() {
 }
 
 wait_pixie_http_events_ready() {
-  local max_wait="${1:-180}" i=0 probe
+  local max_wait="${1:-180}" i=0 probe cluster_id
+  cluster_id=$(_resolve_pixie_cluster_id)
   probe=$(mktemp)
   cat >"$probe" <<'EOF'
 import px
@@ -254,7 +267,7 @@ px.display(df.head(1))
 EOF
   echo "==> Wait for Pixie http_events schema (post-PEM restart warm-up)"
   while [[ "$i" -lt "$max_wait" ]]; do
-    if timeout 25 px run -f "$probe" >/dev/null 2>&1; then
+    if timeout 25 px run ${cluster_id:+-c "$cluster_id"} -f "$probe" >/dev/null 2>&1; then
       rm -f "$probe"
       echo "    http_events table ready"
       return 0
@@ -458,9 +471,10 @@ apply_pixie_bridge_manifests() {
 }
 
 run_pixie_export_once() {
-  local pxl_file="$1" err
+  local pxl_file="$1" err cluster_id
+  cluster_id=$(_resolve_pixie_cluster_id)
   # ponytail: px run blocks on OTLP export; timeout keeps bridge killable via SIGTERM
-  if ! err=$(timeout 25 px run -f "$pxl_file" 2>&1); then
+  if ! err=$(timeout 25 px run ${cluster_id:+-c "$cluster_id"} -f "$pxl_file" 2>&1); then
     echo "WARN: px run export failed for ${pxl_file}: $(echo "$err" | tail -1)" >&2
     return 1
   fi
@@ -483,7 +497,7 @@ _pixie_bridge_running_pid() {
       return 0
     fi
   fi
-  p=$(pgrep -f "pixie-stream-bridge\.sh" 2>/dev/null | head -1 || true)
+  p=$(pgrep -f "scripts/pixie-stream-bridge\.sh" 2>/dev/null | head -1 || true)
   if [[ -n "$p" ]]; then
     echo "$p"
     return 0
