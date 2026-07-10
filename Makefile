@@ -125,10 +125,10 @@ test-bats: ## Run all Bats integration + E2E suites.
 	@./testing/bats/run.sh all
 
 # Run one .bats file or filtered @test. Examples:
-#   make test-bats-one FILE=e2e/python_hybrid.bats
-#   make test-bats-one FILE=e2e/python_hybrid.bats FILTER='RabbitMQ egress'
+#   make test-bats-one FILE=e2e/rabbitmq-ingress/python_hybrid.bats
+#   make test-bats-one FILE=e2e/rabbitmq-ingress/python_hybrid.bats FILTER='RabbitMQ egress'
 test-bats-one:
-	@test -n "$(FILE)" || { echo "Usage: make test-bats-one FILE=e2e/python_hybrid.bats [FILTER='regex']"; exit 1; }
+	@test -n "$(FILE)" || { echo "Usage: make test-bats-one FILE=e2e/rabbitmq-ingress/python_hybrid.bats [FILTER='regex']"; exit 1; }
 	@chmod +x testing/bats/run-one.sh
 	@if [ -n "$(FILTER)" ]; then \
 	  ./testing/bats/run-one.sh "$(FILE)" -f "$(FILTER)"; \

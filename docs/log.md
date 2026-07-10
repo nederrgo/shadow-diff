@@ -11,6 +11,7 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-10]
 ### Added
+* 'testing/bats/e2e/': Reorganised e2e tests into http-ingress/ and rabbitmq-ingress/ subfolders; updated load paths, run.sh glob, and Makefile/run-one.sh examples
 * 'pipeline/monarch,python-test-worker': drop HTTP_PROXY injection; python worker uses iptables egress like nodejs
 * 'pipeline/monarch/internal/controller/shadowtest_helpers.go': restore HTTP_PROXY on all shadow apps now that Shop+Recorder are always-on
 * 'testing/bats/lib/traffic.bash, python_hybrid.bats': fix wait_recorder_seed stale-log false positives; add recorder warmup and http replay asserts

@@ -11,7 +11,7 @@ usage() {
 Usage: $(basename "$0") [integration|e2e|all]
 
   integration  Run testing/bats/integration/*.bats
-  e2e          Run testing/bats/e2e/*.bats
+  e2e          Run testing/bats/e2e/http-ingress/*.bats + rabbitmq-ingress/*.bats
   all          Run both (default)
 EOF
 }
@@ -34,11 +34,11 @@ trap cleanup_on_exit EXIT
 run_e2e_suite() {
   local jobs="${BATS_PARALLEL_JOBS:-1}"
   if [[ "$jobs" -le 1 ]]; then
-    "$BATS_BIN" "${BATS_DIR}/e2e"
+    "$BATS_BIN" "${BATS_DIR}/e2e/http-ingress" "${BATS_DIR}/e2e/rabbitmq-ingress"
     return
   fi
   local rc=0 p
-  local files=("${BATS_DIR}/e2e"/*.bats)
+  local files=("${BATS_DIR}/e2e/http-ingress"/*.bats "${BATS_DIR}/e2e/rabbitmq-ingress"/*.bats)
   local i=0
   local -a pids=()
 

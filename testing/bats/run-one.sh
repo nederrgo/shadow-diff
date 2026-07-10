@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run a single .bats file or one filtered @test.
 # Usage:
-#   ./testing/bats/run-one.sh e2e/python_hybrid.bats
-#   ./testing/bats/run-one.sh e2e/python_hybrid.bats -f 'RabbitMQ egress'
+#   ./testing/bats/run-one.sh e2e/rabbitmq-ingress/python_hybrid.bats
+#   ./testing/bats/run-one.sh e2e/rabbitmq-ingress/python_hybrid.bats -f 'RabbitMQ egress'
 set -euo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
@@ -29,8 +29,8 @@ usage() {
 Usage: $(basename "$0") <path-under-testing/bats/> [bats options...]
 
 Examples:
-  $(basename "$0") e2e/python_hybrid.bats
-  $(basename "$0") e2e/python_hybrid.bats -f 'RabbitMQ egress'
+  $(basename "$0") e2e/rabbitmq-ingress/python_hybrid.bats
+  $(basename "$0") e2e/rabbitmq-ingress/python_hybrid.bats -f 'RabbitMQ egress'
   $(basename "$0") integration/mongo_egress.bats -f 'PixieStreamRule'
 EOF
 }

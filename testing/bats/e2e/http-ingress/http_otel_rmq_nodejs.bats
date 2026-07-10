@@ -1,21 +1,21 @@
 #!/usr/bin/env bats
-# E2E: HTTP ingress (igris-http) → OTel → Mongo OTLP + RabbitMQ Firehose egress — Python worker.
+# E2E: HTTP ingress (igris-http) → OTel → Mongo OTLP + RabbitMQ Firehose egress — Node.js worker.
 
-load '../test_helper'
+load '../../test_helper'
 
-FIXTURE_DIR="${BATS_TEST_DIRNAME}/../fixtures/e2e/http-otel-rmq-python"
+FIXTURE_DIR="${BATS_TEST_DIRNAME}/../../fixtures/e2e/http-otel-rmq-nodejs"
 MANIFEST_DIR="${REPO}/testing/bats/manifests/http-otel-rmq-e2e"
 RMQ_EGRESS_LOG="${RMQ_EGRESS_LOG:-rmq egress published exchange=egress-events}"
 
 setup_file() {
-  bats_begin_suite "bats-http-otel-rmq-python" "default"
+  bats_begin_suite "bats-http-otel-rmq-nodejs" "default"
 
   ensure_platform_ready
   build_test_images_if_needed
   load_test_images_if_needed
 
-  kubectl apply -f "${MANIFEST_DIR}/prod-target-python.yaml"
-  kubectl wait --for=condition=Available deployment/http-rmq-python-prod -n default --timeout=120s
+  kubectl apply -f "${MANIFEST_DIR}/prod-target-nodejs.yaml"
+  kubectl wait --for=condition=Available deployment/http-rmq-nodejs-prod -n default --timeout=120s
   bats_suite_mark PROD_DEPLOYED 1
 
   bats_prepare_shadowtest_slot "$SHADOWTEST" "$SHADOWTEST_NS"
@@ -79,5 +79,5 @@ setup_file() {
 }
 
 teardown_file() {
-  bats_teardown_suite "${MANIFEST_DIR}/prod-target-python.yaml"
+  bats_teardown_suite "${MANIFEST_DIR}/prod-target-nodejs.yaml"
 }
