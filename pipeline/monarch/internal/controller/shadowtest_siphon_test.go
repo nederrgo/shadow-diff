@@ -92,8 +92,9 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	if spec.OTelEndpoint != shadowSiphonOTelEndpoint("shadow-default-my-st") {
 		t.Fatalf("endpoint %q", spec.OTelEndpoint)
 	}
-	if spec.RecorderOTelEndpoint != "" {
-		t.Fatalf("recorder endpoint %q", spec.RecorderOTelEndpoint)
+	want := shadowRecorderOTelEndpoint(st, "shadow-default-my-st")
+	if spec.RecorderOTelEndpoint != want {
+		t.Fatalf("recorder endpoint %q want %q", spec.RecorderOTelEndpoint, want)
 	}
 	if spec.MaxPayloadSize != 4096 {
 		t.Fatalf("max payload %d", spec.MaxPayloadSize)
@@ -106,14 +107,11 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	}
 }
 
-func TestBuildPixieStreamRuleSpecEgressOnly(t *testing.T) {
+func TestBuildPixieStreamRuleSpecAlwaysHasRecorderEndpoint(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "egress-st"},
 		Spec: enginev1alpha1.ShadowTestSpec{
 			TargetNamespace: "prod",
-			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{
-				{Host: "egress-httpbin.default.svc.cluster.local"},
-			},
 		},
 	}
 	dep := &appsv1.Deployment{
@@ -130,25 +128,6 @@ func TestBuildPixieStreamRuleSpecEgressOnly(t *testing.T) {
 	want := shadowRecorderOTelEndpoint(st, "shadow-default-egress-st")
 	if spec.RecorderOTelEndpoint != want {
 		t.Fatalf("recorder endpoint %q want %q", spec.RecorderOTelEndpoint, want)
-	}
-	if len(spec.RecordAndReplayHosts) != 1 || spec.RecordAndReplayHosts[0] != "egress-httpbin.default.svc.cluster.local" {
-		t.Fatalf("recordAndReplayHosts %v", spec.RecordAndReplayHosts)
-	}
-}
-
-func TestBuildPixieStreamRuleSpecEgressHostPort(t *testing.T) {
-	st := &enginev1alpha1.ShadowTest{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "egress-st"},
-		Spec: enginev1alpha1.ShadowTestSpec{
-			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{
-				{Host: "user-service.prod:8080"},
-			},
-		},
-	}
-	dep := &appsv1.Deployment{}
-	spec := buildPixieStreamRuleSpec(st, "shadow-default-egress-st", dep)
-	if len(spec.RecordAndReplayHosts) != 1 || spec.RecordAndReplayHosts[0] != "user-service.prod" {
-		t.Fatalf("recordAndReplayHosts %v", spec.RecordAndReplayHosts)
 	}
 }
 
@@ -219,15 +198,6 @@ func TestSiphonEnabled(t *testing.T) {
 
 	st = &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{
-			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{{Host: "example.com"}},
-		},
-	}
-	if siphonEnabled(st, dep) {
-		t.Fatal("recordAndReplay alone should not enable siphon")
-	}
-
-	st = &enginev1alpha1.ShadowTest{
-		Spec: enginev1alpha1.ShadowTestSpec{
 			Inputs: []enginev1alpha1.InputSpec{{Port: 80, Driver: "http_request"}},
 		},
 	}
@@ -242,11 +212,11 @@ func TestSiphonEnabled(t *testing.T) {
 
 	st = &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{
-			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{{Host: "example.com"}},
-			Siphon:          &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)},
+			Inputs: []enginev1alpha1.InputSpec{{Port: 80, Driver: "http_request"}},
+			Siphon: &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)},
 		},
 	}
 	if siphonEnabled(st, dep) {
-		t.Fatal("explicit false should override recordAndReplay")
+		t.Fatal("explicit false should override matching port")
 	}
 }

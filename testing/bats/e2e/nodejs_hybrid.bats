@@ -5,6 +5,7 @@ load '../test_helper'
 
 FIXTURE_DIR="${BATS_TEST_DIRNAME}/../fixtures/e2e/rabbit-ingress-nodejs"
 MANIFEST_DIR="${REPO}/testing/scripts/manifests/rabbitmq-otel-e2e"
+HTTP_RECORD_HOST="user-service-nodejs.default.internal"
 
 setup_file() {
   bats_begin_suite "bats-nodejs-hybrid" "default"
@@ -15,16 +16,12 @@ setup_file() {
 
   kubectl apply -f "${REPO}/testing/scripts/manifests/rabbitmq-e2e/prod-rabbitmq.yaml"
   kubectl apply -f "${MANIFEST_DIR}/prod-mongo.yaml"
-  if kubectl get svc user-service -n prod -o jsonpath='{.spec.clusterIP}' 2>/dev/null | grep -qv '^None$'; then
-    kubectl delete svc user-service -n prod --ignore-not-found --wait=true
-  fi
-  bats_wait_namespace_gone prod 180
-  kubectl apply -f "${MANIFEST_DIR}/prod-user-service.yaml"
+  kubectl apply -f "${MANIFEST_DIR}/prod-user-service-nodejs.yaml"
   kubectl apply -f "${MANIFEST_DIR}/prod-nodejs-worker.yaml"
 
   kubectl wait --for=condition=Available deployment/rmq-prod-broker -n default --timeout=180s
   kubectl wait --for=condition=Available deployment/mongo-prod -n default --timeout=180s
-  kubectl wait --for=condition=Available deployment/user-service -n prod --timeout=180s
+  kubectl wait --for=condition=Available deployment/user-service-nodejs -n default --timeout=180s
   kubectl rollout restart deployment/nodejs-prod-worker -n default >/dev/null
   kubectl rollout status deployment/nodejs-prod-worker -n default --timeout=120s
   bats_suite_mark PROD_DEPLOYED 1
@@ -103,6 +100,6 @@ teardown_file() {
   bats_teardown_suite \
     "${REPO}/testing/scripts/manifests/rabbitmq-e2e/prod-rabbitmq.yaml" \
     "${MANIFEST_DIR}/prod-mongo.yaml" \
-    "${MANIFEST_DIR}/prod-user-service.yaml" \
+    "${MANIFEST_DIR}/prod-user-service-nodejs.yaml" \
     "${MANIFEST_DIR}/prod-nodejs-worker.yaml"
 }

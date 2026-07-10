@@ -3,7 +3,6 @@ package controller
 import (
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -172,28 +171,6 @@ func parseBeruHostPort(address string) (host string, port int32, err error) {
 		return "", 0, err
 	}
 	return h, int32(portNum), nil
-}
-
-const defaultRecordAndReplayPort int32 = 80 // ponytail: HTTP egress default; override via host:port in spec
-
-func parseRecordAndReplayTarget(rawHost string, defaultPort int32) (host string, port int32) {
-	host = strings.TrimSpace(rawHost)
-	port = defaultPort
-	if host == "" {
-		return "", defaultPort
-	}
-	if h, p, err := net.SplitHostPort(host); err == nil && h != "" {
-		host = h
-		if n, err := strconv.Atoi(p); err == nil {
-			port = int32(n)
-		}
-	}
-	return host, port
-}
-
-func recordAndReplayEntry(d enginev1alpha1.RecordAndReplayHostSpec) (host string, port int32, ignorePaths []string) {
-	host, port = parseRecordAndReplayTarget(d.Host, defaultRecordAndReplayPort)
-	return host, port, d.IgnoreRequestPaths
 }
 
 func resolveDependencyDefaults(dep enginev1alpha1.DependencySpec) (image string, port int32) {

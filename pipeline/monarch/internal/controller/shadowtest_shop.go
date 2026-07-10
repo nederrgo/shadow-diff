@@ -29,17 +29,6 @@ func shopGRPCAddressFor(shadowNS string) string {
 	return fmt.Sprintf("%s:%d", shopDNSHost(shadowNS), shopGRPCPort)
 }
 
-func (r *ShadowTestReconciler) reconcileShopIfNeeded(
-	ctx context.Context,
-	st *enginev1alpha1.ShadowTest,
-	shadowNS string,
-) error {
-	if !egressRecordingEnabled(st) {
-		return nil
-	}
-	return r.reconcileShop(ctx, st, shadowNS)
-}
-
 func (r *ShadowTestReconciler) reconcileShop(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,

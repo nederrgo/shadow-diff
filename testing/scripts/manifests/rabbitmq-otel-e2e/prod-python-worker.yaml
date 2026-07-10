@@ -31,6 +31,6 @@ spec:
             - name: AMQP_BINDING_KEY
               value: order.created
             - name: HTTP_EGRESS_REPLAY_HOST
-              value: user-service.prod.internal
+              value: user-service-python.default.internal:8080
             - name: HTTP_EGRESS_CONNECT_URL
-              value: http://user-service.prod.svc.cluster.local:8080/v1/log
+              value: http://user-service-python.default.svc.cluster.local:8080/v1/log

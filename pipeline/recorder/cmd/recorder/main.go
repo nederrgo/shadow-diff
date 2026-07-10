@@ -13,22 +13,21 @@ import (
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip" // Pixie px.export sends grpc-encoding: gzip
 
-	"github.com/shadow-diff/recorder/internal/shop"
 	"github.com/shadow-diff/recorder/internal/config"
 	"github.com/shadow-diff/recorder/internal/ingest"
 	otlprecv "github.com/shadow-diff/recorder/internal/receiver"
+	"github.com/shadow-diff/recorder/internal/shop"
 )
 
 func main() {
 	cfg := config.Load()
-	log.Printf("Recorder starting tcp=%s otlp=%s recordAndReplay=%d",
-		cfg.ListenAddr, cfg.OTLPGRPCAddr, len(cfg.RecordAndReplay))
+	log.Printf("Recorder starting tcp=%s otlp=%s", cfg.ListenAddr, cfg.OTLPGRPCAddr)
 
 	client := shop.NewClient(cfg.ShopHTTPURL)
-	store := ingest.NewSessionStore(client, cfg.RecordAndReplay, cfg.PairTimeout, cfg.MaxFrameBytes)
+	store := ingest.NewSessionStore(client, cfg.PairTimeout, cfg.MaxFrameBytes)
 	defer store.Stop()
 
-	otlpRecv := otlprecv.NewOTLPReceiver(client, cfg.RecordAndReplay, 4, 512, slog.Default())
+	otlpRecv := otlprecv.NewOTLPReceiver(client, 4, 512, slog.Default())
 	defer otlpRecv.Stop()
 
 	tcpSrv := ingest.NewServer(cfg.ListenAddr, store)

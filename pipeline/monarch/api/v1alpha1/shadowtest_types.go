@@ -79,16 +79,6 @@ type SiphonSpec struct {
 	ExcludePaths []string `json:"excludePaths,omitempty"`
 }
 
-// RecordAndReplayHostSpec declares an outbound host for egress record/replay.
-type RecordAndReplayHostSpec struct {
-	// Host is the record-and-replay hostname (matches :authority / Host on proxied requests).
-	Host string `json:"host"`
-
-	// IgnoreRequestPaths are JSONPath expressions stripped before egress hashing (e.g. "$.timestamp").
-	// +optional
-	IgnoreRequestPaths []string `json:"ignoreRequestPaths,omitempty"`
-}
-
 // DependencySpec declares an ephemeral backing service provisioned per shadow role.
 type DependencySpec struct {
 	// Name is the logical dependency id; used in resource names and DNS labels.
@@ -243,7 +233,7 @@ type ShadowTestSpec struct {
 	// +optional
 	Siphon *SiphonSpec `json:"siphon,omitempty"`
 
-	// Recorder overrides the Recorder image when spec.recordAndReplay enables egress recording.
+	// Recorder overrides the Recorder image (always provisioned per shadow namespace).
 	// +optional
 	Recorder *RecorderSpec `json:"recorder,omitempty"`
 
@@ -251,13 +241,9 @@ type ShadowTestSpec struct {
 	// +optional
 	Beru *BeruSpec `json:"beru,omitempty"`
 
-	// Shop overrides the Shop mock-store image when spec.recordAndReplay is non-empty.
+	// Shop overrides the Shop mock-store image (always provisioned per shadow namespace).
 	// +optional
 	Shop *ShopSpec `json:"shop,omitempty"`
-
-	// RecordAndReplay lists outbound hosts trapped by the egress proxy for strict replay.
-	// +optional
-	RecordAndReplay []RecordAndReplayHostSpec `json:"recordAndReplay,omitempty"`
 
 	// Dependencies lists ephemeral backing services (e.g. Redis) provisioned once per shadow role.
 	// +optional

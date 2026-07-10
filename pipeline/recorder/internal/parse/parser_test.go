@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/shadow-diff/recorder/internal/shop"
-	"github.com/shadow-diff/recorder/internal/config"
 )
 
 const keepAliveTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
@@ -72,9 +71,6 @@ func TestRunBidirectional_keepAlive(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	client := shop.NewClient(srv.URL)
-	recordAndReplay := []config.RecordAndReplayHost{
-		{Host: "api.example.com", IgnorePaths: []string{"$.timestamp"}},
-	}
 
 	reqR, reqW := io.Pipe()
 	resR, resW := io.Pipe()
@@ -89,7 +85,7 @@ func TestRunBidirectional_keepAlive(t *testing.T) {
 		_ = resW.Close()
 	}()
 
-	RunBidirectional(context.Background(), reqR, resR, recordAndReplay, client)
+	RunBidirectional(context.Background(), reqR, resR, client)
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -144,12 +140,3 @@ func TestTraceIDFromTraceparent(t *testing.T) {
 	}
 }
 
-func TestHostMatches_wildcard(t *testing.T) {
-	ds := []config.RecordAndReplayHost{{Host: "*.example.com"}}
-	if !HostMatches("api.example.com", ds) {
-		t.Fatal("expected wildcard match")
-	}
-	if HostMatches("other.org", ds) {
-		t.Fatal("expected no match")
-	}
-}

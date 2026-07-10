@@ -25,8 +25,8 @@ const (
 	shadowSiphonOTLPPort        = 4317
 )
 
-func pixieCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) bool {
-	return siphonEnabled(st, target) || egressRecordingEnabled(st) || hasMongoDependency(st)
+func pixieCaptureEnabled(_ *enginev1alpha1.ShadowTest, _ *appsv1.Deployment) bool {
+	return true // recorder is always provisioned; egress PxL always needed
 }
 
 func targetPrimaryContainerPorts(target *appsv1.Deployment) map[int32]bool {
@@ -154,28 +154,19 @@ func buildPixieStreamRuleSpec(
 	target *appsv1.Deployment,
 ) enginev1alpha1.PixieStreamRuleSpec {
 	ingress := siphonEnabled(st, target)
-	egress := egressRecordingEnabled(st)
 
 	spec := enginev1alpha1.PixieStreamRuleSpec{
-		ShadowTestRef:   st.Namespace + "/" + st.Name,
-		Active:          true,
-		TargetNamespace: targetNamespaceFor(st),
-		TargetLabels:    copyStringMap(target.Spec.Template.Labels),
-		MaxPayloadSize:  siphonMaxPayloadSize(st),
-		ExcludePaths:    siphonExcludePaths(st),
+		ShadowTestRef:        st.Namespace + "/" + st.Name,
+		Active:               true,
+		TargetNamespace:      targetNamespaceFor(st),
+		TargetLabels:         copyStringMap(target.Spec.Template.Labels),
+		MaxPayloadSize:       siphonMaxPayloadSize(st),
+		ExcludePaths:         siphonExcludePaths(st),
+		RecorderOTelEndpoint: shadowRecorderOTelEndpoint(st, shadowNS),
 	}
 	if ingress {
 		spec.OTelEndpoint = shadowSiphonOTelEndpoint(shadowNS)
 		spec.TargetPorts = siphonIngressPorts(st)
-	}
-	if egress {
-		spec.RecorderOTelEndpoint = shadowRecorderOTelEndpoint(st, shadowNS)
-		for _, h := range st.Spec.RecordAndReplay {
-			host, _, _ := recordAndReplayEntry(h)
-			if host != "" {
-				spec.RecordAndReplayHosts = append(spec.RecordAndReplayHosts, host)
-			}
-		}
 	}
 	if hasMongoDependency(st) {
 		spec.ShadowNamespace = shadowNS

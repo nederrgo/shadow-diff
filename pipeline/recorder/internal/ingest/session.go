@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shadow-diff/recorder/internal/config"
 	"github.com/shadow-diff/recorder/internal/parse"
 	"github.com/shadow-diff/recorder/internal/shop"
 )
@@ -28,28 +27,26 @@ type connSession struct {
 
 // SessionStore tracks in-flight pairing per Siphon TCP connection.
 type SessionStore struct {
-	mu              sync.Mutex
-	sessions        map[uint64]*connSession
-	shop            *shop.Client
-	recordAndReplay []config.RecordAndReplayHost
-	pairTimeout     time.Duration
-	maxFrame        int
-	nextConnID      uint64
-	stopSweeper     chan struct{}
+	mu          sync.Mutex
+	sessions    map[uint64]*connSession
+	shop        *shop.Client
+	pairTimeout time.Duration
+	maxFrame    int
+	nextConnID  uint64
+	stopSweeper chan struct{}
 }
 
 // NewSessionStore creates a store with a background TTL sweeper.
-func NewSessionStore(client *shop.Client, recordAndReplay []config.RecordAndReplayHost, pairTimeout time.Duration, maxFrame int) *SessionStore {
+func NewSessionStore(client *shop.Client, pairTimeout time.Duration, maxFrame int) *SessionStore {
 	if maxFrame <= 0 {
 		maxFrame = DefaultMaxFrame
 	}
 	s := &SessionStore{
-		sessions:        make(map[uint64]*connSession),
-		shop:            client,
-		recordAndReplay: recordAndReplay,
-		pairTimeout:     pairTimeout,
-		maxFrame:        maxFrame,
-		stopSweeper:     make(chan struct{}),
+		sessions:    make(map[uint64]*connSession),
+		shop:        client,
+		pairTimeout: pairTimeout,
+		maxFrame:    maxFrame,
+		stopSweeper: make(chan struct{}),
 	}
 	go s.sweepLoop()
 	return s
@@ -174,13 +171,12 @@ func (s *SessionStore) startParser(connID uint64, reqR, resR io.ReadCloser) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sess.parserCancel = cancel
 	sess.parserDone = make(chan struct{})
-	ds := s.recordAndReplay
 	client := s.shop
 	done := sess.parserDone
 	s.mu.Unlock()
 
 	go func() {
-		parse.RunBidirectional(ctx, reqR, resR, ds, client)
+		parse.RunBidirectional(ctx, reqR, resR, client)
 		close(done)
 		s.RemoveConn(connID)
 	}()

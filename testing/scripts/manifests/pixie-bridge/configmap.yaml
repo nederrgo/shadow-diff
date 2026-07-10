@@ -7,7 +7,7 @@ data:
   http-ingress-export.pxl.tmpl: |
     import px
 
-    df = px.DataFrame(table='http_events', start_time='-30s', end_time=px.now())
+    df = px.DataFrame(table='http_events', start_time='-60s', end_time=px.now())
 
     df.namespace = df.ctx['namespace']
     df.pod = df.ctx['pod']
@@ -50,7 +50,7 @@ data:
   mongodb-export.pxl.tmpl: |
     import px
 
-    df = px.DataFrame(table='mongodb_events', start_time='-30s', end_time=px.now())
+    df = px.DataFrame(table='mongodb_events', start_time='-60s', end_time=px.now())
 
     df.namespace = df.ctx['namespace']
     df.pod       = df.ctx['pod']
@@ -86,17 +86,17 @@ data:
   http-egress-export.pxl.tmpl: |
     import px
 
-    df = px.DataFrame(table='http_events', start_time='-30s', end_time=px.now())
+    df = px.DataFrame(table='http_events', start_time='-60s', end_time=px.now())
 
     df.namespace = df.ctx['namespace']
     df.pod = df.ctx['pod']
     df.service = df.ctx['service']
 
+    df = df[df.namespace == '__TARGET_NAMESPACE__']
     # ponytail: no trace_role filter — works for both in-cluster and external services.
     # Shadow worker 599s (from transparent proxy Pixie capture) are suppressed in Shop's
     # Put() which refuses to overwrite a 2xx mock with a non-2xx.
     df.req_host = px.pluck(df.req_headers, 'Host')
-    __EGRESS_HOST_FILTERS__
     __EXCLUDE_PATH_FILTERS__
 
     df.end_time = df.time_ + df.latency

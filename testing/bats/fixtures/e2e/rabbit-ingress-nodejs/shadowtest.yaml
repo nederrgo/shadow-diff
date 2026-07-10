@@ -18,9 +18,6 @@ spec:
         routingKey: order.created
         targetDependency: rabbitmq
 
-  recordAndReplay:
-    - host: user-service.prod.internal:8080
-
   dependencies:
     - name: rabbitmq
       type: rabbitmq

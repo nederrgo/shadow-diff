@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -20,10 +19,6 @@ func recorderDeploymentName(st *enginev1alpha1.ShadowTest) string {
 	return sanitizeForDNS(fmt.Sprintf("%s-recorder", st.Name))
 }
 
-func recorderConfigMapName(st *enginev1alpha1.ShadowTest) string {
-	return sanitizeForDNS(fmt.Sprintf("%s-recorder-config", st.Name))
-}
-
 func recorderServiceName(st *enginev1alpha1.ShadowTest) string {
 	return recorderDeploymentName(st)
 }
@@ -31,60 +26,6 @@ func recorderServiceName(st *enginev1alpha1.ShadowTest) string {
 func recorderHostFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
 	host := shadowServiceHost(shadowNS, recorderServiceName(st))
 	return fmt.Sprintf("%s:%d", host, recorderServicePort)
-}
-
-func recorderRecordAndReplayJSON(st *enginev1alpha1.ShadowTest) (string, error) {
-	type hostEntry struct {
-		Host        string   `json:"host"`
-		IgnorePaths []string `json:"ignore_paths,omitempty"`
-	}
-	out := make([]hostEntry, len(st.Spec.RecordAndReplay))
-	for i, d := range st.Spec.RecordAndReplay {
-		host, _, ignorePaths := recordAndReplayEntry(d)
-		out[i] = hostEntry{
-			Host:        host,
-			IgnorePaths: ignorePaths,
-		}
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-func egressRecordingEnabled(st *enginev1alpha1.ShadowTest) bool {
-	return len(st.Spec.RecordAndReplay) > 0
-}
-
-func (r *ShadowTestReconciler) reconcileRecorderConfigMap(
-	ctx context.Context,
-	st *enginev1alpha1.ShadowTest,
-	shadowNS string,
-) error {
-	recordAndReplay, err := recorderRecordAndReplayJSON(st)
-	if err != nil {
-		return err
-	}
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: shadowNS,
-			Name:      recorderConfigMapName(st),
-		},
-	}
-	_, err = ctrl.CreateOrPatch(ctx, r.Client, cm, func() error {
-		if cm.Labels == nil {
-			cm.Labels = map[string]string{}
-		}
-		cm.Labels[labelManagedBy] = valueManagedBy
-		cm.Labels[labelShadowTestName] = st.Name
-		if cm.Data == nil {
-			cm.Data = map[string]string{}
-		}
-		cm.Data[configMapKeyRecordAndReplayJSON] = recordAndReplay
-		return nil
-	})
-	return err
 }
 
 func (r *ShadowTestReconciler) reconcileRecorderDeployment(
@@ -134,13 +75,7 @@ func (r *ShadowTestReconciler) reconcileRecorderDeployment(
 				{Name: envShopHTTPURL, Value: fmt.Sprintf("http://%s", shopHTTPHostFor(shadowNS))},
 				{Name: envRecorderListenAddr, Value: ":8080"},
 				{Name: envRecorderOTLPGRPCAddr, Value: ":4317"},
-				{Name: envRecorderRecordAndReplayFile, Value: defaultRecorderRecordAndReplayPath},
 			},
-			VolumeMounts: []corev1.VolumeMount{{
-				Name:      volumeNameRecorderConfig,
-				MountPath: "/etc/recorder",
-				ReadOnly:  true,
-			}},
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("50m"),
@@ -153,14 +88,6 @@ func (r *ShadowTestReconciler) reconcileRecorderDeployment(
 			},
 		}
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{container}
-		deploy.Spec.Template.Spec.Volumes = []corev1.Volume{{
-			Name: volumeNameRecorderConfig,
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{Name: recorderConfigMapName(st)},
-				},
-			},
-		}}
 		return nil
 	})
 	return err
@@ -223,12 +150,6 @@ func (r *ShadowTestReconciler) reconcileRecorderStack(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) error {
-	if !egressRecordingEnabled(st) {
-		return nil
-	}
-	if err := r.reconcileRecorderConfigMap(ctx, st, shadowNS); err != nil {
-		return err
-	}
 	if err := r.reconcileRecorderDeployment(ctx, st, shadowNS); err != nil {
 		return err
 	}

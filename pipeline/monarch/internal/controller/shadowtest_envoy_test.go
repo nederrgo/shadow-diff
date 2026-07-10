@@ -113,9 +113,6 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 			ApplicationPort: 8080,
 			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			BeruGRPCTimeout: "2s",
-			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{
-				{Host: "api.stripe.com", IgnoreRequestPaths: []string{"$.timestamp"}},
-			},
 		},
 	}
 	yaml, err := renderEnvoyYAML(st, "shadow-default-test", roleControlA)
@@ -151,17 +148,6 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 		}
 	}
 	assertEgressFilterOrder(t, yaml)
-}
-
-func TestParseRecordAndReplayTarget(t *testing.T) {
-	host, port := parseRecordAndReplayTarget("api.example.com", defaultRecordAndReplayPort)
-	if host != "api.example.com" || port != 80 {
-		t.Fatalf("got %q:%d", host, port)
-	}
-	host, port = parseRecordAndReplayTarget("user-service.prod:8080", defaultRecordAndReplayPort)
-	if host != "user-service.prod" || port != 8080 {
-		t.Fatalf("got %q:%d", host, port)
-	}
 }
 
 func TestApplicationPortFor_defaultOffset(t *testing.T) {

@@ -9,6 +9,17 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-10]
+### Added
+* 'pipeline/recorder + pipeline/monarch/internal/controller': Remove recordAndReplay.json host-filter dead code — deleted HostMatches, RecordAndReplayHost type, loadRecordAndReplay, ConfigMap/volume/env-var provisioning; recorder now unconditionally forwards all OTLP spans to Shop
+* 'docs/data-plane/egress-record-replay.md': Added egress record-and-replay architecture spec covering Recorder→Shop→Envoy ext_proc pipeline, mock key format, host normalisation, and always-on provisioning model
+* 'pipeline/shop', 'testing/bats': Fix hybrid Recorder seed — normalize host in Shop seed key to strip port (HostWithoutPort), correct HTTP_RECORD_HOST in hybrid bats files, add ext_proc warmup probe to eliminate beru-local cold-start flake on test 1
+* 'pipeline/monarch/, pipeline/recorder/': always-on Shop+Recorder; remove recordAndReplay from ShadowTest spec and PixieStreamRule; egress PxL scoped by TARGET_NAMESPACE; HostMatches empty=capture-all
+
+## [2026-07-09]
+### Added
+* 'pipeline/monarch/internal/controller/shadowtest_rabbitmq.go': skip prod broker dial on deletion when broker is unreachable to unblock ShadowTest finalizer
+
 ## [2026-07-06]
 ### Added
 * 'testing/bats/lib/shadowtest.bash': Add --require-rmq-egress for HTTP-igris suites without AMQP ingress queue

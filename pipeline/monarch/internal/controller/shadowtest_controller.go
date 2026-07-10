@@ -147,31 +147,29 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	if egressRecordingEnabled(&shadowTest) {
-		if err := r.reconcileShopIfNeeded(ctx, &shadowTest, shadowNS); err != nil {
-			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-			return ctrl.Result{}, err
-		}
-		shopReady, err := r.shopDeploymentReady(ctx, shadowNS)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if !shopReady {
-			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Shop", shadowNS)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-		if err := r.reconcileRecorderStack(ctx, &shadowTest, shadowNS); err != nil {
-			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-			return ctrl.Result{}, err
-		}
-		recorderReady, err := r.recorderDeploymentReady(ctx, &shadowTest, shadowNS)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if !recorderReady {
-			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Recorder", shadowNS)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
+	if err := r.reconcileShop(ctx, &shadowTest, shadowNS); err != nil {
+		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+		return ctrl.Result{}, err
+	}
+	shopReady, err := r.shopDeploymentReady(ctx, shadowNS)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !shopReady {
+		_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Shop", shadowNS)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+	if err := r.reconcileRecorderStack(ctx, &shadowTest, shadowNS); err != nil {
+		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+		return ctrl.Result{}, err
+	}
+	recorderReady, err := r.recorderDeploymentReady(ctx, &shadowTest, shadowNS)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !recorderReady {
+		_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Recorder", shadowNS)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	captureTargets, siphonPhase, err := r.reconcileSiphonCapture(ctx, &shadowTest, shadowNS, &target)

@@ -47,7 +47,7 @@ const (
 	// the probe below works on any kernel: modern clusters (GKE COS, EKS Bottlerocket,
 	// OpenShift 4.x) have nf_tables loaded; minikube kvm2 / older kubeadm nodes have
 	// only x_tables (legacy) loaded.
-	iptablesInitImage = "debian:bookworm-slim"
+	iptablesInitImage   = "debian:bookworm-slim"
 	iptablesSetupScript = `apt-get update -qq && apt-get install -yqq --no-install-recommends iptables 2>/dev/null
 if iptables -t nat -L >/dev/null 2>&1; then IPT=iptables; else IPT=iptables-legacy; fi
 $IPT -t nat -A OUTPUT -p tcp -d 127.0.0.1/8 -j RETURN
@@ -67,17 +67,13 @@ $IPT -t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-port 10001`
 	defaultIgrisListenersPath    = "/etc/igris/listeners.json"
 	igrisTerminationGraceSeconds = int64(35)
 
-	containerRecorder                  = "recorder"
-	configMapKeyRecordAndReplayJSON    = "recordAndReplay.json"
-	volumeNameRecorderConfig           = "recorder-config"
-	envRecorderListenAddr              = "RECORDER_LISTEN_ADDR"
-	envRecorderOTLPGRPCAddr            = "RECORDER_OTLP_GRPC_ADDR"
-	envRecorderRecordAndReplayFile     = "RECORDER_RECORD_AND_REPLAY_FILE"
-	envShopHTTPURL                     = "SHOP_HTTP_URL"
-	envBeruHTTPURL                     = "BERU_HTTP_URL"
-	defaultRecorderRecordAndReplayPath = "/etc/recorder/recordAndReplay.json"
-	recorderServicePort                = int32(8080)
-	recorderOTLPPort                   = int32(4317)
+	containerRecorder       = "recorder"
+	envRecorderListenAddr   = "RECORDER_LISTEN_ADDR"
+	envRecorderOTLPGRPCAddr = "RECORDER_OTLP_GRPC_ADDR"
+	envShopHTTPURL          = "SHOP_HTTP_URL"
+	envBeruHTTPURL          = "BERU_HTTP_URL"
+	recorderServicePort     = int32(8080)
+	recorderOTLPPort        = int32(4317)
 
 	shopName        = "shop"
 	shopGRPCPort    = int32(50051)
