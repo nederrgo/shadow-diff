@@ -76,7 +76,7 @@ Pixie requires a VM-capable cluster node (Minikube `kvm2` / `virtualbox`; not Ki
 
 ```bash
 # Pixie Cloud account: px auth login or export PIXIE_API_KEY
-MINIKUBE_DRIVER=kvm2 ./testing/scripts/setup/setup-local-pixie.sh --no-bridge
+MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh --no-bridge
 ```
 
 This installs Vizier into namespace `pl` and applies bridge RBAC + PxL templates (`monarch-system/pixie-stream-bridge` ConfigMap). Use `--no-bridge` when the bridge is packaged separately (Helm Deployment).
@@ -88,18 +88,18 @@ This installs Vizier into namespace `pl` and applies bridge RBAC + PxL templates
 The bridge is **not** deployed by Monarch. It must run continuously:
 
 ```bash
-./testing/scripts/setup/start-pixie-stream-bridge.sh
+./testing/bats/setup/start-pixie-stream-bridge.sh
 ```
 
 Or run in foreground for debugging:
 
 ```bash
-./testing/scripts/pixie-stream-bridge.sh
+./testing/bats/pixie-stream-bridge.sh
 ```
 
 **Production / Helm:** package as a single-replica Deployment in `monarch-system` with:
 
-- ServiceAccount bound to [`pixie-stream-bridge` RBAC](/testing/scripts/manifests/pixie-bridge/rbac.yaml) (`get/list/watch` on `pixiestreamrules`)
+- ServiceAccount bound to [`pixie-stream-bridge` RBAC](/testing/bats/manifests/pixie-bridge/rbac.yaml) (`get/list/watch` on `pixiestreamrules`)
 - `PIXIE_API_KEY` (or Pixie deploy key) as a Secret
 - `px` CLI + `kubectl` in the container image
 - **No** aggressive `pkill` + short sleep restart between ShadowTests — use normal rolling updates with adequate `terminationGracePeriodSeconds` (≥30s) so in-flight `px run` can finish
@@ -172,7 +172,7 @@ Within one poll cycle after the CR exists and `spec.active=true`:
 SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
 kubectl get pixiestreamrule pixie-my-app-shadow -n default -o yaml
 kubectl get pods -n "$SHADOW_NS"
-./testing/scripts/debug-mongo-egress.sh my-app-shadow default   # when Mongo dependency present
+./testing/bats/debug-mongo-egress.sh my-app-shadow default   # when Mongo dependency present
 ```
 
 ### MongoDB capture note
@@ -194,7 +194,7 @@ Deletion is CR-driven. Pixie Vizier and the bridge stay running.
 ```bash
 kubectl delete shadowtest my-app-shadow -n default
 # or
-./testing/scripts/setup/delete-shadowtest.sh my-app-shadow default
+./testing/bats/setup/delete-shadowtest.sh my-app-shadow default
 ```
 
 ### Monarch cleanup order (`reconcileDelete`)
@@ -255,5 +255,5 @@ The E2E restart race (`pkill` while `px run` blocks up to 25s) can leave **no br
 - [ARCHITECTURE.md](/architecture/ARCHITECTURE.md) — pixie-stream-bridge layer table and Mongo egress path
 - [pipeline/monarch/internal/controller/shadowtest_resources.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_resources.go) — `reconcileDelete` PixieStreamRule cleanup
 - [pipeline/monarch/internal/controller/shadowtest_siphon.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_siphon.go) — `reconcilePixieStreamRule`, `deletePixieStreamRule`
-- [testing/scripts/pixie-stream-bridge.sh](https://github.com/shadow-diff/monarch/tree/main/testing/scripts/pixie-stream-bridge.sh) — poll loop and PxL export
-- [testing/scripts/debug-mongo-egress.sh](https://github.com/shadow-diff/monarch/tree/main/testing/scripts/debug-mongo-egress.sh) — layer-by-layer Pixie → Beru diagnostics
+- [testing/bats/pixie-stream-bridge.sh](https://github.com/shadow-diff/monarch/tree/main/testing/bats/pixie-stream-bridge.sh) — poll loop and PxL export
+- [testing/bats/debug-mongo-egress.sh](https://github.com/shadow-diff/monarch/tree/main/testing/bats/debug-mongo-egress.sh) — layer-by-layer Pixie → Beru diagnostics

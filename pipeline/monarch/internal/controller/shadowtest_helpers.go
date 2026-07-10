@@ -73,10 +73,6 @@ func envFromTarget(dep *appsv1.Deployment) ([]corev1.EnvVar, string) {
 	return out, warn
 }
 
-func appEnvWithEgressProxy(_ *enginev1alpha1.ShadowTest, base []corev1.EnvVar) []corev1.EnvVar {
-	return append([]corev1.EnvVar{}, base...)
-}
-
 func envoyContainerPorts(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort {
 	return []corev1.ContainerPort{
 		{Name: "ingress", ContainerPort: servicePortFor(st), Protocol: corev1.ProtocolTCP},

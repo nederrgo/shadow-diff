@@ -6,18 +6,18 @@
 #   - Free Pixie Cloud account (PIXIE_API_KEY or px auth login)
 #
 # Usage:
-#   MINIKUBE_DRIVER=kvm2 ./testing/scripts/setup-local-pixie.sh
-#   ./testing/scripts/setup-local-pixie.sh --skip-minikube-start --foreground-bridge
+#   MINIKUBE_DRIVER=kvm2 ./testing/bats/setup-local-pixie.sh
+#   ./testing/bats/setup-local-pixie.sh --skip-minikube-start --foreground-bridge
 #
 set -euo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 cd "$REPO"
 
-# shellcheck source=testing/scripts/helpers/cluster-minikube.sh
-source "$REPO/testing/scripts/helpers/cluster-minikube.sh"
-# shellcheck source=testing/scripts/helpers/pixie-bridge.sh
-source "$REPO/testing/scripts/helpers/pixie-bridge.sh"
+# shellcheck source=testing/bats/helpers/cluster-minikube.sh
+source "$REPO/testing/bats/helpers/cluster-minikube.sh"
+# shellcheck source=testing/bats/helpers/pixie-bridge.sh
+source "$REPO/testing/bats/helpers/pixie-bridge.sh"
 
 SKIP_MINIKUBE_START=0
 SKIP_PIXIE_INSTALL=0
@@ -106,18 +106,18 @@ apply_pixie_bridge_manifests
 
 if [[ "$NO_BRIDGE" -eq 1 ]]; then
   echo "==> Skip bridge daemon (--no-bridge)"
-  echo "    Run manually: ./testing/scripts/pixie-stream-bridge.sh"
+  echo "    Run manually: ./testing/bats/pixie-stream-bridge.sh"
   exit 0
 fi
 
 if [[ "$FOREGROUND_BRIDGE" -eq 1 ]]; then
   echo "==> Starting pixie-stream-bridge in foreground"
-  exec "$REPO/testing/scripts/pixie-stream-bridge.sh"
+  exec "$REPO/testing/bats/pixie-stream-bridge.sh"
 fi
 
 start_pixie_stream_bridge_background
 
 echo ""
 echo "Pixie local sandbox ready."
-echo "  Next: ./testing/scripts/e2e-reset-minikube.sh --no-reset"
+echo "  Next: ./testing/bats/e2e-reset-minikube.sh --no-reset"
 echo "  Then: curl prod Service with traceparent (see docs/verification/VERIFICATION.md)"

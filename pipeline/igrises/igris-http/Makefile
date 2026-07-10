@@ -11,7 +11,7 @@ test:
 	go test ./...
 
 docker-build:
-	bash "$(REPO_ROOT)/testing/scripts/helpers/docker.sh" build -t $(IGRIS_IMG) .
+	docker build -t $(IGRIS_IMG) .
 
 run: build
 	./bin/igris

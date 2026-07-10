@@ -4,7 +4,7 @@
 load '../test_helper'
 
 FIXTURE_DIR="${BATS_TEST_DIRNAME}/../fixtures/e2e/rabbit-ingress-nodejs"
-MANIFEST_DIR="${REPO}/testing/scripts/manifests/rabbitmq-otel-e2e"
+MANIFEST_DIR="${REPO}/testing/bats/manifests/rabbitmq-otel-e2e"
 HTTP_RECORD_HOST="user-service-nodejs.default.internal"
 
 setup_file() {
@@ -14,10 +14,13 @@ setup_file() {
   build_test_images_if_needed
   load_test_images_if_needed
 
-  kubectl apply -f "${REPO}/testing/scripts/manifests/rabbitmq-e2e/prod-rabbitmq.yaml"
+  kubectl apply -f "${REPO}/testing/bats/manifests/rabbitmq-e2e/prod-rabbitmq.yaml"
   kubectl apply -f "${MANIFEST_DIR}/prod-mongo.yaml"
   kubectl apply -f "${MANIFEST_DIR}/prod-user-service-nodejs.yaml"
   kubectl apply -f "${MANIFEST_DIR}/prod-nodejs-worker.yaml"
+
+  # ponytail: competing prod workers share the orders queue — only one may run per suite
+  kubectl delete deployment python-prod-worker -n default --ignore-not-found --wait=false 2>/dev/null || true
 
   kubectl wait --for=condition=Available deployment/rmq-prod-broker -n default --timeout=180s
   kubectl wait --for=condition=Available deployment/mongo-prod -n default --timeout=180s
@@ -98,7 +101,7 @@ setup_file() {
 
 teardown_file() {
   bats_teardown_suite \
-    "${REPO}/testing/scripts/manifests/rabbitmq-e2e/prod-rabbitmq.yaml" \
+    "${REPO}/testing/bats/manifests/rabbitmq-e2e/prod-rabbitmq.yaml" \
     "${MANIFEST_DIR}/prod-mongo.yaml" \
     "${MANIFEST_DIR}/prod-user-service-nodejs.yaml" \
     "${MANIFEST_DIR}/prod-nodejs-worker.yaml"

@@ -5,14 +5,14 @@
 # ponytail: polls px run on an interval; upgrade path = Pixie plugin cron API.
 #
 # Usage:
-#   ./testing/scripts/pixie-stream-bridge.sh
-#   PIXIE_EXPORT_INTERVAL_SEC=3 ./testing/scripts/pixie-stream-bridge.sh
+#   ./testing/bats/pixie-stream-bridge.sh
+#   PIXIE_EXPORT_INTERVAL_SEC=3 ./testing/bats/pixie-stream-bridge.sh
 #
 set -euo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
-# shellcheck source=testing/scripts/helpers/pixie-bridge.sh
-source "$REPO/testing/scripts/helpers/pixie-bridge.sh"
+# shellcheck source=testing/bats/helpers/pixie-bridge.sh
+source "$REPO/testing/bats/helpers/pixie-bridge.sh"
 
 FOREGROUND=1
 while [[ $# -gt 0 ]]; do

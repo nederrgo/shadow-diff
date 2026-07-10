@@ -47,12 +47,11 @@ go test ./internal/controller/... -run TestRenderEnvoyYAML -v
 go test ./internal/otlp/... -run TestExport -v
 ```
 
-### E2E scripts (from repo root or `testing/scripts/`)
+### E2E scripts (bats framework under `testing/bats/`)
 ```bash
-testing/scripts/e2e-rmq-mongo-test.sh          # full RMQ + Mongo pipeline
-testing/scripts/e2e-pipeline-test.sh           # HTTP ingress
-testing/scripts/e2e-rabbitmq-egress-test.sh    # AMQP egress diff
-SKIP_BUILD=1 SKIP_LOAD=1 testing/scripts/e2e-rmq-mongo-test.sh  # fast re-run
+make test-bats-integration   # integration suite (mongo egress)
+make test-bats-e2e           # full E2E suite (python/nodejs hybrid + http-otel-rmq)
+make test-bats               # both suites
 ```
 
 ## Architecture
@@ -99,9 +98,9 @@ Subscribes to Firehose on each shadow broker, deduplicates (OTel pika double-pub
 
 ### Pixie integration
 
-`PixieStreamRule` CR is reconciled by Monarch → the **pixie-stream-bridge** host process (`testing/scripts/pixie-stream-bridge.sh`) polls rules and runs `px run -f <pxl>` → Pixie emits OTLP → Siphon (ingress) or Recorder (egress) or beru-local OTLP port (MongoDB).  
-PxL templates live in `testing/scripts/manifests/pixie-bridge/configmap.yaml`.  
-Rendering helpers: `testing/scripts/lib/pixie-bridge.sh`.
+`PixieStreamRule` CR is reconciled by Monarch → the **pixie-stream-bridge** host process (`testing/bats/pixie-stream-bridge.sh`) polls rules and runs `px run -f <pxl>` → Pixie emits OTLP → Siphon (ingress) or Recorder (egress) or beru-local OTLP port (MongoDB).  
+PxL templates live in `testing/bats/manifests/pixie-bridge/configmap.yaml`.  
+Rendering helpers: `testing/bats/helpers/pixie-bridge.sh`.
 
 ### Beru-local
 

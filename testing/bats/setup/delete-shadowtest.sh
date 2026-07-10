@@ -2,14 +2,14 @@
 # Delete ShadowTest CR(s) and wait for Monarch to tear down shadow namespaces (beru-local GC).
 #
 # Usage:
-#   ./testing/scripts/delete-shadowtest.sh <name> [namespace]
-#   ./testing/scripts/delete-shadowtest.sh --all
-#   SHADOWTEST=my-shadow SHADOWTEST_NS=default ./testing/scripts/delete-shadowtest.sh
+#   ./testing/bats/delete-shadowtest.sh <name> [namespace]
+#   ./testing/bats/delete-shadowtest.sh --all
+#   SHADOWTEST=my-shadow SHADOWTEST_NS=default ./testing/bats/delete-shadowtest.sh
 set -euo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "$0")/../../.." && pwd)}"
-# shellcheck source=testing/scripts/helpers/e2e-helpers.sh
-source "$REPO/testing/scripts/helpers/e2e-helpers.sh"
+# shellcheck source=testing/bats/helpers/e2e-helpers.sh
+source "$REPO/testing/bats/helpers/e2e-helpers.sh"
 
 WAIT_SECS="${WAIT_SECS:-180}"
 

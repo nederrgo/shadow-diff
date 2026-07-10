@@ -59,7 +59,7 @@ resolve_pixie_minikube_driver() {
     echo "$driver"
     return 0
   fi
-  # shellcheck source=testing/scripts/helpers/cluster-minikube.sh
+  # shellcheck source=testing/bats/helpers/cluster-minikube.sh
   if _kvm2_available 2>/dev/null; then
     echo kvm2
     return 0
@@ -90,10 +90,10 @@ assert_minikube_driver_compatible() {
   echo "ERROR: minikube profile '${profile}' was created with driver=${have}, but Pixie needs driver=${want}" >&2
   echo "       Delete and recreate the cluster (one-time):" >&2
   echo "         minikube delete -p ${profile}" >&2
-  echo "         MINIKUBE_DRIVER=${want} ./testing/scripts/setup/setup-local-pixie.sh" >&2
+  echo "         MINIKUBE_DRIVER=${want} ./testing/bats/setup/setup-local-pixie.sh" >&2
   echo "       Or for full E2E:" >&2
   echo "         minikube delete -p ${profile}" >&2
-  echo "         MINIKUBE_DRIVER=${want} ./testing/scripts/setup/e2e-reset-minikube.sh --setup-pixie --run-otlp-ingress-test" >&2
+  echo "         MINIKUBE_DRIVER=${want} ./testing/tools/e2e-reset-minikube.sh --setup-pixie" >&2
   return 1
 }
 
@@ -110,7 +110,7 @@ assert_minikube_cni_compatible() {
   echo "ERROR: minikube profile '${profile}' has cni=${have}, but Pixie E2E needs cni=${want}" >&2
   echo "       Delete and recreate (one-time):" >&2
   echo "         minikube delete -p ${profile}" >&2
-  echo "         ./testing/scripts/setup/e2e-reset-minikube.sh" >&2
+  echo "         ./testing/tools/e2e-reset-minikube.sh" >&2
   return 1
 }
 
@@ -294,7 +294,7 @@ pixie_bridge_repo() {
 pixie_pxl_template() {
   local kind="${1:-ingress}" repo tpl marker
   repo=$(pixie_bridge_repo)
-  tpl="${repo}/testing/scripts/manifests/pixie-bridge/configmap.yaml"
+  tpl="${repo}/testing/bats/manifests/pixie-bridge/configmap.yaml"
   case "$kind" in
     ingress) marker='http-ingress-export.pxl.tmpl' ;;
     egress) marker='http-egress-export.pxl.tmpl' ;;
@@ -321,9 +321,9 @@ _render_pixie_pxl() {
     port_lines=$(pixie_port_filter_lines "$ports")
     host_lines="# ingress: prod pod label filters"
   else
-    label_lines="# egress: Host allowlist (not prod pod labels)"
+    label_lines=$(pixie_label_filter_lines "$labels")
     port_lines="# egress: no local_port filter"
-    host_lines=$(pixie_egress_host_filter_lines "$hosts")
+    host_lines="# egress: scoped by target pod labels"
   fi
   tpl=$(pixie_pxl_template "$kind")
   mkdir -p "$(dirname "$out")"
@@ -466,7 +466,7 @@ apply_pixie_bridge_manifests() {
   local repo
   repo=$(pixie_bridge_repo)
   kubectl create namespace monarch-system --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  kubectl apply -k "${repo}/testing/scripts/manifests/pixie-bridge/"
+  kubectl apply -k "${repo}/testing/bats/manifests/pixie-bridge/"
   echo "    applied pixie-stream-bridge RBAC + ConfigMap in monarch-system"
 }
 
@@ -483,7 +483,13 @@ run_pixie_export_once() {
 pixie_bridge_start_hint() {
   local repo
   repo=$(pixie_bridge_repo)
-  echo "${repo}/testing/scripts/setup/start-pixie-stream-bridge.sh"
+  echo "${repo}/testing/bats/setup/start-pixie-stream-bridge.sh"
+}
+
+_pixie_bridge_pid_valid() {
+  local pid="$1"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && \
+    grep -qF "testing/bats/pixie-stream-bridge.sh" "/proc/${pid}/cmdline" 2>/dev/null
 }
 
 _pixie_bridge_running_pid() {
@@ -491,17 +497,17 @@ _pixie_bridge_running_pid() {
   local existing_pid="" p
   if [[ -n "$pid_file" && -f "$pid_file" ]]; then
     existing_pid=$(cat "$pid_file" 2>/dev/null || true)
-    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null && \
-       grep -q "pixie-stream-bridge" "/proc/${existing_pid}/cmdline" 2>/dev/null; then
+    if _pixie_bridge_pid_valid "$existing_pid"; then
       echo "$existing_pid"
       return 0
     fi
   fi
-  p=$(pgrep -f "scripts/pixie-stream-bridge\.sh" 2>/dev/null | head -1 || true)
-  if [[ -n "$p" ]]; then
-    echo "$p"
-    return 0
-  fi
+  for p in $(pgrep -f "testing/bats/pixie-stream-bridge\.sh" 2>/dev/null || true); do
+    if _pixie_bridge_pid_valid "$p"; then
+      echo "$p"
+      return 0
+    fi
+  done
   return 1
 }
 
@@ -555,12 +561,13 @@ start_pixie_stream_bridge_background() {
     fi
     rm -f "$pid_file"
   fi
-  nohup "${repo}/testing/scripts/pixie-stream-bridge.sh" >"${PIXIE_BRIDGE_STATE_DIR}/bridge.log" 2>&1 &
+  # ponytail: close inherited bats platform flock (fd 9) — otherwise later setup_files block on flock forever
+  nohup bash -c 'exec 9>&- 2>/dev/null; exec "$1"' _ "${repo}/testing/bats/pixie-stream-bridge.sh" \
+    >"${PIXIE_BRIDGE_STATE_DIR}/bridge.log" 2>&1 &
   new_pid=$!
   echo "$new_pid" >"$pid_file"
   sleep 1
-  if ! kill -0 "$new_pid" 2>/dev/null || \
-     ! grep -q "pixie-stream-bridge" "/proc/${new_pid}/cmdline" 2>/dev/null; then
+  if ! kill -0 "$new_pid" 2>/dev/null || ! _pixie_bridge_pid_valid "$new_pid"; then
     echo "ERROR: pixie-stream-bridge failed to start (pid=${new_pid})" >&2
     tail -20 "${PIXIE_BRIDGE_STATE_DIR}/bridge.log" 2>/dev/null | sed 's/^/       /' >&2 || true
     rm -f "$pid_file"

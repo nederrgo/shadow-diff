@@ -4,7 +4,7 @@
 load '../test_helper'
 
 FIXTURE_DIR="${BATS_TEST_DIRNAME}/../fixtures/e2e/http-otel-rmq-python"
-MANIFEST_DIR="${REPO}/testing/scripts/manifests/http-otel-rmq-e2e"
+MANIFEST_DIR="${REPO}/testing/bats/manifests/http-otel-rmq-e2e"
 RMQ_EGRESS_LOG="${RMQ_EGRESS_LOG:-rmq egress published exchange=egress-events}"
 
 setup_file() {

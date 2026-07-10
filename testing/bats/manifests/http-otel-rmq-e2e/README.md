@@ -8,11 +8,11 @@ egress-relay deduplicates duplicate Firehose publishes (OTel `pika` double-wrap)
 
 ## Run (Kind or Minikube)
 
-Prerequisites: `./testing/scripts/e2e-reset-kind.sh` or `./testing/scripts/e2e-reset-minikube.sh` (Beru + Monarch + OTel operator). Scripts auto-detect the cluster and load images accordingly.
+Prerequisites: `./testing/bats/e2e-reset-kind.sh` or `./testing/bats/e2e-reset-minikube.sh` (Beru + Monarch + OTel operator). Scripts auto-detect the cluster and load images accordingly.
 
 ```bash
-./testing/scripts/e2e-http-otel-rmq-nodejs-test.sh
-./testing/scripts/e2e-http-otel-rmq-python-test.sh
+./testing/bats/e2e-http-otel-rmq-nodejs-test.sh
+./testing/bats/e2e-http-otel-rmq-python-test.sh
 ```
 
 ## Expected Beru logs (same trace id)

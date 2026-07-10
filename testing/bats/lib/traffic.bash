@@ -114,20 +114,52 @@ wait_recorder_seed() {
   local recorder_ns="${SHADOW_NS}"
   local deploy="${SHADOWTEST}-recorder"
   local i egress_pxl="${PIXIE_BRIDGE_STATE_DIR}/${SHADOWTEST_NS}-pixie-${SHADOWTEST}-egress.pxl"
+  local baseline=0 log_file
 
   bats_source_pixie_helpers
+  log_file=$(mktemp "${TMPDIR:-/tmp}/recorder-seed-XXXXXX.log")
+  kubectl logs -n "$recorder_ns" "deploy/${deploy}" >"$log_file" 2>/dev/null || : >"$log_file"
+  baseline=$(wc -l <"$log_file")
+
   for ((i = 1; i <= 60; i++)); do
-    if [[ -f "$egress_pxl" ]] && pixie_vizier_healthy 2>/dev/null; then
+    # ponytail: bridge exports every 3s; nudge px only on first loop and every 15s
+    if [[ "$i" == "1" || $((i % 8)) -eq 0 ]] && [[ -f "$egress_pxl" ]] && pixie_vizier_healthy 2>/dev/null; then
       run_pixie_export_once "$egress_pxl" 2>/dev/null || true
     fi
-    if kubectl logs -n "$recorder_ns" "deploy/${deploy}" --tail=200 2>/dev/null | grep -Fq "$marker"; then
+    kubectl logs -n "$recorder_ns" "deploy/${deploy}" >"$log_file" 2>/dev/null || true
+    if tail -n +"$((baseline + 1))" "$log_file" 2>/dev/null | grep -Fq "$marker"; then
+      rm -f "$log_file"
       return 0
     fi
     sleep 2
   done
+  rm -f "$log_file"
   return 1
 }
 
+# One prod RMQ publish + recorder seed before hybrid @tests (Pixie egress path warm-up).
+hybrid_recorder_warmup() {
+  [[ -n "${SHADOW_NS:-}" ]] || return 0
+  local tid oid
+  tid="warmup$(openssl rand -hex 6)"
+  oid="bats-${tid:0:8}"
+  echo "==> hybrid recorder warmup"
+  publish_rmq_order "$tid" "$oid" || return 0
+  if wait_recorder_seed; then
+    echo "    recorder warmup ok"
+  else
+    echo "    WARNING: recorder warmup timed out — HTTP replay tests may skip" >&2
+  fi
+}
+
+assert_hybrid_workers_ready() {
+  local order_id="${1:-${BATS_ORDER_ID}}"
+  local role
+  for role in control-a control-b candidate; do
+    assert_worker_http_replay "$role" "$order_id" || return 1
+  done
+}
+
 run_debug_mongo_egress() {
-  "${REPO}/testing/scripts/debug-mongo-egress.sh" "${SHADOWTEST}" "${SHADOWTEST_NS}"
+  "${REPO}/testing/bats/debug-mongo-egress.sh" "${SHADOWTEST}" "${SHADOWTEST_NS}"
 }

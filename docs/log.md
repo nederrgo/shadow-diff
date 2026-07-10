@@ -11,6 +11,14 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-10]
 ### Added
+* 'pipeline/monarch,python-test-worker': drop HTTP_PROXY injection; python worker uses iptables egress like nodejs
+* 'pipeline/monarch/internal/controller/shadowtest_helpers.go': restore HTTP_PROXY on all shadow apps now that Shop+Recorder are always-on
+* 'testing/bats/lib/traffic.bash, python_hybrid.bats': fix wait_recorder_seed stale-log false positives; add recorder warmup and http replay asserts
+* 'testing/bats': revert recordAndReplay fixtures; scope egress PxL by targetLabels; isolate competing hybrid prod workers on shared RMQ queue
+* 'testing/bats/fixtures/e2e/rabbit-ingress*/shadowtest.yaml, traffic.bash': add missing recordAndReplay hosts to hybrid fixtures; reduce wait_recorder_seed px nudge frequency
+* 'testing/bats/helpers/pixie-bridge.sh, platform.bash': fix post-migration bridge pid detection and prevent platform flock leak into pixie-stream-bridge daemon
+* 'docs/, pipeline/, .claude/': updated all stale testing/scripts/ path references to testing/bats/ or testing/tools/ across READMEs, CLAUDE.md, VERIFICATION.md, Makefiles, and settings
+* 'testing/': migrated helpers, manifests, and setup scripts from testing/scripts/ into testing/bats/; deleted superseded standalone E2E runners and orphaned helpers; moved dev utilities to testing/tools/
 * 'pipeline/recorder + pipeline/monarch/internal/controller': Remove recordAndReplay.json host-filter dead code — deleted HostMatches, RecordAndReplayHost type, loadRecordAndReplay, ConfigMap/volume/env-var provisioning; recorder now unconditionally forwards all OTLP spans to Shop
 * 'docs/data-plane/egress-record-replay.md': Added egress record-and-replay architecture spec covering Recorder→Shop→Envoy ext_proc pipeline, mock key format, host normalisation, and always-on provisioning model
 * 'pipeline/shop', 'testing/bats': Fix hybrid Recorder seed — normalize host in Shop seed key to strip port (HostWithoutPort), correct HTTP_RECORD_HOST in hybrid bats files, add ext_proc warmup probe to eliminate beru-local cold-start flake on test 1

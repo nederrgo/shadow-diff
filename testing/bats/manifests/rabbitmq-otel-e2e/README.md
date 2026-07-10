@@ -4,9 +4,9 @@ End-to-end test for **zero-touch W3C trace propagation** across RabbitMQ consume
 
 ## Prerequisites
 
-- Kind cluster with Monarch + Beru (`./testing/scripts/e2e-reset-kind.sh`)
+- Kind cluster with Monarch + Beru (`./testing/bats/e2e-reset-kind.sh`)
 - Monarch operator with **`MONARCH_MODE=dev`** (set by reset and test scripts)
-- **cert-manager** and **OpenTelemetry Operator** installed (`e2e-reset-kind.sh` runs `testing/scripts/helpers/otel-bootstrap.sh` by default; use `--skip-otel-bootstrap` only if already installed)
+- **cert-manager** and **OpenTelemetry Operator** installed (`e2e-reset-kind.sh` runs `testing/bats/helpers/otel-bootstrap.sh` by default; use `--skip-otel-bootstrap` only if already installed)
 - `Instrumentation` CR pre-applied in shadow namespace before ShadowTest creates pods (handled by `e2e-otel-rabbitmq-test.sh`)
 
 ## Run
@@ -14,21 +14,21 @@ End-to-end test for **zero-touch W3C trace propagation** across RabbitMQ consume
 Full reset + test:
 
 ```bash
-./testing/scripts/e2e-reset-kind.sh --run-otel-rabbitmq-test
+./testing/bats/e2e-reset-kind.sh --run-otel-rabbitmq-test
 ```
 
 Standalone (after reset):
 
 ```bash
-./testing/scripts/e2e-reset-kind.sh
-./testing/scripts/e2e-otel-rabbitmq-test.sh
+./testing/bats/e2e-reset-kind.sh
+./testing/bats/e2e-otel-rabbitmq-test.sh
 ```
 
 Node.js hybrid (RabbitMQ ingress + Mongo OTLP + HTTP replay + RMQ Firehose — **minikube only**):
 
 ```bash
-./testing/scripts/e2e-reset-minikube.sh   # if cluster not up
-./testing/scripts/e2e-nodejs-hybrid-test.sh
+./testing/bats/e2e-reset-minikube.sh   # if cluster not up
+./testing/bats/e2e-nodejs-hybrid-test.sh
 ```
 
 ## What it proves

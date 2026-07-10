@@ -2,8 +2,8 @@
 # shellcheck shell=bash
 
 bats_source_pixie_helpers() {
-  # shellcheck source=testing/scripts/helpers/pixie-bridge.sh
-  source "${REPO}/testing/scripts/helpers/pixie-bridge.sh"
+  # shellcheck source=testing/bats/helpers/pixie-bridge.sh
+  source "${REPO}/testing/bats/helpers/pixie-bridge.sh"
 }
 
 bats_platform_state_read() {
@@ -60,7 +60,14 @@ platform_health_matrix() {
   if pixie_vizier_installed; then
     pixie_vizier_healthy || { echo "health: Pixie not CS_HEALTHY" >&2; ok=0; }
   fi
-  _pixie_bridge_running_pid "${PIXIE_BRIDGE_STATE_DIR}/bridge.pid" >/dev/null 2>&1 || { echo "health: pixie-stream-bridge not running" >&2; ok=0; }
+  if ! _pixie_bridge_running_pid "${PIXIE_BRIDGE_STATE_DIR}/bridge.pid" >/dev/null 2>&1; then
+    echo "health: pixie-stream-bridge not running — restarting" >&2
+    start_pixie_stream_bridge_background 1 >/dev/null 2>&1 || true
+    _pixie_bridge_running_pid "${PIXIE_BRIDGE_STATE_DIR}/bridge.pid" >/dev/null 2>&1 || {
+      echo "health: pixie-stream-bridge not running" >&2
+      ok=0
+    }
+  fi
 
   [[ "$ok" == "1" ]]
 }
@@ -88,14 +95,14 @@ platform_bootstrap_install() {
 
   if ! pixie_vizier_installed; then
     MINIKUBE_DRIVER="${MINIKUBE_DRIVER}" \
-      "${REPO}/testing/scripts/setup/setup-local-pixie.sh" --skip-minikube-start --no-bridge
+      "${REPO}/testing/bats/setup/setup-local-pixie.sh" --skip-minikube-start --no-bridge
   else
     wait_pixie_vizier_healthy 120 || true
   fi
 
   wait_pixie_http_events_ready 180 2>/dev/null || true
 
-  "${REPO}/testing/scripts/setup/start-pixie-stream-bridge.sh"
+  "${REPO}/testing/bats/setup/start-pixie-stream-bridge.sh"
 
   kubectl apply -f "${REPO}/pipeline/siphon/deploy/rbac.yaml"
 }

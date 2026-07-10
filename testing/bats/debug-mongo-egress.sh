@@ -3,10 +3,10 @@
 # Run while the E2E test cluster is up (ShadowTest must be in Ready state).
 #
 # Usage:
-#   ./testing/scripts/debug-mongo-egress.sh [shadowtest-name] [shadowtest-namespace]
+#   ./testing/bats/debug-mongo-egress.sh [shadowtest-name] [shadowtest-namespace]
 #
 # Example:
-#   SHADOWTEST=rmq-mongo-test-shadow ./testing/scripts/debug-mongo-egress.sh
+#   SHADOWTEST=rmq-mongo-test-shadow ./testing/bats/debug-mongo-egress.sh
 set -euo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
@@ -60,7 +60,7 @@ if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
   ok "bridge running pid=$(cat "$pid_file")"
 else
   fail "pixie-stream-bridge is NOT running (pid file: ${pid_file})"
-  echo "      → Start with: ./testing/scripts/start-pixie-stream-bridge.sh"
+  echo "      → Start with: ./testing/bats/setup/start-pixie-stream-bridge.sh"
 fi
 
 hdr "Layer 2b: rendered PxL files"
@@ -186,7 +186,7 @@ fi
 hdr "What to check next based on findings"
 cat <<'HINTS'
   Layer 1 FAIL  → Monarch didn't create PixieStreamRule. Check `hasMongoDependency` and `pixieCaptureEnabled`.
-  Layer 2 FAIL  → Bridge not running. Run: ./testing/scripts/start-pixie-stream-bridge.sh
+  Layer 2 FAIL  → Bridge not running. Run: ./testing/bats/setup/start-pixie-stream-bridge.sh
   Layer 2b FAIL → Bridge ran but didn't render mongo.pxl. mongoOtelEndpoint was empty when bridge ran.
                   Restart bridge after Monarch sets the endpoint.
   Layer 3 FAIL  → Pixie isn't seeing MongoDB traffic. Verify:

@@ -1,8 +1,8 @@
 # ShadowTest tuned for Kind E2E: prod (port 80) -> Siphon -> Igris:80 -> Envoy:8888 -> echo:8080 -> Beru
 #
 # Apply:
-#   kubectl apply -f testing/scripts/manifests/e2e-shadowtest.yaml
-#   kubectl apply -f testing/scripts/manifests/e2e-prod-app.yaml   # optional: align prod with echo on :80
+#   kubectl apply -f testing/bats/manifests/e2e-shadowtest.yaml
+#   kubectl apply -f testing/bats/manifests/e2e-prod-app.yaml   # optional: align prod with echo on :80
 #
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest

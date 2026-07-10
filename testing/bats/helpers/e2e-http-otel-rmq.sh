@@ -5,8 +5,8 @@
 
 http_otel_rmq_init_cluster() {
   local repo="$1"
-  # shellcheck source=testing/scripts/helpers/cluster-minikube.sh
-  source "$repo/testing/scripts/helpers/cluster-minikube.sh"
+  # shellcheck source=testing/bats/helpers/cluster-minikube.sh
+  source "$repo/testing/bats/helpers/cluster-minikube.sh"
   echo "==> E2E cluster: minikube (kvm2)"
 }
 
@@ -120,10 +120,10 @@ http_otel_rmq_setup_pixie() {
     HTTP_OTEL_RMQ_MONGO=0
     return 0
   fi
-  # shellcheck source=testing/scripts/helpers/pixie-bridge.sh
-  source "$repo/testing/scripts/helpers/pixie-bridge.sh"
-  # shellcheck source=testing/scripts/helpers/siphon-config.sh
-  source "$repo/testing/scripts/helpers/siphon-config.sh"
+  # shellcheck source=testing/bats/helpers/pixie-bridge.sh
+  source "$repo/testing/bats/helpers/pixie-bridge.sh"
+  # shellcheck source=testing/bats/helpers/siphon-config.sh
+  source "$repo/testing/bats/helpers/siphon-config.sh"
   wait_pixie_vizier_pem 120
   wait_pixie_vizier_healthy 120
   wait_pixie_http_events_ready 180
@@ -131,7 +131,7 @@ http_otel_rmq_setup_pixie() {
   echo "==> Restarting pixie-stream-bridge to pick up current PxL template"
   stop_pixie_stream_bridge
   start_pixie_stream_bridge_background 1
-  kubectl apply -k "$repo/testing/scripts/manifests/pixie-bridge/" >/dev/null
+  kubectl apply -k "$repo/testing/bats/manifests/pixie-bridge/" >/dev/null
   wait_pixie_mongo_pxl_ready "$shadowtest" "$shadowtest_ns" 60
 
   # Pixie's eBPF probe decodes MongoDB wire protocol only for connections it observes
@@ -283,8 +283,8 @@ http_otel_rmq_run_test() {
     local mongo_wait="${HTTP_OTEL_RMQ_MONGO_WAIT_SECS:-120}"
     local mongo_pxl=""
     if [[ "${USE_PIXIE:-0}" == "1" ]]; then
-      # shellcheck source=testing/scripts/helpers/pixie-bridge.sh
-      source "${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}/testing/scripts/helpers/pixie-bridge.sh"
+      # shellcheck source=testing/bats/helpers/pixie-bridge.sh
+      source "${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}/testing/bats/helpers/pixie-bridge.sh"
       mongo_pxl="${PIXIE_BRIDGE_STATE_DIR:-${REPO:-.}/.cache/pixie-bridge}/${SHADOWTEST_NS:-default}-pixie-${shadowtest}-mongo.pxl"
     fi
     http_otel_rmq_wait_beru_message "$shadow_ns" "MongoDB egress" "$mongo_egress_msg" "" \

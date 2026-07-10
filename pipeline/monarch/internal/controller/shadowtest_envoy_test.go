@@ -170,23 +170,6 @@ func TestServicePortFor_default8888(t *testing.T) {
 	}
 }
 
-func TestAppEnvWithEgressProxy(t *testing.T) {
-	st := &enginev1alpha1.ShadowTest{}
-	base := []corev1.EnvVar{{Name: "FOO", Value: "bar"}}
-	env := appEnvWithEgressProxy(st, base)
-	if len(env) != 1 {
-		t.Fatalf("expected 1 env var (base passthrough), got %d: %v", len(env), env)
-	}
-	if env[0].Name != "FOO" || env[0].Value != "bar" {
-		t.Fatalf("unexpected env var: %v", env[0])
-	}
-	for _, e := range env {
-		if e.Name == "HTTP_PROXY" || e.Name == "HTTPS_PROXY" || e.Name == "NO_PROXY" {
-			t.Fatalf("proxy env var must not be injected: %q", e.Name)
-		}
-	}
-}
-
 func TestEnvoySidecarEnvHasNoProxy(t *testing.T) {
 	envoyEnv := []corev1.EnvVar{
 		{Name: envShadowRole, Value: roleControlA},

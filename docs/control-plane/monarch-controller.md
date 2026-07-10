@@ -27,14 +27,9 @@ For each shadow role (`control-a`, `control-b`, `candidate`), Monarch `CreateOrP
 
 Applications must propagate W3C `traceparent` on outbound HTTP and database commands (e.g. Mongo `$comment`). Monarch no longer injects runtime agents.
 
-## Egress capture (env-based)
+## Egress capture (iptables)
 
-All shadow app containers receive:
-
-- `HTTP_PROXY` / `HTTPS_PROXY` → `http://127.0.0.1:10001` (Envoy egress listener)
-- `NO_PROXY` → `127.0.0.1,localhost,beru-ingest.shadow-system.svc.cluster.local,.cluster.local,.svc`
-
-The expanded `NO_PROXY` prevents Envoy loopback deadlock when forwarding to cluster-internal upstreams.
+Shadow app pods run an init container that redirects outbound TCP on ports **80** and **8080** to the Envoy egress listener (`127.0.0.1:10001`). Apps keep prod egress URLs; Monarch does **not** inject `HTTP_PROXY`. Set `Host` / `:authority` to the record/replay hostname (copied from prod env) so Shop can match mocks.
 
 ## Envoy configuration highlights
 
@@ -64,7 +59,6 @@ Beru exposes `POST /api/v1/ingest/wire` on `:8080` (`BERU_HTTP_ADDR`). Envelopes
 ## Out of scope
 
 - Envoy mongo_listener → Beru HTTP POST (Phase 2b access log)
-- iptables transparent egress capture
 - Ingress migration from `ext_proc` to `beru_ingest`
 
 # Citations

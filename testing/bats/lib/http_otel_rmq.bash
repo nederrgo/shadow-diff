@@ -2,8 +2,8 @@
 # shellcheck shell=bash
 
 bats_source_http_otel_helpers() {
-  # shellcheck source=testing/scripts/helpers/e2e-http-otel-rmq.sh
-  source "${REPO}/testing/scripts/helpers/e2e-http-otel-rmq.sh"
+  # shellcheck source=testing/bats/helpers/e2e-http-otel-rmq.sh
+  source "${REPO}/testing/bats/helpers/e2e-http-otel-rmq.sh"
 }
 
 bats_use_pixie_auto() {

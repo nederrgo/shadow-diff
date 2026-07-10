@@ -175,7 +175,7 @@ Monarch deploys Igris into the **shadow namespace** created for each `ShadowTest
 
 HTTP/TCP and AMQP paths are **mutually exclusive** for a given ShadowTest — AMQP tests skip HTTP Igris and use igris-rabbitmq instead.
 
-Example AMQP ShadowTest: [testing/scripts/manifests/rabbitmq-otel-e2e/shadowtest-otel-rmq.yaml](../../testing/scripts/manifests/rabbitmq-otel-e2e/shadowtest-otel-rmq.yaml).
+Example AMQP ShadowTest: [testing/bats/manifests/rabbitmq-otel-e2e/shadowtest-otel-rmq.yaml](../../testing/bats/manifests/rabbitmq-otel-e2e/shadowtest-otel-rmq.yaml).
 
 ---
 

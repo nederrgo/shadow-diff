@@ -97,6 +97,7 @@ data:
     # Shadow worker 599s (from transparent proxy Pixie capture) are suppressed in Shop's
     # Put() which refuses to overwrite a 2xx mock with a non-2xx.
     df.req_host = px.pluck(df.req_headers, 'Host')
+    __LABEL_FILTERS__
     __EXCLUDE_PATH_FILTERS__
 
     df.end_time = df.time_ + df.latency

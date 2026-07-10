@@ -85,7 +85,7 @@ Field-level reference and examples: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 Deletion removes shadow namespace resources, prod AMQP queue (if applicable), and `PixieStreamRule`.
 
-**HTTP capture runtime (outside Monarch):** install Pixie Vizier (`testing/scripts/setup-local-pixie.sh`), deploy Siphon OTLP receiver in the shadow namespace, and run **pixie-stream-bridge** on a host with `px` CLI + Pixie auth. The bridge runs **ingress and egress** `px.export` scripts when the rule exposes the corresponding endpoints.
+**HTTP capture runtime (outside Monarch):** install Pixie Vizier (`testing/bats/setup/setup-local-pixie.sh`), deploy Siphon OTLP receiver in the shadow namespace, and run **pixie-stream-bridge** on a host with `px` CLI + Pixie auth. The bridge runs **ingress and egress** `px.export` scripts when the rule exposes the corresponding endpoints.
 
 ### RabbitMQ shadow dependencies
 
@@ -141,12 +141,12 @@ kubectl api-resources | grep pixiestreamrule   # short name: psr
 **Minikube E2E** (Pixie eBPF + OTLP):
 
 ```sh
-MINIKUBE_DRIVER=kvm2 ./testing/scripts/setup-local-pixie.sh
-./testing/scripts/e2e-reset-minikube.sh
-./testing/scripts/start-pixie-stream-bridge.sh
-./testing/scripts/e2e-siphon-otlp-ingress-test.sh      # HTTP ingress
-./testing/scripts/e2e-pixie-egress-record-test.sh        # HTTP egress → Recorder
-USE_PIXIE=1 ./testing/scripts/e2e-python-hybrid-test.sh  # RMQ + Mongo + HTTP + Firehose
+MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh
+./testing/tools/e2e-reset-minikube.sh
+./testing/bats/setup/start-pixie-stream-bridge.sh
+./make test-bats-integration      # HTTP ingress
+./make test-bats-e2e        # HTTP egress → Recorder
+USE_PIXIE=1 ./make test-bats-e2e  # RMQ + Mongo + HTTP + Firehose
 ```
 
 Recommend **8GB+ Minikube memory** for the hybrid test (six dependency pods + three workers + igris + recorder + egress-relay).
@@ -154,7 +154,7 @@ Recommend **8GB+ Minikube memory** for the hybrid test (six dependency pods + th
 **Kind E2E** (stack without Pixie):
 
 ```sh
-./testing/scripts/e2e-reset-kind.sh
+./testing/tools/e2e-reset-minikube.sh
 ```
 
 ---
@@ -164,7 +164,7 @@ Recommend **8GB+ Minikube memory** for the hybrid test (six dependency pods + th
 | Component | Who installs | Monarch's role |
 | --------- | ------------ | -------------- |
 | **Beru** | You (`pipeline/beru/deploy/`) | Wire `beruGRPCAddress`; Recorder/relay use Beru HTTP |
-| **Pixie Vizier** | You (`testing/scripts/setup-local-pixie.sh`) | Reconciles `PixieStreamRule` targeting prod labels |
+| **Pixie Vizier** | You (`testing/bats/setup/setup-local-pixie.sh`) | Reconciles `PixieStreamRule` targeting prod labels |
 | **pixie-stream-bridge** | You (host process) | Not deployed by Monarch — runs ingress + egress `px.export` |
 | **Siphon OTLP receiver** | You (shadow-namespace Deployment) | Provisions `Service/siphon` with selector `app.kubernetes.io/name: siphon` |
 | **OpenTelemetry Operator** | You (optional) | Set pod annotations; E2E may pre-apply `Instrumentation` CR |

@@ -157,15 +157,15 @@ spec:
 
 ### Full HTTP + Siphon + egress example
 
-See `testing/scripts/manifests/e2e-shadowtest.yaml` — `inputs`, `recordAndReplay`, optional ports only (no `igris` / `siphon` / `recorder` image blocks when `MONARCH_MODE=dev` is set on the operator).
+See `testing/bats/manifests/e2e-shadowtest.yaml` — `inputs`, `recordAndReplay`, optional ports only (no `igris` / `siphon` / `recorder` image blocks when `MONARCH_MODE=dev` is set on the operator).
 
 ```bash
-kubectl apply -f testing/scripts/manifests/e2e-shadowtest.yaml
+kubectl apply -f testing/bats/manifests/e2e-shadowtest.yaml
 ```
 
 ### RabbitMQ (AMQP-only) example
 
-When `inputs[].driver` is `rabbitmq_message`, Monarch skips HTTP Igris and deploys **igris-rabbitmq** + **egress-relay-rabbitmq** (if `recordAndReplay` is set). See `testing/scripts/manifests/rabbitmq-e2e/shadowtest-rmq.yaml`.
+When `inputs[].driver` is `rabbitmq_message`, Monarch skips HTTP Igris and deploys **igris-rabbitmq** + **egress-relay-rabbitmq** (if `recordAndReplay` is set). See `testing/bats/manifests/rabbitmq-e2e/shadowtest-rmq.yaml`.
 
 ---
 
@@ -341,7 +341,7 @@ Typical layout when prod listens on **:80** and Envoy ingress is **:8888**:
 | Shadow app (echo) | `:80` (`applicationPort`) |
 | Envoy egress proxy | `:15001` (`HTTP_PROXY`) |
 
-See `testing/scripts/e2e-reset-kind.sh` and `testing/scripts/manifests/e2e-shadowtest.yaml`.
+See `testing/tools/e2e-reset-minikube.sh` and `testing/bats/manifests/e2e-shadowtest.yaml`.
 
 ---
 
@@ -389,4 +389,4 @@ See `testing/scripts/e2e-reset-kind.sh` and `testing/scripts/manifests/e2e-shado
 - [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — system architecture
 - [README.md](./README.md) — operator development (Kubebuilder)
 - [config/samples/engine_v1alpha1_shadowtest.yaml](./config/samples/engine_v1alpha1_shadowtest.yaml) — sample CR
-- [testing/scripts/manifests/e2e-shadowtest.yaml](../../testing/scripts/manifests/e2e-shadowtest.yaml) — Kind E2E reference manifest
+- [testing/bats/manifests/e2e-shadowtest.yaml](../../testing/bats/manifests/e2e-shadowtest.yaml) — Kind E2E reference manifest

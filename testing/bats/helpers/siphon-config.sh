@@ -160,7 +160,7 @@ wait_pixie_vizier_pem() {
     sleep 3
     i=$((i + 3))
   done
-  echo "ERROR: Pixie PEM not Running — run ./testing/scripts/setup/setup-local-pixie.sh" >&2
+  echo "ERROR: Pixie PEM not Running — run ./testing/bats/setup/setup-local-pixie.sh" >&2
   return 1
 }
 

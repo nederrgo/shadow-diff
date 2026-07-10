@@ -193,7 +193,7 @@ delete_shadowtest_and_verify() {
     return 0
   fi
   SHADOWTEST="$name" SHADOWTEST_NS="$ns" \
-    "${REPO}/testing/scripts/setup/delete-shadowtest.sh" "$name" "$ns" || return 1
+    "${REPO}/testing/bats/setup/delete-shadowtest.sh" "$name" "$ns" || return 1
   assert_kubectl_not_found shadowtest "$name" -n "$ns" || return 1
   assert_kubectl_not_found pixiestreamrule "pixie-${name}" -n "$ns" || return 1
   local shadow_ns="shadow-${ns}-${name}"

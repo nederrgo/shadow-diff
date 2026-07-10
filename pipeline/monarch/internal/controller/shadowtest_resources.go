@@ -147,7 +147,7 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 		beruAddr := beruGRPCAddressFor(st, shadowNS)
 		baseEnv := append([]corev1.EnvVar{}, env...)
 		baseEnv = append(baseEnv, dependencyEnvVarsForRole(st, shadowNS, role)...)
-		appEnv := appEnvWithEgressProxy(st, baseEnv)
+		appEnv := baseEnv
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{
 			{
 				Name:  containerApp,

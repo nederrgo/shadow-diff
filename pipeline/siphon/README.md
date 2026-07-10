@@ -27,7 +27,7 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 | Siphon OTLP receiver | One gRPC server for logs + traces → `HTTPRecord` → igris forwarder |
 | Shadow `Service/siphon` | Cluster DNS export target for Pixie (`siphon.<shadow-ns>.svc.cluster.local:4317`) |
 
-Monarch provisions the **Service** and **PixieStreamRule**; you deploy the **Siphon Deployment** in the shadow namespace (E2E manifest: `testing/scripts/manifests/siphon-otlp-e2e/siphon-deployment.yaml`). The legacy `pipeline/siphon/deploy/daemonset.yaml` hostNetwork path is superseded.
+Monarch provisions the **Service** and **PixieStreamRule**; you deploy the **Siphon Deployment** in the shadow namespace (E2E manifest: `testing/bats/manifests/siphon-otlp-e2e/siphon-deployment.yaml`). The legacy `pipeline/siphon/deploy/daemonset.yaml` hostNetwork path is superseded.
 
 ---
 
@@ -63,7 +63,7 @@ make siphon-docker-build SIPHON_IMG=siphon:dev
 
 OTLP **trace** span attributes (from Pixie PxL): `http.request.method`, `url.path`, `traceparent`, `http.request.body` (string). Siphon forwards `traceparent` to Igris as an HTTP header.
 
-**Pixie PxL notes:** use `px.pluck(df.req_headers, 'traceparent')`; filter prod pods with `px.contains(df.pod, '<app>')` (not `df.service`); precompute `df.end_time = df.time_ + df.latency` for `px.otel.trace.Span`. Template: `testing/scripts/manifests/pixie-bridge/configmap.yaml`.
+**Pixie PxL notes:** use `px.pluck(df.req_headers, 'traceparent')`; filter prod pods with `px.contains(df.pod, '<app>')` (not `df.service`); precompute `df.end_time = df.time_ + df.latency` for `px.otel.trace.Span`. Template: `testing/bats/manifests/pixie-bridge/configmap.yaml`.
 
 ---
 
@@ -72,13 +72,13 @@ OTLP **trace** span attributes (from Pixie PxL): `http.request.method`, `url.pat
 **Pixie + Minikube (verified eBPF path):**
 
 ```sh
-MINIKUBE_DRIVER=kvm2 ./testing/scripts/setup-local-pixie.sh   # Vizier in pl + px auth
-./testing/scripts/e2e-reset-minikube.sh --no-reset
+MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh   # Vizier in pl + px auth
+./testing/tools/e2e-reset-minikube.sh --no-reset
 
 # background bridge (requires px auth — use px auth login --manual on WSL)
-nohup ./testing/scripts/pixie-stream-bridge.sh > .cache/pixie-bridge/bridge.log 2>&1 &
+nohup ./testing/bats/pixie-stream-bridge.sh > .cache/pixie-bridge/bridge.log 2>&1 &
 
-./testing/scripts/e2e-siphon-otlp-ingress-test.sh
+./make test-bats-integration
 ```
 
 Requires **kvm2** (or virtualbox) Minikube driver, **flannel** CNI, Pixie Vizier healthy, and `siphon:dev` built into the minikube docker daemon (`eval $(minikube docker-env)`).
@@ -86,7 +86,7 @@ Requires **kvm2** (or virtualbox) Minikube driver, **flannel** CNI, Pixie Vizier
 **Local smoke (no cluster, no Pixie):**
 
 ```sh
-./testing/scripts/e2e-siphon-otlp-local-smoke.sh
+./make test-bats-integration
 ```
 
 See [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) for prod Service curl and Igris log checks.

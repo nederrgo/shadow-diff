@@ -608,7 +608,7 @@ _minikube_start_failed() {
     if echo "$err" | grep -qi 'GUEST_DRIVER_MISMATCH'; then
       echo "         - existing profile uses a different driver (often none on WSL)" >&2
       echo "         - minikube delete -p ${MINIKUBE_PROFILE}" >&2
-      echo "         - MINIKUBE_DRIVER=kvm2 ./testing/scripts/setup/setup-local-pixie.sh" >&2
+      echo "         - MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh" >&2
     fi
     [[ -r /dev/kvm ]] || {
       echo "         - /dev/kvm missing — try: sudo modprobe kvm kvm_intel  (or kvm_amd)" >&2

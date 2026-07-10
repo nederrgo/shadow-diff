@@ -13,16 +13,15 @@ import requests
 
 EGRESS_EXCHANGE = os.environ.get("RMQ_EGRESS_EXCHANGE", "egress-events")
 EGRESS_ROUTING_KEY = os.environ.get("RMQ_EGRESS_ROUTING_KEY", "order.shipped")
-# recordAndReplay host (NOT *.svc.cluster.local — that bypasses HTTP_PROXY via NO_PROXY).
+# Pixie/Shop egress hash key (:authority / Host header).
 HTTP_EGRESS_REPLAY_HOST = os.environ.get(
     "HTTP_EGRESS_REPLAY_HOST", "user-service.prod.internal"
 )
-# Prod-only: dial real user-service; Host header is HTTP_EGRESS_REPLAY_HOST for Siphon/Beru hash.
+# Dial target; shadow pods redirect :8080 to Envoy via iptables (same URL as prod).
 HTTP_EGRESS_CONNECT_URL = os.environ.get(
     "HTTP_EGRESS_CONNECT_URL",
     "http://user-service.prod.svc.cluster.local:8080/v1/log",
 )
-HTTP_EGRESS_PATH = os.environ.get("HTTP_EGRESS_PATH", "/v1/log")
 
 
 def env_or(name: str, default: str) -> str:
@@ -59,29 +58,19 @@ def parse_order_id(body: bytes) -> str:
     return "unknown"
 
 
-def uses_egress_proxy() -> bool:
-    return bool(os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy"))
+def is_shadow_worker() -> bool:
+    return "shadow" in env_or("AMQP_URL", "") or "shadow" in env_or("MONGO_URL", "")
 
 
 def http_egress_target() -> tuple[str, dict[str, str]]:
-    """Shadow: URL host must avoid NO_PROXY so traffic hits Envoy/Beru. Prod: direct + Host."""
-    if uses_egress_proxy():
-        port = "8080"
-        if "://" in HTTP_EGRESS_CONNECT_URL:
-            from urllib.parse import urlparse
-
-            parsed = urlparse(HTTP_EGRESS_CONNECT_URL)
-            if parsed.port:
-                port = str(parsed.port)
-        url = f"http://{HTTP_EGRESS_REPLAY_HOST}:{port}{HTTP_EGRESS_PATH}"
-        return url, {}
+    """Dial cluster URL; Host header is HTTP_EGRESS_REPLAY_HOST for Pixie/Shop hash."""
     return HTTP_EGRESS_CONNECT_URL, {"Host": HTTP_EGRESS_REPLAY_HOST}
 
 
 def http_post(
     url: str, payload: dict, headers: dict | None = None, timeout: int = 30
 ) -> requests.Response:
-    """POST via HTTP_PROXY on shadow; retry 599 while prod egress is recorded for replay."""
+    """Retry 599 while prod egress is recorded for Shop replay."""
     headers = headers or {}
     deadline = time.monotonic() + 60
     while True:
@@ -113,7 +102,7 @@ def handle_message(ch, method, properties, body, mongo_coll):
         url, headers = http_egress_target()
         if traceparent:
             headers["traceparent"] = traceparent
-        via = "replay" if uses_egress_proxy() else "record"
+        via = "replay" if is_shadow_worker() else "record"
         resp = http_post(
             url,
             {"status": "complete", "order_id": order_id},

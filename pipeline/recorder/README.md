@@ -184,7 +184,7 @@ ShadowTest fields:
 | `spec.recordAndReplay[].ignoreRequestPaths` | JSON paths excluded from request hash (volatile fields) |
 | `spec.recorder.image` | Override container image (default `recorder:latest`) |
 
-Example ShadowTest with recordAndReplay: [testing/scripts/manifests/e2e-shadowtest.yaml](../../testing/scripts/manifests/e2e-shadowtest.yaml). Hybrid (RMQ + Mongo + HTTP replay): [testing/scripts/manifests/rabbitmq-otel-e2e/shadowtest-python-hybrid.yaml](../../testing/scripts/manifests/rabbitmq-otel-e2e/shadowtest-python-hybrid.yaml).
+Example ShadowTest with recordAndReplay: [testing/bats/manifests/e2e-shadowtest.yaml](../../testing/bats/manifests/e2e-shadowtest.yaml). Hybrid (RMQ + Mongo + HTTP replay): [testing/bats/manifests/rabbitmq-otel-e2e/shadowtest-python-hybrid.yaml](../../testing/bats/manifests/rabbitmq-otel-e2e/shadowtest-python-hybrid.yaml).
 
 ---
 
@@ -193,23 +193,23 @@ Example ShadowTest with recordAndReplay: [testing/scripts/manifests/e2e-shadowte
 End-to-end prod record → shadow replay (manual seed path):
 
 ```sh
-./testing/scripts/e2e-reset-kind.sh
-./testing/scripts/e2e-record-replay.sh
+./testing/tools/e2e-reset-minikube.sh
+./make test-bats-e2e
 ```
 
 Pixie egress → Recorder OTLP → Beru (prod outbound must use a `Host` matching `recordAndReplay`):
 
 ```sh
-MINIKUBE_DRIVER=kvm2 ./testing/scripts/setup-local-pixie.sh
-./testing/scripts/e2e-reset-minikube.sh --no-reset
-./testing/scripts/start-pixie-stream-bridge.sh
-./testing/scripts/e2e-pixie-egress-record-test.sh
+MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh
+./testing/tools/e2e-reset-minikube.sh --no-reset
+./testing/bats/setup/start-pixie-stream-bridge.sh
+./make test-bats-e2e
 ```
 
 Ultimate hybrid (RabbitMQ ingress + Mongo OTLP + HTTP record/replay + RMQ Firehose egress) on Minikube:
 
 ```sh
-USE_PIXIE=1 ./testing/scripts/e2e-python-hybrid-test.sh
+USE_PIXIE=1 ./make test-bats-e2e
 ```
 
 See [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) (Phase 4a.2 — prod egress auto-record).

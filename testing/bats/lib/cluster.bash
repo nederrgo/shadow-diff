@@ -2,13 +2,13 @@
 # shellcheck shell=bash
 
 bats_source_cluster_helpers() {
-  # shellcheck source=testing/scripts/helpers/cluster-minikube.sh
-  source "${REPO}/testing/scripts/helpers/cluster-minikube.sh"
+  # shellcheck source=testing/bats/helpers/cluster-minikube.sh
+  source "${REPO}/testing/bats/helpers/cluster-minikube.sh"
 }
 
 bats_source_e2e_helpers() {
-  # shellcheck source=testing/scripts/helpers/e2e-helpers.sh
-  source "${REPO}/testing/scripts/helpers/e2e-helpers.sh"
+  # shellcheck source=testing/bats/helpers/e2e-helpers.sh
+  source "${REPO}/testing/bats/helpers/e2e-helpers.sh"
 }
 
 bats_ensure_minikube() {
