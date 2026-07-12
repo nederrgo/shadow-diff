@@ -4,7 +4,7 @@ title: Control Plane Hub
 description: High-level overview map for Shadow-Diff control plane specifications and operators.
 resource: https://github.com/your-org/shadow-diff/tree/main/docs/control-plane
 tags: [index, control-plane, monarch]
-timestamp: 2026-06-27T19:35:00Z
+timestamp: 2026-07-12T14:20:00Z
 ---
 
 # Control Plane Architecture

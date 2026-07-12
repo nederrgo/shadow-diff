@@ -1,8 +1,8 @@
 # Recorder
 
-**Recorder** is the **L4b — egress record/replay** prod-ingest service for Shadow-Diff. It accepts **production outbound HTTP** from Pixie egress OTLP export (primary) or legacy Siphon TCP relay, and seeds Beru's **egress mock store**. Shadow pods replay prod downstream responses through Envoy's egress proxy without manual `seed_mock` calls.
+**Recorder** is the **L4b** prod-ingest service for Shadow-Diff HTTP egress record/replay. It accepts **production outbound HTTP** from Pixie egress OTLP export (primary) or legacy TCP framing, and seeds **Shop**'s mock store. Shadow pods replay responses via Envoy `shop_ext_proc`.
 
-Recorder is the **prod auto-record** path. It is separate from **egress-relay-rabbitmq**, which observes **shadow** RabbitMQ publishes for AMQP egress diffing.
+Recorder is **always** deployed by Monarch (no `spec.recordAndReplay` field). It is separate from **egress-relay-rabbitmq** (shadow AMQP Firehose → Beru).
 
 See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) for how Recorder fits in the full pipeline.
 
@@ -18,21 +18,19 @@ Prod app outbound HTTP
     └── (legacy) Siphon TCP relay :8080 — length-prefixed R/S frames
     │
     ▼
-Recorder (shadow namespace)
-    │  OTLP span attrs or TCP HTTP parse → filter by downstream host (Host header)
+Recorder (shadow namespace, always-on)
+    │  OTLP span attrs → Shop POST /v1/record_egress (all hosts)
     ▼
-Beru  POST /v1/record_egress
-    │  in-memory mock store (keyed by request hash)
+Shop mock store
     ▼
-Shadow app egress (HTTP_PROXY → Envoy :15001)
-    └──► Beru returns recorded response (or 599 on miss)
+Shadow app → Envoy :10001 → shop_ext_proc → recorded response (or 599)
 ```
 
 | Stage | Component | What happens |
 | ----- | --------- | ------------ |
-| **Capture** | **Pixie** + **pixie-stream-bridge** | Egress PxL filters `http_events` by `recordAndReplayHosts`; OTLP traces include `http.host`, bodies, status |
-| **Parse + store** | **Recorder** | Maps OTLP attrs → `RecordPayload`; or reassembles TCP R/S frame pairs; posts to Beru |
-| **Replay** | **Envoy egress sidecar** | Shadow outbound HTTP is hashed and looked up in Beru's mock store |
+| **Capture** | **Pixie** + **pixie-stream-bridge** | Egress PxL on prod-ns `http_events` (see server-side caveat in docs); OTLP to Recorder |
+| **Parse + store** | **Recorder** | Maps OTLP attrs → payload; posts **all** spans to Shop |
+| **Replay** | **Envoy** + **Shop** | Shadow egress `:10001` → Shop gRPC mock lookup |
 
 **Ingress diff** (Igris → three shadows → Beru) and **AMQP egress diff** (egress-relay-rabbitmq) do not involve Recorder. Recorder only supports **HTTP egress recording** from prod.
 
@@ -52,14 +50,14 @@ Recorder listens for **gzip-compressed OTLP gRPC** traces and maps span attribut
 
 | Span attribute | Record field |
 | -------------- | ------------ |
-| `http.host` / `server.address` | Host (allowlist filter) |
+| `http.host` / `server.address` | Host (normalized, no allowlist) |
 | `url.path` / `http.target` | Path |
 | `http.request.method` | Method |
 | `http.request.body` | Request body |
 | `http.response.status_code` | Status |
 | `http.response.body` | Response body |
 
-Only hosts matching `spec.recordAndReplay` (via mounted `recordAndReplay.json`) are recorded. In-cluster downstream calls are visible on the **server-side** pod; prod workers must send the expected `Host` header (e.g. `user-service.prod.internal` while connecting to cluster DNS).
+Recorder forwards **every** HTTP span to Shop (no host allowlist / no `recordAndReplay.json`). In-cluster calls are often visible on the **server-side** pod in Pixie; workers should still set a stable logical `Host` for Shop keying. See [/data-plane/egress-record-replay.md](../../docs/data-plane/egress-record-replay.md).
 
 ### 2. Legacy Siphon → Recorder TCP format
 
@@ -83,27 +81,15 @@ For each Siphon TCP connection, `SessionStore`:
 3. Reads sequential HTTP request/response pairs from the pipes (supports keep-alive / multiple transactions on one connection).
 4. Evicts incomplete pairs after `RECORDER_PAIR_TIMEOUT` (default 30s).
 
-### 4. Record-and-replay host filtering
+### 4. Shop ingest (always-on)
 
-Only transactions whose `Host` matches `spec.recordAndReplay` on the ShadowTest are recorded. Monarch writes the allowlist to `/etc/recorder/recordAndReplay.json`:
-
-```json
-[
-  { "host": "httpbin.org", "ignore_paths": ["/uuid"] }
-]
-```
-
-Wildcard hosts (`*.example.com`) are supported. Non-matching hosts are skipped.
-
-### 5. Beru ingest
-
-Matching records are posted asynchronously to:
+All records are posted asynchronously to Shop:
 
 ```
-POST {BERU_HTTP_URL}/v1/record_egress
+POST {SHOP_HTTP_URL}/v1/record_egress
 ```
 
-Payload includes method, host, path, request body, response status/headers/body, and optional `ignore_paths` for hash stability. Beru stores the entry in the same mock map used by `POST /v1/seed_mock` and Envoy egress lookup.
+Payload includes method, host, path, request body, response status/headers/body, and optional `ignore_paths` for hash stability. Shop stores the entry in the same mock map used by `POST /v1/seed_mock` and Envoy egress lookup.
 
 ---
 
@@ -114,9 +100,9 @@ recorder/
   cmd/recorder/           main entrypoint (TCP :8080 + OTLP :4317 concurrently)
   internal/
     ingest/               TCP server, framing, session pairing
-    parse/                HTTP request/response parser, host filter
-    beru/                 POST /v1/record_egress client
-    config/               env + recordAndReplay.json loader
+    parse/                HTTP request/response parser
+    shop/                 POST /v1/record_egress client (Shop)
+    config/               env loader
     receiver/             OTLP gRPC trace ingest (Pixie egress export)
 ```
 
@@ -146,81 +132,50 @@ make docker-build RECORDER_IMG=recorder:dev
 
 | Variable | Required | Default | Description |
 | -------- | -------- | ------- | ----------- |
-| `BERU_HTTP_URL` | Yes | — | Beru HTTP base URL (e.g. `http://beru.beru-system.svc.cluster.local:8080`) |
+| `SHOP_HTTP_URL` | Yes | — | Shop HTTP base URL (e.g. `http://shop.<shadow-ns>.svc.cluster.local:8080`) |
 | `RECORDER_LISTEN_ADDR` | No | `:8080` | TCP address for legacy Siphon egress relay connections |
 | `RECORDER_OTLP_GRPC_ADDR` | No | `:4317` | gRPC OTLP trace receiver (Pixie egress `px.export`) |
-| `RECORDER_RECORD_AND_REPLAY_FILE` | No | `/etc/recorder/recordAndReplay.json` | JSON allowlist of record-and-replay hosts |
 | `RECORDER_PAIR_TIMEOUT` | No | `30s` | Drop incomplete request/response pairs after this duration (TCP path) |
 | `RECORDER_MAX_FRAME_BYTES` | No | `5242880` (5 MiB) | Max single frame payload from Siphon (TCP path) |
 
-Monarch sets `BERU_HTTP_URL`, both listen addresses, and mounts the recordAndReplay ConfigMap when `spec.recordAndReplay` is non-empty.
+Monarch sets `SHOP_HTTP_URL` and both listen addresses. There is no `recordAndReplay.json` ConfigMap.
 
 ---
 
 ## Monarch integration
 
-Recorder is deployed into the **shadow namespace** when a ShadowTest defines **`spec.recordAndReplay`**:
+Recorder is **always** deployed into the **shadow namespace**:
 
 | Resource | Name pattern | Purpose |
 | -------- | ------------ | ------- |
 | Deployment | `<shadowtest-name>-recorder` | Recorder pod |
 | Service | `<shadowtest-name>-recorder` | Legacy TCP `:8080`; Pixie OTLP `:4317` |
-| ConfigMap | `<shadowtest-name>-recorder-config` | `recordAndReplay.json` from `spec.recordAndReplay` |
 
-Monarch also reconciles **`PixieStreamRule`** when egress recording is enabled:
+`PixieStreamRule.recorderOtelEndpoint` is always set to the shadow Recorder Service `:4317`.
 
-| PixieStreamRule field | Set when |
-| --------------------- | -------- |
-| `recorderOtelEndpoint` | `spec.recordAndReplay` non-empty → shadow Recorder Service `:4317` |
-| `recordAndReplayHosts` | Hostnames from `spec.recordAndReplay[].host` (egress PxL `req_host` filter) |
-| `otelEndpoint` | HTTP ingress capture enabled (`spec.siphon`) → shadow Siphon `:4317` |
+Optional: `spec.recorder.image` overrides the container image (default via `MONARCH_MODE`).
 
-ShadowTest fields:
-
-| Field | Effect |
-| ----- | ------ |
-| `spec.recordAndReplay[]` | Enables Recorder + Pixie egress export + Envoy egress proxy on shadow apps |
-| `spec.recordAndReplay[].host` | Hostname allowlist for recording |
-| `spec.recordAndReplay[].ignoreRequestPaths` | JSON paths excluded from request hash (volatile fields) |
-| `spec.recorder.image` | Override container image (default `recorder:latest`) |
-
-Example ShadowTest with recordAndReplay: [testing/bats/manifests/e2e-shadowtest.yaml](../../testing/bats/manifests/e2e-shadowtest.yaml). Hybrid (RMQ + Mongo + HTTP replay): [testing/bats/manifests/rabbitmq-otel-e2e/shadowtest-python-hybrid.yaml](../../testing/bats/manifests/rabbitmq-otel-e2e/shadowtest-python-hybrid.yaml).
+Hybrid fixtures: `testing/bats/fixtures/e2e/rabbit-ingress-nodejs/shadowtest.yaml` (no `recordAndReplay` field).
 
 ---
 
 ## Verification
 
-End-to-end prod record → shadow replay (manual seed path):
-
-```sh
-./testing/tools/e2e-reset-minikube.sh
-./make test-bats-e2e
-```
-
-Pixie egress → Recorder OTLP → Beru (prod outbound must use a `Host` matching `recordAndReplay`):
-
 ```sh
 MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh
-./testing/tools/e2e-reset-minikube.sh --no-reset
-./testing/bats/setup/start-pixie-stream-bridge.sh
-./make test-bats-e2e
+SKIP_BUILD=1 SKIP_LOAD=1 make test-bats-e2e
 ```
 
-Ultimate hybrid (RabbitMQ ingress + Mongo OTLP + HTTP record/replay + RMQ Firehose egress) on Minikube:
+See [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) and [/data-plane/egress-record-replay.md](../../docs/data-plane/egress-record-replay.md).
 
-```sh
-USE_PIXIE=1 ./make test-bats-e2e
-```
-
-See [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) (Phase 4a.2 — prod egress auto-record).
-
-Manual seeding (without Recorder) remains available via `POST /v1/seed_mock` — useful for tests and one-off mocks. See [pipeline/beru/README.md](../beru/README.md).
+Manual seeding (without Recorder): Shop `POST /v1/seed_mock`.
 
 ---
 
 ## Related reading
 
 - [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — prod HTTP auto-record vs AMQP egress diff
+- [/data-plane/egress-record-replay.md](../../docs/data-plane/egress-record-replay.md) — always-on Shop+Recorder; Pixie server-side caveat
 - [pipeline/siphon/](../siphon/) — OTLP ingress receiver (separate from Recorder egress path)
-- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — `spec.recordAndReplay`, `PixieStreamRule`
-- [pipeline/beru/README.md](../beru/README.md) — mock store, Envoy egress replay, `/v1/record_egress`
+- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — ShadowTest / PixieStreamRule
+- [pipeline/shop/README.md](../shop/README.md) — mock store + Envoy egress replay

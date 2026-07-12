@@ -1,18 +1,25 @@
 #!/usr/bin/env bats
-# E2E: HTTP ingress (igris-http) → OTel → Mongo OTLP + RabbitMQ Firehose egress — Node.js worker.
+# E2E: HTTP ingress (prod pod → Pixie → Siphon → igris) → OTel → Mongo OTLP + RabbitMQ Firehose egress — Node.js worker.
 
 load '../../test_helper'
 
 FIXTURE_DIR="${BATS_TEST_DIRNAME}/../../fixtures/e2e/http-otel-rmq-nodejs"
 MANIFEST_DIR="${REPO}/testing/bats/manifests/http-otel-rmq-e2e"
+PROD_DEPLOY="http-rmq-nodejs-prod"
 RMQ_EGRESS_LOG="${RMQ_EGRESS_LOG:-rmq egress published exchange=egress-events}"
 
 setup_file() {
   bats_begin_suite "bats-http-otel-rmq-nodejs" "default"
 
   ensure_platform_ready
+  bats_pixie_mongo_enabled || { echo "E2E requires Pixie (no pl namespace) — failing"; exit 1; }
   build_test_images_if_needed
   load_test_images_if_needed
+
+  kubectl apply -f "${MANIFEST_DIR}/prod-rabbitmq.yaml"
+  kubectl apply -f "${MANIFEST_DIR}/prod-mongodb.yaml"
+  kubectl wait --for=condition=Available deployment/rmq-prod-broker -n default --timeout=120s
+  kubectl wait --for=condition=Available deployment/mongo-prod -n default --timeout=120s
 
   kubectl apply -f "${MANIFEST_DIR}/prod-target-nodejs.yaml"
   kubectl wait --for=condition=Available deployment/http-rmq-nodejs-prod -n default --timeout=120s
@@ -21,7 +28,7 @@ setup_file() {
   bats_prepare_shadowtest_slot "$SHADOWTEST" "$SHADOWTEST_NS"
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
-  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-mongo --require-rmq-egress
+  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-mongo --require-rmq-egress --require-siphon
 
   SHADOW_NS="$(shadow_namespace)"
   export SHADOW_NS
@@ -39,15 +46,15 @@ setup_file() {
 
 @test "verify HTTP ingress via igris is clean in Beru" {
   bats_http_otel_reverify_pixie
-  run publish_igris_http "$BATS_TRACE_ID"
+  run publish_prod_http "$BATS_TRACE_ID"
   assert_success
-  run beru_wait_log --grep="$(beru_log_no_regression "$BATS_TRACE_ID")" --timeout=45
+  run beru_wait_log --grep="$(beru_log_no_regression "$BATS_TRACE_ID")" --timeout=120
   assert_success
 }
 
 @test "verify shadow workers publish RMQ egress without logging trace id" {
   bats_http_otel_reverify_pixie
-  run publish_igris_http "$BATS_TRACE_ID"
+  run publish_prod_http "$BATS_TRACE_ID"
   assert_success
   for role in control-a control-b candidate; do
     run assert_worker_log_grep "$role" "$RMQ_EGRESS_LOG"
@@ -58,9 +65,8 @@ setup_file() {
 }
 
 @test "verify Mongo egress is clean for isolated trace" {
-  bats_pixie_mongo_enabled || skip "Pixie not available (no pl namespace)"
   bats_http_otel_reverify_pixie
-  run publish_igris_http "$BATS_TRACE_ID"
+  run publish_prod_http "$BATS_TRACE_ID"
   assert_success
   for role in control-a control-b candidate; do
     run assert_worker_log_grep "$role" "mongo insert ok"
@@ -72,9 +78,9 @@ setup_file() {
 
 @test "verify RabbitMQ egress is clean for isolated trace" {
   bats_http_otel_reverify_pixie
-  run publish_igris_http "$BATS_TRACE_ID"
+  run publish_prod_http "$BATS_TRACE_ID"
   assert_success
-  run beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" rabbitmq)" --timeout=45
+  run beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" rabbitmq)" --timeout=120
   assert_success
 }
 

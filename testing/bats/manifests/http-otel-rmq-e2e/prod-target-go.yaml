@@ -1,23 +1,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: http-rmq-python-prod
+  name: http-rmq-go-prod
   namespace: default
   labels:
-    app: http-rmq-python-prod
+    app: http-rmq-go-prod
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: http-rmq-python-prod
+      app: http-rmq-go-prod
   template:
     metadata:
       labels:
-        app: http-rmq-python-prod
+        app: http-rmq-go-prod
     spec:
       containers:
         - name: app
-          image: http-rmq-python-worker:dev
+          image: http-rmq-go-worker:dev
           imagePullPolicy: Never
           env:
             - name: HTTP_PORT
@@ -34,11 +34,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: http-rmq-python-prod
+  name: http-rmq-go-prod
   namespace: default
 spec:
   selector:
-    app: http-rmq-python-prod
+    app: http-rmq-go-prod
   ports:
     - port: 8080
       targetPort: 8080

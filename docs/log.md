@@ -9,8 +9,24 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-12]
+### Added
+* 'docs/verification/http-ingress-e2e-flow.md': move http-ingress README into OKF verification wiki (same format as hybrid flow)
+* 'docs/verification/hybrid-rmq-e2e-flow.md': document Node/Python hybrid bats setup, per-order runtime flow, and per-@test assertions
+* 'testing/bats/manifests/pixie-bridge, pipeline/shop, docs/data-plane': dual-branch Pixie egress (client+server) + Shop Put first-2xx dedup'
+* 'docs/, pipeline/*/README.md, DEPLOYMENT.md': remove stale recordAndReplay; document always-on Shop+Recorder and Pixie server-side egress caveat
+* 'shadowtest_siphon.go', 'siphon-deployment.yaml', 'siphon-config.sh': enable Service/siphon when inputs.port matches servicePort; Pixie targetPorts use applicationPort; E2E siphon manifest includes Service
+
+## [2026-07-11]
+### Added
+* 'testing/bats/lib/http_otel_rmq.bash': deploy Siphon OTLP pod in bats_http_otel_rollout_stack — Monarch only creates the Service, not the Deployment; Pixie HTTP ingress path was silently dropping all spans (no endpoints)
+* 'testing/bats/e2e/http-ingress/': increased beru_wait_log timeout from 45s to 120s for Pixie ingress latency; added README.md documenting E2E flow, manifest layout, and timing notes
+* 'testing/bats/e2e/http-ingress/': All 3 http-ingress bats tests upgraded to strict E2E — traffic via prod Service + Pixie eBPF capture; exit 1 if Pixie unavailable; added publish_prod_http helper, prod-rabbitmq.yaml, prod-mongodb.yaml, and real worker prod-target manifests with AMQP_URL/MONGO_URL + ClusterIP Services
+* 'CLAUDE.md, docs/verification/VERIFICATION.md': Corrected mock store attribution from Beru to Shop; Shop+Recorder now always-on (no spec.recordAndReplay field)
+
 ## [2026-07-10]
 ### Added
+* 'testing/bats/e2e/http-ingress/http_ingress_rmq_go.bats': Added Go HTTP-ingress e2e test with fixture, manifest, and http-rmq-go-worker app; wired into env.bash and platform.bash build/load
 * 'testing/bats/e2e/': Reorganised e2e tests into http-ingress/ and rabbitmq-ingress/ subfolders; updated load paths, run.sh glob, and Makefile/run-one.sh examples
 * 'pipeline/monarch,python-test-worker': drop HTTP_PROXY injection; python worker uses iptables egress like nodejs
 * 'pipeline/monarch/internal/controller/shadowtest_helpers.go': restore HTTP_PROXY on all shadow apps now that Shop+Recorder are always-on

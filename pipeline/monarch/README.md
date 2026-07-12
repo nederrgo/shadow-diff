@@ -28,11 +28,11 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 
 | Layer | What Monarch provisions or configures |
 | ----- | ------------------------------------- |
-| **L1 Capture** | `PixieStreamRule` CR (ingress `otelEndpoint`, egress `recorderOtelEndpoint`, `recordAndReplayHosts`) + shadow `Service/siphon`; prod RabbitMQ shadow queue + bind (AMQP) |
+| **L1 Capture** | `PixieStreamRule` (ingress `otelEndpoint` when Siphon on; always `recorderOtelEndpoint`; mongo when deps) + shadow `Service/siphon`; prod RabbitMQ shadow queue + bind (AMQP) |
 | **L2 Ingress** | Igris Deployment (HTTP/TCP) **or** igris-rabbitmq (AMQP) |
 | **L3 Shadow stack** | Three app Deployments + Envoy sidecars + Services; ephemeral **dependencies** per role |
 | **L4a Analysis ingest** | Envoy ConfigMaps → Beru gRPC; egress-relay-rabbitmq for AMQP tests |
-| **L4b Egress record/replay** | Recorder (`:8080` legacy TCP, `:4317` Pixie OTLP) + recordAndReplay ConfigMap; `HTTP_PROXY` on shadow apps when `spec.recordAndReplay` set |
+| **L4b Egress record/replay** | **Always-on** Shop + Recorder (`:4317` Pixie OTLP → Shop); Envoy `shop_ext_proc` + iptables egress redirect (no `spec.recordAndReplay`) |
 | **L5 Beru** | Not deployed — `spec.beruGRPCAddress` only |
 
 Shadow namespace name is deterministic: **`shadow-<crNamespace>-<crName>`** (see `shadowtest_helpers.go`).
@@ -51,19 +51,20 @@ One namespaced **`ShadowTest`** (`engine.shadow-diff.io/v1alpha1`) drives the fu
 | `beruGRPCAddress` | Beru gRPC for Envoy `ext_proc` |
 | `inputs[]` | Ingress drivers: `http_request`, `tcp_stream`, `rabbitmq_message` |
 | `dependencies[]` | Ephemeral Redis, RabbitMQ, MongoDB, etc. per role + env injection |
-| `recordAndReplay[]` | HTTP egress hosts → Recorder + Pixie egress OTLP + Envoy egress proxy |
-| `siphon` | Enables HTTP ingress capture; reconciles `PixieStreamRule` + shadow `Service/siphon` when ports match |
-| `igris` / `igrisRabbitmq` / `recorder` / `egressRelayRabbitmq` | Optional component image overrides (defaults via `MONARCH_MODE`) |
-| `otelInjection` | OpenTelemetry Operator annotations on shadow app pods |
+| `siphon` | Optional override for HTTP ingress capture; otherwise inferred from HTTP/TCP inputs |
+| `shop` / `recorder` / `igris` / `igrisRabbitmq` / `egressRelayRabbitmq` | Optional component image overrides (defaults via `MONARCH_MODE`) |
+| `beru` | Optional beru-local image override |
+
+**Removed:** `spec.recordAndReplay` / `recordAndReplayHosts` — Shop+Recorder are always-on.
 
 **`PixieStreamRule`** (created by Monarch, namespaced with the ShadowTest):
 
 | Field | When set |
 | ----- | -------- |
-| `otelEndpoint` | HTTP ingress capture (`spec.siphon`) → `<shadow-ns>/siphon:4317` |
-| `recorderOtelEndpoint` | `spec.recordAndReplay` → `<shadowtest>-recorder.<shadow-ns>:4317` |
-| `recordAndReplayHosts` | Hostnames from `spec.recordAndReplay[].host` (egress PxL filter) |
-| `targetLabels` / `targetPorts` | Prod pod labels and ingress listener ports |
+| `otelEndpoint` | HTTP ingress Siphon enabled → `siphon.<shadow-ns>:4317` |
+| `recorderOtelEndpoint` | Always → `<shadowtest>-recorder.<shadow-ns>:4317` |
+| `mongoOtelEndpoint` | Mongo dependency → `beru-local.<shadow-ns>:4317` |
+| `targetLabels` / `targetPorts` | Prod target labels; ingress Pixie ports use `applicationPort` |
 
 **Status:** `phase` (Ready / Progressing / Failed), `shadowNamespace`, `captureTargets`, `amqpQueueName`, `siphonPhase`, `igrisRabbitMQPhase`, `message`.
 
@@ -79,8 +80,8 @@ Field-level reference and examples: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 4. **AMQP path:** declare prod shadow queue → igris-rabbitmq → egress-relay-rabbitmq.
 5. **HTTP/TCP path:** Igris ConfigMap + Deployment + Service.
 6. For each role: Envoy ConfigMap + shadow Deployment (app + sidecar) + Service.
-7. Optional **Recorder** when `spec.recordAndReplay` is non-empty (Service exposes `:4317` OTLP).
-8. **Pixie capture:** `PixieStreamRule` + shadow-namespace `Service/siphon` (`status.siphonPhase`, `status.captureTargets`).
+7. **Shop** then **Recorder** (always-on; Recorder `:4317` OTLP).
+8. **Pixie capture:** `PixieStreamRule` + shadow-namespace `Service/siphon` when HTTP ingress Siphon is on.
 9. Patch status **Ready** when all gates pass.
 
 Deletion removes shadow namespace resources, prod AMQP queue (if applicable), and `PixieStreamRule`.

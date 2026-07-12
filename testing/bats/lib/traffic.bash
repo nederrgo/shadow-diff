@@ -59,6 +59,27 @@ multicast_igris_write() {
   publish_igris_http "$1" "$2" "/write"
 }
 
+publish_prod_http() {
+  local trace_id="${1:-${BATS_TRACE_ID}}"
+  local body="${2:-{\"e2e\":\"bats-http-otel\"}}"
+  local span_hex="${BATS_SPAN_ID:-$(openssl rand -hex 8)}"
+  local trace_tp="00-${trace_id}-${span_hex}-01"
+  local url="http://${PROD_DEPLOY}.default.svc.cluster.local:8080/publish"
+
+  bats_source_e2e_helpers
+  local out
+  out=$(kubectl run "bats-prod-${RANDOM}" --rm -i --restart=Never -n default \
+    --image=curlimages/curl:latest -- \
+    curl -sS -w '__HTTP_CODE__%{http_code}' -o /dev/null \
+    -X POST "$url" \
+    -H "Content-Type: application/json" \
+    -H "traceparent: ${trace_tp}" \
+    -d "$body" 2>&1) || true
+  out=$(e2e_strip_kubectl_run_output "$out")
+  echo "$out"
+  [[ "$out" == *'__HTTP_CODE__200'* ]]
+}
+
 assert_worker_log_grep() {
   local role="$1" pattern="$2"
   local pod

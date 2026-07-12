@@ -45,15 +45,16 @@ func siphonIngressCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.D
 		return false
 	}
 	targetPorts := targetPrimaryContainerPorts(target)
-	if len(targetPorts) == 0 {
-		return false
-	}
+	appPort := applicationPortFor(st)
+	svcPort := servicePortFor(st)
 	for _, in := range resolvedInputs(st) {
 		d := strings.TrimSpace(strings.ToLower(in.Driver))
 		if d != "http_request" && d != "tcp_stream" {
 			continue
 		}
-		if targetPorts[in.Port] {
+		// Match declared container ports, or servicePort/applicationPort when the
+		// input is the Envoy listen port (common fixture: inputs.port == servicePort).
+		if targetPorts[in.Port] || in.Port == appPort || in.Port == svcPort {
 			return true
 		}
 	}
@@ -125,10 +126,18 @@ func siphonIngressPorts(st *enginev1alpha1.ShadowTest) []int32 {
 	if isAMQPOnlyShadowTest(st) {
 		return nil
 	}
+	// Pixie filters prod-pod local_port; capture the app port, not Envoy servicePort.
+	if app := applicationPortFor(st); app > 0 {
+		return []int32{app}
+	}
 	var ports []int32
 	seen := map[int32]bool{}
 	for _, in := range resolvedInputs(st) {
-		if seen[in.Port] {
+		d := strings.TrimSpace(strings.ToLower(in.Driver))
+		if d != "http_request" && d != "tcp_stream" {
+			continue
+		}
+		if in.Port <= 0 || seen[in.Port] {
 			continue
 		}
 		seen[in.Port] = true

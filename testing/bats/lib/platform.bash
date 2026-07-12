@@ -152,6 +152,7 @@ build_test_images_if_needed() {
   make -C "${REPO}/testing/example-apps/nodejs-hybrid-worker" docker-build NODEJS_HYBRID_WORKER_IMG="${NODEJS_HYBRID_WORKER_IMG}" 2>/dev/null || true
   make -C "${REPO}/testing/example-apps/http-rmq-python-worker" docker-build HTTP_RMQ_PYTHON_IMG="${HTTP_RMQ_PYTHON_WORKER_IMG}" 2>/dev/null || true
   make -C "${REPO}/testing/example-apps/http-rmq-test-app" docker-build HTTP_RMQ_TEST_IMG="${HTTP_RMQ_NODEJS_WORKER_IMG}" 2>/dev/null || true
+  make -C "${REPO}/testing/example-apps/http-rmq-go-worker" docker-build HTTP_RMQ_GO_IMG="${HTTP_RMQ_GO_WORKER_IMG}" 2>/dev/null || true
 }
 
 load_test_images_if_needed() {
@@ -164,7 +165,7 @@ load_test_images_if_needed() {
   fi
   for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$SIPHON_IMG" "$RECORDER_IMG" \
     "$IGRIS_RABBITMQ_IMG" "$EGRESS_RELAY_RABBITMQ_IMG" "$PYTHON_TEST_WORKER_IMG" \
-    "$NODEJS_HYBRID_WORKER_IMG" "$HTTP_RMQ_PYTHON_WORKER_IMG" "$HTTP_RMQ_NODEJS_WORKER_IMG" \
+    "$NODEJS_HYBRID_WORKER_IMG" "$HTTP_RMQ_PYTHON_WORKER_IMG" "$HTTP_RMQ_NODEJS_WORKER_IMG" "$HTTP_RMQ_GO_WORKER_IMG" \
     "$MONGO_IMAGE"; do
     e2e_load_image "$img" 2>/dev/null || docker pull "$img" 2>/dev/null || true
   done

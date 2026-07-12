@@ -122,7 +122,8 @@ func TestBuildPixieStreamRuleSpecAlwaysHasRecorderEndpoint(t *testing.T) {
 		},
 	}
 	spec := buildPixieStreamRuleSpec(st, "shadow-default-egress-st", dep)
-	if spec.OTelEndpoint != "" {
+	// Empty inputs resolve to http_request on servicePort → ingress siphon enabled.
+	if spec.OTelEndpoint != shadowSiphonOTelEndpoint("shadow-default-egress-st") {
 		t.Fatalf("ingress endpoint %q", spec.OTelEndpoint)
 	}
 	want := shadowRecorderOTelEndpoint(st, "shadow-default-egress-st")
@@ -182,8 +183,9 @@ func TestSiphonEnabled(t *testing.T) {
 	}
 
 	st := &enginev1alpha1.ShadowTest{}
-	if siphonEnabled(st, dep) {
-		t.Fatal("expected disabled with no inputs or explicit enable")
+	// Empty inputs resolve to http_request on servicePort → siphon enabled.
+	if !siphonEnabled(st, dep) {
+		t.Fatal("default http_request input on servicePort should enable siphon")
 	}
 
 	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)}
@@ -208,6 +210,31 @@ func TestSiphonEnabled(t *testing.T) {
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{Port: 9999, Driver: "http_request"}}
 	if siphonEnabled(st, dep) {
 		t.Fatal("non-matching port should not enable siphon")
+	}
+
+	// inputs.port == servicePort (Envoy listen) with no matching container port
+	st = &enginev1alpha1.ShadowTest{
+		Spec: enginev1alpha1.ShadowTestSpec{
+			ServicePort:     8888,
+			ApplicationPort: 8080,
+			Inputs:          []enginev1alpha1.InputSpec{{Port: 8888, Driver: "http_request"}},
+		},
+	}
+	depNoPorts := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "app"}},
+				},
+			},
+		},
+	}
+	if !siphonEnabled(st, depNoPorts) {
+		t.Fatal("http_request on servicePort should enable siphon even without container ports")
+	}
+	ports := siphonIngressPorts(st)
+	if len(ports) != 1 || ports[0] != 8080 {
+		t.Fatalf("expected Pixie target port applicationPort 8080, got %v", ports)
 	}
 
 	st = &enginev1alpha1.ShadowTest{

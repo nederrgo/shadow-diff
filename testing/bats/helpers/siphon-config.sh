@@ -60,8 +60,7 @@ _ensure_shadow_siphon_deployment() {
   kubectl apply -n "$shadow_ns" -f "$tmp"
   rm -f "$tmp"
   kubectl rollout status deployment/siphon -n "$shadow_ns" --timeout=120s
-  kubectl patch service/siphon -n "$shadow_ns" --type=merge \
-    -p '{"spec":{"selector":{"app.kubernetes.io/name":"siphon"}}}' >/dev/null
+  kubectl get service/siphon -n "$shadow_ns" >/dev/null
   echo "    siphon OTLP receiver ready in ${shadow_ns} -> igris ${igris_url}"
 }
 

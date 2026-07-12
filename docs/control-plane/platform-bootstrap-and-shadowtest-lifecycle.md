@@ -4,7 +4,7 @@ title: Platform Bootstrap and ShadowTest Lifecycle
 description: How to install Monarch, Pixie Vizier, and pixie-stream-bridge once; create and delete ShadowTests without resetting Pixie.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [operations, control-plane, monarch, pixie, pixiestreamrule, shadowtest, deployment]
-timestamp: 2026-07-06T10:45:00Z
+timestamp: 2026-07-12T14:20:00Z
 ---
 
 # Platform Bootstrap and ShadowTest Lifecycle
@@ -151,8 +151,9 @@ Example fields: `targetDeployment`, `oldImage` / `newImage`, `inputs`, `dependen
 
 | Field | When set | OTLP destination |
 |-------|----------|------------------|
-| `spec.otelEndpoint` | HTTP ingress capture | `siphon.<shadow-ns>.svc.cluster.local:4317` |
-| `spec.recorderOtelEndpoint` | `spec.recordAndReplay` | `<shadowtest>-recorder.<shadow-ns>:4317` |
+| `spec.otelEndpoint` | HTTP ingress Siphon enabled (`http_request`/`tcp_stream` on servicePort, applicationPort, or container port) | `siphon.<shadow-ns>.svc.cluster.local:4317` |
+| `spec.targetPorts` | When ingress Siphon enabled | `applicationPort` (prod app port for Pixie `local_port`, not Envoy `servicePort`) |
+| `spec.recorderOtelEndpoint` | Always (Shop+Recorder always-on; no `spec.recordAndReplay` field) | `<shadowtest>-recorder.<shadow-ns>:4317` |
 | `spec.mongoOtelEndpoint` | MongoDB `dependencies[]` | `beru-local.<shadow-ns>.svc.cluster.local:4317` |
 | `spec.shadowNamespace` | MongoDB dependency | Filters mongo PxL to shadow pods only |
 

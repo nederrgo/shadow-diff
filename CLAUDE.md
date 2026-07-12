@@ -64,14 +64,14 @@ L1  Capture                 Siphon (HTTP via Pixie eBPF) / igris-rabbitmq (AMQP 
 L2  Ingress hub             igris-http (HTTP/TCP multicast) or igris-rabbitmq (AMQP fan-out)
 L3  Shadow stack            3× app Deployment + Envoy sidecar + ephemeral deps per role
 L4a AMQP egress             egress-relay-rabbitmq (Firehose → Beru)
-L4b HTTP egress             Recorder (Pixie egress OTLP → Beru mock store)
-L5  Analysis sink           Beru (diff-of-diffs, SQLite, dashboard, mock replay)
+L4b HTTP egress             Recorder (Pixie egress OTLP → Shop mock store)
+L5  Analysis sink           Beru (diff-of-diffs, SQLite, dashboard) + Shop (per-ShadowTest HTTP egress mock store)
 ```
 
 ### Key components
 
 **`pipeline/monarch/`** — Kubebuilder operator (`github.com/shadow-diff/monarch`)  
-Reconcile flow: validate → shadow namespace → dependencies → igris → 3× shadow deployments + Envoy ConfigMaps → Recorder (if `spec.recordAndReplay`) → PixieStreamRule → status patch.  
+Reconcile flow: validate → shadow namespace → dependencies → igris → 3× shadow deployments + Envoy ConfigMaps → Shop + Recorder (always-on) → PixieStreamRule → status patch.  
 Shadow namespace is always `shadow-<crNamespace>-<crName>`.  
 Key files: `internal/controller/shadowtest_controller.go` (main loop), `shadowtest_envoy.go` (Envoy YAML rendering), `shadowtest_dependencies.go` (dep env injection), `shadowtest_siphon.go` (PixieStreamRule), `shadowtest_beru_local.go` (per-ShadowTest beru-local pod).
 
@@ -90,8 +90,11 @@ Consumes the Monarch-declared shadow queue on the prod broker, republishes to 3�
 **`pipeline/siphon/`** — Pixie ingress bridge  
 Receives compressed OTLP gRPC from pixie-stream-bridge on `:4317`, parses span attributes → `HTTPRecord`, POSTs to igris-http.
 
+**`pipeline/shop/`** — Per-ShadowTest HTTP egress mock store  
+In-memory mock store deployed by Monarch into each shadow namespace alongside Recorder. gRPC ext_proc on `:50051` (Envoy egress replay), HTTP `:8080` (`POST /v1/record_egress` seeding). Mocks keyed by `trace:<traceID>:<METHOD>:<host>:<path>`.
+
 **`pipeline/recorder/`** — Prod HTTP egress recorder  
-Accepts Pixie egress OTLP on `:4317`, filters by `recordAndReplay.json`, POSTs `RecordPayload` to Beru's `/v1/record_egress`.
+Accepts Pixie egress OTLP on `:4317`, unconditionally forwards all HTTP spans to Shop's `/v1/record_egress` (always-on; no host filter).
 
 **`pipeline/egress-relay-rabbitmq/`** — AMQP egress relay  
 Subscribes to Firehose on each shadow broker, deduplicates (OTel pika double-publish), POSTs to `/api/v1/egress/diff` on Beru.

@@ -1,15 +1,17 @@
 ---
 type: Architecture Specification
 title: Egress Record and Replay
-description: How Shadow-Diff captures production HTTP egress via Pixie, seeds the Shop mock store, and replays responses to shadow workers through Envoy's egress ext_proc.
+description: How Shadow-Diff captures production HTTP egress via Pixie dual-branch export (client + server), seeds Shop with Put dedup, and replays via Envoy egress ext_proc. No ShadowTest recordAndReplay field.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/recorder
 tags: [data-plane, recorder, shop, envoy, pixie, egress, replay]
-timestamp: 2026-07-10T00:00:00Z
+timestamp: 2026-07-12T15:35:00Z
 ---
 
 # Egress Record and Replay
 
 Shadow workers cannot call real downstream services — doing so would produce side effects in production systems. Instead, the record-and-replay pipeline captures what the **production worker** actually received from each downstream service and replays those exact responses to shadow workers, scoped to the same trace.
+
+**There is no `spec.recordAndReplay` field.** Monarch always deploys Shop + Recorder into each shadow namespace. Recorder unconditionally forwards every OTLP HTTP span to Shop.
 
 ## Why this exists
 
@@ -40,7 +42,7 @@ The diff-of-diffs model requires all three roles (control-a, control-b, candidat
 
 ### Recorder (`pipeline/recorder/`)
 
-L4b pipeline service. Accepts OTLP gRPC on `:4317` from the Pixie egress PxL. For each span it extracts:
+L4b pipeline service. Always deployed by Monarch. Accepts OTLP gRPC on `:4317` from the Pixie egress PxL. For each span it extracts:
 
 | Span attribute | Field |
 |---|---|
@@ -57,11 +59,11 @@ The Recorder normalises the host with `NormalizeHTTPHost` (lowercase, port strip
 shop client: recorded POST <host><path> -> <status>
 ```
 
-**Always-on capture**: The Recorder's `recordAndReplay.json` config is always written as `[]` (empty array) by Monarch, which `HostMatches` treats as capture-all — no host allowlist is needed.
+No host allowlist ConfigMap — every span is forwarded.
 
 ### Shop (`pipeline/shop/`)
 
-In-memory mock store. Two interfaces:
+Always-on in-memory mock store. Two interfaces:
 
 | Endpoint | Caller | Purpose |
 |---|---|---|
@@ -69,11 +71,11 @@ In-memory mock store. Two interfaces:
 | `POST /v1/seed_mock` | Manual / test scripts | Seed a mock directly |
 | `GET /healthz` | Kubernetes probe | Liveness check |
 
-Envoy egress ext_proc holds a direct reference to the Shop mock map (`replay.MockStore`) — lookups are in-process, not over HTTP.
+Envoy egress `shop_ext_proc` looks up mocks by trace-keyed host/path (gRPC `:50051`).
 
 ### Envoy egress ext_proc (`pipeline/shop/internal/envoyextproc/egress.go`)
 
-Intercepts outbound HTTP from shadow workers at the Envoy egress listener. On every request:
+Intercepts outbound HTTP from shadow workers at the Envoy egress listener (`127.0.0.1:10001`, iptables redirect). On every request:
 
 1. Extract `:authority` (or `host`) header → `host`
 2. Extract `:method`, `:path`, `traceparent` headers
@@ -81,7 +83,7 @@ Intercepts outbound HTTP from shadow workers at the Envoy egress listener. On ev
 4. If key found → `immediateResponse(mock.StatusCode, mock.Headers, mock.Body)`
 5. If key not found → `immediateResponse(599, ..., "Egress Regression")`
 
-Status 599 is the "miss" signal. Shadow workers are expected to retry on 599 while the Recorder is still seeding (the prod worker processes first, Pixie exports a few seconds later, then the seed arrives at Shop).
+Status 599 is the "miss" signal. Shadow workers are expected to retry on 599 while the Recorder is still seeding.
 
 ---
 
@@ -91,70 +93,60 @@ Status 599 is the "miss" signal. Shadow workers are expected to retry on 599 whi
 trace:<traceID>:<METHOD>:<host>:<path>
 ```
 
-- `traceID` — 32 hex chars, from W3C `traceparent` (`00-<traceID>-<spanID>-<flags>`)
-- `METHOD` — uppercased (`POST`, `GET`, …)
-- `host` — **no port** (both seed and lookup apply `HostWithoutPort`)
+- `traceID` — 32 hex chars, from W3C `traceparent`
+- `METHOD` — uppercased
+- `host` — **no port**
 - `path` — verbatim, leading `/` enforced
-
-Example:
-```
-trace:375fd9eab5e0b4903e5b0915ea06c12b:POST:user-service-python.default.internal:/v1/log
-```
-
-The "no port" rule is enforced at both ends:
-- **Seed path**: `NormalizeHTTPHost` in the Recorder strips port before calling Shop; Shop's `putMockFromRequest` additionally applies `replay.HostWithoutPort` as a belt-and-suspenders measure.
-- **Lookup path**: ext_proc applies `replay.HostWithoutPort` to the `:authority` header (which may include the port from the shadow worker's `Host` header).
 
 ---
 
 ## Provisioning (Monarch)
 
-Monarch provisions one Shop + one Recorder per shadow namespace, always, regardless of what fields appear in the ShadowTest spec. The reconcile sequence after shadow workloads are ready:
+Always, for every ShadowTest:
 
 ```
-reconcileShop        → Shop Deployment + Service
-shopDeploymentReady  → requeue until available
-reconcileRecorderStack → ConfigMap (recordAndReplay.json = "[]") + Deployment + Service
+reconcileShop           → Shop Deployment + Service
+shopDeploymentReady     → requeue until available
+reconcileRecorderStack  → Recorder Deployment + Service (SHOP_HTTP_URL → Shop)
 recorderDeploymentReady → requeue until available
 ```
 
-The PixieStreamRule always has `spec.recorderOtelEndpoint` set, which signals the pixie-stream-bridge to render and run the egress PxL for this ShadowTest.
+`PixieStreamRule.spec.recorderOtelEndpoint` is always set so pixie-stream-bridge runs the egress PxL.
 
 ---
 
 ## Pixie Egress PxL
 
-The bridge renders an egress PxL file at:
+Bridge renders:
+
 ```
 $PIXIE_BRIDGE_STATE_DIR/<ns>-pixie-<shadowtest>-egress.pxl
 ```
 
-The PxL queries `http_events` from the **prod namespace** and exports OTLP to the Recorder's `:4317` endpoint. The `traceparent` header is embedded in each span so the Recorder can extract the correct trace ID.
+The PxL queries `http_events` in the **prod namespace** (`targetNamespace`) and exports OTLP to Recorder `:4317`.
 
-`wait_recorder_seed` (in bats) polls the Recorder logs for the seed confirmation line and triggers `run_pixie_export_once` on each iteration to drain any buffered Pixie data.
+**Dual-branch export** (PxL has no reliable OR — two `px.export`s):
+
+| Branch | Filter | Covers |
+|--------|--------|--------|
+| Client / external | `trace_role == 1` + worker `app` pod contains | Outside HTTP |
+| Server / in-cluster | `trace_role == 2` + `client_pod` from `remote_addr` contains worker `app` | In-cluster HTTP |
+
+Worker identity comes from `PixieStreamRule.targetLabels` (copied from the target Deployment). When both sides seed the same Shop key, `MockStore.Put` keeps the **first 2xx**.
+
+`wait_recorder_seed` (bats) polls Recorder logs for `shop client: recorded POST …` and nudges `px run` on the egress PxL.
 
 ---
 
 ## Data Flow (Sequence)
 
 ```
-1.  Prod worker receives RMQ message (traceparent header: 00-<TRACE_ID>-...-01)
-2.  Prod worker calls downstream: POST http://user-service:8080/v1/log
-    ↳ Host header: user-service-python.default.internal:8080
-3.  Pixie eBPF captures the HTTP event, PxL stamps traceparent attribute
-4.  PxL exports OTLP span to Recorder :4317
-5.  Recorder: NormalizeHTTPHost → "user-service-python.default.internal"
-6.  Recorder: POST Shop /v1/record_egress {trace_id, method, host (no port), path, response}
-7.  Shop stores: key = "trace:<TRACE_ID>:POST:user-service-python.default.internal:/v1/log"
-
---- igris-rabbitmq fans out message to shadow workers ---
-
-8.  Shadow worker receives message (same traceparent)
-9.  Shadow worker calls: POST http://egress-proxy/v1/log
-    ↳ Host header: user-service-python.default.internal:8080
-10. Envoy ext_proc: HostWithoutPort(":authority") → "user-service-python.default.internal"
-11. Envoy ext_proc: key lookup → hit → immediateResponse(200, ..., <recorded body>)
-12. Shadow worker sees 200, proceeds normally
+1.  Prod worker receives RMQ message (traceparent header)
+2.  Prod worker calls downstream with Host = logical replay hostname
+3.  Pixie captures http_events (client-side and/or server-side by destination)
+4.  Dual-branch egress PxL exports OTLP → Recorder :4317
+5.  Recorder → Shop POST /v1/record_egress (Shop Put dedups by mock key)
+6.  Shadow worker (same trace) hits Envoy :10001 → shop_ext_proc mock lookup
 ```
 
 ---
@@ -164,21 +156,19 @@ The PxL queries `http_events` from the **prod namespace** and exports OTLP to th
 | Condition | Observed behaviour |
 |---|---|
 | Shop not seeded yet (Pixie lag) | ext_proc returns 599; shadow worker retries |
-| Pixie vizier not healthy | `wait_recorder_seed` times out; bats test skips |
-| Recorder not started | 599 on every shadow request; no seed ever arrives |
-| Host port mismatch (seed vs lookup) | 599 on every shadow request; keys don't match |
-| `failure_mode_allow: true` on ingress ext_proc | Ingress requests pass even if beru-local is down |
+| Pixie vizier not healthy | seed timeout / skip |
+| Host port mismatch (seed vs lookup) | 599; keys don't match |
+| `failure_mode_allow: true` on ingress ext_proc | Ingress passes even if beru-local is down |
 
 ---
 
 # Citations
 
-- Recorder OTLP receiver: [`pipeline/recorder/internal/receiver/otel_receiver.go`](../../pipeline/recorder/internal/receiver/otel_receiver.go)
-- Shop HTTP API (seed + record): [`pipeline/shop/internal/api/http.go`](../../pipeline/shop/internal/api/http.go)
+- Recorder OTLP: [`pipeline/recorder/internal/receiver/otel_receiver.go`](../../pipeline/recorder/internal/receiver/otel_receiver.go)
+- Shop HTTP API: [`pipeline/shop/internal/api/http.go`](../../pipeline/shop/internal/api/http.go)
 - Envoy egress ext_proc: [`pipeline/shop/internal/envoyextproc/egress.go`](../../pipeline/shop/internal/envoyextproc/egress.go)
-- Mock key format: [`pipeline/shop/internal/replay/keys.go`](../../pipeline/shop/internal/replay/keys.go)
-- Host normalisation (Recorder): [`pipeline/recorder/internal/parse/parser.go`](../../pipeline/recorder/internal/parse/parser.go)
-- Monarch provisioning: [`pipeline/monarch/internal/controller/shadowtest_recorder.go`](../../pipeline/monarch/internal/controller/shadowtest_recorder.go)
+- Mock keys: [`pipeline/shop/internal/replay/keys.go`](../../pipeline/shop/internal/replay/keys.go)
+- Shop Put dedup: [`pipeline/shop/internal/replay/mockstore.go`](../../pipeline/shop/internal/replay/mockstore.go)
+- Egress PxL template: [`testing/bats/manifests/pixie-bridge/configmap.yaml`](../../testing/bats/manifests/pixie-bridge/configmap.yaml)
+- Monarch Recorder: [`pipeline/monarch/internal/controller/shadowtest_recorder.go`](../../pipeline/monarch/internal/controller/shadowtest_recorder.go)
 - Bats seed helper: [`testing/bats/lib/traffic.bash`](../../testing/bats/lib/traffic.bash) — `wait_recorder_seed`
-</content>
-</invoke>

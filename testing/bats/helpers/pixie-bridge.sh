@@ -310,26 +310,28 @@ pixie_pxl_template() {
 
 _render_pixie_pxl() {
   local rule_json="$1" out="$2" kind="$3"
-  local labels excludes ports hosts label_lines exclude_lines port_lines host_lines tpl tmp_rule
+  local labels excludes ports hosts label_lines exclude_lines port_lines host_lines remote_client_lines tpl tmp_rule
   labels=$(echo "$rule_json" | jq -c '.spec.targetLabels // {}')
   excludes=$(echo "$rule_json" | jq -c '.spec.excludePaths // []')
   ports=$(echo "$rule_json" | jq -c '.spec.targetPorts // []')
   hosts=$(echo "$rule_json" | jq -c '.spec.recordAndReplayHosts // []')
   exclude_lines=$(pixie_exclude_path_lines "$excludes")
+  remote_client_lines="# no remote client filters"
   if [[ "$kind" == "ingress" ]]; then
     label_lines=$(pixie_label_filter_lines "$labels")
     port_lines=$(pixie_port_filter_lines "$ports")
     host_lines="# ingress: prod pod label filters"
   else
     label_lines=$(pixie_label_filter_lines "$labels")
+    remote_client_lines=$(pixie_remote_client_filter_lines "$labels")
     port_lines="# egress: no local_port filter"
-    host_lines="# egress: scoped by target pod labels"
+    host_lines="# egress: dual-branch client+server"
   fi
   tpl=$(pixie_pxl_template "$kind")
   mkdir -p "$(dirname "$out")"
   tmp_rule=$(mktemp)
   printf '%s' "$rule_json" >"$tmp_rule"
-  PIXL_TPL="$tpl" PIXL_KIND="$kind" PIXL_LABELS="$label_lines" PIXL_EXCLUDES="$exclude_lines" PIXL_PORTS="$port_lines" PIXL_EGRESS_HOSTS="$host_lines" \
+  PIXL_TPL="$tpl" PIXL_KIND="$kind" PIXL_LABELS="$label_lines" PIXL_REMOTE_CLIENT="$remote_client_lines" PIXL_EXCLUDES="$exclude_lines" PIXL_PORTS="$port_lines" PIXL_EGRESS_HOSTS="$host_lines" \
     python3 - "$tmp_rule" "$out" <<'PY'
 import json, sys, os
 
@@ -342,6 +344,7 @@ text = tpl.replace('__TARGET_NAMESPACE__', spec.get('targetNamespace', 'default'
 text = text.replace('__OTEL_ENDPOINT__', spec.get('otelEndpoint', ''))
 text = text.replace('__RECORDER_OTEL_ENDPOINT__', spec.get('recorderOtelEndpoint', ''))
 text = text.replace('__LABEL_FILTERS__', os.environ.get('PIXL_LABELS', '').strip())
+text = text.replace('__REMOTE_CLIENT_FILTERS__', os.environ.get('PIXL_REMOTE_CLIENT', '').strip())
 text = text.replace('__EXCLUDE_PATH_FILTERS__', os.environ.get('PIXL_EXCLUDES', '').strip())
 text = text.replace('__PORT_FILTERS__', os.environ.get('PIXL_PORTS', '').strip())
 text = text.replace('__EGRESS_HOST_FILTERS__', os.environ.get('PIXL_EGRESS_HOSTS', '').strip())
@@ -404,6 +407,22 @@ pixie_label_filter_lines() {
     fi
     echo "$line"
   done
+}
+
+# Server-side egress: remote_addr is the client; keep rows whose client pod matches worker app.
+pixie_remote_client_filter_lines() {
+  local labels_json="$1"
+  if [[ -z "$labels_json" || "$labels_json" == "null" ]]; then
+    echo "# no remote client filters"
+    return 0
+  fi
+  local app
+  app=$(echo "$labels_json" | jq -r '.app // empty' 2>/dev/null || true)
+  if [[ -z "$app" ]]; then
+    echo "# no remote client filters"
+    return 0
+  fi
+  echo "df = df[px.contains(df.client_pod, '${app}')]"
 }
 
 pixie_exclude_path_lines() {

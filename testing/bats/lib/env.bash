@@ -24,6 +24,7 @@ bats_init_env() {
   export NODEJS_HYBRID_WORKER_IMG="${NODEJS_HYBRID_WORKER_IMG:-nodejs-hybrid-worker:dev}"
   export HTTP_RMQ_PYTHON_WORKER_IMG="${HTTP_RMQ_PYTHON_WORKER_IMG:-http-rmq-python-worker:dev}"
   export HTTP_RMQ_NODEJS_WORKER_IMG="${HTTP_RMQ_NODEJS_WORKER_IMG:-http-rmq-test-app:dev}"
+  export HTTP_RMQ_GO_WORKER_IMG="${HTTP_RMQ_GO_WORKER_IMG:-http-rmq-go-worker:dev}"
   export IGRIS_RABBITMQ_IMG="${IGRIS_RABBITMQ_IMG:-igris-rabbitmq:dev}"
   export EGRESS_RELAY_RABBITMQ_IMG="${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:dev}"
   export MONGO_IMAGE="${MONGO_IMAGE:-mongo:4.4}"

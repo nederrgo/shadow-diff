@@ -16,7 +16,7 @@ For each `ShadowTest`, Monarch reconciles resources in two places:
 |----------|-----------|
 | **Shadow namespace** `shadow-<cr-namespace>-<cr-name>` | `<name>-control-a`, `-control-b`, `-candidate` Deployments + Services (Envoy sidecar + app) |
 | Same shadow namespace | **Igris** Deployment + Service (HTTP/TCP ingress) *or* **igris-rabbitmq** (AMQP ingress) |
-| Same shadow namespace | **Recorder** Deployment + ConfigMap (when `spec.recordAndReplay` is set) |
+| Same shadow namespace | **Recorder** Deployment + ConfigMap (always (Shop+Recorder always-on)) |
 | Same shadow namespace | **egress-relay-rabbitmq** Deployment (ShadowTests with a RabbitMQ `dependencies[]` entry, or AMQP ingress) |
 | Same shadow namespace | Per-role **dependency** Deployments + Services (Redis, RabbitMQ, etc.) |
 | **`siphon-system`** (cluster-wide) | **Siphon** DaemonSet (shared; image from `spec.siphon.image`) |
@@ -157,7 +157,7 @@ spec:
 
 ### Full HTTP + Siphon + egress example
 
-See `testing/bats/manifests/e2e-shadowtest.yaml` — `inputs`, `recordAndReplay`, optional ports only (no `igris` / `siphon` / `recorder` image blocks when `MONARCH_MODE=dev` is set on the operator).
+See `testing/bats/manifests/e2e-shadowtest.yaml` — `inputs`, optional ports only (no `igris` / `siphon` / `recorder` image blocks when `MONARCH_MODE=dev` is set on the operator).
 
 ```bash
 kubectl apply -f testing/bats/manifests/e2e-shadowtest.yaml
@@ -165,7 +165,7 @@ kubectl apply -f testing/bats/manifests/e2e-shadowtest.yaml
 
 ### RabbitMQ (AMQP-only) example
 
-When `inputs[].driver` is `rabbitmq_message`, Monarch skips HTTP Igris and deploys **igris-rabbitmq** + **egress-relay-rabbitmq** (if `recordAndReplay` is set). See `testing/bats/manifests/rabbitmq-e2e/shadowtest-rmq.yaml`.
+When `inputs[].driver` is `rabbitmq_message`, Monarch skips HTTP Igris and deploys **igris-rabbitmq** + **egress-relay-rabbitmq** . See `testing/bats/manifests/rabbitmq-e2e/shadowtest-rmq.yaml`.
 
 ---
 
@@ -217,23 +217,22 @@ Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`** and se
 
 | Field | Description |
 |-------|-------------|
-| `siphon.enabled` | `true` enables capture; **`false` disables**. When omitted, Siphon is **on** if `spec.recordAndReplay` is set, ingress port matches the target container port, or `enabled: true` is explicit — otherwise **off** |
+| `siphon.enabled` | `true` enables capture; **`false` disables**. When omitted, Siphon is **on** if an HTTP/TCP input port matches `servicePort`, `applicationPort`, or a declared container port — otherwise **off** |
 | `siphon.image` | DaemonSet image (default `siphon:latest` / `siphon:dev`) |
 | `siphon.sampleRate` | Percentage of new TCP flows to sample (0–100; default `100`) |
 
-Monarch POSTs merged config to each Siphon agent (`targets`, `recordAndReplay`, `recorder_host`, prod pod IPs). **`status.siphonPhase`**: `Ready`, `Degraded`, or `Disabled`.
+Monarch reconciles `PixieStreamRule` + shadow `Service/siphon` for HTTP ingress. **`status.siphonPhase`**: `Ready`, `Degraded`, or `Disabled`.
 
-### Egress — `recordAndReplay`, `recorder`
+### Egress — Shop + Recorder (always-on)
 
 | Field | Description |
 |-------|-------------|
-| `recordAndReplay[]` | Outbound hosts trapped by shadow egress Envoy → Beru replay |
-| `recordAndReplay[].host` | Hostname (`:authority` / `Host`) |
-| `recordAndReplay[].ignoreRequestPaths` | JSONPath fields stripped before egress hash (e.g. `$.timestamp`) |
-| `recorder` | Optional override for **Recorder** image when `recordAndReplay` is non-empty |
+| `shop` / `recorder` | Optional image overrides for always-on Shop + Recorder |
+
+**Removed:** `spec.recordAndReplay` — Recorder forwards all OTLP HTTP spans to Shop; Envoy `shop_ext_proc` always does egress mock lookup.
 | `recorder.image` | Default `recorder:latest` / `recorder:dev` |
 
-When `recordAndReplay` is set, Monarch deploys Recorder in the shadow namespace and configures Siphon to relay prod egress bytes to it.
+Monarch always deploys Shop then Recorder in the shadow namespace. Pixie egress OTLP seeds Shop via Recorder.
 
 ### Ephemeral dependencies — `dependencies`
 
@@ -300,7 +299,8 @@ Expected Deployments in the shadow namespace (varies by spec):
 | `<name>-control-a`, `-control-b`, `-candidate` | Always |
 | `<name>-igris` | HTTP/TCP `inputs` (not AMQP-only) |
 | `<name>-igris-rabbitmq` | `rabbitmq_message` input |
-| `<name>-recorder` | `spec.recordAndReplay` non-empty |
+| `<name>-recorder` | Always |
+| `shop` | Always |
 | `<name>-egress-relay-rabbitmq` | RabbitMQ `dependencies[]` (HTTP or AMQP ingress) |
 | `<dep>-control-a`, etc. | Each `spec.dependencies` entry |
 
@@ -374,7 +374,7 @@ See `testing/tools/e2e-reset-minikube.sh` and `testing/bats/manifests/e2e-shadow
 |---------|----------------|------------|
 | `phase: Failed`, target not found | Wrong `targetDeployment` / `targetNamespace` | Fix spec; ensure Deployment exists |
 | `waiting for egress-relay-rabbitmq` | Image not loaded (Kind) | Build/load `egress-relay-rabbitmq:dev`; ensure `MONARCH_MODE=dev` on operator |
-| No `HTTP_PROXY` / `egress_stub` with `spec.recordAndReplay` | Stale `monarch:dev` binary (Docker cache) | `MONARCH_NO_CACHE=1` rebuild; `kind load`; rollout-restart manager |
+| Stale `monarch:dev` (Docker cache) after controller changes | Pod still on old image digest | `docker build --no-cache` + `kubectl rollout restart` manager |
 | `siphonPhase: Degraded` | Agent unreachable or bad config | Check `siphon-system` pods; Monarch logs; node hostIP reachability |
 | Pods `ImagePullBackOff` | Missing image in cluster/registry | Fix image tags; `kind load docker-image ...` for local dev |
 | Shadow apps without OTel sidecar | Webhook fail-open or `otelInjection.enabled: false` | Install OTel operator or disable injection explicitly |

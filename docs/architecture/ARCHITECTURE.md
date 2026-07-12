@@ -1,3 +1,12 @@
+---
+type: Architecture Specification
+title: Shadow-Diff Architecture
+description: Layer stack and data flows for Shadow-Diff; always-on Shop+Recorder (no spec.recordAndReplay); Pixie ingress/egress/mongo capture.
+resource: https://github.com/shadow-diff/monarch
+tags: [architecture, monarch, beru, shop, recorder, pixie, siphon]
+timestamp: 2026-07-12T15:35:00Z
+---
+
 # Shadow-Diff — Architecture
 
 Shadow-Diff is an open-source differential testing framework for Kubernetes. It replays captured or synthetic traffic across **three isolated shadow workloads** (two identical controls plus a candidate) and compares responses to find regressions while filtering non-deterministic noise.
@@ -25,7 +34,7 @@ Each service is a separate Go module. The repo root [`Makefile`](../../Makefile)
 
 ## Architecture layers
 
-Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that wires them from a single `ShadowTest` CR. **Beru** is always the analysis sink. **Shop** is the optional per-ShadowTest mock store for HTTP egress replay. The **egress record/replay layer** activates when downstream hosts are configured in `spec.recordAndReplay`.
+Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that wires them from a single `ShadowTest` CR. **Beru** is always the analysis sink. **Shop** + **Recorder** are always deployed per ShadowTest for HTTP egress record/replay (no `spec.recordAndReplay` field).
 
 ### Layer stack
 
@@ -39,7 +48,7 @@ Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that w
 │                     • HTTP ingress → Pixie eBPF → OTLP → Siphon → Igris     │
 │                     • AMQP → RabbitMQ native routing (shadow queue bind)      │
 │                     • HTTP egress record → Pixie eBPF → OTLP → Recorder     │
-│                       (when spec.recordAndReplay is set)                    │
+│                       (always-on Shop + Recorder per shadow namespace)         │
 └───────────────────────────────────┬─────────────────────────────────────────┘
                                     │
 ┌───────────────────────────────────▼─────────────────────────────────────────┐
@@ -78,7 +87,7 @@ Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that w
         └──────────────────────────────────────────────────────────┘
 ```
 
-**L1 — capture is input-driven.** HTTP **ingress** uses **Pixie** eBPF on prod pods: Monarch writes a `PixieStreamRule` with `otelEndpoint`, **pixie-stream-bridge** runs ingress `px.export` OTLP to per-shadow **Siphon** (`:4317`), and Siphon POSTs parsed requests to Igris. HTTP **egress record** (when `spec.recordAndReplay` is set) uses the same Pixie PEM with a separate egress PxL export: OTLP traces go to shadow **Recorder** (`:4317`), which seeds **Shop**'s mock store via `POST /v1/record_egress`. RabbitMQ ingress uses **broker-native routing** (Monarch binds a shadow queue on the prod broker — no Pixie on the AMQP path).
+**L1 — capture is input-driven.** HTTP **ingress** uses **Pixie** eBPF on prod pods: Monarch writes a `PixieStreamRule` with `otelEndpoint` when HTTP/TCP inputs enable Siphon, **pixie-stream-bridge** runs ingress `px.export` OTLP to per-shadow **Siphon** (`:4317`), and Siphon POSTs parsed requests to Igris. HTTP **egress record** is always-on: the same Pixie PEM runs a dual-branch egress PxL export to shadow **Recorder** (`:4317`), which seeds **Shop** via `POST /v1/record_egress` (Shop Put keeps first 2xx). RabbitMQ ingress uses **broker-native routing** (Monarch binds a shadow queue on the prod broker — no Pixie on the AMQP path).
 
 **L4a — analysis ingest is workload-driven.** HTTP ingress responses reach Beru through **Envoy ingress `ext_proc`**. MongoDB egress is captured by **Pixie eBPF on the MongoDB server pods** (server-side events, `trace_role == 2`) and exported via `pixie-stream-bridge` as OTLP to the per-ShadowTest **beru-local** OTLP port `:4317` — the traceparent injected into the MongoDB `$comment` field correlates each write to its shadow trace. When shadow workers **publish AMQP messages**, **egress-relay-rabbitmq** reads RabbitMQ Firehose on each **shadow broker** and posts egress diff reports to Beru.
 
@@ -99,12 +108,12 @@ Synthetic tests can skip Pixie/Siphon and send traffic directly to Igris.
 
 | Step | Layer | Component | What happens |
 |------|-------|-----------|--------------|
-| 1 | Production | Target pods | Outbound HTTP to a configured downstream (`Host` must match `spec.recordAndReplay`) |
-| 2 | Capture | **Pixie PEM** + **pixie-stream-bridge** | Egress PxL filters `http_events` by `req_host`; `px.export` OTLP to Recorder |
-| 3 | Capture | **Recorder** | OTLP gRPC `:4317` (gzip) → parse span attrs (`http.host`, bodies, status) → `POST /v1/record_egress` to **Shop** |
-| 4 | Replay prep | **Shop** | In-memory mock store keyed by `trace:<traceID>:<METHOD>:<host>:<path>` — shadow apps replay via Envoy egress `:10001` → Shop gRPC ext_proc |
+| 1 | Production | Target / downstream pods | Outbound HTTP (logical `Host` header for Shop keying) |
+| 2 | Capture | **Pixie PEM** + **pixie-stream-bridge** | Dual-branch egress PxL: `trace_role==1` on worker (external) + `trace_role==2` scoped by remote client pod (in-cluster) |
+| 3 | Capture | **Recorder** (always-on) | OTLP gRPC `:4317` → parse span attrs → `POST /v1/record_egress` to **Shop** (all hosts) |
+| 4 | Replay prep | **Shop** (always-on) | Mock store keyed by `trace:<traceID>:<METHOD>:<host>:<path>` — Envoy `:10001` → Shop gRPC ext_proc |
 
-Monarch sets `PixieStreamRule.recorderOtelEndpoint` to `<shadowtest>-recorder.<shadow-ns>.svc.cluster.local:4317` and `recordAndReplayHosts` from `spec.recordAndReplay`. **pixie-stream-bridge** runs ingress and egress exports independently when the rule exposes both endpoints.
+Monarch always sets `PixieStreamRule.recorderOtelEndpoint` to `<shadowtest>-recorder.<shadow-ns>.svc.cluster.local:4317`. There is no `recordAndReplayHosts` field. **pixie-stream-bridge** runs ingress and egress exports independently when the corresponding endpoints are set. See [/data-plane/egress-record-replay.md](/data-plane/egress-record-replay.md).
 
 ### RabbitMQ ingress path
 
@@ -144,7 +153,7 @@ When downstream hosts are configured, two parallel mechanisms apply:
 | Path | Flow | Purpose |
 |------|------|---------|
 | **Shadow HTTP replay** | Shadow app → `HTTP_PROXY` → Envoy **:10001** → **Shop** gRPC ext_proc | Strict replay: look up mock by trace ID + request, return recorded response or **599** on miss |
-| **Prod HTTP auto-record** | Prod pod → **Pixie** egress export → **Recorder** OTLP `:4317` → **Shop** `POST /v1/record_egress` | Seed Shop from real prod outbound HTTP (`Host` must match `spec.recordAndReplay`) |
+| **Prod HTTP auto-record** | Prod path → **Pixie** egress export → **Recorder** OTLP `:4317` → **Shop** `POST /v1/record_egress` | Always-on seed of Shop from prod outbound HTTP |
 | **Shadow AMQP egress diff** | Shadow publish → broker Firehose → **egress-relay-rabbitmq** → Beru | Compare outbound AMQP publishes across the three roles |
 
 **egress-relay-rabbitmq** observes **shadow** broker publishes for diff analysis. Prod HTTP auto-record is **Pixie → Recorder → Shop**, not Siphon TCP relay. Shop is deployed by Monarch per-ShadowTest into the shadow namespace alongside Recorder.
@@ -359,7 +368,7 @@ sequenceDiagram
   participant Sh as Shadow app
   participant E as Envoy egress
 
-  P->>P: outbound HTTP (Host matches recordAndReplay)
+  P->>P: outbound HTTP (logical Host for Shop key)
   Pix->>Br: http_events egress query
   Br->>R: px.export OTLP traces
   R->>S: POST /v1/record_egress
@@ -387,7 +396,7 @@ Beru and Shop receive shadow traffic through **complementary ingest paths**:
 
 ### Monarch
 
-Kubebuilder operator in `monarch-system`. Reads `ShadowTest` and materializes the full pipeline: shadow namespace, three app Deployments with Envoy sidecars, ingress hub (Igris or igris-rabbitmq), **`PixieStreamRule`** (ingress `otelEndpoint` and/or egress `recorderOtelEndpoint` + `recordAndReplayHosts` + `mongoOtelEndpoint`) + shadow **`Service/siphon`**, optional Shop + Recorder + egress-relay-rabbitmq, and ephemeral dependencies (Redis, RabbitMQ with Firehose tracing, MongoDB, etc.) per role. When `spec.recordAndReplay` is set, Monarch deploys **Shop** first (waits for readiness), then **Recorder** (with `SHOP_HTTP_URL` pointing at Shop), and adds the `shop_ext_proc` cluster to each shadow pod's Envoy config. Does **not** deploy Pixie Vizier, pixie-stream-bridge, the Siphon OTLP Deployment, or the cluster-wide Beru — those are installed separately.
+Kubebuilder operator in `monarch-system`. Reads `ShadowTest` and materializes the full pipeline: shadow namespace, three app Deployments with Envoy sidecars, ingress hub (Igris or igris-rabbitmq), **`PixieStreamRule`** (ingress `otelEndpoint` when HTTP capture is enabled; always `recorderOtelEndpoint`; `mongoOtelEndpoint` when Mongo deps exist) + shadow **`Service/siphon`** when ingress Siphon is on, **always-on Shop + Recorder**, optional egress-relay-rabbitmq, and ephemeral dependencies per role. Envoy always includes `shop_ext_proc` for egress replay. Does **not** deploy Pixie Vizier, pixie-stream-bridge, the Siphon OTLP Deployment, or the cluster-wide Beru — those are installed separately. There is **no** `spec.recordAndReplay` field.
 
 ### Igris (HTTP/TCP)
 
@@ -403,11 +412,11 @@ Per-shadow-namespace **OTLP gRPC receiver** on `:4317`. Accepts gzip-compressed 
 
 ### Recorder
 
-Shadow-namespace service deployed by Monarch when `spec.recordAndReplay` is set. **Primary path:** accepts **OTLP gRPC** on `:4317` from Pixie egress `px.export`, parses HTTP span attributes, filters by configured hosts, and posts to **Shop** `POST /v1/record_egress` (env var `SHOP_HTTP_URL`). **Legacy path:** TCP framing on `:8080` (length-prefixed R/S frames). Read by `SHOP_HTTP_URL` pointing at `shop.<shadow-ns>.svc.cluster.local:8080`.
+Shadow-namespace service **always** deployed by Monarch. **Primary path:** accepts **OTLP gRPC** on `:4317` from Pixie egress `px.export`, parses HTTP span attributes, and posts **all** spans to **Shop** `POST /v1/record_egress` (`SHOP_HTTP_URL`). **Legacy path:** TCP framing on `:8080`.
 
 ### Shop
 
-Per-ShadowTest **in-memory mock store** deployed by Monarch into the shadow namespace alongside Recorder when `spec.recordAndReplay` is set. Two ports:
+Per-ShadowTest **in-memory mock store** **always** deployed by Monarch alongside Recorder. Two ports:
 
 | Port | Protocol | Role |
 |------|----------|------|

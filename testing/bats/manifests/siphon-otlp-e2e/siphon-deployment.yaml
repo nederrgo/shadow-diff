@@ -1,5 +1,22 @@
-# Siphon OTLP receiver in the shadow namespace (Monarch creates the Service; this
-# Deployment supplies Endpoints via pod labels). Image tag must match Kind load.
+# Siphon OTLP receiver in the shadow namespace.
+# Monarch normally creates Service/siphon; this manifest includes it so E2E can
+# recover when the Service is missing (selector must match Monarch's).
+apiVersion: v1
+kind: Service
+metadata:
+  name: siphon
+  labels:
+    app.kubernetes.io/name: siphon
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: siphon
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      protocol: TCP
+      targetPort: 4317
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
