@@ -4,7 +4,7 @@ title: HTTP Ingress E2E Test Flow
 description: End-to-end data and assertion flow for Node.js, Python, and Go http-ingress bats suites — Pixie HTTP capture, Siphon, igris-http fan-out, Mongo and RabbitMQ egress diffs.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/http-ingress
 tags: [verification, e2e, bats, http-ingress, pixie, siphon, igris, mongo, rabbitmq]
-timestamp: 2026-07-12T16:35:00Z
+timestamp: 2026-07-12T17:35:00Z
 ---
 
 # HTTP Ingress E2E Test Flow
@@ -123,10 +123,10 @@ Fixtures: `testing/bats/fixtures/e2e/http-otel-rmq-{nodejs,python,go}/shadowtest
 | App | Source | Endpoint | Egress |
 |-----|--------|----------|--------|
 | `http-rmq-test-app` | `testing/example-apps/http-rmq-test-app/` | `POST /publish` | Mongo + amqplib |
-| `http-rmq-python-worker` | `testing/example-apps/http-rmq-python-worker/` | `POST /publish` | Mongo + pika |
+| `http-rmq-python-worker` | `testing/example-apps/http-rmq-python-worker/` | `POST /publish` | Mongo + pika (AMQP connect per publish) |
 | `http-rmq-go-worker` | `testing/example-apps/http-rmq-go-worker/` | `POST /publish` | Mongo + amqp091-go |
 
-Workers crash at startup if `AMQP_URL` is empty or RMQ is unreachable — `rmq-prod-broker` must be Ready first.
+Workers crash at startup if `AMQP_URL` is empty or RMQ is unreachable — `rmq-prod-broker` must be Ready first. The Python worker opens a fresh pika connection on each `/publish` so long `setup_file` idle windows cannot kill a heartbeat-starved `BlockingConnection` (unlike Go/Node clients that keep IO alive in the background).
 
 ---
 
