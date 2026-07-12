@@ -50,28 +50,19 @@ _shadow_igris_cluster_url() {
   echo "http://${shadowtest}-igris.${shadow_ns}.svc.cluster.local:${port}"
 }
 
-_ensure_shadow_siphon_deployment() {
-  local shadow_ns="$1" shadowtest="$2" igris_port="${3:-80}"
-  local igris_url manifest tmp
-  igris_url=$(_shadow_igris_cluster_url "$shadow_ns" "$shadowtest" "$igris_port")
-  manifest="$(dirname "${BASH_SOURCE[0]}")/../manifests/siphon-otlp-e2e/siphon-deployment.yaml"
-  tmp=$(mktemp)
-  sed -e "s|__IGRIS_BASE_URL__|${igris_url}|g" "$manifest" >"$tmp"
-  kubectl apply -n "$shadow_ns" -f "$tmp"
-  rm -f "$tmp"
-  kubectl rollout status deployment/siphon -n "$shadow_ns" --timeout=120s
-  kubectl get service/siphon -n "$shadow_ns" >/dev/null
-  echo "    siphon OTLP receiver ready in ${shadow_ns} -> igris ${igris_url}"
-}
-
+# Wait for Monarch-provisioned Siphon Deployment (HTTP ingress ShadowTests only).
 wait_shadow_siphon_otlp() {
   local shadow_ns="$1"
-  local shadowtest="${SHADOWTEST:-my-app-shadow}"
-  _ensure_shadow_siphon_deployment "$shadow_ns" "$shadowtest" 80
+  kubectl rollout status deployment/siphon -n "$shadow_ns" --timeout=120s
+  kubectl get service/siphon -n "$shadow_ns" >/dev/null
+  echo "    siphon OTLP receiver ready in ${shadow_ns}"
 }
 
-# Alias used by Pixie-path E2E scripts (matches old siphon-otlp.sh API).
-ensure_shadow_siphon_deployment() { _ensure_shadow_siphon_deployment "$@"; }
+# Deprecated alias — Monarch owns the Deployment; this only waits.
+ensure_shadow_siphon_deployment() {
+  local shadow_ns="$1"
+  wait_shadow_siphon_otlp "$shadow_ns"
+}
 
 siphon_otlp_cluster_addr() {
   local shadow_ns="$1"

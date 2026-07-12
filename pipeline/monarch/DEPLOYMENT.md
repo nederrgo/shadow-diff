@@ -221,7 +221,7 @@ Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`** and se
 | `siphon.image` | DaemonSet image (default `siphon:latest` / `siphon:dev`) |
 | `siphon.sampleRate` | Percentage of new TCP flows to sample (0–100; default `100`) |
 
-Monarch reconciles `PixieStreamRule` + shadow `Service/siphon` for HTTP ingress. **`status.siphonPhase`**: `Ready`, `Degraded`, or `Disabled`.
+Monarch reconciles `PixieStreamRule` + shadow `Service/siphon` + `Deployment/siphon` for HTTP ingress (image via `spec.siphon.image` / `SIPHON_IMAGE` / `MONARCH_MODE`). **`status.siphonPhase`**: `Ready`, `Degraded`, or `Disabled`.
 
 ### Egress — Shop + Recorder (always-on)
 

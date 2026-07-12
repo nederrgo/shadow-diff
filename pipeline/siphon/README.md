@@ -27,7 +27,7 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 | Siphon OTLP receiver | One gRPC server for logs + traces → `HTTPRecord` → igris forwarder |
 | Shadow `Service/siphon` | Cluster DNS export target for Pixie (`siphon.<shadow-ns>.svc.cluster.local:4317`) |
 
-Monarch provisions the **Service** and **PixieStreamRule**; you deploy the **Siphon Deployment** in the shadow namespace (E2E manifest: `testing/bats/manifests/siphon-otlp-e2e/siphon-deployment.yaml`). The legacy `pipeline/siphon/deploy/daemonset.yaml` hostNetwork path is superseded.
+Monarch provisions the **Service**, **Deployment**, and **PixieStreamRule** when HTTP ingress capture is enabled (`SIPHON_IGRIS_BASE_URL` → shadow igris-http). The legacy `pipeline/siphon/deploy/daemonset.yaml` hostNetwork path is superseded.
 
 ---
 

@@ -108,7 +108,7 @@ The bridge polls all `PixieStreamRule` objects cluster-wide every `PIXIE_EXPORT_
 
 ### 5. Siphon OTLP receiver (HTTP Pixie ingress only)
 
-Monarch creates `Service/siphon` in each shadow namespace when HTTP ingress capture is enabled. The **Siphon Deployment** must exist in that namespace to receive OTLP on `:4317` and POST to Igris. Deploy per shadow namespace or extend your chart to watch ShadowTest Ready status.
+When HTTP ingress capture is enabled, Monarch creates `Service/siphon` and `Deployment/siphon` in the shadow namespace. The Deployment receives OTLP on `:4317` and POSTs to the shadow Igris Service (`SIPHON_IGRIS_BASE_URL`). No separate bats/chart apply is required.
 
 MongoDB egress and AMQP paths do not require Siphon.
 

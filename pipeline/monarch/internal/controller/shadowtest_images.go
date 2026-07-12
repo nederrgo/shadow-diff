@@ -14,6 +14,7 @@ const (
 	imageBaseRecorder            = "recorder"
 	imageBaseBeru                = "beru"
 	imageBaseShop                = "shop"
+	imageBaseSiphon              = "siphon"
 
 	envIgrisHTTPImage           = "IGRIS_HTTP_IMAGE"
 	envIgrisRabbitMQImage       = "IGRIS_RABBITMQ_IMAGE"
@@ -21,6 +22,7 @@ const (
 	envRecorderImage            = "RECORDER_IMAGE"
 	envBeruImage                = "BERU_IMAGE"
 	envShopImage                = "SHOP_IMAGE"
+	envSiphonImage              = "SIPHON_IMAGE"
 )
 
 func monarchImageTagSuffix() string {
@@ -88,4 +90,12 @@ func shopImageFor(st *enginev1alpha1.ShadowTest) string {
 		cr = st.Spec.Shop.Image
 	}
 	return resolveHelperImage(imageBaseShop, cr, envShopImage)
+}
+
+func siphonImageFor(st *enginev1alpha1.ShadowTest) string {
+	cr := ""
+	if st.Spec.Siphon != nil {
+		cr = st.Spec.Siphon.Image
+	}
+	return resolveHelperImage(imageBaseSiphon, cr, envSiphonImage)
 }

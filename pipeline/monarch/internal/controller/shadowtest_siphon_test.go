@@ -145,6 +145,30 @@ func TestTargetNamespaceFor_defaultsToCRNamespace(t *testing.T) {
 	}
 }
 
+func TestShadowSiphonIgrisBaseURL(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "bats-http"},
+		Spec:       enginev1alpha1.ShadowTestSpec{ServicePort: 8888},
+	}
+	want := "http://bats-http-igris.shadow-default-bats-http.svc.cluster.local:8888"
+	if got := shadowSiphonIgrisBaseURL(st, "shadow-default-bats-http"); got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestSiphonImageFor(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{}
+	t.Setenv("MONARCH_MODE", "dev")
+	t.Setenv("SIPHON_IMAGE", "")
+	if got := siphonImageFor(st); got != "siphon:dev" {
+		t.Fatalf("default mode: got %q want siphon:dev", got)
+	}
+	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{Image: "siphon:custom"}
+	if got := siphonImageFor(st); got != "siphon:custom" {
+		t.Fatalf("CR override: got %q", got)
+	}
+}
+
 func TestEnsureShadowSiphonServicePatch_selector(t *testing.T) {
 	svc := &corev1.Service{}
 	patch := func() error {

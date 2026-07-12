@@ -11,6 +11,7 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-12]
 ### Added
+* 'pipeline/monarch siphon + bats http-ingress': Monarch deploys Siphon Service+Deployment for HTTP ingress; remove bats-side Siphon apply
 * 'docs/verification/http-ingress-e2e-flow.md': move http-ingress README into OKF verification wiki (same format as hybrid flow)
 * 'docs/verification/hybrid-rmq-e2e-flow.md': document Node/Python hybrid bats setup, per-order runtime flow, and per-@test assertions
 * 'testing/bats/manifests/pixie-bridge, pipeline/shop, docs/data-plane': dual-branch Pixie egress (client+server) + Shop Put first-2xx dedup'

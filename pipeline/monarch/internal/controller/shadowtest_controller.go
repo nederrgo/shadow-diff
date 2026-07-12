@@ -177,6 +177,16 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		log.Error(err, "Siphon capture reconcile failed")
 		siphonPhase = "Degraded"
 	}
+	if siphonEnabled(&shadowTest, &target) {
+		siphonReady, readyErr := r.siphonDeploymentReady(ctx, shadowNS)
+		if readyErr != nil {
+			return ctrl.Result{}, readyErr
+		}
+		if !siphonReady {
+			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Siphon", shadowNS)
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+	}
 
 	var igrisEndpoint string
 	igrisRMQPhase := ""

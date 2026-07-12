@@ -42,12 +42,9 @@ bats_http_otel_rollout_stack() {
     kubectl rollout status "deployment/mongodb-${role}" -n "$shadow_ns" --timeout=180s
     kubectl rollout status "deployment/${shadowtest}-${role}" -n "$shadow_ns" --timeout=180s
   done
-  # Monarch creates the siphon Service but no pod — deploy the pod so the Pixie HTTP
-  # ingress path (pixie-stream-bridge → Siphon → igris) has a live OTLP endpoint.
-  # shellcheck source=testing/bats/helpers/siphon-config.sh
-  source "${REPO}/testing/bats/helpers/siphon-config.sh"
-  echo "==> deploy Siphon OTLP receiver (Pixie HTTP ingress)"
-  _ensure_shadow_siphon_deployment "$shadow_ns" "$shadowtest" 8888
+  # Monarch provisions Deployment/siphon when HTTP ingress capture is enabled.
+  echo "==> wait for Monarch Siphon OTLP receiver"
+  kubectl rollout status deployment/siphon -n "$shadow_ns" --timeout=120s
   _bats_http_otel_warmup_extproc "$shadow_ns"
 }
 

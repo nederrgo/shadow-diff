@@ -396,7 +396,7 @@ Beru and Shop receive shadow traffic through **complementary ingest paths**:
 
 ### Monarch
 
-Kubebuilder operator in `monarch-system`. Reads `ShadowTest` and materializes the full pipeline: shadow namespace, three app Deployments with Envoy sidecars, ingress hub (Igris or igris-rabbitmq), **`PixieStreamRule`** (ingress `otelEndpoint` when HTTP capture is enabled; always `recorderOtelEndpoint`; `mongoOtelEndpoint` when Mongo deps exist) + shadow **`Service/siphon`** when ingress Siphon is on, **always-on Shop + Recorder**, optional egress-relay-rabbitmq, and ephemeral dependencies per role. Envoy always includes `shop_ext_proc` for egress replay. Does **not** deploy Pixie Vizier, pixie-stream-bridge, the Siphon OTLP Deployment, or the cluster-wide Beru — those are installed separately. There is **no** `spec.recordAndReplay` field.
+Kubebuilder operator in `monarch-system`. Reads `ShadowTest` and materializes the full pipeline: shadow namespace, three app Deployments with Envoy sidecars, ingress hub (Igris or igris-rabbitmq), **`PixieStreamRule`** (ingress `otelEndpoint` when HTTP capture is enabled; always `recorderOtelEndpoint`; `mongoOtelEndpoint` when Mongo deps exist) + shadow **`Service/siphon` + `Deployment/siphon`** when HTTP ingress Siphon is on, **always-on Shop + Recorder**, optional egress-relay-rabbitmq, and ephemeral dependencies per role. Envoy always includes `shop_ext_proc` for egress replay. Does **not** deploy Pixie Vizier, pixie-stream-bridge, or the cluster-wide Beru — those are installed separately. There is **no** `spec.recordAndReplay` field.
 
 ### Igris (HTTP/TCP)
 
@@ -408,7 +408,7 @@ AMQP ingress hub. Consumes the prod shadow queue, injects W3C `traceparent` on m
 
 ### Siphon
 
-Per-shadow-namespace **OTLP gRPC receiver** on `:4317`. Accepts gzip-compressed OTLP traces from Pixie `px.export` (via **pixie-stream-bridge**), parses HTTP fields from span attributes (`url.path`, `traceparent`, `http.request.method`, `http.request.body`), and **HTTP POST**s to **igris-http**. Monarch reconciles the cluster DNS target (`Service/siphon`) and `PixieStreamRule`; you deploy the Siphon Deployment with `SIPHON_IGRIS_BASE_URL` pointing at the shadow Igris Service.
+Per-shadow-namespace **OTLP gRPC receiver** on `:4317`. Accepts gzip-compressed OTLP traces from Pixie `px.export` (via **pixie-stream-bridge**), parses HTTP fields from span attributes (`url.path`, `traceparent`, `http.request.method`, `http.request.body`), and **HTTP POST**s to **igris-http**. When HTTP ingress capture is enabled, Monarch provisions `Service/siphon` + `Deployment/siphon` (with `SIPHON_IGRIS_BASE_URL` pointing at the shadow Igris Service) and sets `PixieStreamRule.otelEndpoint`.
 
 ### Recorder
 

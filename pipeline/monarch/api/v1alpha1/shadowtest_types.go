@@ -70,6 +70,10 @@ type SiphonSpec struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
+	// Image overrides the default Siphon OTLP receiver container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+
 	// MaxPayloadSize is the max bytes to parse per HTTP/2 frame (default 65536).
 	// +optional
 	MaxPayloadSize int64 `json:"maxPayloadSize,omitempty"`

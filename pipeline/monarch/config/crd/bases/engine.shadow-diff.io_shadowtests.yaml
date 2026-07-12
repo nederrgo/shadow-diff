@@ -428,6 +428,10 @@ spec:
                     items:
                       type: string
                     type: array
+                  image:
+                    description: Image overrides the default Siphon OTLP receiver
+                      container image.
+                    type: string
                   maxPayloadSize:
                     description: MaxPayloadSize is the max bytes to parse per HTTP/2
                       frame (default 65536).

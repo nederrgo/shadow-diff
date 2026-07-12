@@ -9,6 +9,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -214,6 +215,78 @@ func (r *ShadowTestReconciler) ensureShadowSiphonService(ctx context.Context, sh
 	return err
 }
 
+func shadowSiphonIgrisBaseURL(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d",
+		igrisServiceName(st), shadowNS, servicePortFor(st))
+}
+
+func (r *ShadowTestReconciler) ensureShadowSiphonDeployment(
+	ctx context.Context,
+	st *enginev1alpha1.ShadowTest,
+	shadowNS string,
+) error {
+	labels := map[string]string{
+		labelManagedBy:           valueManagedBy,
+		labelShadowTestName:      st.Name,
+		labelShadowTestCRNS:      st.Namespace,
+		labelShadowTestUID:       string(st.UID),
+		"app.kubernetes.io/name": shadowSiphonServiceName,
+	}
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: shadowNS,
+			Name:      shadowSiphonServiceName,
+		},
+	}
+	replicas := int32(1)
+	igrisURL := shadowSiphonIgrisBaseURL(st, shadowNS)
+	_, err := ctrl.CreateOrPatch(ctx, r.Client, deploy, func() error {
+		deploy.Labels = labels
+		deploy.Spec.Replicas = &replicas
+		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{
+			"app.kubernetes.io/name": shadowSiphonServiceName,
+		}}
+		deploy.Spec.Template.ObjectMeta.Labels = map[string]string{
+			"app.kubernetes.io/name": shadowSiphonServiceName,
+		}
+		deploy.Spec.Template.Spec.Containers = []corev1.Container{{
+			Name:            shadowSiphonServiceName,
+			Image:           siphonImageFor(st),
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Ports: []corev1.ContainerPort{{
+				Name:          "otlp-grpc",
+				ContainerPort: shadowSiphonOTLPPort,
+				Protocol:      corev1.ProtocolTCP,
+			}},
+			Env: []corev1.EnvVar{
+				{Name: "SIPHON_OTLP_GRPC_ADDR", Value: fmt.Sprintf(":%d", shadowSiphonOTLPPort)},
+				{Name: "SIPHON_IGRIS_BASE_URL", Value: igrisURL},
+			},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("50m"),
+					corev1.ResourceMemory: resource.MustParse("64Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("200m"),
+					corev1.ResourceMemory: resource.MustParse("128Mi"),
+				},
+			},
+		}}
+		return nil
+	})
+	return err
+}
+
+func (r *ShadowTestReconciler) siphonDeploymentReady(ctx context.Context, shadowNS string) (bool, error) {
+	var deploy appsv1.Deployment
+	key := client.ObjectKey{Namespace: shadowNS, Name: shadowSiphonServiceName}
+	if err := r.Get(ctx, key, &deploy); err != nil {
+		return false, err
+	}
+	return deploy.Status.AvailableReplicas > 0, nil
+}
+
 func (r *ShadowTestReconciler) reconcilePixieStreamRule(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
@@ -306,6 +379,9 @@ func (r *ShadowTestReconciler) reconcileSiphonCapture(
 
 	if ingress {
 		if err := r.ensureShadowSiphonService(ctx, shadowNS); err != nil {
+			return formatCaptureTargets(labels), "Degraded", err
+		}
+		if err := r.ensureShadowSiphonDeployment(ctx, st, shadowNS); err != nil {
 			return formatCaptureTargets(labels), "Degraded", err
 		}
 	}

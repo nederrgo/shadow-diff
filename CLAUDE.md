@@ -71,9 +71,9 @@ L5  Analysis sink           Beru (diff-of-diffs, SQLite, dashboard) + Shop (per-
 ### Key components
 
 **`pipeline/monarch/`** — Kubebuilder operator (`github.com/shadow-diff/monarch`)  
-Reconcile flow: validate → shadow namespace → dependencies → igris → 3× shadow deployments + Envoy ConfigMaps → Shop + Recorder (always-on) → PixieStreamRule → status patch.  
+Reconcile flow: validate → shadow namespace → dependencies → igris → 3× shadow deployments + Envoy ConfigMaps → Shop + Recorder (always-on) → Siphon Service+Deployment (HTTP ingress) + PixieStreamRule → status patch.  
 Shadow namespace is always `shadow-<crNamespace>-<crName>`.  
-Key files: `internal/controller/shadowtest_controller.go` (main loop), `shadowtest_envoy.go` (Envoy YAML rendering), `shadowtest_dependencies.go` (dep env injection), `shadowtest_siphon.go` (PixieStreamRule), `shadowtest_beru_local.go` (per-ShadowTest beru-local pod).
+Key files: `internal/controller/shadowtest_controller.go` (main loop), `shadowtest_envoy.go` (Envoy YAML rendering), `shadowtest_dependencies.go` (dep env injection), `shadowtest_siphon.go` (Siphon + PixieStreamRule), `shadowtest_beru_local.go` (per-ShadowTest beru-local pod).
 
 **`pipeline/beru/`** — L5 analysis sink (`github.com/shadow-diff/beru`)  
 Three ports: gRPC `:50051` (Envoy ext_proc + TrafficReporter), OTLP gRPC `:4317`, HTTP `:8080` (REST API, dashboard, egress diff).  
@@ -88,7 +88,7 @@ Listens on ports from `/etc/igris/listeners.json` (written by Monarch). Stamps W
 Consumes the Monarch-declared shadow queue on the prod broker, republishes to 3× shadow RabbitMQ brokers with trace headers.
 
 **`pipeline/siphon/`** — Pixie ingress bridge  
-Receives compressed OTLP gRPC from pixie-stream-bridge on `:4317`, parses span attributes → `HTTPRecord`, POSTs to igris-http.
+Receives compressed OTLP gRPC from pixie-stream-bridge on `:4317`, parses span attributes → `HTTPRecord`, POSTs to igris-http. Monarch deploys Siphon into the shadow namespace when HTTP ingress capture is enabled.
 
 **`pipeline/shop/`** — Per-ShadowTest HTTP egress mock store  
 In-memory mock store deployed by Monarch into each shadow namespace alongside Recorder. gRPC ext_proc on `:50051` (Envoy egress replay), HTTP `:8080` (`POST /v1/record_egress` seeding). Mocks keyed by `trace:<traceID>:<METHOD>:<host>:<path>`.

@@ -154,6 +154,7 @@ var _ = Describe("ShadowTest Controller", func() {
 				}
 				markDeploymentAvailable(shopServiceName())
 				markDeploymentAvailable(recorderDeploymentName(st))
+				markDeploymentAvailable(shadowSiphonServiceName)
 			}
 
 			shadowNS = shadowNamespaceForCR(&enginev1alpha1.ShadowTest{
