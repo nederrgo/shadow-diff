@@ -11,6 +11,8 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-12]
 ### Added
+* 'testing/bats/lib/reporter.bash': Resolve WSL Windows node.exe beside npm for tap-mocha-reporter
+* 'testing/bats': Jest-like tap-mocha-reporter for BATS_PARALLEL_JOBS=1; roadmap doc for future isolation + bats --jobs
 * 'testing/bats/manifests': remove stale spec.recordAndReplay from e2e-shadowtest and rabbitmq* ShadowTest YAMLs (CRD rejects unknown field)
 * 'testing/bats/helpers/cluster-minikube.sh': Reuse healthy Running minikube instead of always calling minikube start (fixes --no-reset bouncing an existing cluster+bridge)
 * 'testing/tools/e2e-reset-minikube.sh': Fix REPO to ../.. after move from testing/bats/; pin beru:dev; scrub stale bats/e2e-reset and deleted --run-*-test docs

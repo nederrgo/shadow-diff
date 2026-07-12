@@ -1,10 +1,10 @@
 ---
 type: Architecture Specification
 title: Bats-Core Modular Testing Framework
-description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, settlement-based Beru assertions, and idempotent platform bootstrap.
+description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, settlement-based Beru assertions, Jest-like reporter for BATS_PARALLEL_JOBS=1, and idempotent platform bootstrap.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats
 tags: [infrastructure, testing, bats, e2e, integration, monarch, beru]
-timestamp: 2026-07-12T22:15:00Z
+timestamp: 2026-07-12T23:15:00Z
 ---
 
 # Bats-Core Modular Testing Framework
@@ -26,7 +26,7 @@ Shadow-Diff E2E validation uses **bats-core** under [`testing/bats/`](https://gi
 
 ```
 testing/bats/
-  lib/                    # bats facade layer (platform, cluster, shadowtest, beru_assert, …)
+  lib/                    # bats facade layer (platform, cluster, shadowtest, beru_assert, reporter, …)
   helpers/                # shared bash libraries sourced by lib/ and setup scripts
   setup/                  # scripts exec'd during setup_file / teardown_file
   manifests/              # Kubernetes YAML for prod stack + ShadowTest CRs
@@ -34,6 +34,7 @@ testing/bats/
   integration/            # .bats integration suites
   fixtures/               # per-suite CR YAML
   vendor/                 # bats-core, bats-support, bats-assert (vendored)
+  package.json            # tap-mocha-reporter pin (Jest-like output)
   pixie-stream-bridge.sh  # long-running Pixie export loop
   debug-mongo-egress.sh   # interactive 5-layer egress diagnostic
 
@@ -54,6 +55,21 @@ testing/tools/            # standalone developer utilities (not called by bats)
 
 Escape hatches: `SKIP_PLATFORM_BOOTSTRAP`, `SKIP_BUILD`, `SKIP_LOAD`, `BATS_FORCE_PLATFORM_BOOTSTRAP`.
 
+## Jest-like reporter (`lib/reporter.bash`)
+
+[`run.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/run.sh) / [`run-one.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/run-one.sh) call `bats_invoke`, which may pipe bats TAP through `tap-mocha-reporter spec`.
+
+**Hard limit:** Jest-like output works **only when `BATS_PARALLEL_JOBS=1`**. Parallel mode still uses a custom multi-process runner (not native `bats --jobs`); interleaved TAP cannot feed one reporter. See [/infrastructure/bats-parallel-isolation-roadmap.md](/infrastructure/bats-parallel-isolation-roadmap.md).
+
+| `BATS_REPORTER` | Effect |
+|-----------------|--------|
+| *(unset)* | Auto `spec` on TTY when jobs=1; otherwise bats default |
+| `spec` | Force Jest-like (falls back if jobs>1) |
+| `pretty` / `tap` | Bats built-in formatters |
+| `off` | Unchanged bats invocation |
+
+Install once: `npm ci --prefix testing/bats`.
+
 ## Beru settlement assertions (`lib/beru_assert.bash`)
 
 Beru UPSERTs `verdicts` on every report. For **log-based** checks (what `mirrorLegacyLogs` emits), use `beru_wait_log` with a per-test pattern:
@@ -73,8 +89,9 @@ Default: trace UUID scoping. Optional `BATS_ISOLATE_MODE=wipe-beru|full` for tab
 ## Running
 
 ```bash
+npm ci --prefix testing/bats   # once, for Jest-like reporter
 make test-bats-integration
-make test-bats-e2e
+BATS_PARALLEL_JOBS=1 make test-bats-e2e   # Jest-like on TTY
 make test-bats
 ```
 
@@ -96,9 +113,11 @@ See [`testing/bats/README.md`](https://github.com/shadow-diff/monarch/tree/main/
 # Citations
 
 - [/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md](/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md)
+- [/infrastructure/bats-parallel-isolation-roadmap.md](/infrastructure/bats-parallel-isolation-roadmap.md)
 - [/verification/hybrid-rmq-e2e-flow.md](/verification/hybrid-rmq-e2e-flow.md)
 - [/verification/http-ingress-e2e-flow.md](/verification/http-ingress-e2e-flow.md)
 - [`testing/bats/lib/platform.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/platform.bash)
+- [`testing/bats/lib/reporter.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/reporter.bash)
 - [`testing/bats/helpers/pixie-bridge.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/helpers/pixie-bridge.sh)
 - [`testing/bats/manifests/`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/manifests)
 - [`pipeline/beru/internal/v2/engine/router.go`](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2/engine/router.go)

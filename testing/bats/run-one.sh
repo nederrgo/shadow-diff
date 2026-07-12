@@ -9,9 +9,14 @@ REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 BATS_DIR="${REPO}/testing/bats"
 BATS_BIN="${BATS_DIR}/vendor/bats-core/bin/bats"
 
+# shellcheck source=testing/bats/lib/reporter.bash
+source "${BATS_DIR}/lib/reporter.bash"
+
 export BATS_PARALLEL_JOBS="${BATS_PARALLEL_JOBS:-1}"
 export BATS_TEST_TIMEOUT="${BATS_TEST_TIMEOUT:-900}"
 export REPO
+export BATS_DIR
+export BATS_BIN
 export BATS_STATE_DIR="${REPO}/.cache/shadow-diff-bats"
 
 cleanup_on_exit() {
@@ -32,6 +37,8 @@ Examples:
   $(basename "$0") e2e/rabbitmq-ingress/python_hybrid.bats
   $(basename "$0") e2e/rabbitmq-ingress/python_hybrid.bats -f 'RabbitMQ egress'
   $(basename "$0") integration/mongo_egress.bats -f 'PixieStreamRule'
+
+Jest-like output when BATS_PARALLEL_JOBS=1 (default) on a TTY, or BATS_REPORTER=spec.
 EOF
 }
 
@@ -44,4 +51,4 @@ if [[ "$target" != /* ]]; then
 fi
 [[ -f "$target" ]] || { echo "not found: $target" >&2; exit 1; }
 
-exec "$BATS_BIN" "$@" "$target"
+bats_invoke "$@" "$target"

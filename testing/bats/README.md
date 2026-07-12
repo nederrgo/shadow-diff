@@ -8,6 +8,7 @@ Modular integration and E2E tests using [bats-core](https://github.com/bats-core
 - `kubectl`, `jq`, `openssl` (host `sqlite3` optional — only for `beru_sqlite_query`)
 - Pixie Cloud account (`px auth login` or `PIXIE_API_KEY`)
 - Container images built into Minikube docker (`make` targets below)
+- For Jest-like output: Node/npm once — `npm ci --prefix testing/bats`
 
 ## Layout
 
@@ -15,9 +16,10 @@ Modular integration and E2E tests using [bats-core](https://github.com/bats-core
 testing/bats/
   integration/     # Lighter multi-@test files (mongo egress, …)
   e2e/             # Full hybrid pipeline scenarios
-  lib/             # Shared helpers (platform, shadowtest, beru_assert, …)
+  lib/             # Shared helpers (platform, shadowtest, beru_assert, reporter, …)
   fixtures/        # Per-suite ShadowTest + prod YAML
   vendor/          # bats-core, bats-support, bats-assert (vendored; no nested .git)
+  package.json     # tap-mocha-reporter pin
 ```
 
 Refresh vendor deps (if missing):
@@ -44,16 +46,34 @@ The pixie-stream-bridge runs continuously — tests never `pkill` or restart it.
 ## Running
 
 ```bash
+# Once (Jest-like reporter)
+npm ci --prefix testing/bats
+
 # From repo root
 make test-bats-integration   # integration/*.bats
-make test-bats-e2e           # e2e/*.bats (hybrid + http_otel_rmq)
+BATS_PARALLEL_JOBS=1 make test-bats-e2e   # Jest-like on TTY
 make test-bats               # both
 
-# Or directly (export env from bats.config — Bats 1.13 has no --config-file flag)
+# Or directly
 export BATS_PARALLEL_JOBS=1 BATS_TEST_TIMEOUT=900
 
 # If images are already loaded into minikube docker, skip builds:
-SKIP_BUILD=1 SKIP_LOAD=1 ./testing/bats/run-one.sh e2e/python_hybrid.bats -f 'RabbitMQ egress'
+SKIP_BUILD=1 SKIP_LOAD=1 ./testing/bats/run-one.sh e2e/rabbitmq-ingress/python_hybrid.bats -f 'RabbitMQ egress'
+```
+
+### Jest-like reporter (jobs=1 only)
+
+`run.sh` / `run-one.sh` pipe bats TAP through `tap-mocha-reporter spec` when:
+
+- `BATS_PARALLEL_JOBS=1` (required — multi-process parallel interleaves TAP), and
+- stdout is a TTY, or you set `BATS_REPORTER=spec`
+
+**Native `bats --jobs` is not used yet.** Parallelism today is a custom multi-process runner. See [docs/infrastructure/bats-parallel-isolation-roadmap.md](/infrastructure/bats-parallel-isolation-roadmap.md).
+
+```bash
+BATS_REPORTER=spec make test-bats-one FILE=e2e/http-ingress/http_otel_rmq_python.bats
+BATS_REPORTER=tap make test-bats-e2e          # classic TAP
+BATS_PARALLEL_JOBS=2 make test-bats-e2e       # parallel; NO Jest reporter
 ```
 
 ## Environment variables
@@ -65,6 +85,8 @@ SKIP_BUILD=1 SKIP_LOAD=1 ./testing/bats/run-one.sh e2e/python_hybrid.bats -f 'Ra
 | `SKIP_PLATFORM_BOOTSTRAP` | `0` | Health-check only; no install |
 | `BERU_QUIESCENCE_SEC` | `5` | Verdict settlement quiescence window |
 | `BATS_ISOLATE_MODE` | `trace` | `trace`, `wipe-beru`, or `full` |
+| `BATS_PARALLEL_JOBS` | `1` | Multi-process file parallelism; Jest reporter only when `1` |
+| `BATS_REPORTER` | auto | `spec` \| `pretty` \| `tap` \| `off` (see above) |
 | `MONARCH_IMG`, `BERU_IMG`, … | `:dev` tags | Image overrides |
 
 ## Beru assertions

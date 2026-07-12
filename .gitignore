@@ -18,6 +18,9 @@ Dockerfile.cross
 .cache/pixie-bridge/
 .cache/shadow-diff-bats/
 
+# Bats Jest-like reporter (tap-mocha-reporter)
+testing/bats/node_modules/
+
 # Test binary, built with `go test -c`
 *.test
 
