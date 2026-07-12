@@ -658,6 +658,15 @@ resolve_minikube_cni() {
   esac
 }
 
+_minikube_already_running() {
+  # Host + kubelet + apiserver all Running → safe to skip minikube start.
+  local host kubelet apiserver
+  host=$(_minikube status --format='{{.Host}}' 2>/dev/null || true)
+  kubelet=$(_minikube status --format='{{.Kubelet}}' 2>/dev/null || true)
+  apiserver=$(_minikube status --format='{{.APIServer}}' 2>/dev/null || true)
+  [[ "$host" == "Running" && "$kubelet" == "Running" && "$apiserver" == "Running" ]]
+}
+
 ensure_minikube_ready() {
   require_minikube
 
@@ -668,6 +677,25 @@ ensure_minikube_ready() {
   export MINIKUBE_CNI="$cni"
   if [[ "$driver" == none ]] || [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
     _ensure_none_preflight
+  fi
+
+  # Reuse a healthy cluster — do not call minikube start (that reconfigures / can
+  # bounce the VM). --no-reset only skips ShadowTest/prod deletes; this is the
+  # cluster-level counterpart for an already-up profile + bridge.
+  if _minikube_already_running; then
+    echo "==> Minikube already running (profile=${MINIKUBE_PROFILE}, driver=${driver}, cni=${cni}) — reuse"
+    kubectl config use-context "$MINIKUBE_CONTEXT" >/dev/null 2>&1 || {
+      echo "ERROR: kubectl context '${MINIKUBE_CONTEXT}' not found" >&2
+      exit 1
+    }
+    if ! kubectl cluster-info --context "$MINIKUBE_CONTEXT" >/dev/null 2>&1; then
+      echo "ERROR: Minikube reports Running but kubectl cannot reach the API" >&2
+      exit 1
+    fi
+    if [[ "$cni" == calico ]]; then
+      _wait_calico_ready
+    fi
+    return 0
   fi
 
   if [[ "${SKIP_LOAD:-0}" -eq 0 ]]; then

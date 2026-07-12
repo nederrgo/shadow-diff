@@ -1,4 +1,6 @@
-# ShadowTest tuned for Kind E2E: prod (port 80) -> Siphon -> Igris:80 -> Envoy:8888 -> echo:8080 -> Beru
+# ShadowTest tuned for Minikube E2E: prod (port 80) -> Siphon -> Igris:80 -> Envoy:8888 -> echo:80 -> Beru
+#
+# Shop + Recorder are always-on (no spec.recordAndReplay).
 #
 # Apply:
 #   kubectl apply -f testing/bats/manifests/e2e-shadowtest.yaml
@@ -29,8 +31,3 @@ spec:
       driver: http_request
     - port: 8888
       driver: http_request
-
-  # Egress replay (Sprint 4a.1): trap outbound HTTP via HTTP_PROXY -> Envoy :15001 ->  Beru
-  recordAndReplay:
-    - host: egress-httpbin.default.svc.cluster.local
-      ignoreRequestPaths: []

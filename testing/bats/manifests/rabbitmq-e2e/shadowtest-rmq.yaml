@@ -27,6 +27,3 @@ spec:
     - name: rabbitmq
       type: rabbitmq
       envVarInjection: AMQP_URL
-
-  recordAndReplay:
-    - host: httpbin.org

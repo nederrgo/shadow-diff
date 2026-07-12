@@ -11,6 +11,9 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-12]
 ### Added
+* 'testing/bats/manifests': remove stale spec.recordAndReplay from e2e-shadowtest and rabbitmq* ShadowTest YAMLs (CRD rejects unknown field)
+* 'testing/bats/helpers/cluster-minikube.sh': Reuse healthy Running minikube instead of always calling minikube start (fixes --no-reset bouncing an existing cluster+bridge)
+* 'testing/tools/e2e-reset-minikube.sh': Fix REPO to ../.. after move from testing/bats/; pin beru:dev; scrub stale bats/e2e-reset and deleted --run-*-test docs
 * 'testing/example-apps/http-rmq-python-worker': Open pika AMQP connection per /publish so idle Flask + long bats setup cannot starve BlockingConnection heartbeats
 * 'pipeline/monarch siphon + bats http-ingress': Monarch deploys Siphon Service+Deployment for HTTP ingress; remove bats-side Siphon apply
 * 'docs/verification/http-ingress-e2e-flow.md': move http-ingress README into OKF verification wiki (same format as hybrid flow)

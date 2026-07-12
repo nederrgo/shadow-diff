@@ -174,19 +174,19 @@ Example ShadowTest: [testing/bats/manifests/rabbitmq-otel-e2e/shadowtest-otel-rm
 RabbitMQ egress diff E2E (manual `traceparent` on publish):
 
 ```sh
-./make test-bats-e2e
+make test-bats-e2e
 ```
 
 OTel zero-touch AMQP egress (Node `amqplib` auto-instrumentation):
 
 ```sh
-./make test-bats-e2e
+make test-bats-e2e
 ```
 
 Python hybrid — OTel `pika` + Mongo OTLP + HTTP replay; relay dedup + candidate N+1 count regression:
 
 ```sh
-./make test-bats-e2e
+make test-bats-e2e
 ```
 
 Expected Beru logs (controls): `No egress regression for Trace <trace-id> (rabbitmq)`. Hybrid candidate run also expects count regression: `expected 1 message but got 2`.

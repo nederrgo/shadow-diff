@@ -119,5 +119,5 @@ start_pixie_stream_bridge_background
 
 echo ""
 echo "Pixie local sandbox ready."
-echo "  Next: ./testing/bats/e2e-reset-minikube.sh --no-reset"
+echo "  Next: ./testing/tools/e2e-reset-minikube.sh --no-reset"
 echo "  Then: curl prod Service with traceparent (see docs/verification/VERIFICATION.md)"

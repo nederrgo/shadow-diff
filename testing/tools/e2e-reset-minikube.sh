@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Reset and deploy the full Monarch E2E stack on Minikube (kvm2 + flannel + Pixie by default).
 #
-# HTTP ingress capture uses Pixie eBPF (NetObserv removed). Defaults:
+# HTTP ingress capture uses Pixie eBPF. Defaults:
 #   MINIKUBE_DRIVER=kvm2 (or virtualbox), MINIKUBE_CNI=flannel, Pixie Vizier bootstrap on.
 # Opt out of Pixie install: --skip-pixie
-# Run OTLP ingress assertion after deploy: --run-otlp-ingress-test
+# E2E assertions: make test-bats-e2e (standalone --run-*-test flags were removed).
 #
 # Override driver: MINIKUBE_DRIVER=virtualbox|kvm2|none
 #
@@ -15,19 +15,19 @@
 #   Igris listener    -> :80   (replays captured prod traffic)
 #   Envoy ingress     -> :8888 (Igris multicasts to shadow Services here)
 #   shadow app (echo) -> :80   (applicationPort; env copied from prod)
-#   Envoy egress proxy -> :15001 (HTTP_PROXY when spec.recordAndReplay is set)
+#   Envoy egress proxy -> :15001 (Shop + Recorder always-on)
 #
-# Usage:
-#   ./testing/bats/e2e-reset-minikube.sh                    # full reset + deploy + wait Ready
-#   ./testing/bats/e2e-reset-minikube.sh --run-record-replay
-#   ./testing/bats/e2e-reset-minikube.sh --skip-build       # assume images already in minikube docker
-#   ./testing/bats/e2e-reset-minikube.sh --no-reset         # deploy/upgrade only (no deletes)
-#   ./testing/bats/e2e-reset-minikube.sh --run-otlp-ingress-test
-#   ./testing/bats/e2e-reset-minikube.sh --skip-pixie           # Monarch only, no Vizier
+# Usage (from repo root):
+#   ./testing/tools/e2e-reset-minikube.sh                 # full reset + deploy + wait Ready
+#   ./testing/tools/e2e-reset-minikube.sh --skip-build    # reuse images already in minikube docker
+#   ./testing/tools/e2e-reset-minikube.sh --no-reset      # deploy/upgrade only (no deletes; reuses running minikube)
+#   ./testing/tools/e2e-reset-minikube.sh --skip-pixie    # Monarch only, no Vizier
+#   ./testing/tools/e2e-reset-minikube.sh --skip-load --skip-build --no-reset  # fastest: cluster already up + images present
 #
 set -euo pipefail
 
-REPO="${REPO:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+# testing/tools/<script> → repo root is ../..
+REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 cd "$REPO"
 # shellcheck source=testing/bats/helpers/siphon-config.sh
 source "$REPO/testing/bats/helpers/siphon-config.sh"
@@ -54,7 +54,8 @@ SETUP_PIXIE=1
 SKIP_PIXIE=0
 
 usage() {
-  sed -n '2,22p' "$0"
+  # Comment header only (through the blank line before set -euo).
+  sed -n '2,25p' "$0"
   echo "Flags: --skip-build --skip-load --no-reset --skip-pixie --setup-pixie -h"
 }
 
@@ -174,6 +175,13 @@ e2e_reset_deploy_stack() {
   fi
   kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
 
+  # beru-system is optional for ShadowTests (beru-local), but bats platform health
+  # expects the Deployment; deploy YAML defaults to beru:latest — pin to BERU_IMG.
+  echo "==> Beru (beru-system image=${BERU_IMG})"
+  kubectl apply -f "$REPO/pipeline/beru/deploy/"
+  kubectl set image deployment/beru -n beru-system beru="$BERU_IMG"
+  kubectl rollout status deployment/beru -n beru-system --timeout=180s
+
   echo "==> Siphon RBAC (per-shadow OTLP receiver; Monarch writes PixieStreamRule)"
   kubectl apply -f pipeline/siphon/deploy/rbac.yaml
 
@@ -182,7 +190,7 @@ e2e_reset_deploy_stack() {
   kubectl rollout status deployment/my-prod-app -n default --timeout=120s
   kubectl wait -n default --for=condition=Ready pod -l app=my-prod-app --timeout=120s
 
-  echo "==> ShadowTest (servicePort=8888, applicationPort=80, Igris :80/:8888, recordAndReplay for egress recorder)"
+  echo "==> ShadowTest (servicePort=8888, applicationPort=80, Igris :80/:8888; Shop+Recorder always-on)"
   wait_shadowtest_gone "$SHADOWTEST" "$SHADOWTEST_NS" 180
   kubectl apply -f "$REPO/testing/bats/manifests/e2e-shadowtest.yaml"
   if ! kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" >/dev/null 2>&1; then

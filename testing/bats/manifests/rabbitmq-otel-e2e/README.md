@@ -1,65 +1,49 @@
 # OTel RabbitMQ egress E2E manifests
 
-End-to-end test for **zero-touch W3C trace propagation** across RabbitMQ consume/publish using OpenTelemetry Operator auto-instrumentation on a trace-unaware Node.js worker.
+End-to-end fixtures for **zero-touch W3C trace propagation** across RabbitMQ consume/publish (hybrid bats suites).
 
 ## Prerequisites
 
-- Kind cluster with Monarch + Beru (`./testing/bats/e2e-reset-kind.sh`)
-- Monarch operator with **`MONARCH_MODE=dev`** (set by reset and test scripts)
-- **cert-manager** and **OpenTelemetry Operator** installed (`e2e-reset-kind.sh` runs `testing/bats/helpers/otel-bootstrap.sh` by default; use `--skip-otel-bootstrap` only if already installed)
-- `Instrumentation` CR pre-applied in shadow namespace before ShadowTest creates pods (handled by `e2e-otel-rabbitmq-test.sh`)
+- Minikube with Monarch + Beru (`./testing/tools/e2e-reset-minikube.sh`)
+- Monarch operator with **`MONARCH_MODE=dev`** (set by reset / bats platform bootstrap)
+- Pixie Vizier + pixie-stream-bridge for Mongo/HTTP capture paths used by hybrid suites
 
 ## Run
 
-Full reset + test:
-
 ```bash
-./testing/bats/e2e-reset-kind.sh --run-otel-rabbitmq-test
+./testing/tools/e2e-reset-minikube.sh --no-reset
+make test-bats-e2e
+# or:
+make test-bats-one FILE=e2e/rabbitmq-ingress/nodejs_hybrid.bats
+make test-bats-one FILE=e2e/rabbitmq-ingress/python_hybrid.bats
 ```
 
-Standalone (after reset):
-
-```bash
-./testing/bats/e2e-reset-kind.sh
-./testing/bats/e2e-otel-rabbitmq-test.sh
-```
-
-Node.js hybrid (RabbitMQ ingress + Mongo OTLP + HTTP replay + RMQ Firehose — **minikube only**):
-
-```bash
-./testing/bats/e2e-reset-minikube.sh   # if cluster not up
-./testing/bats/e2e-nodejs-hybrid-test.sh
-```
+See [/verification/hybrid-rmq-e2e-flow.md](../../../docs/verification/hybrid-rmq-e2e-flow.md).
 
 ## What it proves
 
-1. Prod message published with **only** W3C `traceparent` (no `traceparent`) via RabbitMQ Management HTTP API
+1. Prod message published with W3C `traceparent` via RabbitMQ
 2. `igris-rabbitmq` multicasts to shadow brokers with trace headers
-3. OTel-injected Node.js worker (`nodejs-test-worker`) consumes and publishes egress **without** app-level trace code
+3. Workers consume and publish egress (Mongo + HTTP + RMQ)
 4. `egress-relay-rabbitmq` posts three role payloads to Beru
-5. Beru completes RabbitMQ egress diff-of-diffs
+5. Beru completes RabbitMQ / Mongo egress diff-of-diffs (intentional candidate regressions where asserted)
 
 ## Expected success
 
-Script output:
+Beru log patterns (see bats helpers):
 
 ```
-[SUCCESS] Beru reported no RabbitMQ egress regression for trace <32-hex-trace-id>
-```
-
-Beru log:
-
-```
-No egress regression for Trace <32-hex-trace-id> (rabbitmq)
+Egress count regression for Trace <32-hex-trace-id> (rabbitmq)
+Egress count regression for Trace <32-hex-trace-id> (mongodb)
 ```
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `prod-target-nodejs.yaml` | Prod deployment env for egress exchange/routing (no manual trace flag) |
-| `prod-nodejs-worker.yaml` | Prod worker for `nodejs-hybrid-shadow` hybrid E2E |
-| `shadowtest-otel-rmq.yaml` | ShadowTest with `rabbitmq_message` input (apps must propagate `traceparent` without Monarch OTel injection) |
+| `prod-target-nodejs.yaml` | Prod deployment env for egress exchange/routing |
+| `prod-nodejs-worker.yaml` | Prod worker for `nodejs-hybrid` hybrid E2E |
+| `shadowtest-otel-rmq.yaml` | ShadowTest with `rabbitmq_message` input |
 | `shadowtest-nodejs-hybrid.yaml` | Node.js hybrid ShadowTest (RMQ ingress + mongo + record/replay) |
 
-Shadow namespace (deterministic): `shadow-default-otel-rmq-test-shadow`
+Shadow namespace (deterministic): `shadow-default-<shadowtest-name>`

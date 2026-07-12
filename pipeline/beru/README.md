@@ -243,7 +243,7 @@ Spans without query text are ingested when **operation + collection** attrs are 
 
 **Known limitations:** `getMore` continuations share the parent `find` signature; `bulkWrite` may hash as `unknown` without query text; non-JSON wire text without span attrs stays opaque.
 
-See `./make test-bats-e2e` and `./make test-bats-integration`.
+See `make test-bats-e2e` and `make test-bats-integration`.
 
 ---
 
@@ -293,7 +293,7 @@ Root Makefile aliases: `make beru-build`, `make beru-test`, and Monarch's `make 
 | **Mongo egress (OTel → Beru)** | OTel agent auto-instruments MongoDB drivers, extracts inbound context from AMQP/HTTP headers, exports `db.statement` spans to Beru OTLP. No app-level header copying. |
 | **RabbitMQ egress (relay)** | Workers publish with W3C context (OTel `amqplib` / `pika` injection); egress-relay-rabbitmq reads Firehose and posts to Beru HTTP API (dedupes duplicate Firehose events by trace+span+payload). |
 
-Enable OTel injection via `spec.otelInjection` on ShadowTest + OpenTelemetry Operator + `Instrumentation` CR. Monarch sets `OTEL_EXPORTER_OTLP_ENDPOINT` to Beru when a Mongo dependency is declared. See `./make test-bats-e2e`, `./make test-bats-e2e`, and [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) Phase 5_OTel.
+Enable OTel injection via `spec.otelInjection` on ShadowTest + OpenTelemetry Operator + `Instrumentation` CR. Monarch sets `OTEL_EXPORTER_OTLP_ENDPOINT` to Beru when a Mongo dependency is declared. See `make test-bats-e2e`, `make test-bats-e2e`, and [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) Phase 5_OTel.
 
 Manual propagation (`traceparent` / `traceparent` copying) remains supported for libraries the agent cannot instrument — see `testing/example-apps/rmq-test-worker` with `RMQ_WORKER_MANUAL_TRACE=1`. Python `pika` is auto-instrumented when OTel injection is enabled; egress-relay deduplicates duplicate Firehose publishes.
 

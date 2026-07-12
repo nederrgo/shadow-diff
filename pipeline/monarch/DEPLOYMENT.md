@@ -61,7 +61,7 @@ Monarch resolves helper container images at reconcile time:
 | `dev` or `development` | `:dev` | `igris-http:dev`, `siphon:dev`, `recorder:dev` |
 | unset / `prod` / `production` | `:latest` | `igris-http:latest`, `siphon:latest`, … |
 
-**Kind E2E:** `e2e-reset-kind.sh` sets `MONARCH_MODE=dev` and rollout-restarts the operator after loading images. Use `MONARCH_NO_CACHE=1` when rebuilding Monarch to avoid stale Docker cache under the same tag.
+**Minikube E2E:** `./testing/tools/e2e-reset-minikube.sh` sets `MONARCH_MODE=dev` and rollout-restarts the operator after loading images. Use `MONARCH_NO_CACHE=1` when rebuilding Monarch to avoid stale Docker cache under the same tag.
 
 ---
 

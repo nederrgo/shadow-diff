@@ -10,7 +10,7 @@ Parallel load test for the shadow stack: steady JSON traffic, noisy payloads (Be
 
 ## Prerequisites
 
-1. Kind E2E stack is **Ready** (Monarch, Beru, Igris, shadows, optional Siphon):
+1. Minikube E2E stack is **Ready** (Monarch, Beru, Igris, shadows, optional Siphon):
 
    ```bash
    ./testing/tools/e2e-reset-minikube.sh
@@ -194,7 +194,7 @@ With identical echo images (`testing/bats/manifests/e2e-shadowtest.yaml`), contr
 ## Related scripts
 
 - [`testing/tools/send-json-trace.sh`](../../testing/tools/send-json-trace.sh) — grpcurl orphan flood, 10MB 413 check, `hey` burst (complementary).
-- [`testing/tools/e2e-reset-minikube.sh`](../../testing/tools/e2e-reset-minikube.sh) — full Kind deploy.
+- [`testing/tools/e2e-reset-minikube.sh`](../../testing/tools/e2e-reset-minikube.sh) — full Minikube deploy.
 - [`e2e-pipeline-test.sh`](../../scripts/e2e-pipeline-test.sh) — single-trace ingress validation.
 
 ## Troubleshooting

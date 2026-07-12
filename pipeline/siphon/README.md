@@ -78,7 +78,7 @@ MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh   # Vizier in pl 
 # background bridge (requires px auth — use px auth login --manual on WSL)
 nohup ./testing/bats/pixie-stream-bridge.sh > .cache/pixie-bridge/bridge.log 2>&1 &
 
-./make test-bats-integration
+make test-bats-integration
 ```
 
 Requires **kvm2** (or virtualbox) Minikube driver, **flannel** CNI, Pixie Vizier healthy, and `siphon:dev` built into the minikube docker daemon (`eval $(minikube docker-env)`).
@@ -86,7 +86,7 @@ Requires **kvm2** (or virtualbox) Minikube driver, **flannel** CNI, Pixie Vizier
 **Local smoke (no cluster, no Pixie):**
 
 ```sh
-./make test-bats-integration
+make test-bats-integration
 ```
 
 See [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) for prod Service curl and Igris log checks.

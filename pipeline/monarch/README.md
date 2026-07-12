@@ -145,9 +145,9 @@ kubectl api-resources | grep pixiestreamrule   # short name: psr
 MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh
 ./testing/tools/e2e-reset-minikube.sh
 ./testing/bats/setup/start-pixie-stream-bridge.sh
-./make test-bats-integration      # HTTP ingress
-./make test-bats-e2e        # HTTP egress → Recorder
-USE_PIXIE=1 ./make test-bats-e2e  # RMQ + Mongo + HTTP + Firehose
+make test-bats-integration      # HTTP ingress
+make test-bats-e2e        # HTTP egress → Recorder
+USE_PIXIE=1 make test-bats-e2e  # RMQ + Mongo + HTTP + Firehose
 ```
 
 Recommend **8GB+ Minikube memory** for the hybrid test (six dependency pods + three workers + igris + recorder + egress-relay).
