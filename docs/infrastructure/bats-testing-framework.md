@@ -64,11 +64,11 @@ Escape hatches: `SKIP_PLATFORM_BOOTSTRAP`, `SKIP_BUILD`, `SKIP_LOAD`, `BATS_FORC
 | `BATS_REPORTER` | Effect |
 |-----------------|--------|
 | *(unset)* | Auto `spec` on TTY when jobs=1; otherwise bats default |
-| `spec` | Force Jest-like (falls back if jobs>1) |
+| `spec` | Force Jest-like (falls back if jobs>1); **colors on by default** |
 | `pretty` / `tap` | Bats built-in formatters |
 | `off` | Unchanged bats invocation |
 
-Install once: `npm ci --prefix testing/bats`.
+Install once: `npm ci --prefix testing/bats`. Prefer Linux `node` for ANSI colors (`BATS_NO_COLOR=1` to disable). Override binary with `BATS_NODE`.
 
 ## Beru settlement assertions (`lib/beru_assert.bash`)
 

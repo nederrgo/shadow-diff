@@ -9,32 +9,61 @@ bats_reporter_bin() {
   echo "${BATS_DIR}/node_modules/.bin/tap-mocha-reporter"
 }
 
-# Resolve a usable Node binary. On WSL, `npm` is often Windows
-# (/mnt/c/Program Files/nodejs/npm) while Linux `node` is absent — use node.exe beside it.
+# True if path looks like a native Linux node (ANSI colors work in WSL terminals).
+bats_is_linux_node() {
+  local p="$1"
+  [[ -n "$p" ]] || return 1
+  [[ "$p" == *.exe ]] && return 1
+  [[ "$p" == /mnt/c/* || "$p" == /mnt/c\\* ]] && return 1
+  return 0
+}
+
+# Resolve a usable Node binary. Prefer Linux node over Windows node.exe (WSL colors).
 bats_resolve_node() {
   if [[ -n "${BATS_NODE:-}" && -x "${BATS_NODE}" ]]; then
     echo "${BATS_NODE}"
     return 0
   fi
-  local c
-  for c in node nodejs node.exe; do
-    if command -v "$c" >/dev/null 2>&1; then
-      command -v "$c"
-      return 0
+
+  local c cand
+  local -a linux_cands=() win_cands=()
+
+  for c in node nodejs; do
+    if cand="$(command -v "$c" 2>/dev/null)"; then
+      if bats_is_linux_node "$cand"; then
+        linux_cands+=("$cand")
+      else
+        win_cands+=("$cand")
+      fi
     fi
   done
+  if cand="$(command -v node.exe 2>/dev/null)"; then
+    win_cands+=("$cand")
+  fi
+
   local npm_path npm_dir
   npm_path="$(command -v npm 2>/dev/null || true)"
   if [[ -n "$npm_path" ]]; then
     npm_dir="$(cd "$(dirname "$npm_path")" && pwd)"
-    if [[ -x "${npm_dir}/node.exe" ]]; then
-      echo "${npm_dir}/node.exe"
-      return 0
-    fi
     if [[ -x "${npm_dir}/node" ]]; then
-      echo "${npm_dir}/node"
-      return 0
+      if bats_is_linux_node "${npm_dir}/node"; then
+        linux_cands+=("${npm_dir}/node")
+      else
+        win_cands+=("${npm_dir}/node")
+      fi
     fi
+    if [[ -x "${npm_dir}/node.exe" ]]; then
+      win_cands+=("${npm_dir}/node.exe")
+    fi
+  fi
+
+  if ((${#linux_cands[@]} > 0)); then
+    echo "${linux_cands[0]}"
+    return 0
+  fi
+  if ((${#win_cands[@]} > 0)); then
+    echo "${win_cands[0]}"
+    return 0
   fi
   return 1
 }
@@ -49,10 +78,10 @@ bats_ensure_reporter() {
   bin="$(bats_reporter_bin)"
 
   if ! bats_have_node; then
-    echo "ERROR: Jest-like reporter needs Node.js (node/nodejs/node.exe on PATH, or next to npm)." >&2
-    echo "       WSL tip: Windows Node is fine — ensure '/mnt/c/Program Files/nodejs' is on PATH," >&2
-    echo "       or: export BATS_NODE='/mnt/c/Program Files/nodejs/node.exe'" >&2
-    echo "       Or install a Linux Node, or unset BATS_REPORTER." >&2
+    echo "ERROR: Jest-like reporter needs Node.js on PATH (prefer Linux node for colors)." >&2
+    echo "       Install: sudo apt install -y nodejs   # or nvm" >&2
+    echo "       Or: export BATS_NODE=/usr/bin/node" >&2
+    echo "       Or unset BATS_REPORTER." >&2
     return 1
   fi
 
@@ -121,8 +150,14 @@ bats_resolve_reporter() {
 bats_run_mocha_spec() {
   local node_bin
   node_bin="$(bats_resolve_node)" || return 1
-  # Prefer package entry (avoids non-executable shim / missing shebang path).
-  "$node_bin" "$(bats_reporter_js)" spec
+
+  # Default: colored √ / pass / fail. Opt out with BATS_NO_COLOR=1 (or FORCE_COLOR=0).
+  if [[ "${BATS_NO_COLOR:-0}" == "1" || "${FORCE_COLOR:-}" == "0" ]]; then
+    env -u FORCE_COLOR TAP_COLORS=0 "$node_bin" "$(bats_reporter_js)" spec
+    return
+  fi
+  FORCE_COLOR="${FORCE_COLOR:-1}" TAP_COLORS="${TAP_COLORS:-1}" \
+    "$node_bin" "$(bats_reporter_js)" spec
 }
 
 bats_invoke() {

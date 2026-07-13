@@ -68,11 +68,14 @@ SKIP_BUILD=1 SKIP_LOAD=1 ./testing/bats/run-one.sh e2e/rabbitmq-ingress/python_h
 - `BATS_PARALLEL_JOBS=1` (required — multi-process parallel interleaves TAP), and
 - stdout is a TTY, or you set `BATS_REPORTER=spec`
 
+**Colors are on by default** (`FORCE_COLOR=1` / `TAP_COLORS=1`). Prefer a Linux `node` (`/usr/bin/node`); Windows `node.exe` under WSL often prints without ANSI. Opt out with `BATS_NO_COLOR=1`.
+
 **Native `bats --jobs` is not used yet.** Parallelism today is a custom multi-process runner. See [docs/infrastructure/bats-parallel-isolation-roadmap.md](/infrastructure/bats-parallel-isolation-roadmap.md).
 
 ```bash
 BATS_REPORTER=spec make test-bats-one FILE=e2e/http-ingress/http_otel_rmq_python.bats
 BATS_REPORTER=tap make test-bats-e2e          # classic TAP
+BATS_NO_COLOR=1 BATS_REPORTER=spec ...        # monochrome
 BATS_PARALLEL_JOBS=2 make test-bats-e2e       # parallel; NO Jest reporter
 ```
 
@@ -87,6 +90,8 @@ BATS_PARALLEL_JOBS=2 make test-bats-e2e       # parallel; NO Jest reporter
 | `BATS_ISOLATE_MODE` | `trace` | `trace`, `wipe-beru`, or `full` |
 | `BATS_PARALLEL_JOBS` | `1` | Multi-process file parallelism; Jest reporter only when `1` |
 | `BATS_REPORTER` | auto | `spec` \| `pretty` \| `tap` \| `off` (see above) |
+| `BATS_NODE` | auto | Override Node binary (prefer Linux `/usr/bin/node` for colors) |
+| `BATS_NO_COLOR` | `0` | Set `1` to disable Jest-like ANSI colors |
 | `MONARCH_IMG`, `BERU_IMG`, … | `:dev` tags | Image overrides |
 
 ## Beru assertions

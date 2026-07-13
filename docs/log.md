@@ -9,6 +9,10 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-13]
+### Added
+* 'testing/bats/lib/reporter.bash': Default FORCE_COLOR/TAP_COLORS for Jest reporter; prefer Linux node over node.exe
+
 ## [2026-07-12]
 ### Added
 * 'testing/bats/lib/reporter.bash': Resolve WSL Windows node.exe beside npm for tap-mocha-reporter
