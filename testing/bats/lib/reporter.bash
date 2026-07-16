@@ -164,20 +164,31 @@ bats_run_verbose() {
     pass=$'\033[32m✓\033[0m'; fail=$'\033[31m✗\033[0m'
   fi
 
-  local line name
+  local line
+  local -i n_pass=0 n_fail=0
   while IFS= read -r line; do
     if [[ "$line" =~ ^[0-9]+\.\.[0-9]+$ ]]; then
       continue
     elif [[ "$line" =~ ^ok\ [0-9]+\ (.*) ]]; then
       printf '  %s %s\n' "$pass" "${BASH_REMATCH[1]}"
+      (( n_pass++ )) || true
     elif [[ "$line" =~ ^not\ ok\ [0-9]+\ (.*) ]]; then
       printf '  %s %s\n' "$fail" "${BASH_REMATCH[1]}"
+      (( n_fail++ )) || true
     elif [[ "$line" == '# '* ]]; then
       printf '    %s\n' "${line:2}"
     else
       printf '%s\n' "$line"
     fi
   done
+
+  if [[ "${BATS_NO_COLOR:-0}" == "1" || "${FORCE_COLOR:-}" == "0" ]]; then
+    printf '\n  %d passed, %d failed\n' "$n_pass" "$n_fail"
+  elif [[ "$n_fail" -gt 0 ]]; then
+    printf '\n  \033[32m%d passed\033[0m, \033[31m%d failed\033[0m\n' "$n_pass" "$n_fail"
+  else
+    printf '\n  \033[32m%d passed\033[0m\n' "$n_pass"
+  fi
 }
 
 bats_run_mocha_spec() {

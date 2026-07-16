@@ -1,17 +1,17 @@
 ---
 type: Architecture Specification
 title: Egress Record and Replay
-description: How Shadow-Diff captures production HTTP egress via Pixie dual-branch export (client + server), seeds Shop with Put dedup, and replays via Envoy egress ext_proc. No ShadowTest recordAndReplay field.
+description: How Shadow-Diff captures production HTTP egress via Pixie dual-branch export (client + server), seeds Shop with Put dedup, and replays via Envoy egress ext_proc.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/recorder
 tags: [data-plane, recorder, shop, envoy, pixie, egress, replay]
-timestamp: 2026-07-12T15:35:00Z
+timestamp: 2026-07-16T12:35:00Z
 ---
 
 # Egress Record and Replay
 
 Shadow workers cannot call real downstream services — doing so would produce side effects in production systems. Instead, the record-and-replay pipeline captures what the **production worker** actually received from each downstream service and replays those exact responses to shadow workers, scoped to the same trace.
 
-**There is no `spec.recordAndReplay` field.** Monarch always deploys Shop + Recorder into each shadow namespace. Recorder unconditionally forwards every OTLP HTTP span to Shop.
+Monarch always deploys Shop + Recorder into each shadow namespace. Recorder unconditionally forwards every OTLP HTTP span to Shop.
 
 ## Why this exists
 
@@ -59,7 +59,7 @@ The Recorder normalises the host with `NormalizeHTTPHost` (lowercase, port strip
 shop client: recorded POST <host><path> -> <status>
 ```
 
-No host allowlist ConfigMap — every span is forwarded.
+Every span is forwarded to Shop.
 
 ### Shop (`pipeline/shop/`)
 

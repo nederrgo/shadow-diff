@@ -9,6 +9,12 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-16]
+### Added
+* 'pipeline/monarch/README.md': Align with current CRD — drop otelInjection/recordAndReplay; document Envoy+iptables, beru-local, always-on Shop+Recorder
+* 'docs/data-plane/egress-record-replay.md': Apply doc-hygiene — strip legacy negatives (recordAndReplay / host allowlist absences)
+* 'docs/architecture/ARCHITECTURE.md': Apply doc-hygiene — strip legacy negatives (recordAndReplay absences) and always-on Shop+Recorder wording
+
 ## [2026-07-14]
 ### Added
 * 'testing/bats/lib/reporter.bash': Add BATS_REPORTER=verbose mode — streams ✓/✗ marks with all diagnostic lines shown inline for both passing and failing tests; uses bats --show-output-of-passing-tests

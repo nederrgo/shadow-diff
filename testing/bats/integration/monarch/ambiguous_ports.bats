@@ -25,7 +25,7 @@ setup_file() {
   bats_suite_mark SHADOWTEST_APPLIED 1
 
   # Monarch should resolve the port ambiguity and set phase=Failed quickly.
-  monarch_wait_shadowtest_failed "$SHADOWTEST" "$SHADOWTEST_NS" 60
+  monarch_wait_shadowtest_failed "$SHADOWTEST" "$SHADOWTEST_NS" 20
 
   bats_suite_mark SETUP_COMPLETE 1
   bats_write_suite_state

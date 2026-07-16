@@ -1,5 +1,10 @@
 # CLAUDE.md
 
+@.cursor/rules/ponytail.md
+@.cursor/rules/shadow-diff-core.md
+@.cursor/rules/shadow-diff-wiki.md
+@.claude/rules/shadow-diff-doc-hygiene.md
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What this project is
