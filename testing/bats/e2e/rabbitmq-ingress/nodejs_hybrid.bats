@@ -46,7 +46,7 @@ setup_file() {
   bats_write_suite_state
 }
 
-@test "verify HTTP ingress reaches all shadow roles" {
+@test "verify HTTP ingress reaches all shadow roles (nodejs)" {
   publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
   if ! wait_recorder_seed; then
     skip "Pixie HTTP egress / Recorder seed not available"
@@ -57,7 +57,7 @@ setup_file() {
   done
 }
 
-@test "verify Mongo egress diff is clean for isolated trace" {
+@test "verify Mongo egress diff is clean for isolated trace (nodejs)" {
   if ! kubectl get svc "${SHADOWTEST}-igris" -n "${SHADOW_NS}" >/dev/null 2>&1; then
     skip "RMQ-only hybrid has no igris-http; use integration/mongo_egress.bats"
   fi
@@ -67,7 +67,7 @@ setup_file() {
   assert_success
 }
 
-@test "verify candidate Mongo count regression in Beru verdict" {
+@test "verify candidate Mongo count regression in Beru verdict (nodejs)" {
   publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
   if ! wait_recorder_seed; then
     skip "Pixie HTTP egress / Recorder seed not available"
@@ -85,7 +85,7 @@ setup_file() {
   assert_output --regexp '^MISMATCH\|1$'
 }
 
-@test "verify RabbitMQ egress count regression" {
+@test "verify RabbitMQ egress count regression (nodejs)" {
   publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
   if ! wait_recorder_seed; then
     skip "Pixie HTTP egress / Recorder seed not available"

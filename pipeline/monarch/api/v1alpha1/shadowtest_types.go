@@ -185,20 +185,24 @@ type ShadowTestSpec struct {
 	TargetNamespace string `json:"targetNamespace,omitempty"`
 
 	// OldImage is the container image for Control-A and Control-B pods.
-	OldImage string `json:"oldImage"`
+	// When unset, Monarch derives it from the target Deployment's current running image.
+	// +optional
+	OldImage string `json:"oldImage,omitempty"`
 
 	// NewImage is the container image for the Candidate pod.
 	NewImage string `json:"newImage"`
 
 	// ServicePort is the TCP port the Envoy ingress listener binds on in shadow pods.
-	// Defaults to 8888 when unset.
+	// Monarch always computes a conflict-free value relative to applicationPort — leave unset
+	// unless you have a specific networking reason to pin it.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	ServicePort int32 `json:"servicePort,omitempty"`
 
 	// ApplicationPort is the TCP port the app container listens on (Envoy forwards here).
-	// Must differ from ServicePort when Envoy fronts ingress. Defaults to servicePort+1 if unset.
+	// When unset, Monarch derives it from the target Deployment's container ports (prefers the
+	// port named "http"; falls back to the single declared port; fails if ambiguous).
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	// +optional

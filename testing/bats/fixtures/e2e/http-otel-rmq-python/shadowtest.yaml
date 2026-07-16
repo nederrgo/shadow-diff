@@ -7,11 +7,7 @@ metadata:
 spec:
   targetDeployment: http-rmq-python-prod
 
-  oldImage: http-rmq-python-worker:dev
   newImage: http-rmq-python-worker:dev
-
-  servicePort: 8888
-  applicationPort: 8080
 
   inputs:
     - port: 8888

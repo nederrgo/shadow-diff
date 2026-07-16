@@ -44,7 +44,7 @@ setup_file() {
   bats_write_suite_state
 }
 
-@test "verify HTTP ingress via igris is clean in Beru" {
+@test "verify HTTP ingress via igris is clean in Beru (nodejs)" {
   bats_http_otel_reverify_pixie
   run publish_prod_http "$BATS_TRACE_ID"
   assert_success
@@ -52,7 +52,7 @@ setup_file() {
   assert_success
 }
 
-@test "verify shadow workers publish RMQ egress without logging trace id" {
+@test "verify shadow workers publish RMQ egress without logging trace id (nodejs)" {
   bats_http_otel_reverify_pixie
   run publish_prod_http "$BATS_TRACE_ID"
   assert_success
@@ -64,7 +64,7 @@ setup_file() {
   done
 }
 
-@test "verify Mongo egress is clean for isolated trace" {
+@test "verify Mongo egress is clean for isolated trace (nodejs)" {
   bats_http_otel_reverify_pixie
   run publish_prod_http "$BATS_TRACE_ID"
   assert_success
@@ -76,7 +76,7 @@ setup_file() {
   assert_success
 }
 
-@test "verify RabbitMQ egress is clean for isolated trace" {
+@test "verify RabbitMQ egress is clean for isolated trace (nodejs)" {
   bats_http_otel_reverify_pixie
   run publish_prod_http "$BATS_TRACE_ID"
   assert_success

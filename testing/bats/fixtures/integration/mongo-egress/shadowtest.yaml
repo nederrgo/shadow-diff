@@ -10,9 +10,6 @@ spec:
   oldImage: http-rmq-python-worker:dev
   newImage: http-rmq-python-worker:dev
 
-  servicePort: 8888
-  applicationPort: 8080
-
   inputs:
     - port: 8888
       driver: http_request

@@ -93,14 +93,14 @@ main() {
 
   case "$suite" in
     integration)
-      bats_invoke "${BATS_DIR}/integration"
+      bats_invoke --recursive "${BATS_DIR}/integration"
       ;;
     e2e)
       run_e2e_suite
       ;;
     all|-h|--help)
       [[ "$suite" == "-h" || "$suite" == "--help" ]] && { usage; exit 0; }
-      bats_invoke "${BATS_DIR}/integration"
+      bats_invoke --recursive "${BATS_DIR}/integration"
       run_e2e_suite
       ;;
     *)

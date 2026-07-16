@@ -65,8 +65,10 @@ SKIP_BUILD=1 SKIP_LOAD=1 ./testing/bats/run-one.sh e2e/rabbitmq-ingress/python_h
 
 `run.sh` / `run-one.sh` pipe bats TAP through `tap-mocha-reporter spec` when:
 
-- `BATS_PARALLEL_JOBS=1` (required — multi-process parallel interleaves TAP), and
-- stdout is a TTY, or you set `BATS_REPORTER=spec`
+- `BATS_PARALLEL_JOBS=1` (required — multi-process parallel interleaves TAP), or
+- you set `BATS_REPORTER=spec`
+
+(`make` often fails a TTY check, so auto mode keys off jobs=1 only — not whether stdout looks like a terminal.)
 
 **Colors are on by default** (`FORCE_COLOR=1` / `TAP_COLORS=1`). Prefer a Linux `node` (`/usr/bin/node`); Windows `node.exe` under WSL often prints without ANSI. Opt out with `BATS_NO_COLOR=1`.
 

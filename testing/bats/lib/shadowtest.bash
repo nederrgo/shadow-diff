@@ -121,6 +121,22 @@ wait_shadowtest_ready() {
     siphon=$(kubectl get shadowtest "$name" -n "$ns" -o jsonpath='{.status.siphonPhase}' 2>/dev/null || true)
     relay_ok=1 mongo_ok=1 rabbitmq_ok=1
 
+    # Fast-fail: once the shadow namespace exists, check every iteration for
+    # pods in terminal bad states (CrashLoop, bad image, OOM). These won't
+    # self-heal — waiting the full SHADOW_WAIT_LOOPS timeout only wastes time
+    # and hides the real error.
+    if [[ -n "$actual_ns" ]]; then
+      local bad_pods
+      bad_pods=$(kubectl get pods -n "$actual_ns" --no-headers 2>/dev/null \
+        | grep -E 'CrashLoopBackOff|OOMKilled|ErrImagePull|ImagePullBackOff|InvalidImageName' \
+        || true)
+      if [[ -n "$bad_pods" ]]; then
+        echo "==> [wait_shadowtest_ready] terminal pod failure in ${actual_ns} — failing fast:" >&2
+        kubectl get pods -n "$actual_ns" -o wide 2>/dev/null >&2 || true
+        return 1
+      fi
+    fi
+
     if [[ ( "$require_rmq" == "1" || "$require_rmq_egress" == "1" ) && -n "$actual_ns" ]]; then
       relay_ok=0
       if kubectl get deploy "${name}-egress-relay-rabbitmq" -n "$actual_ns" >/dev/null 2>&1; then

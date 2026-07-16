@@ -1,1 +1,1 @@
-../../../../scripts/manifests/rabbitmq-otel-e2e/prod-mongo.yaml
+../../../manifests/rabbitmq-otel-e2e/prod-mongo.yaml

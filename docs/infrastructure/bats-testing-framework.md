@@ -63,7 +63,7 @@ Escape hatches: `SKIP_PLATFORM_BOOTSTRAP`, `SKIP_BUILD`, `SKIP_LOAD`, `BATS_FORC
 
 | `BATS_REPORTER` | Effect |
 |-----------------|--------|
-| *(unset)* | Auto `spec` on TTY when jobs=1; otherwise bats default |
+| *(unset)* | Auto `spec` when `BATS_PARALLEL_JOBS=1`; otherwise bats default |
 | `spec` | Force Jest-like (falls back if jobs>1); **colors on by default** |
 | `pretty` / `tap` | Bats built-in formatters |
 | `off` | Unchanged bats invocation |

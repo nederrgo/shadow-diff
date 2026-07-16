@@ -122,20 +122,26 @@ bats_resolve_reporter() {
         echo "spec"
         return 0
         ;;
+      verbose)
+        echo "verbose"
+        return 0
+        ;;
       pretty|tap|off)
         echo "$want"
         return 0
         ;;
       *)
-        echo "WARN: unknown BATS_REPORTER=${want} (use spec|pretty|tap|off); using bats default" >&2
+        echo "WARN: unknown BATS_REPORTER=${want} (use spec|pretty|tap|verbose|off); using bats default" >&2
         echo ""
         return 0
         ;;
     esac
   fi
 
-  # Auto: Jest-like only on an interactive TTY with a single bats process.
-  if [[ "$jobs" -eq 1 ]] && [[ -t 1 ]]; then
+  # Auto: Jest-like whenever a single bats process runs (jobs=1).
+  # Do not require [[ -t 1 ]] — `make test-bats-e2e` often fails the TTY check
+  # and would otherwise fall back to raw TAP.
+  if [[ "$jobs" -eq 1 ]]; then
     if ! bats_have_node; then
       echo "WARN: auto Jest-like reporter skipped (no Node found); using bats default." >&2
       echo ""
@@ -145,6 +151,33 @@ bats_resolve_reporter() {
     return 0
   fi
   echo ""
+}
+
+# Verbose formatter: clean ✓ for passing tests, ✗ with full inline diagnostics for failures.
+# Passing tests show only the result line; failing tests show all captured output immediately
+# below the ✗ mark so the context is visible without scrolling to a summary section.
+bats_run_verbose() {
+  local pass fail
+  if [[ "${BATS_NO_COLOR:-0}" == "1" || "${FORCE_COLOR:-}" == "0" ]]; then
+    pass='✓'; fail='✗'
+  else
+    pass=$'\033[32m✓\033[0m'; fail=$'\033[31m✗\033[0m'
+  fi
+
+  local line name
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[0-9]+\.\.[0-9]+$ ]]; then
+      continue
+    elif [[ "$line" =~ ^ok\ [0-9]+\ (.*) ]]; then
+      printf '  %s %s\n' "$pass" "${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^not\ ok\ [0-9]+\ (.*) ]]; then
+      printf '  %s %s\n' "$fail" "${BASH_REMATCH[1]}"
+    elif [[ "$line" == '# '* ]]; then
+      printf '    %s\n' "${line:2}"
+    else
+      printf '%s\n' "$line"
+    fi
+  done
 }
 
 bats_run_mocha_spec() {
@@ -170,6 +203,10 @@ bats_invoke() {
       # pipefail: bats failure must be the make/run exit code
       set -o pipefail
       "${BATS_BIN}" --formatter tap --timing "$@" | bats_run_mocha_spec
+      ;;
+    verbose)
+      set -o pipefail
+      "${BATS_BIN}" --formatter tap --timing "$@" | bats_run_verbose
       ;;
     pretty)
       "${BATS_BIN}" --formatter pretty --timing "$@"

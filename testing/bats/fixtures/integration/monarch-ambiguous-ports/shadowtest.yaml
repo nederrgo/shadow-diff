@@ -1,0 +1,11 @@
+# ShadowTest with no applicationPort set. The target has two ports ("api":8080
+# and "metrics":9090) with no "http"-named port, so Monarch cannot pick one
+# automatically and must fail with a clear disambiguation error.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-monarch-ambig-ports
+  namespace: default
+spec:
+  targetDeployment: monarch-ambig-target
+  newImage: nginx:alpine

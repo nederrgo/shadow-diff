@@ -1,0 +1,12 @@
+# ShadowTest for Monarch HTTP input integration tests.
+# Monarch derives oldImage from the prod target, applicationPort from its container
+# port (nginx:alpine → 80), and picks a conflict-free servicePort automatically.
+# Deploys both igris-http and siphon in the shadow namespace.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-monarch-http-input
+  namespace: default
+spec:
+  targetDeployment: monarch-integ-target
+  newImage: nginx:alpine

@@ -9,8 +9,19 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-14]
+### Added
+* 'testing/bats/lib/reporter.bash': Add BATS_REPORTER=verbose mode — streams ✓/✗ marks with all diagnostic lines shown inline for both passing and failing tests; uses bats --show-output-of-passing-tests
+* 'testing/bats/fixtures/{e2e/rabbit-ingress,integration/mongo-egress}': retarget broken prod-*.yaml symlinks from scripts/manifests to testing/bats/manifests
+* 'testing/bats/integration/monarch/ambiguous_ports.bats + fixtures/integration/monarch-ambiguous-ports/ + lib/monarch_assert.bash': Add integration test for multi-port disambiguation error; ShadowTest with two unnamed container ports reaches Failed with clear applicationPort error; monarch_wait_shadowtest_failed helper added
+* 'pipeline/monarch/internal/controller/shadowtest_helpers.go + shadowtest_controller.go + api/v1alpha1/shadowtest_types.go': resolveSpecDefaults derives oldImage/applicationPort/servicePort from target Deployment at reconcile time; users now only need targetDeployment + newImage in ShadowTest spec; CRD regenerated, all integration tests passing
+* 'testing/bats/fixtures/integration/': Simplified ShadowTest fixture YAMLs — removed oldImage, servicePort, applicationPort (now derived by resolveSpecDefaults from target Deployment); updated monarch-http-input and monarch-basic fixtures
+* 'testing/bats/integration/monarch/http_input.bats': Add Monarch HTTP input integration tests — igris-http and siphon deployment readiness assertions using monarch_assert lib; add prod-target fixture and monarch-http-input ShadowTest fixture; extend monarch_assert with monarch_wait_igris_running and monarch_wait_siphon_running
+* 'testing/bats/lib/monarch_assert.bash + integration/monarch/': Add Monarch integration testing framework — monarch_assert lib with pod-readiness polling, CrashLoop detection, and diagnostics; integration/monarch/ directory and monarch-basic fixture for the integration testing pyramid layer
+
 ## [2026-07-13]
 ### Added
+* 'testing/bats/lib/reporter.bash': Auto Jest reporter on BATS_PARALLEL_JOBS=1 even when make/stdout fails TTY check
 * 'testing/bats/lib/reporter.bash': Default FORCE_COLOR/TAP_COLORS for Jest reporter; prefer Linux node over node.exe
 
 ## [2026-07-12]

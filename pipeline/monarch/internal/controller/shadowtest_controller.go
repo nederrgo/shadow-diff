@@ -81,6 +81,13 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	if err := resolveSpecDefaults(&shadowTest, &target); err != nil {
+		msg := fmt.Sprintf("cannot resolve spec defaults from target: %s", err)
+		log.Info(msg)
+		_ = r.patchStatus(ctx, &shadowTest, "Failed", msg, shadowNS)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
 	if len(shadowTest.Spec.Inputs) == 0 && shadowTest.Spec.TargetDeployment != "" && !siphonEnabled(&shadowTest, &target) {
 		log.Info("live capture inactive: spec.inputs is empty and Siphon is disabled",
 			"level", "warn",
@@ -225,9 +232,6 @@ func (r *ShadowTestReconciler) reconcileIngressRelays(
 ) (bool, error) {
 	if needsAMQPIngress(st) {
 		if _, err := r.ensureProdShadowQueue(ctx, st); err != nil {
-			return false, err
-		}
-		if err := r.Get(ctx, req.NamespacedName, st); err != nil {
 			return false, err
 		}
 		if err := r.reconcileIgrisRabbitMQStack(ctx, st, shadowNS); err != nil {

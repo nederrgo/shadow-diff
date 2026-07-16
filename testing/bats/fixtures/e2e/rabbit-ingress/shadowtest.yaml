@@ -7,7 +7,6 @@ metadata:
 spec:
   targetDeployment: python-prod-worker
 
-  oldImage: python-test-worker:dev
   newImage: python-test-worker:dev
 
   inputs:

@@ -7,7 +7,6 @@ metadata:
 spec:
   targetDeployment: nodejs-prod-worker
 
-  oldImage: nodejs-hybrid-worker:dev
   newImage: nodejs-hybrid-worker:dev
 
   inputs:

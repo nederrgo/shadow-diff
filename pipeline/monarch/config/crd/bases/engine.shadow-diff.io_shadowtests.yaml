@@ -44,7 +44,8 @@ spec:
               applicationPort:
                 description: |-
                   ApplicationPort is the TCP port the app container listens on (Envoy forwards here).
-                  Must differ from ServicePort when Envoy fronts ingress. Defaults to servicePort+1 if unset.
+                  When unset, Monarch derives it from the target Deployment's container ports (prefers the
+                  port named "http"; falls back to the single declared port; fails if ambiguous).
                 format: int32
                 maximum: 65535
                 minimum: 1
@@ -388,8 +389,9 @@ spec:
                 description: NewImage is the container image for the Candidate pod.
                 type: string
               oldImage:
-                description: OldImage is the container image for Control-A and Control-B
-                  pods.
+                description: |-
+                  OldImage is the container image for Control-A and Control-B pods.
+                  When unset, Monarch derives it from the target Deployment's current running image.
                 type: string
               recorder:
                 description: Recorder overrides the Recorder image (always provisioned
@@ -402,7 +404,8 @@ spec:
               servicePort:
                 description: |-
                   ServicePort is the TCP port the Envoy ingress listener binds on in shadow pods.
-                  Defaults to 8888 when unset.
+                  Monarch always computes a conflict-free value relative to applicationPort — leave unset
+                  unless you have a specific networking reason to pin it.
                 format: int32
                 maximum: 65535
                 minimum: 1
@@ -450,7 +453,6 @@ spec:
                 type: string
             required:
             - newImage
-            - oldImage
             - targetDeployment
             type: object
           status:

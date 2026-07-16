@@ -56,7 +56,7 @@ publish_igris_http() {
 }
 
 multicast_igris_write() {
-  publish_igris_http "$1" "$2" "/write"
+  publish_igris_http "$1" "$2" "/publish"
 }
 
 publish_prod_http() {
