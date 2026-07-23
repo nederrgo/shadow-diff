@@ -4,7 +4,7 @@ title: Infrastructure Hub
 description: Index for Shadow-Diff infrastructure, deployment, and testing harness specifications.
 resource: https://github.com/shadow-diff/monarch/tree/main/docs/infrastructure
 tags: [index, infrastructure, testing]
-timestamp: 2026-07-12T23:15:00Z
+timestamp: 2026-07-23T10:34:00Z
 ---
 
 # Infrastructure

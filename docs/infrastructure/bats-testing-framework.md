@@ -4,7 +4,7 @@ title: Bats-Core Modular Testing Framework
 description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, settlement-based Beru assertions, Jest-like reporter for BATS_PARALLEL_JOBS=1, and idempotent platform bootstrap.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats
 tags: [infrastructure, testing, bats, e2e, integration, monarch, beru]
-timestamp: 2026-07-12T23:15:00Z
+timestamp: 2026-07-23T10:50:00Z
 ---
 
 # Bats-Core Modular Testing Framework
@@ -21,6 +21,8 @@ Shadow-Diff E2E validation uses **bats-core** under [`testing/bats/`](https://gi
 | `teardown_file` | Teardown | `delete_shadowtest_and_verify` **then** prod undeploy (prod must stay up until ShadowTest finalizer completes RMQ queue cleanup) |
 
 **CI optimization:** Multiple `@test` blocks share one ShadowTest CR. Phase 4 runs in `teardown_file` only — not after each test.
+
+**Exception — lifecycle suite:** `integration/monarch/lifecycle.bats` apply/deletes the ShadowTest **inside each `@test`** (delete/recreate is the behavior under test).
 
 ## Directory layout
 
@@ -94,6 +96,18 @@ make test-bats-integration
 BATS_PARALLEL_JOBS=1 make test-bats-e2e   # Jest-like on TTY
 make test-bats
 ```
+
+### Integration suites (`testing/bats/integration/`)
+
+| File | Scenario |
+|------|----------|
+| `monarch/http_input.bats` | HTTP input stack Ready (igris-http, siphon, roles, deps) |
+| `monarch/ambiguous_ports.bats` | Multi-port target → `Failed` with `applicationPort` message |
+| `monarch/lifecycle.bats` | Delete mid-bring-up, re-apply while deleting, recreate → Ready, delete after Ready |
+| `monarch/deps_update.bats` | Live `spec.dependencies` add → dep Deployments + shadow app pod rollout with injected env |
+| `mongo_egress.bats` | Mongo egress path (integration) |
+
+Helpers: `monarch_wait_shadowtest_bringup_started`, `monarch_wait_shadowtest_cleaned`, `monarch_wait_dependency_available`, `monarch_assert_shadow_app_env` in `lib/monarch_assert.bash`.
 
 ### E2E suites (`testing/bats/e2e/`)
 

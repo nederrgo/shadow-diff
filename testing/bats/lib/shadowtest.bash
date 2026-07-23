@@ -125,14 +125,26 @@ wait_shadowtest_ready() {
     # pods in terminal bad states (CrashLoop, bad image, OOM). These won't
     # self-heal — waiting the full SHADOW_WAIT_LOOPS timeout only wastes time
     # and hides the real error.
+    # Note: ImagePullBackOff can be transient on a cold Minikube (first pull of
+    # mongo/rabbitmq); dump details to stdout so bats reporters keep them.
     if [[ -n "$actual_ns" ]]; then
       local bad_pods
       bad_pods=$(kubectl get pods -n "$actual_ns" --no-headers 2>/dev/null \
         | grep -E 'CrashLoopBackOff|OOMKilled|ErrImagePull|ImagePullBackOff|InvalidImageName' \
         || true)
       if [[ -n "$bad_pods" ]]; then
-        echo "==> [wait_shadowtest_ready] terminal pod failure in ${actual_ns} — failing fast:" >&2
-        kubectl get pods -n "$actual_ns" -o wide 2>/dev/null >&2 || true
+        echo "==> [wait_shadowtest_ready] terminal pod failure in ${actual_ns} — failing fast:"
+        echo "    ShadowTest phase=${phase:-<none>} siphon=${siphon:-<none>} msg=${message:-<none>}"
+        echo "    matched rows:"
+        echo "$bad_pods" | sed 's/^/      /'
+        echo "    all pods:"
+        kubectl get pods -n "$actual_ns" -o wide 2>/dev/null | sed 's/^/      /' || true
+        echo "    waiting reasons / images:"
+        kubectl get pods -n "$actual_ns" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.containerStatuses[*]}{.name}={.state.waiting.reason}({.image});{end}{"\n"}{end}' \
+          2>/dev/null | sed 's/^/      /' || true
+        echo "    recent events (Warning):"
+        kubectl get events -n "$actual_ns" --field-selector type=Warning \
+          --sort-by='.lastTimestamp' 2>/dev/null | tail -20 | sed 's/^/      /' || true
         return 1
       fi
     fi

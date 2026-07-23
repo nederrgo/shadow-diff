@@ -4,7 +4,7 @@ title: Platform Bootstrap and ShadowTest Lifecycle
 description: How to install Monarch, Pixie Vizier, and pixie-stream-bridge once; create and delete ShadowTests without resetting Pixie.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [operations, control-plane, monarch, pixie, pixiestreamrule, shadowtest, deployment]
-timestamp: 2026-07-12T14:20:00Z
+timestamp: 2026-07-23T10:34:00Z
 ---
 
 # Platform Bootstrap and ShadowTest Lifecycle
@@ -206,6 +206,23 @@ kubectl delete shadowtest my-app-shadow -n default
 4. Delete shadow namespace (all pods, Services, beru-local, dependencies)
 5. Remove ShadowTest finalizer
 
+### Mid-bring-up delete (race contract)
+
+`Reconcile` checks `deletionTimestamp` only at the **start** of each pass. An in-flight create reconcile that already passed that check can still create later resources (Deployments, `PixieStreamRule`, …) after `kubectl delete` has been issued.
+
+Contract:
+
+| Claim | Guaranteed? |
+|-------|-------------|
+| Bring-up freezes at the stage where delete was requested | **No** — stage-precise stop is not promised |
+| Next reconcile enters `reconcileDelete` and does not resume bring-up to `Ready` | **Yes** |
+| Late creates after `deletionTimestamp` are still removed (explicit Pixie delete + shadow namespace wipe) | **Yes** |
+| Same-name recreate while the CR still has a finalizer | **Blocked** by the API until the finalizer is removed (after the shadow namespace is gone) |
+
+Unit coverage (fake client): `pipeline/monarch/internal/controller/shadowtest_delete_lifecycle_test.go` — late creates after `deletionTimestamp` still cleaned; delete path never recreates the shadow namespace or marks `Ready`.
+
+Integration coverage (bats): `testing/bats/integration/monarch/lifecycle.bats` — real-cluster delete mid-bring-up, re-apply while deleting (same UID), recreate after clean → Ready, delete after Ready. Asserts CR / shadow namespace / `PixieStreamRule` gone; does not claim stage-precise freeze.
+
 ### Bridge behavior on delete
 
 On the next poll (~3s):
@@ -255,6 +272,8 @@ The E2E restart race (`pkill` while `px run` blocks up to 25s) can leave **no br
 - [monarch-security-model.md](/control-plane/monarch-security-model.md) — Monarch does not manage Pixie PEM; bridge is out-of-band
 - [ARCHITECTURE.md](/architecture/ARCHITECTURE.md) — pixie-stream-bridge layer table and Mongo egress path
 - [pipeline/monarch/internal/controller/shadowtest_resources.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_resources.go) — `reconcileDelete` PixieStreamRule cleanup
+- [pipeline/monarch/internal/controller/shadowtest_delete_lifecycle_test.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_delete_lifecycle_test.go) — fake-client mid-delete / late-create cleanup
+- [testing/bats/integration/monarch/lifecycle.bats](https://github.com/shadow-diff/monarch/tree/main/testing/bats/integration/monarch/lifecycle.bats) — integration lifecycle delete / recreate
 - [pipeline/monarch/internal/controller/shadowtest_siphon.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_siphon.go) — `reconcilePixieStreamRule`, `deletePixieStreamRule`
 - [testing/bats/pixie-stream-bridge.sh](https://github.com/shadow-diff/monarch/tree/main/testing/bats/pixie-stream-bridge.sh) — poll loop and PxL export
 - [testing/bats/debug-mongo-egress.sh](https://github.com/shadow-diff/monarch/tree/main/testing/bats/debug-mongo-egress.sh) — layer-by-layer Pixie → Beru diagnostics

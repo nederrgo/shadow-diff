@@ -308,7 +308,7 @@ Expected Deployments in the shadow namespace (varies by spec):
 
 ## Step 6 — Change or remove a ShadowTest
 
-**Update:** edit the CR and re-apply; Monarch patches owned resources.
+**Update:** edit the CR and re-apply; Monarch patches owned resources. Adding or removing `spec.dependencies` creates/prunes per-role dep Deployments and rolls shadow app pods so injected env (e.g. `MONGO_URL`) matches the new spec. Covered by `testing/bats/integration/monarch/deps_update.bats`.
 
 ```bash
 kubectl apply -f my-shadowtest.yaml
