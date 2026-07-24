@@ -68,23 +68,32 @@ beru_seed_reports() {
 }
 
 beru_assert_verdict_status() {
+  # Seed-only assert: one GET per attempt, no quiescence (history is static).
   local trace_id="$1" protocol="$2" want_status="$3" want_reg="${4:-}"
-  local line status reg
-  # Allow engine workers a moment after seed.
-  sleep 1
-  line=$(beru_verdict_line_api "$trace_id" "$protocol")
-  IFS='|' read -r status reg <<<"$line"
-  [[ "$status" == "$want_status" ]] || {
-    echo "verdict status=${status} want=${want_status} line=${line}" >&2
-    return 1
-  }
-  if [[ -n "$want_reg" ]]; then
-    [[ "$reg" == "$want_reg" ]] || {
-      echo "has_count_regression=${reg} want=${want_reg}" >&2
-      return 1
-    }
-  fi
-  echo "ok status=${status} regression=${reg}"
+  local timeout="${5:-20}"
+  local line status reg i=0
+  while [[ $i -lt "$timeout" ]]; do
+    line=$(beru_verdict_line_api "$trace_id" "$protocol" 2>/dev/null || true)
+    IFS='|' read -r status reg <<<"$line"
+    if [[ -n "$status" ]]; then
+      [[ "$status" == "$want_status" ]] || {
+        echo "verdict status=${status} want=${want_status} line=${line}" >&2
+        return 1
+      }
+      if [[ -n "$want_reg" ]]; then
+        [[ "$reg" == "$want_reg" ]] || {
+          echo "has_count_regression=${reg} want=${want_reg}" >&2
+          return 1
+        }
+      fi
+      echo "ok status=${status} regression=${reg}"
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "timeout waiting for verdict status=${want_status} trace=${trace_id} (last=${line})" >&2
+  return 1
 }
 
 beru_print_ui_hint() {

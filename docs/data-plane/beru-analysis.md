@@ -4,7 +4,7 @@ title: Beru Trace Analysis Engine
 description: Single-trace correctness pipeline for Beru v2 — completeness timeout, baseline void guard, and compound candidate diffing with structured verdict details.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2
 tags: [data-plane, beru, diff, analysis, verdict, baseline]
-timestamp: 2026-07-24T07:00:00Z
+timestamp: 2026-07-24T08:00:00Z
 ---
 
 # Beru Trace Analysis Engine
@@ -62,7 +62,7 @@ Signature-bucket pairing accumulates **all** findings without short-circuit:
 
 `POST /api/v1/debug/seed-reports` accepts a `reports` array of RawReport-shaped JSON (`trace_id`, `shadow_role`, `protocol`, `direction`, `signature`, `status_code`, `payload`, optional `captured_at`) and routes each into the TraceRouter — same evaluation path as live ingest.
 
-Bats suite: `testing/bats/integration/beru/verdict_ui.bats` (mirrors unit-test histories). Leave the stack up with `BATS_KEEP=1` and port-forward `svc/beru-local:8080` to inspect the dashboard.
+Bats suite: `testing/bats/integration/beru/verdict_ui.bats` (mirrors unit-test histories; waits for beru-local only, asserts status after seed — no full Ready / quiescence). Leave the stack up with `BATS_KEEP=1` and port-forward `svc/beru-local:8080` to inspect the dashboard.
 
 ## Citations
 
