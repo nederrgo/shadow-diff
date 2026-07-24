@@ -50,13 +50,18 @@ func (h *Handler) handleAPITraces(w http.ResponseWriter, r *http.Request) {
 	}
 	status := r.URL.Query().Get("status")
 	if status == "" {
-		if f := r.URL.Query().Get("filter"); f == "match" {
-			status = "MATCH"
-		} else if f == "mismatch" {
-			status = "MISMATCH"
+		switch r.URL.Query().Get("filter") {
+		case "match":
+			status = v2storage.StatusMatch
+		case "mismatch":
+			status = v2storage.StatusMismatch
+		case "voided":
+			status = v2storage.StatusVoidedBaselineDivergence
+		case "waiting":
+			status = v2storage.StatusWaitingForRoles
 		}
 	}
-	traces, err := listTraceSummaries(r.Context(), h.Repo, shadowTestName, status, 500)
+	traces, err := listTraceSummaries(r.Context(), h.Repo, h.DB, shadowTestName, status, 500)
 	if err != nil {
 		http.Error(w, "Could not list traces", http.StatusInternalServerError)
 		return

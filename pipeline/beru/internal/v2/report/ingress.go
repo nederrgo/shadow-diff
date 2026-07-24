@@ -38,15 +38,20 @@ func FromTrafficReport(report *beruv1.TrafficReport, shadowTestName string) (*st
 	if path == "" {
 		path = meta["path"]
 	}
+	statusCode := meta[":status"]
+	if statusCode == "" {
+		statusCode = meta["status"]
+	}
 	return &storage.RawReport{
 		TraceID:        report.TraceId,
 		ShadowRole:     report.Role,
 		ShadowTestName: name,
 		Protocol:       "http",
-		Direction:    storage.DirectionIngress,
-		Signature:    HTTPSignature(method, path),
-		PayloadBytes: body,
-		CapturedAt:   time.Now().UTC(),
+		Direction:      storage.DirectionIngress,
+		Signature:      HTTPSignature(method, path),
+		StatusCode:     statusCode,
+		PayloadBytes:   body,
+		CapturedAt:     time.Now().UTC(),
 	}, nil
 }
 
@@ -71,14 +76,19 @@ func FromHTTPIngress(traceID, role, shadowTestName, method, path string, meta ma
 	if meta["shadow_test_name"] != "" {
 		name = meta["shadow_test_name"]
 	}
+	statusCode := meta[":status"]
+	if statusCode == "" {
+		statusCode = meta["status"]
+	}
 	return &storage.RawReport{
 		TraceID:        traceID,
 		ShadowRole:     role,
 		ShadowTestName: name,
 		Protocol:       "http",
-		Direction:    storage.DirectionIngress,
-		Signature:    HTTPSignature(method, path),
-		PayloadBytes: normalized,
-		CapturedAt:   time.Now().UTC(),
+		Direction:      storage.DirectionIngress,
+		Signature:      HTTPSignature(method, path),
+		StatusCode:     statusCode,
+		PayloadBytes:   normalized,
+		CapturedAt:     time.Now().UTC(),
 	}, nil
 }

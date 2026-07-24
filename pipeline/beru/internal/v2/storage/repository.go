@@ -1,6 +1,9 @@
 package storage
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type TraceRepository interface {
 	AppendReport(ctx context.Context, report *RawReport) ([]RawReport, error)
@@ -8,4 +11,5 @@ type TraceRepository interface {
 	ListReports(ctx context.Context, traceID, protocol string) ([]RawReport, error)
 	ListTraceGroups(ctx context.Context, shadowTestName string, limit int) ([]TraceGroup, error)
 	GetVerdict(ctx context.Context, traceID string) (*VerdictState, error)
+	ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]StaleIncompleteTrace, error)
 }

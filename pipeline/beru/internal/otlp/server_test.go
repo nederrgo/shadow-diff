@@ -45,6 +45,10 @@ func (r *routeRecorder) GetVerdict(ctx context.Context, traceID string) (*v2stor
 	return nil, nil
 }
 
+func (r *routeRecorder) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]v2storage.StaleIncompleteTrace, error) {
+	return nil, nil
+}
+
 func testRouter(rec *routeRecorder) *v2engine.TraceRouter {
 	return v2engine.NewTraceRouter(1, rec, nil)
 }

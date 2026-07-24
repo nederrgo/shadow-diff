@@ -41,6 +41,10 @@ func (r *wireRouteRecorder) GetVerdict(_ context.Context, _ string) (*v2storage.
 	return nil, nil
 }
 
+func (r *wireRouteRecorder) ListStaleIncompleteTraces(_ context.Context, _ time.Time) ([]v2storage.StaleIncompleteTrace, error) {
+	return nil, nil
+}
+
 func waitWireReport(t *testing.T, rec *wireRouteRecorder) *v2storage.RawReport {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

@@ -186,6 +186,60 @@ func TestSaveDiffVerdict_upserts(t *testing.T) {
 	}
 }
 
+func TestAppendReport_persistsStatusCode(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	_, err := repo.AppendReport(ctx, &RawReport{
+		TraceID:      "trace-status",
+		ShadowRole:   "control-a",
+		Protocol:     "http",
+		Direction:    DirectionIngress,
+		Signature:    "http:GET:/x",
+		StatusCode:   "404",
+		PayloadBytes: []byte(`{}`),
+		CapturedAt:   t0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.ListReports(ctx, "trace-status", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].StatusCode != "404" {
+		t.Fatalf("got %+v, want status_code=404", got)
+	}
+}
+
+func TestListStaleIncompleteTraces(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	old := time.Now().UTC().Add(-30 * time.Second)
+	fresh := time.Now().UTC()
+	_, err := repo.AppendReport(ctx, &RawReport{
+		TraceID: "stale-1", ShadowRole: "control-a", Protocol: "mongodb",
+		Direction: DirectionEgress, Signature: "mongodb:x", PayloadBytes: []byte(`{}`), CapturedAt: old,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repo.AppendReport(ctx, &RawReport{
+		TraceID: "fresh-1", ShadowRole: "control-a", Protocol: "mongodb",
+		Direction: DirectionEgress, Signature: "mongodb:x", PayloadBytes: []byte(`{}`), CapturedAt: fresh,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, err := repo.ListStaleIncompleteTraces(ctx, time.Now().UTC().Add(-10*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 || stale[0].TraceID != "stale-1" {
+		t.Fatalf("stale = %+v, want [stale-1]", stale)
+	}
+}
+
 func readVerdict(ctx context.Context, db *sql.DB, traceID string) (VerdictState, error) {
 	var (
 		got        VerdictState

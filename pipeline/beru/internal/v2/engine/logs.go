@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -26,7 +27,10 @@ func mirrorLegacyLogs(traceID string, history []storage.RawReport, verdict *stor
 				continue
 			}
 		}
-		pv := diff.EvaluateTraceHistory(subset)
+		pv := diff.EvaluateTraceHistory(subset, nil, diff.EvalOptions{})
+		if pv == nil {
+			continue
+		}
 		if isIngressProtocol(protocol) {
 			mirrorIngressLogs(log, traceID, pv)
 			continue
@@ -37,25 +41,31 @@ func mirrorLegacyLogs(traceID string, history []storage.RawReport, verdict *stor
 
 func mirrorIngressLogs(log *slog.Logger, traceID string, verdict *storage.VerdictState) {
 	switch verdict.Status {
-	case "MATCH":
+	case storage.StatusMatch:
 		log.Info(fmt.Sprintf("No regression for Trace %s", traceID))
-	case "MISMATCH":
-		for _, detail := range strings.Split(verdict.SummaryDetails, "; ") {
-			if strings.Contains(detail, "payload mismatch:") {
+	case storage.StatusMismatch:
+		for _, step := range parseSteps(verdict.SummaryDetails) {
+			if step.Kind == storage.FlagMismatchPayload {
 				log.Info(fmt.Sprintf(
 					"Regression found in Trace %s: Field '%s' expected <control-a> but got <candidate>.",
-					traceID, detail,
+					traceID, step.Detail,
 				))
 			}
 		}
+	case storage.StatusVoidedBaselineDivergence:
+		log.Info(fmt.Sprintf("Voided baseline divergence for Trace %s", traceID))
+	case storage.StatusWaitingForRoles:
+		log.Info(fmt.Sprintf("Waiting for roles on Trace %s", traceID))
 	}
 }
 
 func mirrorEgressLogs(log *slog.Logger, traceID, protocol string, history []storage.RawReport, verdict *storage.VerdictState) {
 	switch verdict.Status {
-	case "MATCH":
+	case storage.StatusMatch:
 		log.Info(fmt.Sprintf("No egress regression for Trace %s (%s)", traceID, protocol))
-	case "MISMATCH":
+	case storage.StatusMismatch:
+		steps := parseSteps(verdict.SummaryDetails)
+		// Compound: emit count AND payload (no short-circuit).
 		if verdict.HasCountRegression {
 			controlA := roleCount(history, roles.ControlA)
 			candidate := roleCount(history, roles.Candidate)
@@ -64,17 +74,31 @@ func mirrorEgressLogs(log *slog.Logger, traceID, protocol string, history []stor
 				"Egress count regression for Trace %s (%s): expected %d %s but got %d",
 				traceID, protocol, controlA, formatCountUnit(unit, controlA), candidate,
 			))
-			return
 		}
-		for _, detail := range strings.Split(verdict.SummaryDetails, "; ") {
-			if strings.Contains(detail, "payload mismatch:") {
+		for _, step := range steps {
+			if step.Kind == storage.FlagMismatchPayload {
 				log.Info(fmt.Sprintf(
 					"Egress regression for Trace %s (%s): Field '%s' expected <control-a> but got <candidate>",
-					traceID, protocol, detail,
+					traceID, protocol, step.Detail,
 				))
 			}
 		}
+	case storage.StatusVoidedBaselineDivergence:
+		log.Info(fmt.Sprintf("Voided egress baseline divergence for Trace %s (%s)", traceID, protocol))
+	case storage.StatusWaitingForRoles:
+		log.Info(fmt.Sprintf("Waiting for egress roles on Trace %s (%s)", traceID, protocol))
 	}
+}
+
+func parseSteps(summaryDetails string) []storage.VerdictStep {
+	if summaryDetails == "" {
+		return nil
+	}
+	var details storage.VerdictDetails
+	if err := json.Unmarshal([]byte(summaryDetails), &details); err != nil {
+		return nil
+	}
+	return details.Steps
 }
 
 func isIngressProtocol(protocol string) bool {
@@ -112,7 +136,10 @@ func filterHistoryByProtocol(history []storage.RawReport, protocol string) []sto
 func filterHistoryByDirection(history []storage.RawReport, direction storage.PayloadDirection) []storage.RawReport {
 	var out []storage.RawReport
 	for _, r := range history {
-		if r.Direction == direction {
+		if r.Direction == direction || (direction == storage.DirectionIngress && r.Direction == "") {
+			if r.Direction == storage.DirectionEgress && direction == storage.DirectionIngress {
+				continue
+			}
 			out = append(out, r)
 		}
 	}

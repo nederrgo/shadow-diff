@@ -234,6 +234,22 @@ delete_shadowtest_and_verify() {
 bats_teardown_suite() {
   bats_load_suite_state || return 0
 
+  if [[ "${BATS_KEEP:-0}" == "1" ]]; then
+    echo ""
+    echo "============================================================"
+    echo "BATS_KEEP=1 — leaving ShadowTest / beru-local running for UI"
+    echo "  ShadowTest:  ${SHADOWTEST_NS:-default}/${SHADOWTEST}"
+    echo "  Shadow ns:   ${SHADOW_NS:-shadow-${SHADOWTEST_NS:-default}-${SHADOWTEST}}"
+    echo "  Port-forward dashboard:"
+    echo "    kubectl -n ${SHADOW_NS:-shadow-${SHADOWTEST_NS:-default}-${SHADOWTEST}} port-forward svc/beru-local 8080:8080"
+    echo "  Then open http://localhost:8080/dashboard/"
+    echo "  Cleanup later:"
+    echo "    kubectl delete shadowtest ${SHADOWTEST} -n ${SHADOWTEST_NS:-default}"
+    echo "============================================================"
+    echo ""
+    return 0
+  fi
+
   if [[ "${SHADOWTEST_APPLIED:-0}" == "1" || "${SETUP_COMPLETE:-0}" == "1" ]]; then
     delete_shadowtest_and_verify "${SHADOWTEST}" "${SHADOWTEST_NS:-default}" || true
   elif kubectl get shadowtest "${SHADOWTEST}" -n "${SHADOWTEST_NS:-default}" >/dev/null 2>&1; then
@@ -261,6 +277,10 @@ undeploy_prod_stack() {
 run.sh_cleanup_suite() {
   bats_read_suite_state 2>/dev/null || return 0
   [[ -n "${SHADOWTEST:-}" ]] || return 0
+  if [[ "${BATS_KEEP:-0}" == "1" ]]; then
+    echo "==> [bats run.sh] BATS_KEEP=1 — skip stale ShadowTest cleanup for ${SHADOWTEST}"
+    return 0
+  fi
   if kubectl get shadowtest "$SHADOWTEST" -n "${SHADOWTEST_NS:-default}" >/dev/null 2>&1; then
     echo "==> [bats run.sh] cleanup stale ShadowTest ${SHADOWTEST}"
     delete_shadowtest_and_verify "$SHADOWTEST" "${SHADOWTEST_NS:-default}" || true

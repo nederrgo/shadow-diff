@@ -39,9 +39,25 @@ done
 | `setup_file` | Platform bootstrap + prod app + ShadowTest CR (once) |
 | `setup` | Fresh trace UUID per `@test` (`isolate_test_state`) |
 | `@test` | Traffic + `beru_wait_log` / `beru_wait_verdict_settled` |
-| `teardown_file` | Delete ShadowTest + prod stack (once) |
+| `teardown_file` | Delete ShadowTest + prod stack (once); skipped when `BATS_KEEP=1` |
 
 The pixie-stream-bridge runs continuously — tests never `pkill` or restart it.
+
+### Keep stack for dashboard UI
+
+```bash
+# Rebuild beru so seed endpoint is present, then:
+BATS_KEEP=1 ./testing/bats/run-one.sh integration/beru/verdict_ui.bats
+
+# After tests finish, port-forward beru-local and open the dashboard:
+kubectl -n shadow-default-bats-beru-verdict-ui port-forward svc/beru-local 8080:8080
+# → http://localhost:8080/dashboard/
+
+# Cleanup when done:
+kubectl delete shadowtest bats-beru-verdict-ui -n default
+```
+
+`integration/beru/verdict_ui.bats` seeds the same histories as `pipeline/beru/internal/v2/diff/diff_test.go` via `POST /api/v1/debug/seed-reports` (no live traffic / Pixie).
 
 ## Running
 

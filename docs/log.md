@@ -9,8 +9,15 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-24]
+### Added
+* 'pipeline/beru': Ignore path only on payload field NoisePath; hide for count/signature mismatches
+* 'testing/bats/integration/beru': seed-reports API + verdict_ui bats with BATS_KEEP for dashboard inspection
+
 ## [2026-07-23]
 ### Added
+* 'pipeline/beru/internal/v2': single-trace verdicts, baseline void, compound diffs, WAITING_FOR_ROLES timeout
+* 'pipeline/beru': purge legacy internal/diff package, wire user noise filters into v2 EvaluateTraceHistory, remove committed beru binary, add .gitignore
 * 'testing/bats/integration/monarch/deps_update.bats': add integration test for live dependency add (mongodb deps created, shadow app pods roll with MONGO_URL)
 * 'testing/bats/integration/monarch/lifecycle.bats': add 4 ShadowTest lifecycle integration tests (mid-delete, re-apply while deleting, recreate after clean, delete after Ready)
 * 'pipeline/monarch/internal/controller/shadowtest_delete_lifecycle_test.go': add fake-client unit tests for mid-bring-up delete race (late creates cleaned, no recreate/Ready while deleting)
