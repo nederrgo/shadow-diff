@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -78,6 +79,13 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		return ctrl.Result{}, err
+	}
+
+	if err := resolveSpecDefaults(&shadowTest, &target); err != nil {
+		msg := fmt.Sprintf("cannot resolve spec defaults from target: %s", err)
+		log.Info(msg)
+		_ = r.patchStatus(ctx, &shadowTest, "Failed", msg, shadowNS)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	if len(shadowTest.Spec.Inputs) == 0 && shadowTest.Spec.TargetDeployment != "" && !siphonEnabled(&shadowTest, &target) {
@@ -146,37 +154,45 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	if egressRecordingEnabled(&shadowTest) {
-		if err := r.reconcileShopIfNeeded(ctx, &shadowTest, shadowNS); err != nil {
-			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-			return ctrl.Result{}, err
-		}
-		shopReady, err := r.shopDeploymentReady(ctx, shadowNS)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if !shopReady {
-			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Shop", shadowNS)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-		if err := r.reconcileRecorderStack(ctx, &shadowTest, shadowNS); err != nil {
-			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-			return ctrl.Result{}, err
-		}
-		recorderReady, err := r.recorderDeploymentReady(ctx, &shadowTest, shadowNS)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if !recorderReady {
-			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Recorder", shadowNS)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
+	if err := r.reconcileShop(ctx, &shadowTest, shadowNS); err != nil {
+		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+		return ctrl.Result{}, err
+	}
+	shopReady, err := r.shopDeploymentReady(ctx, shadowNS)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !shopReady {
+		_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Shop", shadowNS)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+	if err := r.reconcileRecorderStack(ctx, &shadowTest, shadowNS); err != nil {
+		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+		return ctrl.Result{}, err
+	}
+	recorderReady, err := r.recorderDeploymentReady(ctx, &shadowTest, shadowNS)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !recorderReady {
+		_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Recorder", shadowNS)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	captureTargets, siphonPhase, err := r.reconcileSiphonCapture(ctx, &shadowTest, shadowNS, &target)
 	if err != nil {
 		log.Error(err, "Siphon capture reconcile failed")
 		siphonPhase = "Degraded"
+	}
+	if siphonEnabled(&shadowTest, &target) {
+		siphonReady, readyErr := r.siphonDeploymentReady(ctx, shadowNS)
+		if readyErr != nil {
+			return ctrl.Result{}, readyErr
+		}
+		if !siphonReady {
+			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Siphon", shadowNS)
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
 	}
 
 	var igrisEndpoint string
@@ -216,9 +232,6 @@ func (r *ShadowTestReconciler) reconcileIngressRelays(
 ) (bool, error) {
 	if needsAMQPIngress(st) {
 		if _, err := r.ensureProdShadowQueue(ctx, st); err != nil {
-			return false, err
-		}
-		if err := r.Get(ctx, req.NamespacedName, st); err != nil {
 			return false, err
 		}
 		if err := r.reconcileIgrisRabbitMQStack(ctx, st, shadowNS); err != nil {
@@ -315,10 +328,11 @@ func (r *ShadowTestReconciler) reconcileShadowWorkloads(
 	return shadowsReady, nil
 }
 
-func (r *ShadowTestReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *ShadowTestReconciler) SetupWithManager(mgr ctrl.Manager, opts controller.Options) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&enginev1alpha1.ShadowTest{}).
 		Watches(&appsv1.Deployment{}, handler.EnqueueRequestsFromMapFunc(r.mapDeploymentToShadowTests)).
 		Named("shadowtest").
+		WithOptions(opts).
 		Complete(r)
 }

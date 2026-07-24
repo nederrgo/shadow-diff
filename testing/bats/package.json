@@ -1,0 +1,8 @@
+{
+  "name": "shadow-diff-bats-reporter",
+  "private": true,
+  "description": "Local pin for Jest-like bats TAP formatting (jobs=1 only)",
+  "dependencies": {
+    "tap-mocha-reporter": "^5.0.4"
+  }
+}

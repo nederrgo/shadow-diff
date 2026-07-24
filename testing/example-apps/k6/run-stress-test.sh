@@ -101,7 +101,7 @@ start_port_forward() {
     fi
   done
   echo "ERROR: port-forward to ${ns}/${svc}:${remote_port} -> localhost:${local_port} failed" >&2
-  echo "       Is the E2E stack up? Run: ${REPO}/testing/scripts/e2e-reset-kind.sh" >&2
+  echo "       Is the E2E stack up? Run: ${REPO}/testing/tools/e2e-reset-minikube.sh" >&2
   exit 1
 }
 
@@ -117,7 +117,7 @@ fi
 SHADOW_NS=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.shadowNamespace}' 2>/dev/null || true)
 if [[ -z "$SHADOW_NS" ]]; then
   echo "ERROR: ShadowTest ${SHADOWTEST} not Ready (missing shadowNamespace)." >&2
-  echo "       Run: ${REPO}/testing/scripts/e2e-reset-kind.sh" >&2
+  echo "       Run: ${REPO}/testing/tools/e2e-reset-minikube.sh" >&2
   exit 1
 fi
 echo "Shadow namespace: ${SHADOW_NS}"

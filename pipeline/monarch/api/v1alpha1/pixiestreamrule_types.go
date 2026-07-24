@@ -57,10 +57,6 @@ type PixieStreamRuleSpec struct {
 	// +optional
 	MongoOTelEndpoint string `json:"mongoOtelEndpoint,omitempty"`
 
-	// RecordAndReplayHosts are downstream hostnames for egress PxL Host-header filtering.
-	// +optional
-	RecordAndReplayHosts []string `json:"recordAndReplayHosts,omitempty"`
-
 	// MaxPayloadSize is the max bytes to parse per HTTP/2 frame.
 	// +optional
 	MaxPayloadSize int64 `json:"maxPayloadSize,omitempty"`

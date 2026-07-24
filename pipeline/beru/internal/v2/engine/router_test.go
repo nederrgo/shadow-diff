@@ -106,6 +106,10 @@ func (r *recordingRepo) GetVerdict(ctx context.Context, traceID string) (*storag
 	return nil, nil
 }
 
+func (r *recordingRepo) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]storage.StaleIncompleteTrace, error) {
+	return nil, nil
+}
+
 func workerIndex(traceID string, workerCount int) uint32 {
 	hasher := fnv.New32a()
 	hasher.Write([]byte(traceID))
@@ -233,29 +237,23 @@ func TestRoute_withSQLiteRepository(t *testing.T) {
 		TraceRepository: repo,
 		appendDone:      make(chan struct{}),
 	}
-	repoRecorder.appendRemaining.Store(2)
+	repoRecorder.appendRemaining.Store(3)
 
 	router := NewTraceRouter(1, repoRecorder, nil)
 	capturedAt := time.Now().UTC()
 	payload := []byte(`{}`)
-	router.Route(&storage.RawReport{
-		TraceID:      "trace-smoke",
-		ShadowRole:   "control-a",
-		Protocol:     "http",
-		Direction:    storage.DirectionIngress,
-		Signature:    "http:GET:/health",
-		PayloadBytes: payload,
-		CapturedAt:   capturedAt,
-	})
-	router.Route(&storage.RawReport{
-		TraceID:      "trace-smoke",
-		ShadowRole:   "candidate",
-		Protocol:     "http",
-		Direction:    storage.DirectionIngress,
-		Signature:    "http:GET:/health",
-		PayloadBytes: payload,
-		CapturedAt:   capturedAt,
-	})
+	for _, role := range []string{"control-a", "control-b", "candidate"} {
+		router.Route(&storage.RawReport{
+			TraceID:      "trace-smoke",
+			ShadowRole:   role,
+			Protocol:     "http",
+			Direction:    storage.DirectionIngress,
+			Signature:    "http:GET:/health",
+			StatusCode:   "200",
+			PayloadBytes: payload,
+			CapturedAt:   capturedAt,
+		})
+	}
 
 	select {
 	case <-repoRecorder.appendDone:
@@ -272,6 +270,45 @@ func TestRoute_withSQLiteRepository(t *testing.T) {
 	if status != "MATCH" {
 		t.Fatalf("verdict status = %q, want MATCH", status)
 	}
+}
+
+func TestReaper_marksWaitingForRoles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reaper.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo, err := storage.NewSQLiteRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewTraceRouterWithTimeout(1, repo, nil, 50*time.Millisecond)
+	old := time.Now().UTC().Add(-200 * time.Millisecond)
+	ctx := context.Background()
+	if _, err := repo.AppendReport(ctx, &storage.RawReport{
+		TraceID: "reaper-trace", ShadowRole: "control-a", Protocol: "mongodb",
+		Direction: storage.DirectionEgress, Signature: "mongodb:x",
+		PayloadBytes: []byte(`{}`), CapturedAt: old,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		router.reapOnce()
+		v, err := repo.GetVerdict(ctx, "reaper-trace")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v != nil && v.Status == storage.StatusWaitingForRoles {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("reaper did not mark WAITING_FOR_ROLES")
 }
 
 type sqliteSmokeRepo struct {

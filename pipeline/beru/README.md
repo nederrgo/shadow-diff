@@ -2,7 +2,7 @@
 
 Beru is the **L5 — analysis sink** for Shadow-Diff. It correlates traffic from the three shadow roles (control-a, control-b, candidate), runs **diff-of-diffs** to separate noise from regressions, serves **egress mock responses** for strict downstream replay, and exposes a **web dashboard** for inspecting traces.
 
-Monarch does **not** deploy Beru. Install it separately and point each `ShadowTest` at Beru's gRPC address (`spec.beruGRPCAddress`). See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) for how Beru fits in the full pipeline.
+Monarch provisions Beru automatically. When `spec.beruGRPCAddress` is unset, Monarch deploys a per-ShadowTest **`beru-local`** pod inside the shadow namespace (SQLite on an in-memory EmptyDir — state is lost on pod restart). To use a persistent, shared Beru instance instead, set `spec.beruGRPCAddress` on the `ShadowTest` CR and point it at a separately deployed Beru (e.g. `beru.beru-system.svc.cluster.local:50051`). See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) for how Beru fits in the full pipeline.
 
 ---
 
@@ -12,9 +12,7 @@ Monarch does **not** deploy Beru. Install it separately and point each `ShadowTe
 | Path                     | How Beru receives data                          | What Beru does                                                       |
 | ------------------------ | ----------------------------------------------- | -------------------------------------------------------------------- |
 | **Ingress (HTTP)**       | Envoy sidecar **ingress `ext_proc`** (gRPC)     | Collects one response per role per trace → **diff-of-diffs**         |
-| **Egress diff (MongoDB)** | OTel agent → **OTLP** (`:4317` gRPC or `:8080/v1/traces` HTTP) | Appends spans per trace → **sequence diff** with N+1 detection (re-diff on each arrival) |
-| **Egress replay (HTTP)** | Envoy sidecar **egress `ext_proc`** on `:15001` | Hashes outbound request → returns mock from store or **599** on miss |
-| **Egress record**        | **Recorder** or manual HTTP API                 | Seeds the in-memory mock store from prod capture                     |
+| **Egress diff (MongoDB)** | Pixie eBPF on MongoDB server pods → pixie-stream-bridge → **beru-local OTLP `:4317`** | Appends spans per trace → **sequence diff** with N+1 detection (re-diff on each arrival) |
 | **Egress diff (AMQP)**   | **egress-relay-rabbitmq** HTTP API              | Compares outbound broker publishes across the three roles (same sequence engine) |
 
 
@@ -34,7 +32,7 @@ Monarch does **not** deploy Beru. Install it separately and point each `ShadowTe
 4. **N+1 detection:** if the candidate has more operations than control-a, Beru flags a **count regression** (`expected N queries/messages but got N+1`). This catches extra loops, duplicate publishes, and spurious DB writes without mis-aligning later operations.
 5. When counts match but the candidate introduces an operation with no control-a signature, Beru reports an **unexpected extra egress** for that signature.
 
-Every inbound report is appended to SQLite immediately. Each arrival triggers a **full timeline re-diff** for that trace (no in-memory correlation buffers, no egress wait timer). Results land in `raw_reports` (event log) and `verdicts` (latest status per trace). The dashboard reads those v2 tables directly. User-configured **noise filters** (per shadow test name) can suppress known flaky JSON paths.
+Every inbound report is appended to SQLite immediately. Each arrival triggers a **full timeline re-diff** for that trace. Evaluation is a strict 3-step pipeline: (1) wait for all three roles or mark `WAITING_FOR_ROLES` after `BERU_TRACE_TIMEOUT`, (2) void the trace on control baseline divergence (`VOIDED_BASELINE_DIVERGENCE`), (3) compound-diff the candidate against control-a (`MATCH` / `MISMATCH` with JSON detail flags). Results land in `raw_reports` and `verdicts`. User-configured **noise filters** suppress known flaky JSON paths before `MISMATCH_PAYLOAD` is recorded. See [docs/data-plane/beru-analysis.md](../../docs/data-plane/beru-analysis.md).
 
 ---
 
@@ -80,10 +78,10 @@ This creates namespace `**beru-system**`, Deployment `**beru**`, and Service `**
 | --------- | -------- | ------------------------------------------------------------- |
 | **50051** | gRPC     | `TrafficReporter`, Envoy `ext_proc`                           |
 | **4317**  | gRPC     | OTLP trace receiver (MongoDB egress from OTel agents)         |
-| **8080**  | HTTP     | OTLP/HTTP (`POST /v1/traces`), mock store APIs, egress diff ingest, dashboard |
+| **8080**  | HTTP     | OTLP/HTTP (`POST /v1/traces`), egress diff ingest, dashboard |
 
 
-Point Monarch / ShadowTest at `beru.beru-system.svc.cluster.local:50051` (gRPC). OTel agents export to `:4317` (gRPC) or `:8080/v1/traces` (HTTP/protobuf). Recorder and egress-relay use the HTTP service on `:8080`.
+Point Monarch / ShadowTest at `beru.beru-system.svc.cluster.local:50051` (gRPC). OTel agents export to `:4317` (gRPC) or `:8080/v1/traces` (HTTP/protobuf). egress-relay-rabbitmq posts egress diffs to `:8080/api/v1/egress/diff`.
 
 ---
 
@@ -94,13 +92,12 @@ Point Monarch / ShadowTest at `beru.beru-system.svc.cluster.local:50051` (gRPC).
 | ------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | `BERU_GRPC_ADDR`          | `:50051`                                                                                        | gRPC listen address (ext_proc, TrafficReporter)        |
 | `BERU_OTLP_GRPC_ADDR`     | `:4317`                                                                                         | OTLP gRPC listen address                               |
-| `BERU_HTTP_ADDR`          | `:8080`                                                                                         | HTTP listen address (OTLP/HTTP, mock APIs, dashboard)  |
+| `BERU_HTTP_ADDR`          | `:8080`                                                                                         | HTTP listen address (OTLP/HTTP, egress diff ingest, dashboard)  |
 | `BERU_DB_PATH`            | `/var/lib/beru/shadow_diff.db` (falls back to `./shadow_diff.db` if parent dir is not writable) | SQLite path (`raw_reports`, `verdicts`, `shadow_tests`, `noise_filters`) |
 | `BERU_DB_RETENTION_DAYS`  | `7`                                                                                             | Purge `raw_reports` older than N days; orphan `verdicts` removed        |
 | `BERU_SHADOW_TEST_NAME`   | `default`                                                                                       | Default shadow test name when ingest metadata omits `shadow_test_name`  |
+| `BERU_TRACE_TIMEOUT`      | `10s`                                                                                           | Incomplete traces older than this become `WAITING_FOR_ROLES`            |
 
-
-The egress **mock store** is **in-memory** (not SQLite). Restarting Beru clears seeded mocks unless Recorder repopulates them.
 
 ---
 
@@ -114,7 +111,6 @@ Beru uses **two persistence layers** plus an in-memory mock store.
 | ----- | ------------- | ----- | ----------------- |
 | **State engine** | Every report + latest verdict per trace | SQLite `raw_reports`, `verdicts` | Yes |
 | **Shadow test runs** | Run names for dashboard filter + noise filter scope | SQLite `shadow_tests`, `noise_filters` | Yes |
-| **Egress mock store** | Recorded downstream HTTP responses for strict replay | In-memory map (`replay.MockStore`) | No |
 
 ### State engine (`internal/v2/`)
 
@@ -130,10 +126,10 @@ Handler → TraceRouter (FNV-sharded worker)
 
 | Table | Write model | Contents |
 | ----- | ----------- | -------- |
-| `raw_reports` | Append-only | `trace_id`, `shadow_role`, `shadow_test_name`, `protocol`, `direction`, `signature`, payload bytes, `captured_at` |
-| `verdicts` | Upsert on `trace_id` | `MATCH`/`MISMATCH`, count-regression flag, summary details |
+| `raw_reports` | Append-only | `trace_id`, `shadow_role`, `shadow_test_name`, `protocol`, `direction`, `signature`, `status_code`, payload bytes, `captured_at` |
+| `verdicts` | Upsert on `trace_id` | `MATCH` / `MISMATCH` / `VOIDED_BASELINE_DIVERGENCE` / `WAITING_FOR_ROLES`, count-regression flag, JSON `summary_details` |
 
-Late-arriving spans or relay messages **re-open** the timeline: Beru re-reads all reports for the trace and overwrites the verdict. No TTL eviction of in-flight traces — if a role never reports, that trace simply never appears on the dashboard (rows require all three roles for a protocol).
+Late-arriving spans **re-open** the timeline and overwrite the verdict — including rows previously marked `WAITING_FOR_ROLES`. A background reaper finalizes incomplete traces past `BERU_TRACE_TIMEOUT` (default 10s).
 
 `shadow_test_name` is set from ingest metadata (`shadow_test_name` on gRPC/HTTP, `x-shadow-test-name` on ext_proc) or falls back to `BERU_SHADOW_TEST_NAME`.
 
@@ -142,12 +138,6 @@ Late-arriving spans or relay messages **re-open** the timeline: Beru re-reads al
 The web UI reads **v2 tables only** — no duplicate legacy projection. Trace list shows one row per `(trace_id, protocol)` with signatures from stored `raw_reports`. Detail URLs: `/dashboard/traces/{traceID}?protocol=mongodb`.
 
 Match/mismatch stats on the index page are **computed on load** from v2 data (not stored counters on `shadow_tests`).
-
-### Egress mock store (`seed_mock` / `record_egress`)
-
-`POST /v1/seed_mock` and `POST /v1/record_egress` write directly into the in-memory mock map keyed by **request hash**. There is **no TTL** and **no SQLite** — entries live until Beru restarts or the hash is overwritten.
-
-Envoy egress `ext_proc` only **reads** this map (lookup by hash); it does not store responses there.
 
 ### SQLite retention
 
@@ -165,7 +155,7 @@ Beru exposes gRPC (`:50051`, `:4317`) and HTTP (`:8080`). Detailed request/respo
 | Service                                  | Purpose                                                                                                                                            |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `**TrafficReporter.ReportTraffic`**      | Direct ingress reports (role, trace_id, payload) — used for tests and integrations                                                                 |
-| `**ExternalProcessor` (Envoy ext_proc)** | **Ingress mode:** observe shadow app responses → TraceRouter. **Egress mode** (`x-shadow-mode: egress`): hash outbound HTTP and return mock |
+| `**ExternalProcessor` (Envoy ext_proc)** | Observes shadow app responses → TraceRouter (ingress diff only) |
 
 
 ### OTLP gRPC (`:4317`)
@@ -185,9 +175,8 @@ Protobuf: `[api/proto/beru/v1/traffic.proto](api/proto/beru/v1/traffic.proto)` (
 | ----------------------------------------------- | ----------------------------------------------------------------------- |
 | `GET /healthz`                                  | Liveness                                                                |
 | `POST /v1/traces`                               | OTLP/HTTP protobuf trace export (Python OTel default) → Mongo egress |
-| `POST /v1/seed_mock`                            | Manually seed an egress mock response                                   |
-| `POST /v1/record_egress`                        | Same storage as `seed_mock` — used by **Recorder** for prod auto-record |
 | `POST /api/v1/egress/diff`                      | Egress diff ingest — used by **egress-relay-rabbitmq** (optional `shadow_test_name`) |
+| `POST /api/v1/debug/seed-reports`               | Inject RawReport histories for UI/bats (no live traffic)                            |
 | `GET /dashboard/`                               | Web UI — trace list, diff detail, egress sequence, noise filter management |
 | `GET /api/v1/traces?shadow_test_id=`            | Dashboard JSON — trace summaries (`trace_id`, `protocol`, `status`, `signatures`) |
 | `GET /api/v1/traces/{traceID}?protocol=`        | Trace detail — `raw_reports`, `verdict`, `sequence_steps`               |
@@ -203,47 +192,22 @@ Protobuf: `[api/proto/beru/v1/traffic.proto](api/proto/beru/v1/traffic.proto)` (
 
 **Egress (egress-relay-rabbitmq):** trace id from AMQP message headers (`traceparent` or `traceparent`). Payload includes `exchange`, `routing_key`, and `body` (message JSON) for signatures like `rabbitmq:publish:egress-events:order.shipped`.
 
-### MongoDB egress (OTLP)
+### MongoDB egress (Pixie eBPF)
 
-When shadow pods have a Mongo dependency and `spec.otelInjection` is enabled, the OTel agent exports MongoDB client spans to Beru OTLP. Beru:
+Monarch sets `PixieStreamRule.mongoOtelEndpoint` to `beru-local.<shadow-ns>.svc.cluster.local:4317` when a MongoDB dependency is declared. The capture path is entirely server-side — no application instrumentation required:
 
-1. Parses `db.statement` / `db.query.text` from each span into canonical JSON (via `internal/otlp/mongo_parser`).
-2. Derives a **signature** `mongodb:{operation}:{collection}` from wire-command JSON and/or span metadata.
-3. Appends a `RawReport` per span; re-diff runs on every arrival — **N+1 count regression** when the candidate issues extra inserts/updates.
+1. **Pixie PEM** captures `mongodb_events` on the MongoDB server pods (`trace_role == 2`, wire-protocol bytes).
+2. **pixie-stream-bridge** runs `mongodb-export.pxl.tmpl` — filters by shadow namespace and presence of `"comment"` in `req_body`, then exports OTLP to beru-local.
+3. **Beru OTLP receiver** reads `db.raw_payload` (two-object MongoDB wire format: command doc + document body), extracts the `traceparent` injected by the worker into the `$comment` field, and derives the shadow role from the MongoDB pod name pattern.
+4. Beru strips `_id`, `lsid`, `comment`, and `$db` from the document body before diffing.
+
+The signature `mongodb:{operation}:{collection}` is derived from the wire command doc (e.g. `{"insert":"orders",…}` → `mongodb:insert:orders`). Beru deduplicates Pixie re-exports by span start time (pixie-stream-bridge runs every 3 s over a rolling window).
 
 Example: control-a and control-b each perform one `insert` into `orders`; the candidate performs that insert plus an extra `insert` → Beru logs `Egress count regression … expected 1 query but got 2`.
 
-#### Mongo egress signatures & OTel by language
+**Known limitations:** `getMore` continuations share the parent `find` signature; operations without a `$comment` field are skipped (no trace correlation).
 
-Signatures pair the same logical operation across the three roles even when drivers emit different span shapes.
-
-| Source | Priority | Example signature |
-|--------|----------|-------------------|
-| Wire JSON command key | 1st | `{"insert":"orders",…}` → `mongodb:insert:orders` |
-| Span metadata | 2nd | `db.operation.name=insert`, `db.collection.name=orders` → `mongodb:insert:orders` |
-| Wrapped non-JSON text | 3rd | `{"query":"insert orders"}` → `mongodb:insert:orders` |
-| Hash fallback | last | `mongodb:unknown:<8 hex>` |
-
-Beru reads legacy and stable semconv attributes:
-
-| Purpose | Legacy | Stable |
-|---------|--------|--------|
-| DB system | `db.system` | `db.system.name` |
-| Query text | `db.statement` | `db.query.text` |
-| Operation | `db.operation` | `db.operation.name` |
-| Collection | `db.mongodb.collection` | `db.collection.name` |
-
-Spans without query text are ingested when **operation + collection** attrs are present (common on Java/.NET instrumentations). **Python pymongo** is different: it sets `db.mongodb.collection` and a command-only `db.statement` (e.g. `insert`) but not `db.operation` — Beru derives the operation from that statement text.
-
-| Language | OTLP to Beru | Mongo-specific Monarch env | E2E in repo |
-|----------|--------------|----------------------------|-------------|
-| **Python** | HTTP `:8080/v1/traces` | `OTEL_PYTHON_MONGODB_CAPTURE_STATEMENT=true` (required for `db.statement`) | Yes |
-| **Node.js** | gRPC `:4317` | `OTEL_NODE_ENABLED_INSTRUMENTATIONS=mongodb,http` | Yes |
-| **Java / .NET / Go** | gRPC `:4317` | none extra | No mongo E2E |
-
-**Known limitations:** `getMore` continuations share the parent `find` signature; `bulkWrite` may hash as `unknown` without query text; non-JSON wire text without span attrs stays opaque.
-
-See `./testing/scripts/e2e-python-hybrid-test.sh` and `./testing/scripts/e2e-mongo-egress-test.sh`.
+See `make test-bats-e2e` and `make test-bats-integration`.
 
 ---
 
@@ -257,11 +221,10 @@ internal/
     storage/           SQLite raw_reports + verdicts
     diff/              Signature-based timeline evaluation
     report/            RawReport builders (ingress, egress, signatures)
-  envoyextproc/        Envoy ext_proc (ingress observe + egress mock)
-  otlp/                OTLP trace receiver + MongoDB db.statement parser
+  envoyextproc/        Envoy ext_proc (ingress observe → TraceRouter)
+  otlp/                OTLP trace receiver + MongoDB wire payload parser (Pixie eBPF path)
   diff/                JSON diff-of-diffs (ingress noise paths; noise filter tests)
-  replay/              In-memory egress mock store and request hashing
-  api/                 HTTP handlers (OTLP, seed_mock, record_egress, egress diff)
+  api/                 HTTP handlers (OTLP, egress diff)
   dashboard/           Embedded web UI + REST API (reads v2 tables)
   storage/             SQLite shadow_tests + noise_filters + retention
   server/              gRPC TrafficReporter
@@ -290,18 +253,16 @@ Root Makefile aliases: `make beru-build`, `make beru-test`, and Monarch's `make 
 | Path | How trace reaches Beru |
 | ---- | ---------------------- |
 | **HTTP ingress (Igris → Envoy)** | Igris injects W3C `traceparent` on multicast; Envoy ingress `ext_proc` reports responses. Apps usually need no trace code. |
-| **Mongo egress (OTel → Beru)** | OTel agent auto-instruments MongoDB drivers, extracts inbound context from AMQP/HTTP headers, exports `db.statement` spans to Beru OTLP. No app-level header copying. |
+| **Mongo egress (Pixie → Beru)** | Pixie eBPF captures MongoDB wire bytes on server pods; pixie-stream-bridge exports OTLP to beru-local `:4317`. Workers inject `traceparent` into the MongoDB `$comment` field — no other app instrumentation required. |
 | **RabbitMQ egress (relay)** | Workers publish with W3C context (OTel `amqplib` / `pika` injection); egress-relay-rabbitmq reads Firehose and posts to Beru HTTP API (dedupes duplicate Firehose events by trace+span+payload). |
 
-Enable OTel injection via `spec.otelInjection` on ShadowTest + OpenTelemetry Operator + `Instrumentation` CR. Monarch sets `OTEL_EXPORTER_OTLP_ENDPOINT` to Beru when a Mongo dependency is declared. See `./testing/scripts/e2e-python-hybrid-test.sh`, `./testing/scripts/e2e-otel-rabbitmq-test.sh`, and [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) Phase 5_OTel.
-
-Manual propagation (`traceparent` / `traceparent` copying) remains supported for libraries the agent cannot instrument — see `testing/example-apps/rmq-test-worker` with `RMQ_WORKER_MANUAL_TRACE=1`. Python `pika` is auto-instrumented when OTel injection is enabled; egress-relay deduplicates duplicate Firehose publishes.
+RabbitMQ egress-relay deduplicates duplicate Firehose publishes (by trace+span+payload). Manual `traceparent` propagation is supported for libraries that cannot auto-inject — see `testing/example-apps/rmq-test-worker` with `RMQ_WORKER_MANUAL_TRACE=1`.
 
 ---
 
 ## Related reading
 
 - [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — layers, data flow, Envoy sidecar roles
-- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — ShadowTest `beruGRPCAddress`, egress recordAndReplay
+- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — ShadowTest `beruGRPCAddress`; always-on Shop+Recorder egress replay
 - [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) — end-to-end verification steps
 

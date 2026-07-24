@@ -87,7 +87,7 @@ func (s *Server) putMockFromRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key := replay.TraceKey(req.TraceID, req.Method, req.Host, req.Path)
+	key := replay.TraceKey(req.TraceID, req.Method, replay.HostWithoutPort(req.Host), req.Path)
 	s.Mocks.Put(key, replay.EarlyResponse{
 		StatusCode: req.Response.Status,
 		Headers:    req.Response.Headers,

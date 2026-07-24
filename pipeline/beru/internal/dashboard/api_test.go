@@ -162,7 +162,7 @@ func TestListTraceSummariesHTTPSplitByDirection(t *testing.T) {
 		}
 	}
 
-	summaries, err := listTraceSummaries(ctx, h.Repo, "default", "", 50)
+	summaries, err := listTraceSummaries(ctx, h.Repo, nil, "default", "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}

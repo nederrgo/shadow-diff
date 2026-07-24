@@ -9,6 +9,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -25,8 +26,8 @@ const (
 	shadowSiphonOTLPPort        = 4317
 )
 
-func pixieCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) bool {
-	return siphonEnabled(st, target) || egressRecordingEnabled(st) || hasMongoDependency(st)
+func pixieCaptureEnabled(_ *enginev1alpha1.ShadowTest, _ *appsv1.Deployment) bool {
+	return true // recorder is always provisioned; egress PxL always needed
 }
 
 func targetPrimaryContainerPorts(target *appsv1.Deployment) map[int32]bool {
@@ -45,15 +46,16 @@ func siphonIngressCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.D
 		return false
 	}
 	targetPorts := targetPrimaryContainerPorts(target)
-	if len(targetPorts) == 0 {
-		return false
-	}
+	appPort := applicationPortFor(st)
+	svcPort := servicePortFor(st)
 	for _, in := range resolvedInputs(st) {
 		d := strings.TrimSpace(strings.ToLower(in.Driver))
 		if d != "http_request" && d != "tcp_stream" {
 			continue
 		}
-		if targetPorts[in.Port] {
+		// Match declared container ports, or servicePort/applicationPort when the
+		// input is the Envoy listen port (common fixture: inputs.port == servicePort).
+		if targetPorts[in.Port] || in.Port == appPort || in.Port == svcPort {
 			return true
 		}
 	}
@@ -125,10 +127,18 @@ func siphonIngressPorts(st *enginev1alpha1.ShadowTest) []int32 {
 	if isAMQPOnlyShadowTest(st) {
 		return nil
 	}
+	// Pixie filters prod-pod local_port; capture the app port, not Envoy servicePort.
+	if app := applicationPortFor(st); app > 0 {
+		return []int32{app}
+	}
 	var ports []int32
 	seen := map[int32]bool{}
 	for _, in := range resolvedInputs(st) {
-		if seen[in.Port] {
+		d := strings.TrimSpace(strings.ToLower(in.Driver))
+		if d != "http_request" && d != "tcp_stream" {
+			continue
+		}
+		if in.Port <= 0 || seen[in.Port] {
 			continue
 		}
 		seen[in.Port] = true
@@ -154,28 +164,19 @@ func buildPixieStreamRuleSpec(
 	target *appsv1.Deployment,
 ) enginev1alpha1.PixieStreamRuleSpec {
 	ingress := siphonEnabled(st, target)
-	egress := egressRecordingEnabled(st)
 
 	spec := enginev1alpha1.PixieStreamRuleSpec{
-		ShadowTestRef:   st.Namespace + "/" + st.Name,
-		Active:          true,
-		TargetNamespace: targetNamespaceFor(st),
-		TargetLabels:    copyStringMap(target.Spec.Template.Labels),
-		MaxPayloadSize:  siphonMaxPayloadSize(st),
-		ExcludePaths:    siphonExcludePaths(st),
+		ShadowTestRef:        st.Namespace + "/" + st.Name,
+		Active:               true,
+		TargetNamespace:      targetNamespaceFor(st),
+		TargetLabels:         copyStringMap(target.Spec.Template.Labels),
+		MaxPayloadSize:       siphonMaxPayloadSize(st),
+		ExcludePaths:         siphonExcludePaths(st),
+		RecorderOTelEndpoint: shadowRecorderOTelEndpoint(st, shadowNS),
 	}
 	if ingress {
 		spec.OTelEndpoint = shadowSiphonOTelEndpoint(shadowNS)
 		spec.TargetPorts = siphonIngressPorts(st)
-	}
-	if egress {
-		spec.RecorderOTelEndpoint = shadowRecorderOTelEndpoint(st, shadowNS)
-		for _, h := range st.Spec.RecordAndReplay {
-			host, _, _ := recordAndReplayEntry(h)
-			if host != "" {
-				spec.RecordAndReplayHosts = append(spec.RecordAndReplayHosts, host)
-			}
-		}
 	}
 	if hasMongoDependency(st) {
 		spec.ShadowNamespace = shadowNS
@@ -212,6 +213,78 @@ func (r *ShadowTestReconciler) ensureShadowSiphonService(ctx context.Context, sh
 		return nil
 	})
 	return err
+}
+
+func shadowSiphonIgrisBaseURL(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d",
+		igrisServiceName(st), shadowNS, servicePortFor(st))
+}
+
+func (r *ShadowTestReconciler) ensureShadowSiphonDeployment(
+	ctx context.Context,
+	st *enginev1alpha1.ShadowTest,
+	shadowNS string,
+) error {
+	labels := map[string]string{
+		labelManagedBy:           valueManagedBy,
+		labelShadowTestName:      st.Name,
+		labelShadowTestCRNS:      st.Namespace,
+		labelShadowTestUID:       string(st.UID),
+		"app.kubernetes.io/name": shadowSiphonServiceName,
+	}
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: shadowNS,
+			Name:      shadowSiphonServiceName,
+		},
+	}
+	replicas := int32(1)
+	igrisURL := shadowSiphonIgrisBaseURL(st, shadowNS)
+	_, err := ctrl.CreateOrPatch(ctx, r.Client, deploy, func() error {
+		deploy.Labels = labels
+		deploy.Spec.Replicas = &replicas
+		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{
+			"app.kubernetes.io/name": shadowSiphonServiceName,
+		}}
+		deploy.Spec.Template.ObjectMeta.Labels = map[string]string{
+			"app.kubernetes.io/name": shadowSiphonServiceName,
+		}
+		deploy.Spec.Template.Spec.Containers = []corev1.Container{{
+			Name:            shadowSiphonServiceName,
+			Image:           siphonImageFor(st),
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Ports: []corev1.ContainerPort{{
+				Name:          "otlp-grpc",
+				ContainerPort: shadowSiphonOTLPPort,
+				Protocol:      corev1.ProtocolTCP,
+			}},
+			Env: []corev1.EnvVar{
+				{Name: "SIPHON_OTLP_GRPC_ADDR", Value: fmt.Sprintf(":%d", shadowSiphonOTLPPort)},
+				{Name: "SIPHON_IGRIS_BASE_URL", Value: igrisURL},
+			},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("50m"),
+					corev1.ResourceMemory: resource.MustParse("64Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("200m"),
+					corev1.ResourceMemory: resource.MustParse("128Mi"),
+				},
+			},
+		}}
+		return nil
+	})
+	return err
+}
+
+func (r *ShadowTestReconciler) siphonDeploymentReady(ctx context.Context, shadowNS string) (bool, error) {
+	var deploy appsv1.Deployment
+	key := client.ObjectKey{Namespace: shadowNS, Name: shadowSiphonServiceName}
+	if err := r.Get(ctx, key, &deploy); err != nil {
+		return false, err
+	}
+	return deploy.Status.AvailableReplicas > 0, nil
 }
 
 func (r *ShadowTestReconciler) reconcilePixieStreamRule(
@@ -306,6 +379,9 @@ func (r *ShadowTestReconciler) reconcileSiphonCapture(
 
 	if ingress {
 		if err := r.ensureShadowSiphonService(ctx, shadowNS); err != nil {
+			return formatCaptureTargets(labels), "Degraded", err
+		}
+		if err := r.ensureShadowSiphonDeployment(ctx, st, shadowNS); err != nil {
 			return formatCaptureTargets(labels), "Degraded", err
 		}
 	}

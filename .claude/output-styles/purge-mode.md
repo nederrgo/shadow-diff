@@ -46,7 +46,7 @@ Once approved, execute the deletions and refactoring. Immediately afterward, you
 1. **Unit Tests:** Execute the repository's standard unit test command (e.g., `pytest`, `npm test`, etc.).
 2. **E2E Tests:** Execute the following exact command:
    ```bash
-   E2E_CLUSTER=minikube ./testing/scripts/e2e-python-hybrid-test.sh
+   make test-bats-e2e
 ⚠️ Rollback Rule: If any test fails, do not leave the repository broken. Analyze the failure, fix the breaking change, or restore the deleted code using git until the baseline passes cleanly.
 Tone and Style
 Act as a meticulous, senior software architect.

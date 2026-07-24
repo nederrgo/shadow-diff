@@ -14,23 +14,21 @@ import (
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
-	"github.com/shadow-diff/recorder/internal/shop"
-	"github.com/shadow-diff/recorder/internal/config"
 	"github.com/shadow-diff/recorder/internal/parse"
+	"github.com/shadow-diff/recorder/internal/shop"
 )
 
-// OTLPReceiver ingests Pixie egress OTLP traces and posts to Beru.
+// OTLPReceiver ingests Pixie egress OTLP traces and posts to Shop.
 type OTLPReceiver struct {
-	shopClient      *shop.Client
-	recordAndReplay []config.RecordAndReplayHost
-	jobs            chan shop.RecordPayload
-	wg              sync.WaitGroup
-	dropped         atomic.Uint64
-	log             *slog.Logger
-	stopOnce        sync.Once
+	shopClient *shop.Client
+	jobs       chan shop.RecordPayload
+	wg         sync.WaitGroup
+	dropped    atomic.Uint64
+	log        *slog.Logger
+	stopOnce   sync.Once
 }
 
-func NewOTLPReceiver(client *shop.Client, hosts []config.RecordAndReplayHost, workers, queueSize int, log *slog.Logger) *OTLPReceiver {
+func NewOTLPReceiver(client *shop.Client, workers, queueSize int, log *slog.Logger) *OTLPReceiver {
 	if workers <= 0 {
 		workers = 4
 	}
@@ -41,10 +39,9 @@ func NewOTLPReceiver(client *shop.Client, hosts []config.RecordAndReplayHost, wo
 		log = slog.Default()
 	}
 	r := &OTLPReceiver{
-		shopClient:      client,
-		recordAndReplay: hosts,
-		jobs:            make(chan shop.RecordPayload, queueSize),
-		log:             log,
+		shopClient: client,
+		jobs:       make(chan shop.RecordPayload, queueSize),
+		log:        log,
 	}
 	for i := 0; i < workers; i++ {
 		r.wg.Add(1)
@@ -79,7 +76,7 @@ func (r *OTLPReceiver) ExportTraces(ctx context.Context, req *coltracepb.ExportT
 	for _, rs := range req.GetResourceSpans() {
 		for _, ss := range rs.GetScopeSpans() {
 			for _, span := range ss.GetSpans() {
-				record, ok := parseEgressRecordFromSpan(span, rs.GetResource(), r.recordAndReplay)
+				record, ok := parseEgressRecordFromSpan(span, rs.GetResource())
 				if !ok {
 					continue
 				}
@@ -97,7 +94,6 @@ func (r *OTLPReceiver) ExportTraces(ctx context.Context, req *coltracepb.ExportT
 func parseEgressRecordFromSpan(
 	span *tracepb.Span,
 	res *resourcepb.Resource,
-	hosts []config.RecordAndReplayHost,
 ) (shop.RecordPayload, bool) {
 	if span == nil {
 		return shop.RecordPayload{}, false
@@ -105,7 +101,7 @@ func parseEgressRecordFromSpan(
 	attrs := mergeAttrs(res, span.GetAttributes())
 
 	host := firstAttr(attrs, "http.host", "server.address")
-	if host == "" || !parse.HostMatches(host, hosts) {
+	if host == "" {
 		return shop.RecordPayload{}, false
 	}
 	host = parse.NormalizeHTTPHost(host)

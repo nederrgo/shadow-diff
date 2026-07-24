@@ -1,0 +1,11 @@
+# Minimal ShadowTest fixture template for Monarch integration tests.
+# Only newImage is required — oldImage, applicationPort, and servicePort are
+# all derived by Monarch from the target Deployment at reconcile time.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-monarch-basic
+  namespace: default
+spec:
+  targetDeployment: monarch-integ-target
+  newImage: monarch-integ-app:dev

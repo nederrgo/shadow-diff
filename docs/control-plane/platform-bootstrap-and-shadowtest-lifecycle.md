@@ -4,7 +4,7 @@ title: Platform Bootstrap and ShadowTest Lifecycle
 description: How to install Monarch, Pixie Vizier, and pixie-stream-bridge once; create and delete ShadowTests without resetting Pixie.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [operations, control-plane, monarch, pixie, pixiestreamrule, shadowtest, deployment]
-timestamp: 2026-07-06T10:45:00Z
+timestamp: 2026-07-23T10:34:00Z
 ---
 
 # Platform Bootstrap and ShadowTest Lifecycle
@@ -76,7 +76,7 @@ Pixie requires a VM-capable cluster node (Minikube `kvm2` / `virtualbox`; not Ki
 
 ```bash
 # Pixie Cloud account: px auth login or export PIXIE_API_KEY
-MINIKUBE_DRIVER=kvm2 ./testing/scripts/setup/setup-local-pixie.sh --no-bridge
+MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh --no-bridge
 ```
 
 This installs Vizier into namespace `pl` and applies bridge RBAC + PxL templates (`monarch-system/pixie-stream-bridge` ConfigMap). Use `--no-bridge` when the bridge is packaged separately (Helm Deployment).
@@ -88,18 +88,18 @@ This installs Vizier into namespace `pl` and applies bridge RBAC + PxL templates
 The bridge is **not** deployed by Monarch. It must run continuously:
 
 ```bash
-./testing/scripts/setup/start-pixie-stream-bridge.sh
+./testing/bats/setup/start-pixie-stream-bridge.sh
 ```
 
 Or run in foreground for debugging:
 
 ```bash
-./testing/scripts/pixie-stream-bridge.sh
+./testing/bats/pixie-stream-bridge.sh
 ```
 
 **Production / Helm:** package as a single-replica Deployment in `monarch-system` with:
 
-- ServiceAccount bound to [`pixie-stream-bridge` RBAC](/testing/scripts/manifests/pixie-bridge/rbac.yaml) (`get/list/watch` on `pixiestreamrules`)
+- ServiceAccount bound to [`pixie-stream-bridge` RBAC](/testing/bats/manifests/pixie-bridge/rbac.yaml) (`get/list/watch` on `pixiestreamrules`)
 - `PIXIE_API_KEY` (or Pixie deploy key) as a Secret
 - `px` CLI + `kubectl` in the container image
 - **No** aggressive `pkill` + short sleep restart between ShadowTests — use normal rolling updates with adequate `terminationGracePeriodSeconds` (≥30s) so in-flight `px run` can finish
@@ -108,7 +108,7 @@ The bridge polls all `PixieStreamRule` objects cluster-wide every `PIXIE_EXPORT_
 
 ### 5. Siphon OTLP receiver (HTTP Pixie ingress only)
 
-Monarch creates `Service/siphon` in each shadow namespace when HTTP ingress capture is enabled. The **Siphon Deployment** must exist in that namespace to receive OTLP on `:4317` and POST to Igris. Deploy per shadow namespace or extend your chart to watch ShadowTest Ready status.
+When HTTP ingress capture is enabled, Monarch creates `Service/siphon` and `Deployment/siphon` in the shadow namespace. The Deployment receives OTLP on `:4317` and POSTs to the shadow Igris Service (`SIPHON_IGRIS_BASE_URL`). No separate bats/chart apply is required.
 
 MongoDB egress and AMQP paths do not require Siphon.
 
@@ -151,8 +151,9 @@ Example fields: `targetDeployment`, `oldImage` / `newImage`, `inputs`, `dependen
 
 | Field | When set | OTLP destination |
 |-------|----------|------------------|
-| `spec.otelEndpoint` | HTTP ingress capture | `siphon.<shadow-ns>.svc.cluster.local:4317` |
-| `spec.recorderOtelEndpoint` | `spec.recordAndReplay` | `<shadowtest>-recorder.<shadow-ns>:4317` |
+| `spec.otelEndpoint` | HTTP ingress Siphon enabled (`http_request`/`tcp_stream` on servicePort, applicationPort, or container port) | `siphon.<shadow-ns>.svc.cluster.local:4317` |
+| `spec.targetPorts` | When ingress Siphon enabled | `applicationPort` (prod app port for Pixie `local_port`, not Envoy `servicePort`) |
+| `spec.recorderOtelEndpoint` | Always (Shop+Recorder always-on; no `spec.recordAndReplay` field) | `<shadowtest>-recorder.<shadow-ns>:4317` |
 | `spec.mongoOtelEndpoint` | MongoDB `dependencies[]` | `beru-local.<shadow-ns>.svc.cluster.local:4317` |
 | `spec.shadowNamespace` | MongoDB dependency | Filters mongo PxL to shadow pods only |
 
@@ -172,7 +173,7 @@ Within one poll cycle after the CR exists and `spec.active=true`:
 SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
 kubectl get pixiestreamrule pixie-my-app-shadow -n default -o yaml
 kubectl get pods -n "$SHADOW_NS"
-./testing/scripts/debug-mongo-egress.sh my-app-shadow default   # when Mongo dependency present
+./testing/bats/debug-mongo-egress.sh my-app-shadow default   # when Mongo dependency present
 ```
 
 ### MongoDB capture note
@@ -194,7 +195,7 @@ Deletion is CR-driven. Pixie Vizier and the bridge stay running.
 ```bash
 kubectl delete shadowtest my-app-shadow -n default
 # or
-./testing/scripts/setup/delete-shadowtest.sh my-app-shadow default
+./testing/bats/setup/delete-shadowtest.sh my-app-shadow default
 ```
 
 ### Monarch cleanup order (`reconcileDelete`)
@@ -204,6 +205,23 @@ kubectl delete shadowtest my-app-shadow -n default
 3. **Delete** `PixieStreamRule` CR
 4. Delete shadow namespace (all pods, Services, beru-local, dependencies)
 5. Remove ShadowTest finalizer
+
+### Mid-bring-up delete (race contract)
+
+`Reconcile` checks `deletionTimestamp` only at the **start** of each pass. An in-flight create reconcile that already passed that check can still create later resources (Deployments, `PixieStreamRule`, …) after `kubectl delete` has been issued.
+
+Contract:
+
+| Claim | Guaranteed? |
+|-------|-------------|
+| Bring-up freezes at the stage where delete was requested | **No** — stage-precise stop is not promised |
+| Next reconcile enters `reconcileDelete` and does not resume bring-up to `Ready` | **Yes** |
+| Late creates after `deletionTimestamp` are still removed (explicit Pixie delete + shadow namespace wipe) | **Yes** |
+| Same-name recreate while the CR still has a finalizer | **Blocked** by the API until the finalizer is removed (after the shadow namespace is gone) |
+
+Unit coverage (fake client): `pipeline/monarch/internal/controller/shadowtest_delete_lifecycle_test.go` — late creates after `deletionTimestamp` still cleaned; delete path never recreates the shadow namespace or marks `Ready`.
+
+Integration coverage (bats): `testing/bats/integration/monarch/lifecycle.bats` — real-cluster delete mid-bring-up, re-apply while deleting (same UID), recreate after clean → Ready, delete after Ready. Asserts CR / shadow namespace / `PixieStreamRule` gone; does not claim stage-precise freeze.
 
 ### Bridge behavior on delete
 
@@ -254,6 +272,8 @@ The E2E restart race (`pkill` while `px run` blocks up to 25s) can leave **no br
 - [monarch-security-model.md](/control-plane/monarch-security-model.md) — Monarch does not manage Pixie PEM; bridge is out-of-band
 - [ARCHITECTURE.md](/architecture/ARCHITECTURE.md) — pixie-stream-bridge layer table and Mongo egress path
 - [pipeline/monarch/internal/controller/shadowtest_resources.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_resources.go) — `reconcileDelete` PixieStreamRule cleanup
+- [pipeline/monarch/internal/controller/shadowtest_delete_lifecycle_test.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_delete_lifecycle_test.go) — fake-client mid-delete / late-create cleanup
+- [testing/bats/integration/monarch/lifecycle.bats](https://github.com/shadow-diff/monarch/tree/main/testing/bats/integration/monarch/lifecycle.bats) — integration lifecycle delete / recreate
 - [pipeline/monarch/internal/controller/shadowtest_siphon.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_siphon.go) — `reconcilePixieStreamRule`, `deletePixieStreamRule`
-- [testing/scripts/pixie-stream-bridge.sh](https://github.com/shadow-diff/monarch/tree/main/testing/scripts/pixie-stream-bridge.sh) — poll loop and PxL export
-- [testing/scripts/debug-mongo-egress.sh](https://github.com/shadow-diff/monarch/tree/main/testing/scripts/debug-mongo-egress.sh) — layer-by-layer Pixie → Beru diagnostics
+- [testing/bats/pixie-stream-bridge.sh](https://github.com/shadow-diff/monarch/tree/main/testing/bats/pixie-stream-bridge.sh) — poll loop and PxL export
+- [testing/bats/debug-mongo-egress.sh](https://github.com/shadow-diff/monarch/tree/main/testing/bats/debug-mongo-egress.sh) — layer-by-layer Pixie → Beru diagnostics

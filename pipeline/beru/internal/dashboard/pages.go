@@ -53,6 +53,7 @@ type mismatchView struct {
 	Path          string
 	ExpectedValue string
 	ActualValue   string
+	NoisePath     string // set only for payload field diffs; drives "Ignore path" button
 }
 
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -97,13 +98,18 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	page.Filter = filter
 	statusFilter := ""
-	if filter == "match" {
-		statusFilter = "MATCH"
-	} else if filter == "mismatch" {
-		statusFilter = "MISMATCH"
+	switch filter {
+	case "match":
+		statusFilter = v2storage.StatusMatch
+	case "mismatch":
+		statusFilter = v2storage.StatusMismatch
+	case "voided":
+		statusFilter = v2storage.StatusVoidedBaselineDivergence
+	case "waiting":
+		statusFilter = v2storage.StatusWaitingForRoles
 	}
 
-	summaries, err := listTraceSummaries(r.Context(), h.Repo, shadowTestName, statusFilter, 200)
+	summaries, err := listTraceSummaries(r.Context(), h.Repo, h.DB, shadowTestName, statusFilter, 200)
 	if err != nil {
 		http.Error(w, "Could not list traces", http.StatusInternalServerError)
 		return
@@ -112,13 +118,17 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		page.Traces = append(page.Traces, summaryToView(s))
 	}
 	page.TotalTraces = len(summaries)
+	matchCount := 0
 	for _, s := range summaries {
-		if s.Status == "MISMATCH" {
+		switch s.Status {
+		case v2storage.StatusMismatch:
 			page.MismatchCount++
+		case v2storage.StatusMatch:
+			matchCount++
 		}
 	}
 	if page.TotalTraces > 0 {
-		page.MatchRate = float64(page.TotalTraces-page.MismatchCount) / float64(page.TotalTraces) * 100
+		page.MatchRate = float64(matchCount) / float64(page.TotalTraces) * 100
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -164,7 +174,7 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 		shadowTestName = h.DB.DefaultShadowTestName()
 	}
 
-	summaries, _ := listTraceSummaries(r.Context(), h.Repo, shadowTestName, "", 500)
+	summaries, _ := listTraceSummaries(r.Context(), h.Repo, h.DB, shadowTestName, "", 500)
 	var current traceView
 	for _, s := range summaries {
 		if sameTraceView(traceID, protocol, direction, s) {
@@ -257,22 +267,40 @@ func mismatchesForProtocol(verdict *v2storage.VerdictState, protocol string) []m
 	if verdict == nil || verdict.SummaryDetails == "" {
 		return nil
 	}
-	prefix := protocol + ":"
+	details := parseVerdictDetails(verdict.SummaryDetails)
 	var out []mismatchView
-	for _, detail := range strings.Split(verdict.SummaryDetails, "; ") {
-		detail = strings.TrimSpace(detail)
-		if detail == "" {
+	for _, step := range details.Steps {
+		if protocol != "" && step.Protocol != "" && step.Protocol != protocol {
 			continue
 		}
-		if !strings.Contains(detail, prefix) && !strings.HasPrefix(detail, "count ") {
-			if protocol != "http" {
-				continue
-			}
+		path := step.Kind
+		if step.Signature != "" {
+			path = step.Protocol + ":" + step.Signature
+		}
+		if step.NoisePath != "" {
+			path = step.NoisePath
+		} else if step.Detail != "" {
+			path = step.Detail
 		}
 		out = append(out, mismatchView{
-			Path:          detail,
-			ExpectedValue: "match",
-			ActualValue:   detail,
+			Path:          path,
+			ExpectedValue: step.Reason,
+			ActualValue:   step.Detail,
+			NoisePath:     step.NoisePath,
+		})
+	}
+	if details.Baseline != nil && (protocol == "" || details.Baseline.Protocol == protocol || details.Baseline.Protocol == "") {
+		out = append(out, mismatchView{
+			Path:          details.Baseline.Reason,
+			ExpectedValue: details.Baseline.ControlA,
+			ActualValue:   details.Baseline.ControlB,
+		})
+	}
+	for _, role := range details.Missing {
+		out = append(out, mismatchView{
+			Path:          "missing_role",
+			ExpectedValue: role,
+			ActualValue:   "absent",
 		})
 	}
 	return out

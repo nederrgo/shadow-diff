@@ -46,7 +46,7 @@ Our core philosophy is **Pragmatic Isolation**: we leverage native protocols, pr
 *   [x] **Ephemeral DB Provisioner:** Update Monarch to deploy single-replica instances of requested databases inside the shadow namespace, using standard open-source Docker images (e.g., `redis:7-alpine`).
 *   [x] **Dynamic Environment Injection:** Monarch overwrites connection string environment variables (e.g., `REDIS_HOST`, `MONGO_URL`) on the shadow application containers, redirecting them to the local shadow services.
 *   [x] **Readiness Gate Update:** Monarch blocks `ShadowTest.Status.Phase: Ready` until all ephemeral dependency pods have `AvailableReplicas > 0`.
-*   [x] **E2E verification:** `./testing/scripts/e2e-dependency-test.sh` (manifests under `testing/scripts/manifests/dependency-e2e/`).
+*   [x] **E2E verification:** `make test-bats-e2e` (manifests under `testing/bats/manifests/dependency-e2e/`).
 
 ---
 
@@ -56,7 +56,7 @@ Our core philosophy is **Pragmatic Isolation**: we leverage native protocols, pr
 *   [x] **`igris-rabbitmq` module:** Consumes Monarch’s prod shadow queue, injects `traceparent`, `ExchangeDeclare` on shadow brokers, multicasts to three role-specific brokers.
 *   [x] **Monarch queue orchestration:** One-time `QueueDeclare` with `x-max-length` / `x-overflow` / `x-expires`; `status.amqpQueueName` gate; delete on ShadowTest removal.
 *   [x] **CRD:** `spec.inputs[].driver: rabbitmq_message` + `amqp` block; `spec.igrisRabbitmq`; AMQP-only ShadowTests (no HTTP Igris / no Siphon ingress).
-*   [x] **E2E:** `./testing/scripts/e2e-rabbitmq-test.sh` (manifests under `testing/scripts/manifests/rabbitmq-e2e/`).
+*   [x] **E2E:** `make test-bats-e2e` (manifests under `testing/bats/manifests/rabbitmq-e2e/`).
 
 ---
 

@@ -4,7 +4,7 @@ title: Monarch Controller — Envoy-Only Shadow Injection
 description: Reconcile contract for telemetry-dependent shadow pods after Plan 1 realignment.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [architecture, control-plane, monarch, envoy, kubernetes]
-timestamp: 2026-07-01T00:00:00Z
+timestamp: 2026-07-12T14:20:00Z
 ---
 
 # Monarch Controller — Envoy-Only Shadow Injection
@@ -27,14 +27,9 @@ For each shadow role (`control-a`, `control-b`, `candidate`), Monarch `CreateOrP
 
 Applications must propagate W3C `traceparent` on outbound HTTP and database commands (e.g. Mongo `$comment`). Monarch no longer injects runtime agents.
 
-## Egress capture (env-based)
+## Egress capture (iptables)
 
-All shadow app containers receive:
-
-- `HTTP_PROXY` / `HTTPS_PROXY` → `http://127.0.0.1:10001` (Envoy egress listener)
-- `NO_PROXY` → `127.0.0.1,localhost,beru-ingest.shadow-system.svc.cluster.local,.cluster.local,.svc`
-
-The expanded `NO_PROXY` prevents Envoy loopback deadlock when forwarding to cluster-internal upstreams.
+Shadow app pods run an init container that redirects outbound TCP on ports **80** and **8080** to the Envoy egress listener (`127.0.0.1:10001`). Apps keep prod egress URLs; Monarch does **not** inject `HTTP_PROXY`. Set `Host` / `:authority` to the record/replay hostname (copied from prod env) so Shop can match mocks.
 
 ## Envoy configuration highlights
 
@@ -45,8 +40,8 @@ Per-role ConfigMap `{shadowtest}-{role}-envoy` renders:
    - Lua extracts `traceparent`, method/path, and truncated (64KB) request/response bodies
    - Lua `httpCall` async POST to `beru_ingest` cluster at `/api/v1/ingest/wire` (`string.format` JSON — no `json.encode`)
    - Sidecar env: `SHADOW_ROLE`, `SHADOW_TEST_NAME`
-   - `ext_proc` handles record/replay mocking when `spec.recordAndReplay` is set
-   - Passthrough mode uses `dynamic_forward_proxy` when no record/replay hosts
+   - `ext_proc` (`shop_ext_proc`) always handles HTTP egress mock lookup against Shop
+   - Apps keep prod egress URLs; iptables redirects :80/:8080 to Envoy `:10001`
 3. **Mongo egress** (`127.0.0.1:27017`) — `mongo_proxy` with `emit_dynamic_metadata: true` + `tcp_proxy` to sandbox Mongo (Envoy→Beru mongo wire POST is Phase 2b)
 4. **Clusters** — `beru_ext_proc`, `beru_ingest`, `dynamic_egress_cluster`, optional `mongo_upstream`
 
@@ -64,7 +59,6 @@ Beru exposes `POST /api/v1/ingest/wire` on `:8080` (`BERU_HTTP_ADDR`). Envelopes
 ## Out of scope
 
 - Envoy mongo_listener → Beru HTTP POST (Phase 2b access log)
-- iptables transparent egress capture
 - Ingress migration from `ext_proc` to `beru_ingest`
 
 # Citations

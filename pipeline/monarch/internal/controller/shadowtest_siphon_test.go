@@ -92,8 +92,9 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	if spec.OTelEndpoint != shadowSiphonOTelEndpoint("shadow-default-my-st") {
 		t.Fatalf("endpoint %q", spec.OTelEndpoint)
 	}
-	if spec.RecorderOTelEndpoint != "" {
-		t.Fatalf("recorder endpoint %q", spec.RecorderOTelEndpoint)
+	want := shadowRecorderOTelEndpoint(st, "shadow-default-my-st")
+	if spec.RecorderOTelEndpoint != want {
+		t.Fatalf("recorder endpoint %q want %q", spec.RecorderOTelEndpoint, want)
 	}
 	if spec.MaxPayloadSize != 4096 {
 		t.Fatalf("max payload %d", spec.MaxPayloadSize)
@@ -106,14 +107,11 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	}
 }
 
-func TestBuildPixieStreamRuleSpecEgressOnly(t *testing.T) {
+func TestBuildPixieStreamRuleSpecAlwaysHasRecorderEndpoint(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "egress-st"},
 		Spec: enginev1alpha1.ShadowTestSpec{
 			TargetNamespace: "prod",
-			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{
-				{Host: "egress-httpbin.default.svc.cluster.local"},
-			},
 		},
 	}
 	dep := &appsv1.Deployment{
@@ -124,31 +122,13 @@ func TestBuildPixieStreamRuleSpecEgressOnly(t *testing.T) {
 		},
 	}
 	spec := buildPixieStreamRuleSpec(st, "shadow-default-egress-st", dep)
-	if spec.OTelEndpoint != "" {
+	// Empty inputs resolve to http_request on servicePort → ingress siphon enabled.
+	if spec.OTelEndpoint != shadowSiphonOTelEndpoint("shadow-default-egress-st") {
 		t.Fatalf("ingress endpoint %q", spec.OTelEndpoint)
 	}
 	want := shadowRecorderOTelEndpoint(st, "shadow-default-egress-st")
 	if spec.RecorderOTelEndpoint != want {
 		t.Fatalf("recorder endpoint %q want %q", spec.RecorderOTelEndpoint, want)
-	}
-	if len(spec.RecordAndReplayHosts) != 1 || spec.RecordAndReplayHosts[0] != "egress-httpbin.default.svc.cluster.local" {
-		t.Fatalf("recordAndReplayHosts %v", spec.RecordAndReplayHosts)
-	}
-}
-
-func TestBuildPixieStreamRuleSpecEgressHostPort(t *testing.T) {
-	st := &enginev1alpha1.ShadowTest{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "egress-st"},
-		Spec: enginev1alpha1.ShadowTestSpec{
-			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{
-				{Host: "user-service.prod:8080"},
-			},
-		},
-	}
-	dep := &appsv1.Deployment{}
-	spec := buildPixieStreamRuleSpec(st, "shadow-default-egress-st", dep)
-	if len(spec.RecordAndReplayHosts) != 1 || spec.RecordAndReplayHosts[0] != "user-service.prod" {
-		t.Fatalf("recordAndReplayHosts %v", spec.RecordAndReplayHosts)
 	}
 }
 
@@ -162,6 +142,30 @@ func TestTargetNamespaceFor_defaultsToCRNamespace(t *testing.T) {
 	st.Spec.TargetNamespace = "prod"
 	if got := targetNamespaceFor(st); got != "prod" {
 		t.Fatalf("got %q want prod", got)
+	}
+}
+
+func TestShadowSiphonIgrisBaseURL(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "bats-http"},
+		Spec:       enginev1alpha1.ShadowTestSpec{ServicePort: 8888},
+	}
+	want := "http://bats-http-igris.shadow-default-bats-http.svc.cluster.local:8888"
+	if got := shadowSiphonIgrisBaseURL(st, "shadow-default-bats-http"); got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestSiphonImageFor(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{}
+	t.Setenv("MONARCH_MODE", "dev")
+	t.Setenv("SIPHON_IMAGE", "")
+	if got := siphonImageFor(st); got != "siphon:dev" {
+		t.Fatalf("default mode: got %q want siphon:dev", got)
+	}
+	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{Image: "siphon:custom"}
+	if got := siphonImageFor(st); got != "siphon:custom" {
+		t.Fatalf("CR override: got %q", got)
 	}
 }
 
@@ -203,8 +207,9 @@ func TestSiphonEnabled(t *testing.T) {
 	}
 
 	st := &enginev1alpha1.ShadowTest{}
-	if siphonEnabled(st, dep) {
-		t.Fatal("expected disabled with no inputs or explicit enable")
+	// Empty inputs resolve to http_request on servicePort → siphon enabled.
+	if !siphonEnabled(st, dep) {
+		t.Fatal("default http_request input on servicePort should enable siphon")
 	}
 
 	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)}
@@ -215,15 +220,6 @@ func TestSiphonEnabled(t *testing.T) {
 	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{Enabled: boolPtr(true)}
 	if !siphonEnabled(st, dep) {
 		t.Fatal("explicit true should enable")
-	}
-
-	st = &enginev1alpha1.ShadowTest{
-		Spec: enginev1alpha1.ShadowTestSpec{
-			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{{Host: "example.com"}},
-		},
-	}
-	if siphonEnabled(st, dep) {
-		t.Fatal("recordAndReplay alone should not enable siphon")
 	}
 
 	st = &enginev1alpha1.ShadowTest{
@@ -240,13 +236,38 @@ func TestSiphonEnabled(t *testing.T) {
 		t.Fatal("non-matching port should not enable siphon")
 	}
 
+	// inputs.port == servicePort (Envoy listen) with no matching container port
 	st = &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{
-			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{{Host: "example.com"}},
-			Siphon:          &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)},
+			ServicePort:     8888,
+			ApplicationPort: 8080,
+			Inputs:          []enginev1alpha1.InputSpec{{Port: 8888, Driver: "http_request"}},
+		},
+	}
+	depNoPorts := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "app"}},
+				},
+			},
+		},
+	}
+	if !siphonEnabled(st, depNoPorts) {
+		t.Fatal("http_request on servicePort should enable siphon even without container ports")
+	}
+	ports := siphonIngressPorts(st)
+	if len(ports) != 1 || ports[0] != 8080 {
+		t.Fatalf("expected Pixie target port applicationPort 8080, got %v", ports)
+	}
+
+	st = &enginev1alpha1.ShadowTest{
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Inputs: []enginev1alpha1.InputSpec{{Port: 80, Driver: "http_request"}},
+			Siphon: &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)},
 		},
 	}
 	if siphonEnabled(st, dep) {
-		t.Fatal("explicit false should override recordAndReplay")
+		t.Fatal("explicit false should override matching port")
 	}
 }

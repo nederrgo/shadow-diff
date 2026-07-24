@@ -9,12 +9,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/shadow-diff/recorder/internal/config"
 	"github.com/shadow-diff/recorder/internal/shop"
 )
 
-// RunBidirectional reads paired HTTP transactions from pipe readers and posts to Beru.
-func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, recordAndReplay []config.RecordAndReplayHost, client *shop.Client) {
+// RunBidirectional reads paired HTTP transactions from pipe readers and posts to Shop.
+func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, client *shop.Client) {
 	defer reqR.Close()
 	defer resR.Close()
 
@@ -44,11 +43,6 @@ func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, recordAndRe
 		}
 		if host == "" {
 			log.Printf("recorder parser: request missing Host, skipping")
-			discardHTTPResponse(resReader, req)
-			continue
-		}
-		if !HostMatches(host, recordAndReplay) {
-			log.Printf("recorder parser: host %q not in recordAndReplay, skipping", host)
 			discardHTTPResponse(resReader, req)
 			continue
 		}
@@ -91,24 +85,6 @@ func RunBidirectional(ctx context.Context, reqR, resR io.ReadCloser, recordAndRe
 		}
 		client.PostAsync(record)
 	}
-}
-
-// HostMatches reports whether host is allowed by downstream rules.
-func HostMatches(host string, recordAndReplay []config.RecordAndReplayHost) bool {
-	host = NormalizeHTTPHost(host)
-	for _, d := range recordAndReplay {
-		dh := NormalizeHTTPHost(d.Host)
-		if dh == host {
-			return true
-		}
-		if strings.HasPrefix(dh, "*.") {
-			suffix := strings.TrimPrefix(dh, "*")
-			if strings.HasSuffix(host, suffix) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // NormalizeHTTPHost lowercases and strips port from host.

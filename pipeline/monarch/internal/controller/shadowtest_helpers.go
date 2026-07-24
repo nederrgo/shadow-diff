@@ -3,7 +3,6 @@ package controller
 import (
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -74,10 +73,6 @@ func envFromTarget(dep *appsv1.Deployment) ([]corev1.EnvVar, string) {
 	return out, warn
 }
 
-func appEnvWithEgressProxy(_ *enginev1alpha1.ShadowTest, base []corev1.EnvVar) []corev1.EnvVar {
-	return append([]corev1.EnvVar{}, base...)
-}
-
 func envoyContainerPorts(st *enginev1alpha1.ShadowTest) []corev1.ContainerPort {
 	return []corev1.ContainerPort{
 		{Name: "ingress", ContainerPort: servicePortFor(st), Protocol: corev1.ProtocolTCP},
@@ -107,6 +102,73 @@ func applicationPortFor(st *enginev1alpha1.ShadowTest) int32 {
 		return sp - 1
 	}
 	return defaultApplicationPort
+}
+
+// primaryContainerPort returns the application port from the target Deployment.
+// Priority: port named "http" → single declared port → default 8080.
+// Returns an error when the deployment has multiple ports and none is named "http";
+// the caller should ask the user to set spec.applicationPort explicitly.
+func primaryContainerPort(target *appsv1.Deployment) (int32, error) {
+	if len(target.Spec.Template.Spec.Containers) == 0 {
+		return defaultApplicationPort, nil
+	}
+	ports := target.Spec.Template.Spec.Containers[0].Ports
+	if len(ports) == 0 {
+		return defaultApplicationPort, nil
+	}
+	for _, p := range ports {
+		if strings.EqualFold(p.Name, "http") {
+			return p.ContainerPort, nil
+		}
+	}
+	if len(ports) == 1 {
+		return ports[0].ContainerPort, nil
+	}
+	return 0, fmt.Errorf(
+		"target has %d container ports with no port named 'http'; set spec.applicationPort to disambiguate",
+		len(ports))
+}
+
+// safeServicePort returns a servicePort guaranteed not to equal applicationPort.
+// Honours spec.ServicePort when it does not collide; otherwise computes an offset.
+func safeServicePort(st *enginev1alpha1.ShadowTest) int32 {
+	ap := st.Spec.ApplicationPort // always pre-resolved before this is called
+	sp := st.Spec.ServicePort
+	if sp == 0 {
+		sp = defaultServicePort
+	}
+	if sp != ap {
+		return sp
+	}
+	safe := ap + 8000
+	if safe > 65535 {
+		safe = ap - 8000
+	}
+	return safe
+}
+
+// resolveSpecDefaults fills in OldImage, ApplicationPort, and ServicePort from the
+// target Deployment when the user omitted them. Mutates st.Spec in memory only —
+// the CR stored in k8s is never patched.
+func resolveSpecDefaults(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) error {
+	if st.Spec.OldImage == "" {
+		if len(target.Spec.Template.Spec.Containers) == 0 {
+			return fmt.Errorf("target Deployment has no containers")
+		}
+		st.Spec.OldImage = target.Spec.Template.Spec.Containers[0].Image
+	}
+
+	if st.Spec.ApplicationPort == 0 {
+		port, err := primaryContainerPort(target)
+		if err != nil {
+			return err
+		}
+		st.Spec.ApplicationPort = port
+	}
+
+	st.Spec.ServicePort = safeServicePort(st)
+
+	return nil
 }
 
 func beruGRPCAddressFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
@@ -172,28 +234,6 @@ func parseBeruHostPort(address string) (host string, port int32, err error) {
 		return "", 0, err
 	}
 	return h, int32(portNum), nil
-}
-
-const defaultRecordAndReplayPort int32 = 80 // ponytail: HTTP egress default; override via host:port in spec
-
-func parseRecordAndReplayTarget(rawHost string, defaultPort int32) (host string, port int32) {
-	host = strings.TrimSpace(rawHost)
-	port = defaultPort
-	if host == "" {
-		return "", defaultPort
-	}
-	if h, p, err := net.SplitHostPort(host); err == nil && h != "" {
-		host = h
-		if n, err := strconv.Atoi(p); err == nil {
-			port = int32(n)
-		}
-	}
-	return host, port
-}
-
-func recordAndReplayEntry(d enginev1alpha1.RecordAndReplayHostSpec) (host string, port int32, ignorePaths []string) {
-	host, port = parseRecordAndReplayTarget(d.Host, defaultRecordAndReplayPort)
-	return host, port, d.IgnoreRequestPaths
 }
 
 func resolveDependencyDefaults(dep enginev1alpha1.DependencySpec) (image string, port int32) {

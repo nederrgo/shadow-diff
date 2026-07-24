@@ -1,0 +1,10 @@
+# ShadowTest for Beru verdict UI seed scenarios (beru-local + dashboard only).
+# No Pixie / live traffic / siphon — tests POST /api/v1/debug/seed-reports.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-beru-verdict-ui
+  namespace: default
+spec:
+  targetDeployment: monarch-integ-target
+  newImage: nginx:alpine

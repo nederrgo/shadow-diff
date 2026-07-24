@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS raw_reports (
   protocol TEXT NOT NULL,
   direction TEXT NOT NULL,
   signature TEXT NOT NULL,
+  status_code TEXT NOT NULL DEFAULT '',
   payload_bytes BLOB,
   captured_at TEXT NOT NULL
 );
@@ -58,11 +59,16 @@ func (r *SQLiteRepository) migrate() error {
 	if _, err := r.db.Exec(schemaDDL); err != nil {
 		return fmt.Errorf("sqlite repository migrate: %w", err)
 	}
-	_, err := r.db.Exec(`ALTER TABLE raw_reports ADD COLUMN shadow_test_name TEXT NOT NULL DEFAULT ''`)
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		return err
+	for _, stmt := range []string{
+		`ALTER TABLE raw_reports ADD COLUMN shadow_test_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE raw_reports ADD COLUMN status_code TEXT NOT NULL DEFAULT ''`,
+	} {
+		_, err := r.db.Exec(stmt)
+		if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return err
+		}
 	}
-	_, err = r.db.Exec(`CREATE INDEX IF NOT EXISTS idx_raw_reports_shadow_test ON raw_reports(shadow_test_name, captured_at)`)
+	_, err := r.db.Exec(`CREATE INDEX IF NOT EXISTS idx_raw_reports_shadow_test ON raw_reports(shadow_test_name, captured_at)`)
 	return err
 }
 
@@ -79,14 +85,15 @@ func (r *SQLiteRepository) AppendReport(ctx context.Context, report *RawReport) 
 		return nil, fmt.Errorf("append report: nil report")
 	}
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO raw_reports (trace_id, shadow_role, shadow_test_name, protocol, direction, signature, payload_bytes, captured_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO raw_reports (trace_id, shadow_role, shadow_test_name, protocol, direction, signature, status_code, payload_bytes, captured_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		report.TraceID,
 		report.ShadowRole,
 		report.ShadowTestName,
 		report.Protocol,
 		string(report.Direction),
 		report.Signature,
+		report.StatusCode,
 		report.PayloadBytes,
 		formatTime(report.CapturedAt),
 	)

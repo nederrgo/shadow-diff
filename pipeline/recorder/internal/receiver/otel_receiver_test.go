@@ -9,7 +9,6 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
 	"github.com/shadow-diff/recorder/internal/shop"
-	"github.com/shadow-diff/recorder/internal/config"
 )
 
 func kvString(key, val string) *commonpb.KeyValue {
@@ -30,8 +29,7 @@ func kvInt(key string, val int64) *commonpb.KeyValue {
 	}
 }
 
-func TestParseEgressRecordFromSpan_hostAllowlist(t *testing.T) {
-	hosts := []config.RecordAndReplayHost{{Host: "egress-httpbin.default.svc.cluster.local"}}
+func TestParseEgressRecordFromSpan_basic(t *testing.T) {
 	// Pixie-generated trace ID (different from the W3C trace ID below).
 	traceIDBytes := []byte{0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36}
 	const w3cTraceID = "aabb00112233445566778899ccddeeff"
@@ -46,7 +44,7 @@ func TestParseEgressRecordFromSpan_hostAllowlist(t *testing.T) {
 			kvString("traceparent", "00-"+w3cTraceID+"-00f067aa0ba902b7-01"),
 		},
 	}
-	rec, ok := parseEgressRecordFromSpan(span, nil, hosts)
+	rec, ok := parseEgressRecordFromSpan(span, nil)
 	if !ok {
 		t.Fatal("expected record")
 	}
@@ -66,7 +64,6 @@ func TestParseEgressRecordFromSpan_hostAllowlist(t *testing.T) {
 }
 
 func TestParseEgressRecordFromSpan_fallsBackToSpanTraceID(t *testing.T) {
-	hosts := []config.RecordAndReplayHost{{Host: "egress-httpbin.default.svc.cluster.local"}}
 	traceIDBytes := []byte{0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36}
 	span := &tracepb.Span{
 		TraceId: traceIDBytes,
@@ -77,7 +74,7 @@ func TestParseEgressRecordFromSpan_fallsBackToSpanTraceID(t *testing.T) {
 			kvInt("http.response.status_code", 200),
 		},
 	}
-	rec, ok := parseEgressRecordFromSpan(span, nil, hosts)
+	rec, ok := parseEgressRecordFromSpan(span, nil)
 	if !ok {
 		t.Fatal("expected record")
 	}
@@ -87,25 +84,10 @@ func TestParseEgressRecordFromSpan_fallsBackToSpanTraceID(t *testing.T) {
 	}
 }
 
-func TestParseEgressRecordFromSpan_dropsIPHost(t *testing.T) {
-	hosts := []config.RecordAndReplayHost{{Host: "egress-httpbin.default.svc.cluster.local"}}
-	span := &tracepb.Span{
-		Attributes: []*commonpb.KeyValue{
-			kvString("http.host", "10.0.0.5"),
-			kvString("url.path", "/"),
-		},
-	}
-	if _, ok := parseEgressRecordFromSpan(span, nil, hosts); ok {
-		t.Fatal("expected drop for IP host not in allowlist")
-	}
-}
-
-func TestExportTraces_enqueuesAllowedHost(t *testing.T) {
+func TestExportTraces_enqueues(t *testing.T) {
 	ch := make(chan shop.RecordPayload, 1)
 	client := shop.NewClient("http://127.0.0.1:9")
-	r := NewOTLPReceiver(client, []config.RecordAndReplayHost{
-		{Host: "egress-httpbin.default.svc.cluster.local"},
-	}, 1, 1, nil)
+	r := NewOTLPReceiver(client, 1, 1, nil)
 	r.jobs = ch
 
 	req := &coltracepb.ExportTraceServiceRequest{

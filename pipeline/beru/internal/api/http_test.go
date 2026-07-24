@@ -40,6 +40,10 @@ func (r *egressRouteRecorder) GetVerdict(ctx context.Context, traceID string) (*
 	return nil, nil
 }
 
+func (r *egressRouteRecorder) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]v2storage.StaleIncompleteTrace, error) {
+	return nil, nil
+}
+
 func TestHealthz(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -93,21 +97,51 @@ func TestEgressDiff_acceptsReport(t *testing.T) {
 	}
 }
 
-func TestEgressDiff_rejectsInvalidWorkload(t *testing.T) {
+func TestSeedReports_acceptsBatch(t *testing.T) {
 	routeRec := &egressRouteRecorder{}
 	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(1, routeRec, nil)}
 
-	payload := map[string]any{
-		"trace_id": "abc123",
-		"workload": "unknown",
-		"protocol": "rabbitmq",
-		"payload":  map[string]any{"order": 1},
+	body := map[string]any{
+		"reports": []map[string]any{
+			{
+				"trace_id":    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"shadow_role": "control-a",
+				"protocol":    "mongodb",
+				"direction":   "egress",
+				"signature":   "mongodb:insert:orders",
+				"payload":     map[string]any{"price": 10},
+			},
+			{
+				"trace_id":    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"shadow_role": "control-b",
+				"protocol":    "mongodb",
+				"direction":   "egress",
+				"signature":   "mongodb:insert:orders",
+				"payload":     map[string]any{"price": 10},
+			},
+			{
+				"trace_id":    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"shadow_role": "candidate",
+				"protocol":    "mongodb",
+				"direction":   "egress",
+				"signature":   "mongodb:insert:orders",
+				"payload":     map[string]any{"price": 20},
+			},
+		},
 	}
-	raw, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/egress/diff", bytes.NewReader(raw))
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/debug/seed-reports", bytes.NewReader(raw))
 	rr := httptest.NewRecorder()
-	s.handleEgressDiff(rr, req)
-	if rr.Code != http.StatusBadRequest {
+	s.handleSeedReports(rr, req)
+	if rr.Code != http.StatusAccepted {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !routeRec.routed.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("expected router to receive seeded report")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
+

@@ -10,10 +10,10 @@ Parallel load test for the shadow stack: steady JSON traffic, noisy payloads (Be
 
 ## Prerequisites
 
-1. Kind E2E stack is **Ready** (Monarch, Beru, Igris, shadows, optional Siphon):
+1. Minikube E2E stack is **Ready** (Monarch, Beru, Igris, shadows, optional Siphon):
 
    ```bash
-   ./testing/scripts/e2e-reset-kind.sh
+   ./testing/tools/e2e-reset-minikube.sh
    ```
 
 2. Rebuild/load **Igris** with the **512KiB** default (`IGRIS_MAX_BODY_SIZE=524288`) and **Beru** with `GET /healthz`. **Building alone does not update running pods:**
@@ -189,12 +189,12 @@ For local debugging only, you may temporarily relax the threshold (not recommend
 
 ## Noise filter note
 
-With identical echo images (`testing/scripts/manifests/e2e-shadowtest.yaml`), control-a/b/candidate return the same JSON, so Beru often logs **“No noise fields”**. The `noise_generator` scenario still stresses ingest under high-cardinality **requests**. To exercise diff-of-diffs noise filtering live, use different `oldImage` / `newImage` so control-a and control-b responses diverge on `timestamp`.
+With identical echo images (`testing/bats/manifests/e2e-shadowtest.yaml`), control-a/b/candidate return the same JSON, so Beru often logs **“No noise fields”**. The `noise_generator` scenario still stresses ingest under high-cardinality **requests**. To exercise diff-of-diffs noise filtering live, use different `oldImage` / `newImage` so control-a and control-b responses diverge on `timestamp`.
 
 ## Related scripts
 
-- [`testing/scripts/stress-test.sh`](../../testing/scripts/stress-test.sh) — grpcurl orphan flood, 10MB 413 check, `hey` burst (complementary).
-- [`testing/scripts/e2e-reset-kind.sh`](../../testing/scripts/e2e-reset-kind.sh) — full Kind deploy.
+- [`testing/tools/send-json-trace.sh`](../../testing/tools/send-json-trace.sh) — grpcurl orphan flood, 10MB 413 check, `hey` burst (complementary).
+- [`testing/tools/e2e-reset-minikube.sh`](../../testing/tools/e2e-reset-minikube.sh) — full Minikube deploy.
 - [`e2e-pipeline-test.sh`](../../scripts/e2e-pipeline-test.sh) — single-trace ingress validation.
 
 ## Troubleshooting

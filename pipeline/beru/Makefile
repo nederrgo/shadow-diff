@@ -24,4 +24,4 @@ test:
 	go test ./...
 
 docker-build:
-	bash "$(REPO_ROOT)/testing/scripts/helpers/docker.sh" build -t $(BERU_IMG) .
+	docker build -t $(BERU_IMG) .

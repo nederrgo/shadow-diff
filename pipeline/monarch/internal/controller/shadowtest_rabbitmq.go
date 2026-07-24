@@ -7,6 +7,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
@@ -131,7 +132,9 @@ func (r *ShadowTestReconciler) deleteProdShadowQueue(ctx context.Context, st *en
 
 	conn, err := amqp.Dial(amqpSpec.ProdURL)
 	if err != nil {
-		return fmt.Errorf("dial prod broker for queue delete: %w", err)
+		// broker is gone — queue is gone too, unblock deletion
+		log.FromContext(ctx).Info("prod broker unreachable during queue delete, skipping", "err", err)
+		return nil
 	}
 	defer conn.Close()
 

@@ -3,7 +3,9 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // TraceGroup is one trace plus protocol seen in raw_reports.
@@ -18,7 +20,7 @@ func (r *SQLiteRepository) ListReports(ctx context.Context, traceID, protocol st
 		return nil, fmt.Errorf("list reports: empty trace_id")
 	}
 	q := `
-SELECT trace_id, shadow_role, shadow_test_name, protocol, direction, signature, payload_bytes, captured_at
+SELECT trace_id, shadow_role, shadow_test_name, protocol, direction, signature, status_code, payload_bytes, captured_at
 FROM raw_reports
 WHERE trace_id = ?`
 	args := []any{traceID}
@@ -87,8 +89,50 @@ FROM verdicts WHERE trace_id = ?`, traceID,
 	}
 	if details.Valid {
 		v.SummaryDetails = details.String
+		var vd VerdictDetails
+		if err := json.Unmarshal([]byte(details.String), &vd); err == nil {
+			v.Flags = vd.Flags
+		}
 	}
 	return v, nil
+}
+
+// ListStaleIncompleteTraces returns traces whose earliest report is older than olderThan
+// and that are missing at least one of the three required roles.
+// Short read only — callers must process each trace in a separate transaction window.
+func (r *SQLiteRepository) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]StaleIncompleteTrace, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT trace_id, MIN(captured_at) AS first_at,
+       SUM(CASE WHEN shadow_role = 'control-a' THEN 1 ELSE 0 END) AS n_a,
+       SUM(CASE WHEN shadow_role = 'control-b' THEN 1 ELSE 0 END) AS n_b,
+       SUM(CASE WHEN shadow_role = 'candidate' THEN 1 ELSE 0 END) AS n_c
+FROM raw_reports
+GROUP BY trace_id
+HAVING MIN(captured_at) <= ?
+   AND (n_a = 0 OR n_b = 0 OR n_c = 0)`,
+		formatTime(olderThan),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list stale incomplete traces: %w", err)
+	}
+	defer rows.Close()
+	var out []StaleIncompleteTrace
+	for rows.Next() {
+		var (
+			traceID string
+			firstAt string
+			nA, nB, nC int
+		)
+		if err := rows.Scan(&traceID, &firstAt, &nA, &nB, &nC); err != nil {
+			return nil, err
+		}
+		t, err := parseTime(firstAt)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, StaleIncompleteTrace{TraceID: traceID, FirstSeen: t})
+	}
+	return out, rows.Err()
 }
 
 func (r *SQLiteRepository) queryReports(ctx context.Context, q string, args ...any) ([]RawReport, error) {
@@ -121,6 +165,7 @@ func scanReport(rows *sql.Rows) (RawReport, error) {
 		&rep.Protocol,
 		&direction,
 		&rep.Signature,
+		&rep.StatusCode,
 		&rep.PayloadBytes,
 		&captured,
 	); err != nil {

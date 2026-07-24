@@ -70,6 +70,10 @@ type SiphonSpec struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
+	// Image overrides the default Siphon OTLP receiver container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+
 	// MaxPayloadSize is the max bytes to parse per HTTP/2 frame (default 65536).
 	// +optional
 	MaxPayloadSize int64 `json:"maxPayloadSize,omitempty"`
@@ -77,16 +81,6 @@ type SiphonSpec struct {
 	// ExcludePaths are regex strings to drop healthchecks/traffic at the kernel layer.
 	// +optional
 	ExcludePaths []string `json:"excludePaths,omitempty"`
-}
-
-// RecordAndReplayHostSpec declares an outbound host for egress record/replay.
-type RecordAndReplayHostSpec struct {
-	// Host is the record-and-replay hostname (matches :authority / Host on proxied requests).
-	Host string `json:"host"`
-
-	// IgnoreRequestPaths are JSONPath expressions stripped before egress hashing (e.g. "$.timestamp").
-	// +optional
-	IgnoreRequestPaths []string `json:"ignoreRequestPaths,omitempty"`
 }
 
 // DependencySpec declares an ephemeral backing service provisioned per shadow role.
@@ -191,20 +185,24 @@ type ShadowTestSpec struct {
 	TargetNamespace string `json:"targetNamespace,omitempty"`
 
 	// OldImage is the container image for Control-A and Control-B pods.
-	OldImage string `json:"oldImage"`
+	// When unset, Monarch derives it from the target Deployment's current running image.
+	// +optional
+	OldImage string `json:"oldImage,omitempty"`
 
 	// NewImage is the container image for the Candidate pod.
 	NewImage string `json:"newImage"`
 
 	// ServicePort is the TCP port the Envoy ingress listener binds on in shadow pods.
-	// Defaults to 8888 when unset.
+	// Monarch always computes a conflict-free value relative to applicationPort — leave unset
+	// unless you have a specific networking reason to pin it.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	ServicePort int32 `json:"servicePort,omitempty"`
 
 	// ApplicationPort is the TCP port the app container listens on (Envoy forwards here).
-	// Must differ from ServicePort when Envoy fronts ingress. Defaults to servicePort+1 if unset.
+	// When unset, Monarch derives it from the target Deployment's container ports (prefers the
+	// port named "http"; falls back to the single declared port; fails if ambiguous).
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
@@ -243,7 +241,7 @@ type ShadowTestSpec struct {
 	// +optional
 	Siphon *SiphonSpec `json:"siphon,omitempty"`
 
-	// Recorder overrides the Recorder image when spec.recordAndReplay enables egress recording.
+	// Recorder overrides the Recorder image (always provisioned per shadow namespace).
 	// +optional
 	Recorder *RecorderSpec `json:"recorder,omitempty"`
 
@@ -251,13 +249,9 @@ type ShadowTestSpec struct {
 	// +optional
 	Beru *BeruSpec `json:"beru,omitempty"`
 
-	// Shop overrides the Shop mock-store image when spec.recordAndReplay is non-empty.
+	// Shop overrides the Shop mock-store image (always provisioned per shadow namespace).
 	// +optional
 	Shop *ShopSpec `json:"shop,omitempty"`
-
-	// RecordAndReplay lists outbound hosts trapped by the egress proxy for strict replay.
-	// +optional
-	RecordAndReplay []RecordAndReplayHostSpec `json:"recordAndReplay,omitempty"`
 
 	// Dependencies lists ephemeral backing services (e.g. Redis) provisioned once per shadow role.
 	// +optional

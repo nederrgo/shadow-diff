@@ -65,12 +65,6 @@ spec:
                 description: OTelEndpoint is the gRPC OTLP export destination for
                   ingress (server-side) spans.
                 type: string
-              recordAndReplayHosts:
-                description: RecordAndReplayHosts are downstream hostnames for egress
-                  PxL Host-header filtering.
-                items:
-                  type: string
-                type: array
               recorderOtelEndpoint:
                 description: RecorderOTelEndpoint is gRPC OTLP export for egress spans
                   (client or in-cluster server-side).

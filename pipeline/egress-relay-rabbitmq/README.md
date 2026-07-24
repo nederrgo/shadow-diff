@@ -163,7 +163,7 @@ ShadowTest fields:
 
 Monarch waits for this Deployment to be Available before marking the ShadowTest Ready (`waiting for egress-relay-rabbitmq` if the image is missing on Kind).
 
-Example ShadowTest: [testing/scripts/manifests/rabbitmq-otel-e2e/shadowtest-otel-rmq.yaml](../../testing/scripts/manifests/rabbitmq-otel-e2e/shadowtest-otel-rmq.yaml).
+Example ShadowTest: [testing/bats/manifests/rabbitmq-otel-e2e/shadowtest-otel-rmq.yaml](../../testing/bats/manifests/rabbitmq-otel-e2e/shadowtest-otel-rmq.yaml).
 
 **Prerequisite:** Shadow RabbitMQ brokers must expose Firehose (Monarch configures `RABBITMQ_ENABLED_PLUGINS_FILE` and `trace_on` startup on dependency containers).
 
@@ -174,19 +174,19 @@ Example ShadowTest: [testing/scripts/manifests/rabbitmq-otel-e2e/shadowtest-otel
 RabbitMQ egress diff E2E (manual `traceparent` on publish):
 
 ```sh
-./testing/scripts/e2e-rabbitmq-egress-test.sh
+make test-bats-e2e
 ```
 
 OTel zero-touch AMQP egress (Node `amqplib` auto-instrumentation):
 
 ```sh
-./testing/scripts/e2e-otel-rabbitmq-test.sh
+make test-bats-e2e
 ```
 
 Python hybrid — OTel `pika` + Mongo OTLP + HTTP replay; relay dedup + candidate N+1 count regression:
 
 ```sh
-./testing/scripts/e2e-python-hybrid-test.sh
+make test-bats-e2e
 ```
 
 Expected Beru logs (controls): `No egress regression for Trace <trace-id> (rabbitmq)`. Hybrid candidate run also expects count regression: `expected 1 message but got 2`.

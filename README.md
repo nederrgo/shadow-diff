@@ -80,7 +80,7 @@ Each service has its own README with layer role, build commands, and Monarch wir
 With Docker and Kind available:
 
 ```sh
-./testing/scripts/e2e-reset-kind.sh
+./testing/tools/e2e-reset-minikube.sh
 ```
 
 This bootstraps a test cluster, builds and loads images, deploys Monarch and Beru, applies a sample `ShadowTest`, and waits for `Ready`. See [docs/verification/VERIFICATION.md](docs/verification/VERIFICATION.md) for step-by-step manual verification and individual E2E scripts (egress, RabbitMQ, OTel, dependencies).

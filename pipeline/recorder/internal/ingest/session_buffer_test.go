@@ -8,7 +8,7 @@ import (
 )
 
 func TestSessionStore_buffersUntilFinishConn(t *testing.T) {
-	store := NewSessionStore(shop.NewClient("http://127.0.0.1:1"), nil, 30*time.Second, DefaultMaxFrame)
+	store := NewSessionStore(shop.NewClient("http://127.0.0.1:1"), 30*time.Second, DefaultMaxFrame)
 	defer store.Stop()
 
 	connID := store.RegisterConn()

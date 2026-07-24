@@ -1,0 +1,38 @@
+# Prod target with two ambiguous container ports (neither named "http").
+# Monarch's primaryContainerPort cannot resolve a single port automatically and
+# must return an error asking the user to set spec.applicationPort.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monarch-ambig-target
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monarch-ambig-target
+  template:
+    metadata:
+      labels:
+        app: monarch-ambig-target
+    spec:
+      containers:
+        - name: app
+          image: nginx:alpine
+          ports:
+            - name: api
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monarch-ambig-target
+  namespace: default
+spec:
+  selector:
+    app: monarch-ambig-target
+  ports:
+    - port: 8080
+      targetPort: 8080

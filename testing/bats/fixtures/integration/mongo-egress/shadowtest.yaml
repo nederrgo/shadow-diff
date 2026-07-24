@@ -1,0 +1,24 @@
+# HTTP ingress + Mongo OTLP — Bats integration fixture (bats-mongo-egress).
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-mongo-egress
+  namespace: default
+spec:
+  targetDeployment: http-rmq-python-prod
+
+  oldImage: http-rmq-python-worker:dev
+  newImage: http-rmq-python-worker:dev
+
+  inputs:
+    - port: 8888
+      driver: http_request
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

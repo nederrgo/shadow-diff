@@ -1,0 +1,33 @@
+# ShadowTest tuned for Minikube E2E: prod (port 80) -> Siphon -> Igris:80 -> Envoy:8888 -> echo:80 -> Beru
+#
+# Shop + Recorder are always-on (no spec.recordAndReplay).
+#
+# Apply:
+#   kubectl apply -f testing/bats/manifests/e2e-shadowtest.yaml
+#   kubectl apply -f testing/bats/manifests/e2e-prod-app.yaml   # optional: align prod with echo on :80
+#
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: my-app-shadow
+  namespace: default
+spec:
+  targetDeployment: my-prod-app
+
+  # Shadow pods (control-a, control-b, candidate)
+  oldImage: mendhak/http-https-echo:latest
+  newImage: mendhak/http-https-echo:latest
+
+  # Envoy ingress on shadow pods; Igris multicasts to control-* at this port
+  servicePort: 8888
+  # Must match the app listen port after Monarch copies prod env (HTTP_PORT=80 on echo)
+  applicationPort: 80
+
+  # Igris listen ports:
+  #   80  — Siphon replays captured prod traffic (prod pod dst port 80)
+  #   8888 — optional manual tests: curl igris:8888/get
+  inputs:
+    - port: 80
+      driver: http_request
+    - port: 8888
+      driver: http_request

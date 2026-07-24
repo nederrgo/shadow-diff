@@ -28,22 +28,49 @@ def normalize_amqp_url(raw: str) -> str:
     return f"amqp://guest:guest@{raw.lstrip('/')}/"
 
 
+def listen_port() -> int:
+    # Manifests set HTTP_PORT; LISTEN_ADDR matches Go/Node fixtures.
+    if http_port := env_or("HTTP_PORT", ""):
+        return int(http_port)
+    return int(env_or("LISTEN_ADDR", ":8080").lstrip(":") or "8080")
+
+
+def publish_egress(amqp_url: str, doc: dict, traceparent: str | None) -> None:
+    # ponytail: open per request — BlockingConnection heartbeats stall under idle Flask
+    # and long bats setup_file windows; Go/Node clients keep IO alive in the background.
+    conn = pika.BlockingConnection(pika.URLParameters(amqp_url))
+    try:
+        ch = conn.channel()
+        ch.exchange_declare(exchange=EGRESS_EXCHANGE, exchange_type="topic", durable=True)
+        ch.basic_publish(
+            exchange=EGRESS_EXCHANGE,
+            routing_key=EGRESS_ROUTING_KEY,
+            body=json.dumps(doc),
+            properties=pika.BasicProperties(
+                content_type="application/json",
+                delivery_mode=2,
+                headers={"traceparent": traceparent} if traceparent else {},
+            ),
+        )
+    finally:
+        conn.close()
+
+
 def main() -> None:
-    listen_addr = env_or("LISTEN_ADDR", ":8080")
-    port = int(listen_addr.lstrip(":") or "8080")
+    port = listen_port()
     amqp_url = normalize_amqp_url(env_or("AMQP_URL", ""))
     if not amqp_url:
         raise SystemExit("AMQP_URL is required")
+
+    # Fail fast if RMQ is down at boot (same as previous long-lived connect).
+    probe = pika.BlockingConnection(pika.URLParameters(amqp_url))
+    probe.close()
 
     mongo_coll = None
     mongo_url = env_or("MONGO_URL", "")
     if mongo_url:
         mongo_db = env_or("MONGO_DB", "test")
         mongo_coll = pymongo.MongoClient(mongo_url)[mongo_db]["items"]
-
-    conn = pika.BlockingConnection(pika.URLParameters(amqp_url))
-    ch = conn.channel()
-    ch.exchange_declare(exchange=EGRESS_EXCHANGE, exchange_type="topic", durable=True)
 
     app = Flask(__name__)
 
@@ -61,16 +88,7 @@ def main() -> None:
                 mongo_opts = {"comment": traceparent} if traceparent else {}
                 mongo_coll.insert_one({**doc}, **mongo_opts)
                 print("mongo insert ok", flush=True)
-            ch.basic_publish(
-                exchange=EGRESS_EXCHANGE,
-                routing_key=EGRESS_ROUTING_KEY,
-                body=json.dumps(doc),
-                properties=pika.BasicProperties(
-                    content_type="application/json",
-                    delivery_mode=2,
-                    headers={"traceparent": traceparent} if traceparent else {},
-                ),
-            )
+            publish_egress(amqp_url, doc, traceparent)
             print(
                 f"rmq egress published exchange={EGRESS_EXCHANGE} routing_key={EGRESS_ROUTING_KEY}",
                 flush=True,
@@ -87,7 +105,6 @@ def main() -> None:
     )
 
     def shutdown(_signum, _frame):
-        conn.close()
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, shutdown)

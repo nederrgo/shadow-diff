@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/shadow-diff/beru/internal/dashboard"
 	"github.com/shadow-diff/beru/internal/otlp"
@@ -12,6 +13,7 @@ import (
 	"github.com/shadow-diff/beru/internal/storage"
 	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
 	v2report "github.com/shadow-diff/beru/internal/v2/report"
+	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 // Server exposes HTTP endpoints for egress diff ingest and the dashboard.
@@ -36,6 +38,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("/healthz", handleHealthz)
 	mux.HandleFunc("/api/v1/egress/diff", s.handleEgressDiff)
 	mux.HandleFunc("/api/v1/ingest/wire", s.handleWireIngest)
+	mux.HandleFunc("/api/v1/debug/seed-reports", s.handleSeedReports)
 	if s.OTLP != nil {
 		mux.HandleFunc("/v1/traces", s.OTLP.HandleHTTP)
 	}
@@ -145,4 +148,99 @@ func (s *Server) handleWireIngest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]struct{}{})
+}
+
+// seedReportRequest mirrors RawReport fields for UI/bats history injection.
+type seedReportRequest struct {
+	TraceID        string          `json:"trace_id"`
+	ShadowRole     string          `json:"shadow_role"`
+	ShadowTestName string          `json:"shadow_test_name"`
+	Protocol       string          `json:"protocol"`
+	Direction      string          `json:"direction"`
+	Signature      string          `json:"signature"`
+	StatusCode     string          `json:"status_code"`
+	Payload        json.RawMessage `json:"payload"`
+	CapturedAt     time.Time       `json:"captured_at"`
+}
+
+type seedReportsBody struct {
+	Reports []seedReportRequest `json:"reports"`
+}
+
+// handleSeedReports injects RawReports into the TraceRouter for dashboard/UI debugging.
+// Used by bats verdict scenarios to mirror unit-test histories without live traffic.
+func (s *Server) handleSeedReports(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.Router == nil {
+		http.Error(w, "Seed not configured", http.StatusServiceUnavailable)
+		return
+	}
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	var body seedReportsBody
+	if err := json.Unmarshal(raw, &body); err != nil || len(body.Reports) == 0 {
+		http.Error(w, "reports array required", http.StatusBadRequest)
+		return
+	}
+
+	defaultTest := ""
+	if s.DB != nil {
+		defaultTest = s.DB.DefaultShadowTestName()
+	}
+
+	accepted := 0
+	for _, req := range body.Reports {
+		if req.TraceID == "" || req.ShadowRole == "" || req.Protocol == "" {
+			http.Error(w, "each report needs trace_id, shadow_role, protocol", http.StatusBadRequest)
+			return
+		}
+		if !roles.IsValid(req.ShadowRole) {
+			http.Error(w, "shadow_role is invalid", http.StatusBadRequest)
+			return
+		}
+		dir := v2storage.DirectionEgress
+		if req.Direction == string(v2storage.DirectionIngress) {
+			dir = v2storage.DirectionIngress
+		}
+		name := req.ShadowTestName
+		if name == "" {
+			name = defaultTest
+		}
+		captured := req.CapturedAt
+		if captured.IsZero() {
+			captured = time.Now().UTC()
+		}
+		sig := req.Signature
+		payload := []byte(req.Payload)
+		if len(payload) == 0 {
+			payload = []byte("{}")
+		}
+		if sig == "" && dir == v2storage.DirectionEgress {
+			if derived, err := v2report.FromEgress(req.TraceID, req.ShadowRole, req.Protocol, name, payload); err == nil {
+				sig = derived.Signature
+			}
+		}
+		s.Router.Route(&v2storage.RawReport{
+			TraceID:        req.TraceID,
+			ShadowRole:     req.ShadowRole,
+			ShadowTestName: name,
+			Protocol:       req.Protocol,
+			Direction:      dir,
+			Signature:      sig,
+			StatusCode:     req.StatusCode,
+			PayloadBytes:   append([]byte(nil), payload...),
+			CapturedAt:     captured.UTC(),
+		})
+		accepted++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{"accepted": accepted})
 }

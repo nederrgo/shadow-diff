@@ -113,9 +113,6 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 			ApplicationPort: 8080,
 			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			BeruGRPCTimeout: "2s",
-			RecordAndReplay: []enginev1alpha1.RecordAndReplayHostSpec{
-				{Host: "api.stripe.com", IgnoreRequestPaths: []string{"$.timestamp"}},
-			},
 		},
 	}
 	yaml, err := renderEnvoyYAML(st, "shadow-default-test", roleControlA)
@@ -153,17 +150,6 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 	assertEgressFilterOrder(t, yaml)
 }
 
-func TestParseRecordAndReplayTarget(t *testing.T) {
-	host, port := parseRecordAndReplayTarget("api.example.com", defaultRecordAndReplayPort)
-	if host != "api.example.com" || port != 80 {
-		t.Fatalf("got %q:%d", host, port)
-	}
-	host, port = parseRecordAndReplayTarget("user-service.prod:8080", defaultRecordAndReplayPort)
-	if host != "user-service.prod" || port != 8080 {
-		t.Fatalf("got %q:%d", host, port)
-	}
-}
-
 func TestApplicationPortFor_defaultOffset(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{ServicePort: 80},
@@ -181,23 +167,6 @@ func TestServicePortFor_default8888(t *testing.T) {
 	st.Spec.ServicePort = 3000
 	if got := servicePortFor(st); got != 3000 {
 		t.Fatalf("expected 3000, got %d", got)
-	}
-}
-
-func TestAppEnvWithEgressProxy(t *testing.T) {
-	st := &enginev1alpha1.ShadowTest{}
-	base := []corev1.EnvVar{{Name: "FOO", Value: "bar"}}
-	env := appEnvWithEgressProxy(st, base)
-	if len(env) != 1 {
-		t.Fatalf("expected 1 env var (base passthrough), got %d: %v", len(env), env)
-	}
-	if env[0].Name != "FOO" || env[0].Value != "bar" {
-		t.Fatalf("unexpected env var: %v", env[0])
-	}
-	for _, e := range env {
-		if e.Name == "HTTP_PROXY" || e.Name == "HTTPS_PROXY" || e.Name == "NO_PROXY" {
-			t.Fatalf("proxy env var must not be injected: %q", e.Name)
-		}
 	}
 }
 

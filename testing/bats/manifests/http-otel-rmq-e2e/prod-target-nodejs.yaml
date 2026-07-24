@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http-rmq-nodejs-prod
+  namespace: default
+  labels:
+    app: http-rmq-nodejs-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: http-rmq-nodejs-prod
+  template:
+    metadata:
+      labels:
+        app: http-rmq-nodejs-prod
+    spec:
+      containers:
+        - name: app
+          image: http-rmq-test-app:dev
+          imagePullPolicy: Never
+          env:
+            - name: HTTP_PORT
+              value: "8080"
+            - name: RMQ_EGRESS_EXCHANGE
+              value: egress-events
+            - name: RMQ_EGRESS_ROUTING_KEY
+              value: order.egress
+            - name: AMQP_URL
+              value: amqp://guest:guest@rmq-prod-broker.default.svc.cluster.local:5672/
+            - name: MONGO_URL
+              value: mongodb://mongo-prod.default.svc.cluster.local:27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: http-rmq-nodejs-prod
+  namespace: default
+spec:
+  selector:
+    app: http-rmq-nodejs-prod
+  ports:
+    - port: 8080
+      targetPort: 8080

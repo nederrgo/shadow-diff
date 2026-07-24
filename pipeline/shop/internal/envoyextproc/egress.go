@@ -2,7 +2,6 @@ package envoyextproc
 
 import (
 	"log/slog"
-	"net"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -67,7 +66,7 @@ func (s *Server) egressImmediateFromState(state *egressState) *extprocv3.Process
 		return immediateResponse(egressMissStatus, nil, []byte(egressRegressionBody), "egress no trace id")
 	}
 
-	hostKey := hostWithoutPort(state.host)
+	hostKey := replay.HostWithoutPort(state.host)
 	key := replay.TraceKey(state.traceID, state.method, hostKey, state.path)
 	if mock, ok := s.Mocks.Get(key); ok {
 		return immediateResponse(mock.StatusCode, mock.Headers, mock.Body, "egress mock hit")
@@ -75,16 +74,6 @@ func (s *Server) egressImmediateFromState(state *egressState) *extprocv3.Process
 
 	slog.Info("Egress Regression", "trace_id", state.traceID, "method", state.method, "host", hostKey, "path", state.path)
 	return immediateResponse(egressMissStatus, nil, []byte(egressRegressionBody), "egress regression")
-}
-
-func hostWithoutPort(host string) string {
-	if host == "" {
-		return ""
-	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		return h
-	}
-	return host
 }
 
 func immediateResponse(statusCode int, headers map[string]string, body []byte, details string) *extprocv3.ProcessingResponse {

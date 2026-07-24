@@ -1,0 +1,14 @@
+# Same ShadowTest with a MongoDB dependency added — applied as a live update.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-monarch-deps-update
+  namespace: default
+spec:
+  targetDeployment: monarch-deps-update-target
+  newImage: nginx:alpine
+  dependencies:
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

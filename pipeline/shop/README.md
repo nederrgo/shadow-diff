@@ -1,6 +1,6 @@
 # Shop — HTTP Egress Mock Store
 
-Shop is a lightweight in-memory service that records production HTTP egress responses and replays them back to shadow workloads during Envoy egress interception. It lives in the shadow namespace, deployed by Monarch alongside Recorder whenever `spec.recordAndReplay` is set on a `ShadowTest`.
+Shop is a lightweight in-memory service that records production HTTP egress responses and replays them back to shadow workloads during Envoy egress interception. It lives in the shadow namespace, **always** deployed by Monarch alongside Recorder (there is no `spec.recordAndReplay` field).
 
 ## Role in the pipeline
 
@@ -43,7 +43,7 @@ This key means the same request from different roles will hit the same stored mo
 
 ## Deployment
 
-Monarch deploys Shop automatically when `spec.recordAndReplay` is non-empty on a `ShadowTest`. The deployment order is:
+Monarch deploys Shop automatically for every ShadowTest. The deployment order is:
 
 1. **Shop** — deployed first; Monarch waits for `AvailableReplicas > 0`
 2. **Recorder** — deployed after Shop is ready; `SHOP_HTTP_URL` is set to `http://shop.<shadow-ns>.svc.cluster.local:8080`
