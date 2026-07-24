@@ -112,6 +112,43 @@ func TestEvaluateTraceHistory_countRegression(t *testing.T) {
 	}
 }
 
+func TestEvaluateTraceHistory_missingEgressCount(t *testing.T) {
+	// Controls each emit 2 publishes; candidate drops one → MISSING_EGRESS.
+	t0 := time.Date(2026, 6, 25, 11, 30, 0, 0, time.UTC)
+	sig := "rabbitmq:publish:order.created"
+	payload := []byte(`{"id":1}`)
+
+	history := []storage.RawReport{
+		rabbitmqReport("control-a", sig, payload, t0),
+		rabbitmqReport("control-a", sig, payload, t0.Add(time.Millisecond)),
+		rabbitmqReport("control-b", sig, payload, t0),
+		rabbitmqReport("control-b", sig, payload, t0.Add(time.Millisecond)),
+		rabbitmqReport("candidate", sig, payload, t0),
+	}
+
+	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
+	if verdict == nil || verdict.Status != storage.StatusMismatch {
+		t.Fatalf("status = %v, want MISMATCH", verdict)
+	}
+	if !verdict.HasCountRegression {
+		t.Fatal("expected HasCountRegression = true")
+	}
+	details := parseDetails(t, verdict.SummaryDetails)
+	if !flagPresent(details.Flags, storage.FlagMismatchCount) {
+		t.Fatalf("flags = %v, want MISMATCH_COUNT", details.Flags)
+	}
+	foundMissing := false
+	for _, s := range details.Steps {
+		if s.Kind == storage.FlagMismatchCount && s.Reason == storage.ReasonMissingEgress {
+			foundMissing = true
+			break
+		}
+	}
+	if !foundMissing {
+		t.Fatalf("steps = %+v, want MISSING_EGRESS", details.Steps)
+	}
+}
+
 func TestEvaluateTraceHistory_payloadMismatch(t *testing.T) {
 	t0 := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 	sig := "mongodb:insert:orders"
@@ -162,6 +199,7 @@ func TestEvaluateTraceHistory_controlBNoiseCancelsPayloadMismatch(t *testing.T) 
 }
 
 func TestEvaluateTraceHistory_controlBNoiseCancelsPayloadMismatch_nonMongo(t *testing.T) {
+	// Diff(A,B) marks "ts" as natural noise; candidate's different ts is cancelled → MATCH.
 	t0 := time.Date(2026, 7, 6, 11, 0, 0, 0, time.UTC)
 	sig := "rabbitmq:publish:events"
 	history := []storage.RawReport{

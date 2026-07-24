@@ -2,6 +2,10 @@
 # Beru verdict UI scenarios — inject the same histories as
 # pipeline/beru/internal/v2/diff/diff_test.go via /api/v1/debug/seed-reports.
 #
+# Seed-only: history is static, so we assert status directly (no quiescence /
+# beru_wait_verdict_settled — that helper is for live-traffic drip).
+# setup_file waits for beru-local only (not full ShadowTest Ready).
+#
 # Leave the stack up for dashboard inspection:
 #   BATS_KEEP=1 SKIP_BUILD=1 SKIP_LOAD=1 \
 #     ./testing/bats/run-one.sh integration/beru/verdict_ui.bats
@@ -35,13 +39,24 @@ setup_file() {
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
 
-  echo "==> [verdict_ui] wait ShadowTest Ready" >&3
-  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS"
-  SHADOW_NS="$(shadow_namespace)"
+  # Seed-only suite: only beru-local is required. Monarch still reconciles the
+  # rest of the stack in the background; we do not wait for ShadowTest Ready.
+  SHADOW_NS="shadow-${SHADOWTEST_NS}-${SHADOWTEST}"
   export SHADOW_NS
-
   bats_source_e2e_helpers
-  echo "==> [verdict_ui] wait beru-local in ${SHADOW_NS}" >&3
+  echo "==> [verdict_ui] wait beru-local in ${SHADOW_NS} (skip full Ready)" >&3
+  local i=0
+  while [[ $i -lt 120 ]]; do
+    if kubectl get deploy/beru-local -n "$SHADOW_NS" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  if ! kubectl get deploy/beru-local -n "$SHADOW_NS" >/dev/null 2>&1; then
+    echo "timeout waiting for beru-local Deployment in ${SHADOW_NS}" >&2
+    return 1
+  fi
   wait_local_beru_rollout "$SHADOW_NS"
 
   # Fail fast if this beru:dev image predates the seed endpoint.
@@ -74,7 +89,7 @@ setup() {
     "$(beru_seed_report_obj "$tid" candidate mongodb egress "$sig" "" "$payload")"
   assert_success
 
-  run beru_wait_verdict_settled "$tid" mongodb --expect-status=MATCH --timeout=60
+  run beru_assert_verdict_status "$tid" mongodb MATCH
   assert_success
   beru_print_ui_hint "$tid"
 }
@@ -87,7 +102,6 @@ setup() {
     "$(beru_seed_report_obj "$tid" candidate http ingress "$sig" "200" "$payload")"
   assert_success
 
-  sleep 2
   run beru_assert_verdict_status "$tid" http VOIDED_BASELINE_DIVERGENCE
   assert_success
   beru_print_ui_hint "$tid"
@@ -101,7 +115,7 @@ setup() {
     "$(beru_seed_report_obj "$tid" candidate http ingress "$sig" "200" '{"ok":true}')"
   assert_success
 
-  run beru_wait_verdict_settled "$tid" http --expect-status=MISMATCH --timeout=60
+  run beru_assert_verdict_status "$tid" http MISMATCH
   assert_success
   beru_print_ui_hint "$tid"
 }
@@ -115,7 +129,35 @@ setup() {
     "$(beru_seed_report_obj "$tid" candidate mongodb egress "$sig" "" '{"price":1}')"
   assert_success
 
-  run beru_wait_verdict_settled "$tid" mongodb --expect-status=MISMATCH --expect-count-regression=1 --timeout=60
+  run beru_assert_verdict_status "$tid" mongodb MISMATCH 1
+  assert_success
+  beru_print_ui_hint "$tid"
+}
+
+@test "UI seed: MATCH timestamp noise auto-filtered (A/B/C differ on ts)" {
+  local tid="$BATS_TRACE_ID" sig="rabbitmq:publish:events"
+  run beru_seed_reports \
+    "$(beru_seed_report_obj "$tid" control-a rabbitmq egress "$sig" "" '{"ts":1000,"v":1}')" \
+    "$(beru_seed_report_obj "$tid" control-b rabbitmq egress "$sig" "" '{"ts":2000,"v":1}')" \
+    "$(beru_seed_report_obj "$tid" candidate rabbitmq egress "$sig" "" '{"ts":3000,"v":1}')"
+  assert_success
+
+  run beru_assert_verdict_status "$tid" rabbitmq MATCH
+  assert_success
+  beru_print_ui_hint "$tid"
+}
+
+@test "UI seed: MISMATCH missing egress (controls 2 candidate 1)" {
+  local tid="$BATS_TRACE_ID" sig="rabbitmq:publish:order.created" payload='{"id":1}'
+  run beru_seed_reports \
+    "$(beru_seed_report_obj "$tid" control-a rabbitmq egress "$sig" "" "$payload")" \
+    "$(beru_seed_report_obj "$tid" control-a rabbitmq egress "$sig" "" "$payload")" \
+    "$(beru_seed_report_obj "$tid" control-b rabbitmq egress "$sig" "" "$payload")" \
+    "$(beru_seed_report_obj "$tid" control-b rabbitmq egress "$sig" "" "$payload")" \
+    "$(beru_seed_report_obj "$tid" candidate rabbitmq egress "$sig" "" "$payload")"
+  assert_success
+
+  run beru_assert_verdict_status "$tid" rabbitmq MISMATCH 1
   assert_success
   beru_print_ui_hint "$tid"
 }
@@ -130,7 +172,6 @@ setup() {
     "$(beru_seed_report_obj "$tid" candidate rabbitmq egress "$sig" "" "$payload")"
   assert_success
 
-  sleep 2
   run beru_assert_verdict_status "$tid" rabbitmq VOIDED_BASELINE_DIVERGENCE
   assert_success
   beru_print_ui_hint "$tid"
@@ -145,20 +186,10 @@ setup() {
     "$(beru_seed_report_obj "$tid" control-b mongodb egress "$sig" "" "$payload" "$old")"
   assert_success
 
-  local i=0 status
-  while [[ $i -lt 30 ]]; do
-    status=$(beru_http_get "${SHADOW_NS}" "/api/v1/traces/${tid}?protocol=mongodb" \
-      | jq -r '.verdict.status // .verdict.Status // empty' 2>/dev/null || true)
-    if [[ "$status" == "WAITING_FOR_ROLES" ]]; then
-      echo "ok status=WAITING_FOR_ROLES"
-      beru_print_ui_hint "$tid"
-      return 0
-    fi
-    sleep 1
-    i=$((i + 1))
-  done
-  echo "timeout waiting for WAITING_FOR_ROLES (last=${status})" >&2
-  return 1
+  # Past-timeout incomplete seeds evaluate to WAITING on ingest (or reaper shortly after).
+  run beru_assert_verdict_status "$tid" mongodb WAITING_FOR_ROLES
+  assert_success
+  beru_print_ui_hint "$tid"
 }
 
 teardown_file() {

@@ -4,7 +4,7 @@ title: Bats-Core Modular Testing Framework
 description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, settlement-based Beru assertions, Jest-like reporter for BATS_PARALLEL_JOBS=1, and idempotent platform bootstrap.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats
 tags: [infrastructure, testing, bats, e2e, integration, monarch, beru]
-timestamp: 2026-07-23T10:50:00Z
+timestamp: 2026-07-24T08:00:00Z
 ---
 
 # Bats-Core Modular Testing Framework
@@ -17,7 +17,7 @@ Shadow-Diff E2E validation uses **bats-core** under [`testing/bats/`](https://gi
 |-----------|-------|----------------|
 | `setup_file` | Platform + ShadowTest | `ensure_platform_ready`, prod deploy, ShadowTest CR, Pixie rule waits |
 | `setup` | Isolation | `isolate_test_state` — fresh `BATS_TRACE_ID` per `@test` |
-| `@test` | Validation | Traffic + `beru_wait_verdict_settled` |
+| `@test` | Validation | Live traffic: `beru_wait_verdict_settled`; seed-only UI: `beru_assert_verdict_status` |
 | `teardown_file` | Teardown | `delete_shadowtest_and_verify` **then** prod undeploy (prod must stay up until ShadowTest finalizer completes RMQ queue cleanup) |
 
 **CI optimization:** Multiple `@test` blocks share one ShadowTest CR. Phase 4 runs in `teardown_file` only — not after each test.
@@ -82,7 +82,7 @@ beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" mongodb)"
 beru_wait_log --grep='custom substring from beru-local logs'
 ```
 
-Helpers match `pipeline/beru/internal/v2/engine/logs.go` wording. For API/SQLite verdict rows use `beru_wait_verdict_settled` (completeness + quiescence).
+Helpers match `pipeline/beru/internal/v2/engine/logs.go` wording. For live-traffic API/SQLite verdict rows use `beru_wait_verdict_settled` (completeness + quiescence). Seed-only suites (`integration/beru/verdict_ui.bats`) use `beru_assert_verdict_status` — history is static, so no drip wait.
 
 ## Per-test isolation (`lib/test_isolation.bash`)
 

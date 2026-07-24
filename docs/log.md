@@ -11,6 +11,10 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-24]
 ### Added
+* 'testing/bats/verdict_ui': wait beru-local only; skip full ShadowTest Ready
+* 'testing/bats': verdict_ui seed suite uses direct assert (no quiescence settle)
+* 'testing/bats': UI seed MATCH when timestamp field differs across A/B/C (natural noise)
+* 'pipeline/beru + bats': add MISSING_EGRESS case (A/B=2, candidate=1) unit + UI seed tests
 * 'pipeline/beru': Ignore path only on payload field NoisePath; hide for count/signature mismatches
 * 'testing/bats/integration/beru': seed-reports API + verdict_ui bats with BATS_KEEP for dashboard inspection
 
