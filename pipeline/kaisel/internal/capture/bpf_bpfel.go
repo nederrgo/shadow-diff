@@ -38,6 +38,7 @@ const (
 	bpfMapTargetPorts   = "target_ports"
 	bpfProgCapture      = "capture"
 	bpfVarL2Off         = "l2_off"
+	bpfVarLoIfindex     = "lo_ifindex"
 	bpfVarPortFilterOn  = "port_filter_on"
 	bpfVarUnusedPktMeta = "unused_pkt_meta"
 )
@@ -103,6 +104,7 @@ type bpfMapSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfVariableSpecs struct {
 	L2Off         *ebpf.VariableSpec `ebpf:"l2_off"`
+	LoIfindex     *ebpf.VariableSpec `ebpf:"lo_ifindex"`
 	PortFilterOn  *ebpf.VariableSpec `ebpf:"port_filter_on"`
 	UnusedPktMeta *ebpf.VariableSpec `ebpf:"unused_pkt_meta"`
 }
@@ -149,6 +151,7 @@ func (m *bpfMaps) Close() error {
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfVariables struct {
 	L2Off         *ebpf.Variable `ebpf:"l2_off"`
+	LoIfindex     *ebpf.Variable `ebpf:"lo_ifindex"`
 	PortFilterOn  *ebpf.Variable `ebpf:"port_filter_on"`
 	UnusedPktMeta *ebpf.Variable `ebpf:"unused_pkt_meta"`
 }

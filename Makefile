@@ -32,7 +32,7 @@ $(MONARCH_TARGETS):
 	siphon-test siphon-build siphon-docker-build \
 	recorder-test recorder-build recorder-docker-build \
 	pixie-gate-test pixie-gate-build pixie-gate-docker-build \
-	kaisel-test kaisel-build kaisel-generate kaisel-verify-generate \
+	kaisel-test kaisel-build kaisel-docker-build kaisel-generate kaisel-verify-generate \
 	igris-rabbitmq-test igris-rabbitmq-build igris-rabbitmq-docker-build \
 	nodejs-test-worker-docker-build python-test-worker-docker-build \
 	egress-relay-rabbitmq-test egress-relay-rabbitmq-build egress-relay-rabbitmq-docker-build
@@ -96,6 +96,9 @@ kaisel-build: ## Build kaisel binary.
 kaisel-generate: ## Regenerate kaisel eBPF bindings (needs clang >= 12).
 	@$(MAKE) -C $(KAISEL_DIR) generate
 
+kaisel-docker-build: ## Build kaisel container image.
+	@$(MAKE) -C $(KAISEL_DIR) docker-build KAISEL_IMG=$(KAISEL_IMG)
+
 kaisel-verify-generate: ## Check the committed kaisel eBPF binding matches capture.c.
 	@$(MAKE) -C $(KAISEL_DIR) verify-generate
 
@@ -139,7 +142,7 @@ test-all: ## Run Monarch, Beru, Shop, Igris, Siphon, Recorder, pixie-gate, kaise
 	@$(MAKE) -C $(KAISEL_DIR) test
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
-.PHONY: test-bats test-bats-integration test-bats-e2e
+.PHONY: test-bats test-bats-integration test-bats-e2e test-bats-kaisel
 test-bats-integration: ## Bats integration suite (one ShadowTest per .bats file).
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh integration
@@ -147,6 +150,10 @@ test-bats-integration: ## Bats integration suite (one ShadowTest per .bats file)
 test-bats-e2e: ## Bats E2E suite (shared env per file, multi-@test).
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh e2e
+
+test-bats-kaisel: ## Kaisel eBPF capture E2E test (requires root + cluster + pipeline/kaisel/bin/kaisel).
+	@chmod +x testing/bats/run-one.sh
+	@./testing/bats/run-one.sh e2e/kaisel-capture/kaisel_capture.bats
 
 test-bats: ## Run all Bats integration + E2E suites.
 	@chmod +x testing/bats/run.sh

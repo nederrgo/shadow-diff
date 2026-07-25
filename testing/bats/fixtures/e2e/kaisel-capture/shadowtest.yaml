@@ -1,0 +1,11 @@
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-kaisel-capture
+  namespace: default
+spec:
+  targetDeployment: kaisel-capture-prod
+  targetNamespace: default
+  newImage: nginx:alpine
+  servicePort: 8080
+  applicationPort: 80

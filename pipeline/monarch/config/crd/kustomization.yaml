@@ -4,6 +4,7 @@
 resources:
 - bases/engine.shadow-diff.io_shadowtests.yaml
 - bases/engine.shadow-diff.io_pixiestreamrules.yaml
+- bases/engine.shadow-diff.io_kaiselrules.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

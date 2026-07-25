@@ -104,6 +104,16 @@ volatile const __u32 l2_off = 14;
  */
 volatile const __u32 port_filter_on = 0;
 
+/* Set from user space to lo's real ifindex when the raw socket is bound to
+ * ifindex 0 ("any" -- every interface in the socket's netns, not just the one
+ * physical NIC). Loopback frames carry no Ethernet header, unlike everything
+ * else multiplexed onto that socket, so they cannot share l2_off with the
+ * rest and are dropped outright rather than misread. 0 (the default, and
+ * never a real ifindex) matches nothing, so this is a no-op when capturing on
+ * a single named interface.
+ */
+volatile const __u32 lo_ifindex = 0;
+
 /* clang prunes BTF for types reachable only from locals, after which
  * `bpf2go -type pkt_meta` fails with "collect C types: not found".
  */
@@ -126,6 +136,9 @@ int capture(struct __sk_buff *skb)
 	__u16 sport, dport;
 	struct chunk_buf *buf;
 	int i, last;
+
+	if (skb->ifindex == lo_ifindex)
+		return 0;
 
 	/* Version nibble, not ethertype: this test is framing-independent, so
 	 * offset 14 (Ethernet) and offset 0 (raw L3) share a single path. The

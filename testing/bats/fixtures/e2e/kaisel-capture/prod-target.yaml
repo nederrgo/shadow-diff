@@ -1,0 +1,35 @@
+# Prod target for the kaisel eBPF capture E2E test.
+# nginx:alpine is used as a simple HTTP server; the test sends real requests
+# to the pod IP and asserts kaisel captured them off the wire.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kaisel-capture-prod
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kaisel-capture-prod
+  template:
+    metadata:
+      labels:
+        app: kaisel-capture-prod
+    spec:
+      containers:
+        - name: app
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kaisel-capture-prod
+  namespace: default
+spec:
+  selector:
+    app: kaisel-capture-prod
+  ports:
+    - port: 8080
+      targetPort: 80

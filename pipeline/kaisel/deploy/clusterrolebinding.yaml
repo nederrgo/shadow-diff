@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kaisel
+  labels:
+    app.kubernetes.io/name: kaisel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kaisel
+subjects:
+- kind: ServiceAccount
+  name: kaisel
+  namespace: kaisel-system

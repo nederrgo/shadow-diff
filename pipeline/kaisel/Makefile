@@ -30,5 +30,8 @@ verify-generate: generate
 	git diff --exit-code -- internal/capture/bpf_bpfel.go
 	go build ./...
 
+docker-build:
+	$(CONTAINER_TOOL) build -t $(KAISEL_IMG) -f Dockerfile ../..
+
 run: build
 	./bin/kaisel -iface lo -target 127.0.0.1

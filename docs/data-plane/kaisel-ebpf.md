@@ -13,12 +13,12 @@ Kaisel captures HTTP traffic to a targeted workload directly off the wire using 
 
 ## Status
 
-Kaisel is a standalone binary. It is **not yet reconciled by Monarch**, has no container image or DaemonSet, and does not export downstream. Targets come from command-line flags; parsed requests are logged. `OnRequest` is the seam where rule-driven capture and export attach.
+Kaisel is a daemon driven by **`KaiselRule` CRs** emitted by Monarch's `ShadowTest` reconciler. At startup it loads the BPF program and optionally seeds maps from `-target`/`-port` flags. A controller-runtime goroutine watches `KaiselRule` objects and delivers incremental `MapUpdate` values into the capture loop; no daemon restart is needed when pod IPs change.
 
 | Capability | State |
 | --- | --- |
 | Packet capture, filtering, reassembly, HTTP request parsing | Implemented |
-| `PixieStreamRule` reconciliation | Not started |
+| `KaiselRule` CRD reconciliation (live IP sync, no restart) | Implemented |
 | Export to igris / OTLP | Not started |
 | HTTP response parsing and request/response correlation | Not started |
 | Sampling | Not started |
@@ -121,13 +121,75 @@ The `covered` watermark serves as both the completeness check and truncation det
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `-iface` | `lo` | Interface to bind the raw socket to |
-| `-target` | `127.0.0.1` | IPv4 address to capture; repeatable, comma-separated |
-| `-port` | all | TCP port to capture; repeatable, comma-separated |
-| `-l2-off` | `-1` | `-1` autodetect, `0` raw L3, `14` Ethernet |
+| `-iface` | `lo` | Interface to bind the raw socket to. `any` binds ifindex 0 (every interface in the netns — see "any interface capture" below). The DaemonSet's `kaisel-config` ConfigMap sets this to `any`; the CLI default of `lo` only applies to a bare manual run |
+| `-kubeconfig` | `""` | Path to kubeconfig; empty uses in-cluster config |
+| `-namespace` | `""` | Namespace to scope KaiselRule watch; empty watches all |
+| `-target` | — | Seed IPv4 address for BPF maps (manual/test runs; controller overrides live) |
+| `-port` | all | Seed TCP port for BPF maps (manual/test runs) |
+| `-l2-off` | `-1` | `-1` autodetect (defaults to Ethernet when `-iface any`, since there is no single sysfs entry to read), `0` raw L3, `14` Ethernet |
 | `-percpu-buffer` | 1 MB | Per-CPU perf ring bytes |
 
+In daemon mode, targets and ports come from `KaiselRule` CRs via the controller. The `-target` and `-port` flags seed the initial BPF maps before the controller has reconciled; they are additive with whatever the controller pushes later.
+
 Requires `CAP_BPF` (or `CAP_SYS_ADMIN` on older kernels) and `CAP_NET_RAW`. The BPF object is GPL-licensed because `bpf_perf_event_output` is a GPL-only helper.
+
+## Deployment & Security
+
+Kaisel runs as a DaemonSet in the `kaisel-system` namespace. The namespace carries the `privileged` Pod Security Standard because `CAP_BPF`, `CAP_NET_RAW`, and `CAP_PERFMON` are blocked by the `baseline` standard. Within that namespace the DaemonSet deliberately avoids `privileged: true`.
+
+### Privilege model
+
+| Control | Value | Rationale |
+| --- | --- | --- |
+| `privileged` | `false` | Grants all 40+ capabilities; never needed |
+| `capabilities.add` | `[BPF, NET_RAW, PERFMON]` | Minimum set for eBPF load, raw socket, perf ring |
+| `capabilities.drop` | `[ALL]` | Drop all before adding back only what is needed |
+| `allowPrivilegeEscalation` | `false` | Prevents setuid / file-capability escalation |
+| `readOnlyRootFilesystem` | `true` | No writable process filesystem |
+| `seccompProfile` | `Unconfined` | RuntimeDefault blocks `bpf()` and `perf_event_open()`; a scoped custom profile is the upgrade path |
+| `runAsUser` | `0` | Root needed on kernels < 5.11 for `setrlimit(RLIMIT_MEMLOCK)`. On 5.11+ (memcg BPF accounting) this becomes a no-op; the UID requirement can then be dropped |
+| PSA level | `privileged` | Required by the capability set above |
+
+### Kubernetes RBAC
+
+The `kaisel` ClusterRole grants `get/list/watch` on `KaiselRules` only. No write access to any resource. No access to Secrets, ConfigMaps, or any core API objects.
+
+### Network interface: `any` (cloud-agnostic, sees same-node pod traffic)
+
+The DaemonSet runs with `hostNetwork: true` so the container operates in the node's network namespace. The AF_PACKET socket binds to **ifindex 0** ("any" — the `kaisel-config` ConfigMap default) rather than a single named device. This is the same mechanism `tcpdump -i any` uses: the kernel delivers a clone of every send/receive event on every interface in that network namespace to the one socket, instead of only one device's traffic.
+
+**Why a single named interface (`eth0`) is not enough.** A node's CNI connects same-node pods through a Linux bridge and veth pairs. When the bridge *forwards* a frame between two pods on the same node, that is an internal switching decision — the bridge only clones a frame to a promiscuous listener (an `AF_PACKET` socket) when the frame is addressed to or from the bridge device itself. A frame it merely relays between two other ports never reaches a listener on `eth0`, the bridge device, or any single interface — confirmed empirically: `tcpdump -i eth0` shows zero packets for a pod-to-pod request that the target actually received and answered. `any` sidesteps this because the destination pod's own host-side veth **transmitting** that frame is itself a per-device event current interface listeners see, and `any` is subscribed to every device's events at once, not one device's.
+
+**What `any` costs, and how it's mitigated.** Binding to every interface means every pod scheduled on the node — not just external clients or cross-node peers — can now present packets to kaisel's in-kernel filter. The confidentiality gate (the `target_ips`/`target_ports` match) is unchanged and still runs before anything reaches user space, so this does not add exposure *if the filter is correct*. It does widen the blast radius *if it is ever wrong*:
+
+* **Stale target IPs.** Kubernetes recycles pod IPs quickly. A `KaiselRule` still holding a deleted pod's IP can start matching a different pod that inherits it before Monarch's reconcile catches up. Under `eth0`-only this could only leak external/cross-node flows; under `any` it can leak **any other pod's traffic on the node**, including a different tenant's.
+* **Mixed link-layer framing.** The kernel filter reads the IP header at one fixed byte offset (`l2_off`), set once at load time — it cannot detect per-packet framing. Loopback is the one device on a node with a genuinely different layout (raw IP, not Ethernet), so it is excluded **by ifindex**, not by framing guesswork: `lo_ifindex` is a `.rodata` constant resolved from `net.InterfaceByName("lo")` and set before load, and the kernel program's first check is `skb->ifindex == lo_ifindex → drop`. This closes the one concrete mis-parse risk `any` introduces; it is a no-op when bound to a single named interface (0 never equals a real ifindex).
+* **Wider kernel-filter attack surface.** Any bug in the eBPF verifier or JIT is now reachable by any co-located pod, not only off-node traffic.
+
+This is an accepted trade-off, not an oversight: it buys same-node pod-to-pod capture with zero per-CNI code and no new Linux capability (`CAP_NET_RAW` already implies "bind to any interface"), at the cost of a larger exposure surface if the filter or a `KaiselRule` is ever wrong. The alternative — resolving each target pod's own host-side veth and attaching a separate capture instance per pod, so the kernel filter only ever sees traffic for pods explicitly named in a `KaiselRule` — closes all three risks above but requires per-pod network-namespace resolution (PID discovery, ifindex correlation) instead of one static bind. Revisit that design if the cluster is multi-tenant and this exposure surface is unacceptable.
+
+To shrink back to `eth0`-only behavior (no same-node pod-to-pod capture, smaller exposure surface), set `iface: eth0` in the ConfigMap — no code change required either way.
+
+Deploy with:
+
+```bash
+kubectl apply -k pipeline/kaisel/deploy/
+```
+
+### Monarch RBAC
+
+Monarch (`manager-role` ClusterRole) holds the minimum verbs for a dynamic-namespace operator:
+
+| Resource | Verbs | Reason |
+| --- | --- | --- |
+| `configmaps`, `services` | full | Igris ConfigMap and Service per shadow namespace |
+| `namespaces` | create/delete/get/list/watch | Shadow namespace lifecycle |
+| `pods` | get/list/watch | Pod IP discovery for `KaiselRule` population |
+| `deployments` (apps) | full | Shadow Deployment per role |
+| `shadowtests`, `kaiselrules` | full + status | CRD owner |
+| `shadowtests/finalizers` | update | Cleanup on delete |
+
+Monarch's own pod runs under the `restricted` Pod Security Standard: `runAsNonRoot`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`, `seccompProfile: RuntimeDefault`. No Linux capabilities are needed.
 
 ## Design rationale
 
@@ -179,7 +241,7 @@ Framing is autodetected by reading the interface's ARPHRD type from sysfs, and `
 | **IPv4 only** | The filter reads IPv4 headers; IPv6 is rejected at the version nibble | — |
 | **No fragment reassembly** | Fragmented datagrams are dropped whole. gopacket independently declines to decode a transport layer from any fragment, so the kernel filter changes visibility rather than behaviour | Drops are counted in the kernel and logged, so an affected flow has a stated cause instead of vanishing. TCP negotiates MSS and sets DF, so fragmented TCP effectively does not occur in-cluster |
 | **Ring drops under burst** | Sampling cannot protect the ring, so a sufficiently large burst overruns it | Drops are logged with both counters; `-percpu-buffer` raises the ceiling |
-| **Bridge devices see nothing** | A Linux bridge does not deliver frames it forwards between ports to AF_PACKET listeners on the bridge device | Attach to the target's host-side veth, which carries every frame in both directions |
+| **`any` widens the kernel-filter attack surface** | Binding to every interface (see "Network interface: `any`" above) means every co-located pod, not just off-node traffic, can present packets to the in-kernel filter | Confidentiality gate (target IP/port match) is unchanged; set `iface: eth0` in the ConfigMap to shrink back to a single device if this is unacceptable |
 | **Lost samples cost whole packets** | After a drop, continuity is unprovable, so in-flight partials for that CPU are discarded | Deliberate: a partly-filled buffer would hand `tcpassembly` plausible-looking corrupt bytes |
 
 ## Verification
@@ -216,3 +278,5 @@ Reliable body capture ultimately wants a **syscall-layer probe** (`sock_sendmsg`
 * [BPF ring buffer introduction (kernel 5.8)](https://docs.kernel.org/bpf/ringbuf.html) — the floor that keeps the transport on a perf array.
 * [`cilium/ebpf`](https://github.com/cilium/ebpf) — loader, `bpf2go` codegen, and perf reader.
 * [`gopacket/gopacket`](https://github.com/gopacket/gopacket) — `tcpassembly` stream reassembly and layer decoding.
+* [`packet(7)`](https://man7.org/linux/man-pages/man7/packet.7.html) — `sll_ifindex == 0` matches any interface, the mechanism behind `iface: any` and `tcpdump -i any`.
+* [`struct __sk_buff` field order](https://github.com/torvalds/linux/blob/master/include/uapi/linux/bpf.h) — `ifindex` is the 11th `__u32` (byte offset 40), which the vendored `bpf_helpers.h` partial struct must match for the verifier's context-access rewriting to resolve it correctly.

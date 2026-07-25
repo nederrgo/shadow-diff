@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kaisel
+  labels:
+    app.kubernetes.io/name: kaisel
+rules:
+- apiGroups:
+  - engine.shadow-diff.io
+  resources:
+  - kaiselrules
+  verbs:
+  - get
+  - list
+  - watch

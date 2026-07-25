@@ -1,9 +1,5 @@
-// Command kaisel captures HTTP traffic with eBPF and prints the reassembled
-// requests.
-//
-// Step 1 prototype: proves the packet path from an AF_PACKET socket filter
-// through perf-array transport, TCP reassembly and HTTP parsing. Rule-driven
-// capture and OTLP export come later.
+// Command kaisel captures HTTP traffic with eBPF and syncs target addresses
+// from KaiselRule CRs via a controller-runtime manager.
 package main
 
 import (
@@ -18,15 +14,31 @@ import (
 	"strings"
 	"syscall"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/client-go/tools/clientcmd"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+
+	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 	"github.com/shadow-diff/kaisel/internal/capture"
+	kaiselcontroller "github.com/shadow-diff/kaisel/internal/controller"
 	"github.com/shadow-diff/kaisel/internal/decode"
 )
 
-// targets collects repeatable -target flags.
+var scheme = runtime.NewScheme()
+
+func init() {
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(enginev1alpha1.AddToScheme(scheme))
+}
+
+// targets collects repeatable -target flags for manual/test runs.
 type targets []net.IP
 
 func (t *targets) String() string { return "" }
-
 func (t *targets) Set(v string) error {
 	for _, s := range strings.Split(v, ",") {
 		ip := net.ParseIP(strings.TrimSpace(s))
@@ -38,11 +50,10 @@ func (t *targets) Set(v string) error {
 	return nil
 }
 
-// ports collects repeatable -port flags.
+// ports collects repeatable -port flags for manual/test runs.
 type ports []uint16
 
 func (p *ports) String() string { return "" }
-
 func (p *ports) Set(v string) error {
 	for _, s := range strings.Split(v, ",") {
 		n, err := strconv.ParseUint(strings.TrimSpace(s), 10, 16)
@@ -58,17 +69,20 @@ func main() {
 	var tgts targets
 	var prts ports
 	iface := flag.String("iface", "lo", "interface to capture on")
-	flag.Var(&tgts, "target", "IPv4 address to capture (repeatable, comma-separated)")
+	flag.Var(&tgts, "target", "IPv4 address to capture (repeatable, comma-separated); seeds initial BPF maps for manual runs")
 	flag.Var(&prts, "port", "TCP port to capture (repeatable, comma-separated; empty = all ports)")
 	l2Off := flag.Int("l2-off", -1, "link-layer header size: -1 autodetect, 0 raw L3, 14 Ethernet")
 	perCPU := flag.Int("percpu-buffer", 0, "per-CPU perf ring bytes (0 = default)")
+	// Some k8s packages register -kubeconfig in init(); look it up rather than
+	// re-registering to avoid the "flag redefined" panic.
+	if flag.Lookup("kubeconfig") == nil {
+		flag.String("kubeconfig", "", "path to kubeconfig (empty = in-cluster)")
+	}
+	namespace := flag.String("namespace", "", "namespace to scope KaiselRule watch (empty = all namespaces)")
 	flag.Parse()
+	kubeconfig := flag.Lookup("kubeconfig").Value.String()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-
-	if len(tgts) == 0 {
-		tgts = targets{net.IPv4(127, 0, 0, 1)}
-	}
 
 	framing, err := resolveFraming(*iface, *l2Off)
 	if err != nil {
@@ -85,27 +99,66 @@ func main() {
 		stop()
 	}()
 
-	if err := capture.Run(ctx, capture.Config{
+	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		log.Error("build REST config", "err", err)
+		os.Exit(1)
+	}
+
+	mgrOpts := ctrl.Options{Scheme: scheme}
+	if *namespace != "" {
+		mgrOpts.Cache = ctrl.Options{}.Cache
+		mgrOpts.Cache.DefaultNamespaces = map[string]cache.Config{*namespace: {}}
+	}
+
+	mgr, err := ctrl.NewManager(restCfg, mgrOpts)
+	if err != nil {
+		log.Error("create manager", "err", err)
+		os.Exit(1)
+	}
+
+	updates := make(chan capture.MapUpdate, 16)
+
+	if err := kaiselcontroller.New(mgr.GetClient(), updates).SetupWithManager(mgr); err != nil {
+		log.Error("setup controller", "err", err)
+		os.Exit(1)
+	}
+
+	cfg := capture.Config{
 		Iface:        *iface,
 		Targets:      tgts,
 		Ports:        prts,
 		Framing:      framing,
 		PerCPUBuffer: *perCPU,
 		Log:          log,
-	}); err != nil {
-		log.Error("capture", "err", err)
+		Updates:      updates,
+	}
+
+	captureErr := make(chan error, 1)
+	go func() { captureErr <- capture.Run(ctx, cfg) }()
+
+	if err := mgr.Start(ctx); err != nil {
+		log.Error("manager stopped", "err", err)
+	}
+	stop()
+
+	if err := <-captureErr; err != nil {
+		log.Error("capture stopped", "err", err)
 		os.Exit(1)
 	}
 }
 
 // resolveFraming honours an explicit -l2-off, else autodetects from sysfs.
-//
-// The override earns its keep: a wrong l2_off makes the kernel's version-nibble
-// check fail on every packet, so the symptom is total silence -- indistinguishable
-// from "no traffic" without a way to force the other value.
+// "any" (ifindex 0, every interface in the netns) has no single sysfs entry
+// to read, so autodetect defaults to Ethernet -- true for eth0, veth, and
+// bridge devices, the only ones a node actually multiplexes traffic across;
+// loopback's differing layout is excluded by ifindex, not framing detection.
 func resolveFraming(iface string, l2Off int) (decode.Framing, error) {
 	switch l2Off {
 	case -1:
+		if iface == "any" {
+			return decode.FramingEthernet, nil
+		}
 		return capture.DetectFraming(iface)
 	case 0:
 		return decode.FramingRawIP, nil

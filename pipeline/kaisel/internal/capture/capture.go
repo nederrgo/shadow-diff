@@ -38,6 +38,14 @@ const (
 // port filters.
 const defaultPerCPUPages = 256
 
+// MapUpdate carries incremental changes to the live eBPF address and port maps.
+type MapUpdate struct {
+	AddIPs      []net.IP
+	RemoveIPs   []net.IP
+	AddPorts    []uint16
+	RemovePorts []uint16
+}
+
 // Config configures a capture run.
 type Config struct {
 	// Iface is the interface to bind the raw socket to. Binding matters:
@@ -61,6 +69,10 @@ type Config struct {
 	// is open. Traffic generated before this fires is not guaranteed to be
 	// seen; tests use it instead of sleeping.
 	Ready func()
+	// Updates, if non-nil, delivers live map changes into the capture loop.
+	// ponytail: applied once per incoming packet; quiescent targets see a delay
+	// until the next frame arrives. Upgrade: process in the flush-ticker goroutine.
+	Updates <-chan MapUpdate
 }
 
 // ipKey converts an IPv4 address to a target_ips map key: its plain numeric
@@ -81,13 +93,19 @@ func Run(ctx context.Context, cfg Config) error {
 	if log == nil {
 		log = slog.Default()
 	}
-	if len(cfg.Targets) == 0 {
-		return errors.New("capture: no target addresses")
-	}
 
-	iface, err := net.InterfaceByName(cfg.Iface)
-	if err != nil {
-		return fmt.Errorf("lookup interface %q: %w", cfg.Iface, err)
+	// "any" binds the raw socket to ifindex 0 -- every interface in the
+	// socket's network namespace, not just one named device. That's the only
+	// way to see same-node pod-to-pod traffic: a Linux bridge never clones
+	// frames it merely forwards between two other ports to a listener on any
+	// single interface, including the bridge device itself.
+	ifIndex := 0
+	if cfg.Iface != "any" {
+		iface, err := net.InterfaceByName(cfg.Iface)
+		if err != nil {
+			return fmt.Errorf("lookup interface %q: %w", cfg.Iface, err)
+		}
+		ifIndex = iface.Index
 	}
 
 	if err := rlimit.RemoveMemlock(); err != nil {
@@ -112,6 +130,17 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := spec.Variables["port_filter_on"].Set(portFilterOn); err != nil {
 		return fmt.Errorf("set port_filter_on: %w", err)
 	}
+	// Loopback's header layout differs from every other device multiplexed
+	// onto an ifindex-0 socket, so it is excluded by ifindex rather than
+	// misread with the wrong l2_off. Harmless when bound to a single named
+	// interface: that interface's ifindex is never lo's.
+	loIfindex := uint32(0)
+	if lo, err := net.InterfaceByName("lo"); err == nil {
+		loIfindex = uint32(lo.Index)
+	}
+	if err := spec.Variables["lo_ifindex"].Set(loIfindex); err != nil {
+		return fmt.Errorf("set lo_ifindex: %w", err)
+	}
 
 	var objs bpfObjects
 	if err := spec.LoadAndAssign(&objs, nil); err != nil {
@@ -134,7 +163,7 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 	}
 
-	sock, err := openRawSocket(iface.Index, objs.Capture.FD())
+	sock, err := openRawSocket(ifIndex, objs.Capture.FD())
 	if err != nil {
 		return err
 	}
@@ -165,7 +194,7 @@ func Run(ctx context.Context, cfg Config) error {
 		cfg.Ready()
 	}
 
-	return consume(ctx, src, cfg, log, src.stats, fragDrops(objs.FragDrops))
+	return consume(ctx, src, cfg, log, src.stats, fragDrops(objs.FragDrops), &objs, portFilterOn)
 }
 
 // fragDrops sums the per-CPU fragment drop counter. A failed lookup reports 0
@@ -207,8 +236,39 @@ func openRawSocket(ifIndex, progFD int) (int, error) {
 	return sock, nil
 }
 
+// applyUpdate mutates the live eBPF hash maps without reloading the program.
+func applyUpdate(objs *bpfObjects, upd MapUpdate, portFilterOn uint32, log *slog.Logger) {
+	if portFilterOn == 0 && len(upd.AddPorts) > 0 {
+		log.Warn("port_filter_on is 0; added ports have no effect until daemon restarts with -port flags")
+	}
+	for _, ip := range upd.AddIPs {
+		if key, ok := ipKey(ip); ok {
+			if err := objs.TargetIps.Put(key, uint8(1)); err != nil {
+				log.Warn("add IP to map", "ip", ip, "err", err)
+			}
+		}
+	}
+	for _, ip := range upd.RemoveIPs {
+		if key, ok := ipKey(ip); ok {
+			if err := objs.TargetIps.Delete(key); err != nil {
+				log.Warn("remove IP from map", "ip", ip, "err", err)
+			}
+		}
+	}
+	for _, p := range upd.AddPorts {
+		if err := objs.TargetPorts.Put(p, uint8(1)); err != nil {
+			log.Warn("add port to map", "port", p, "err", err)
+		}
+	}
+	for _, p := range upd.RemovePorts {
+		if err := objs.TargetPorts.Delete(p); err != nil {
+			log.Warn("remove port from map", "port", p, "err", err)
+		}
+	}
+}
+
 // consume drives the read loop: source -> decode -> reassembly.
-func consume(ctx context.Context, src PacketSource, cfg Config, log *slog.Logger, stats func() (uint64, uint64), frags func() uint64) error {
+func consume(ctx context.Context, src PacketSource, cfg Config, log *slog.Logger, stats func() (uint64, uint64), frags func() uint64, objs *bpfObjects, portFilterOn uint32) error {
 	factory := &decode.StreamFactory{Log: log, OnRequest: cfg.OnRequest}
 	asm := tcpassembly.NewAssembler(tcpassembly.NewStreamPool(factory))
 
@@ -230,6 +290,15 @@ func consume(ctx context.Context, src PacketSource, cfg Config, log *slog.Logger
 					log.Warn("dropped fragmented IP datagrams; those requests are not captured",
 						"total", n, "since_last", n-lastFrags)
 					lastFrags = n
+				}
+			case upd, ok := <-cfg.Updates:
+				// Drained here, not in the packet-read loop below: target_ips
+				// starts empty, so no packet can pass the kernel filter until an
+				// update arrives. Draining only after src.Read() would deadlock
+				// on startup — nothing to read until the update that unblocks
+				// reading is itself read.
+				if ok {
+					applyUpdate(objs, upd, portFilterOn, log)
 				}
 			}
 		}

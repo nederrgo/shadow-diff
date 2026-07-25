@@ -34,10 +34,22 @@ typedef unsigned long long __u64;
 
 /* Partial struct __sk_buff. len really is at offset 0, and the verifier
  * rewrites field access by offset, so a truncated definition is safe as long
- * as any field added later is declared in real UAPI order.
+ * as any field added later is declared in real UAPI order. ifindex is the
+ * 11th __u32 (offset 40) per linux/bpf.h -- the 9 fields between len and
+ * ifindex are unused padding, present only so the offset lines up.
  */
 struct __sk_buff {
 	__u32 len;
+	__u32 pkt_type;
+	__u32 mark;
+	__u32 queue_mapping;
+	__u32 protocol;
+	__u32 vlan_present;
+	__u32 vlan_tci;
+	__u32 vlan_proto;
+	__u32 priority;
+	__u32 ingress_ifindex;
+	__u32 ifindex;
 };
 
 /* Helpers by their fixed ABI ids, the pre-libbpf calling convention. */

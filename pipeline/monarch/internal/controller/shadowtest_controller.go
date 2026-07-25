@@ -104,6 +104,15 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	// KaiselRule only needs target pod IPs — create it immediately, independent
+	// of beru-local/igris/shadow-stack readiness so eBPF capture starts as soon
+	// as the target pods exist.
+	captureTargets, siphonPhase, err := r.reconcileKaiselCapture(ctx, &shadowTest, shadowNS, &target)
+	if err != nil {
+		log.Error(err, "Kaisel capture reconcile failed")
+		siphonPhase = "Degraded"
+	}
+
 	if err := r.reconcileLocalBeruIfNeeded(ctx, &shadowTest, shadowNS); err != nil {
 		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
 		return ctrl.Result{}, err
@@ -183,12 +192,6 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if !recorderReady {
 		_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Recorder", shadowNS)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-	}
-
-	captureTargets, siphonPhase, err := r.reconcileKaiselCapture(ctx, &shadowTest, shadowNS, &target)
-	if err != nil {
-		log.Error(err, "Kaisel capture reconcile failed")
-		siphonPhase = "Degraded"
 	}
 
 	var igrisEndpoint string

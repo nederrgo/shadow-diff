@@ -15,6 +15,7 @@ bats_init_env() {
   export PIXIE_GATE_IMG="${PIXIE_GATE_IMG:-pixie-gate:dev}"
 
   export MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
+  export KAISEL_IMG="${KAISEL_IMG:-kaisel:dev}"
   export BERU_IMG="${BERU_IMG:-beru:dev}"
   export SHOP_IMG="${SHOP_IMG:-shop:dev}"
   export IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
