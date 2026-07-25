@@ -4,7 +4,7 @@ title: Kaisel eBPF Capture Daemon
 description: Self-hosted eBPF ingress capture — AF_PACKET socket filter, kernel-side address/protocol/port filtering, chunked perf transport for GSO super-packets, and user-space TCP reassembly.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel
 tags: [data-plane, kaisel, ebpf, capture, networking, gso]
-timestamp: 2026-07-25T18:40:00Z
+timestamp: 2026-07-25T19:00:00Z
 ---
 
 # Kaisel eBPF Capture Daemon
@@ -259,6 +259,9 @@ Framing is autodetected by reading the interface's ARPHRD type from sysfs, and `
 | Unit — reassembly, framing, IP keys | `make test` | Nothing |
 | Integration — real kernel, real BPF, real traffic | `make test-integration` | root |
 | Codegen contract | `make verify-generate` | clang-18 |
+| Cluster E2E — Monarch → prod → Kaisel → igris → shadows | `make test-bats-kaisel` | cluster + image load |
+
+Cluster E2E (`testing/bats/e2e/kaisel-capture/kaisel_capture.bats`) waits for `ShadowTest` Ready + `kaiselPhase`, curls the prod pod with a W3C `traceparent`, then asserts Kaisel capture logs, igris `multicast complete` for that trace, and nginx access logs on control-a / control-b / candidate.
 
 The integration suite builds a bridge and two network namespaces, loads the real BPF program, and drives real traffic:
 

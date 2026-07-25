@@ -54,7 +54,7 @@ testing/tools/            # standalone developer utilities (not called by bats)
 - Monarch CRDs + operator (`MONARCH_MODE=dev`)
 - Beru (`beru-system`)
 - Pixie Vizier + **continuous** pixie-gate (no per-test restart)
-- Kaisel DaemonSet (`pipeline/kaisel/deploy/`)
+- Kaisel DaemonSet (`pipeline/kaisel/deploy/`, also via `e2e-reset-minikube.sh`)
 
 Escape hatches: `SKIP_PLATFORM_BOOTSTRAP`, `SKIP_BUILD`, `SKIP_LOAD`, `BATS_FORCE_PLATFORM_BOOTSTRAP`.
 
@@ -119,6 +119,7 @@ Helpers: `monarch_wait_shadowtest_bringup_started`, `monarch_wait_shadowtest_cle
 | `http_otel_rmq_python.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Python) |
 | `http_otel_rmq_nodejs.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Node.js) |
 | `http_ingress_rmq_go.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Go) |
+| `kaisel-capture/kaisel_capture.bats` | Full HTTP route: Monarch → prod → Kaisel → igris-http → three shadow pods (`make test-bats-kaisel`) |
 
 Hybrid suite flow map: [/verification/hybrid-rmq-e2e-flow.md](/verification/hybrid-rmq-e2e-flow.md).  
 HTTP ingress suite flow map: [/verification/http-ingress-e2e-flow.md](/verification/http-ingress-e2e-flow.md).

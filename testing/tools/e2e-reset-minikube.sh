@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Reset and deploy the full Monarch E2E stack on Minikube (kvm2 + flannel + Pixie by default).
+# Reset and deploy the full Monarch E2E stack on Minikube (kvm2 + flannel by default).
 #
-# HTTP ingress capture uses Pixie eBPF. Defaults:
-#   MINIKUBE_DRIVER=kvm2 (or virtualbox), MINIKUBE_CNI=flannel, Pixie Vizier bootstrap on.
-# Opt out of Pixie install: --skip-pixie
-# E2E assertions: make test-bats-e2e (standalone --run-*-test flags were removed).
+# HTTP ingress capture uses Kaisel eBPF (DaemonSet in kaisel-system). Pixie Vizier
+# is still bootstrapped by default for egress/Recorder + Mongo OTLP. Opt out: --skip-pixie
+# E2E assertions: make test-bats-e2e / make test-bats-kaisel
 #
 # Override driver: MINIKUBE_DRIVER=virtualbox|kvm2|none
 #
@@ -21,7 +20,7 @@
 #   ./testing/tools/e2e-reset-minikube.sh                 # full reset + deploy + wait Ready
 #   ./testing/tools/e2e-reset-minikube.sh --skip-build    # reuse images already in minikube docker
 #   ./testing/tools/e2e-reset-minikube.sh --no-reset      # deploy/upgrade only (no deletes; reuses running minikube)
-#   ./testing/tools/e2e-reset-minikube.sh --skip-pixie    # Monarch only, no Vizier
+#   ./testing/tools/e2e-reset-minikube.sh --skip-pixie    # Monarch + Kaisel, no Vizier
 #   ./testing/tools/e2e-reset-minikube.sh --skip-load --skip-build --no-reset  # fastest: cluster already up + images present
 #
 set -euo pipefail
@@ -41,6 +40,7 @@ SHOP_IMG="${SHOP_IMG:-shop:dev}"
 IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
 RECORDER_IMG="${RECORDER_IMG:-recorder:dev}"
 PIXIE_GATE_IMG="${PIXIE_GATE_IMG:-pixie-gate:dev}"
+KAISEL_IMG="${KAISEL_IMG:-kaisel:dev}"
 
 SHADOWTEST="${SHADOWTEST:-my-app-shadow}"
 SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
@@ -72,9 +72,10 @@ done
 
 export SKIP_BUILD SKIP_LOAD NO_RESET SETUP_PIXIE SKIP_PIXIE
 
-export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG SHOP_IMG IGRIS_IMG RECORDER_IMG
+export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG SHOP_IMG IGRIS_IMG RECORDER_IMG KAISEL_IMG
 
-# Pixie HTTP ingress: VM driver + flannel CNI (avoid calico/flannel mix on same profile).
+# Pixie (egress/mongo) prefers VM driver + flannel CNI. Kaisel itself needs hostNetwork + BPF
+# and runs with or without Pixie; --skip-pixie still deploys Kaisel.
 # shellcheck source=testing/bats/helpers/pixie-bridge.sh
 source "$REPO/testing/bats/helpers/pixie-bridge.sh"
 export MINIKUBE_CNI="${MINIKUBE_CNI:-flannel}"
@@ -115,7 +116,7 @@ if [[ "${SETUP_PIXIE:-1}" -eq 1 && "${SKIP_PIXIE:-0}" -eq 0 ]]; then
 fi
 
 echo "==> Monarch E2E reset (minikube profile=${MINIKUBE_PROFILE}, driver=${MINIKUBE_DRIVER}, cni=${MINIKUBE_CNI:-flannel})"
-echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG shop=$SHOP_IMG (beru-local) igris=$IGRIS_IMG recorder=$RECORDER_IMG pixie-gate=$PIXIE_GATE_IMG"
+echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG shop=$SHOP_IMG igris=$IGRIS_IMG recorder=$RECORDER_IMG kaisel=$KAISEL_IMG pixie-gate=$PIXIE_GATE_IMG"
 if [[ "$SKIP_BUILD" -eq 1 ]]; then
   echo "WARN: --skip-build reuses existing minikube docker images; code changes are NOT included until you rebuild"
 fi
@@ -138,12 +139,13 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   make shop-docker-build SHOP_IMG="$SHOP_IMG"
   make igris-docker-build IGRIS_IMG="$IGRIS_IMG"
   make recorder-docker-build RECORDER_IMG="$RECORDER_IMG"
+  make kaisel-docker-build KAISEL_IMG="$KAISEL_IMG"
   make pixie-gate-docker-build PIXIE_GATE_IMG="$PIXIE_GATE_IMG"
 fi
 
 if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
   echo "==> Sync local images into containerd (none driver)"
-  load_minikube_images "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$RECORDER_IMG" "$PIXIE_GATE_IMG"
+  load_minikube_images "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$RECORDER_IMG" "$KAISEL_IMG" "$PIXIE_GATE_IMG"
 fi
 
 if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
@@ -152,7 +154,7 @@ else
   export E2E_IMAGE_REBUILD_HINT="After Monarch code fixes: eval \$(minikube docker-env) && make -C pipeline/monarch docker-build IMG=${MONARCH_IMG} && kubectl rollout restart deployment/monarch-controller-manager -n monarch-system"
 fi
 e2e_reset_deploy_stack() {
-  echo "==> Monarch CRDs"
+  echo "==> Monarch CRDs (ShadowTest + PixieStreamRule + KaiselRule)"
   make -C pipeline/monarch install
 
   if [[ "${NO_RESET:-0}" -eq 0 ]]; then
@@ -179,6 +181,13 @@ e2e_reset_deploy_stack() {
   kubectl apply -f "$REPO/pipeline/beru/deploy/"
   kubectl set image deployment/beru -n beru-system beru="$BERU_IMG"
   kubectl rollout status deployment/beru -n beru-system --timeout=180s
+
+  # Kaisel: cluster-wide HTTP ingress capture (Monarch writes KaiselRule per ShadowTest).
+  # shellcheck source=testing/bats/lib/kaisel.bash
+  source "$REPO/testing/bats/lib/kaisel.bash"
+  echo "==> Kaisel DaemonSet (kaisel-system image=${KAISEL_IMG})"
+  kaisel_daemonset_deploy
+  kaisel_daemonset_wait_ready 120
 
   # shellcheck source=testing/bats/helpers/pixie-bridge.sh
   source "$REPO/testing/bats/helpers/pixie-bridge.sh"
@@ -245,10 +254,12 @@ PHASE:.status.phase,KAISEL:.status.kaiselPhase,NS:.status.shadowNamespace,CAPTUR
   prod_ip=$(kubectl get pods -n default -l app=my-prod-app -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2>/dev/null | head -1)
   echo "  Prod IP:          ${prod_ip:-<pending>}"
   echo "  Capture labels:   $(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.captureTargets}' 2>/dev/null || echo '<pending>')"
+  echo "  Kaisel DaemonSet: kaisel-system (image ${KAISEL_IMG})"
   echo "  Kaisel ingress:   KaiselRule kaisel-${SHADOWTEST} -> igris in ${SHADOW_NS}"
   echo "  Beru (local):     beru-local.${SHADOW_NS}.svc.cluster.local:50051"
   echo ""
   echo "Run bats tests:     make test-bats-e2e"
+  echo "  Kaisel route E2E: make test-bats-kaisel"
 }
 
 e2e_reset_deploy_stack

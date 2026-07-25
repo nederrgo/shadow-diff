@@ -1,22 +1,23 @@
 ---
 type: Operations Guide
 title: Platform Bootstrap and ShadowTest Lifecycle
-description: How to install Monarch, Pixie Vizier, and pixie-gate once; create and delete ShadowTests without resetting Pixie.
+description: How to install Monarch, Kaisel, Pixie Vizier, and pixie-gate once; create and delete ShadowTests without resetting the platform.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
-tags: [operations, control-plane, monarch, pixie, pixiestreamrule, shadowtest, deployment, pixie-gate]
-timestamp: 2026-07-25T18:40:00Z
+tags: [operations, control-plane, monarch, kaisel, pixie, pixiestreamrule, shadowtest, deployment, pixie-gate]
+timestamp: 2026-07-25T19:40:00Z
 ---
 
 # Platform Bootstrap and ShadowTest Lifecycle
 
-Shadow-Diff splits **platform install** (once per cluster) from **ShadowTest lifecycle** (on demand). Pixie Vizier and **pixie-gate** are cluster infrastructure — they are **not** torn down when a ShadowTest is deleted, and they do **not** need to be reinstalled or reset between tests.
+Shadow-Diff splits **platform install** (once per cluster) from **ShadowTest lifecycle** (on demand). Kaisel, Pixie Vizier, and **pixie-gate** are cluster infrastructure — they are **not** torn down when a ShadowTest is deleted, and they do **not** need to be reinstalled or reset between tests.
 
 ## Mental model
 
 | Layer | Installed | Lifecycle |
 |-------|-----------|-----------|
 | **Monarch** operator | Once (`monarch-system`) | Survives all ShadowTests |
-| **Pixie Vizier** (`pl` namespace) | Once | Survives all ShadowTests |
+| **Kaisel** DaemonSet | Once (`kaisel-system`) | Survives all ShadowTests; watches `KaiselRule` CRs |
+| **Pixie Vizier** (`pl` namespace) | Once | Survives all ShadowTests (egress / Mongo OTLP) |
 | **pixie-gate** | Once (`monarch-system` Deployment) | Survives all ShadowTests; polls `PixieStreamRule` CRs |
 | **Beru** (`beru-system` or per-shadow `beru-local`) | Once shared, or per test via Monarch | `beru-local` removed with shadow namespace |
 | **ShadowTest** CR | Per test | Create → Ready → Delete |
@@ -32,6 +33,7 @@ sequenceDiagram
   participant User
 
   Ops->>Monarch: Install once
+  Ops->>Monarch: Deploy Kaisel DaemonSet once
   Ops->>Pixie: Install Vizier once
   Ops->>Gate: Deploy once (no reset per test)
 
@@ -119,6 +121,7 @@ MongoDB egress and AMQP paths do not use Kaisel.
 
 ```bash
 kubectl get pods -n monarch-system
+kubectl get pods -n kaisel-system -l app=kaisel
 kubectl get pods -n pl -l name=vizier-pem
 kubectl get pods -n monarch-system -l app.kubernetes.io/name=pixie-gate
 px get viziers    # expect CS_HEALTHY

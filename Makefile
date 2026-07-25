@@ -10,6 +10,7 @@ IGRIS_RABBITMQ_DIR := pipeline/igrises/igris-rabbitmq
 EGRESS_RELAY_RABBITMQ_DIR := pipeline/egress-relay-rabbitmq
 RECORDER_IMG ?= recorder:latest
 PIXIE_GATE_IMG ?= pixie-gate:latest
+KAISEL_IMG ?= kaisel:latest
 IGRIS_RABBITMQ_IMG ?= igris-rabbitmq:latest
 EGRESS_RELAY_RABBITMQ_IMG ?= egress-relay-rabbitmq:latest
 IGRIS_IMG ?= igris-http:latest

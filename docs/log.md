@@ -11,6 +11,9 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-25]
 ### Added
+* 'testing/tools/e2e-reset-minikube.sh,testing/bats/lib/platform.bash': deploy Kaisel DaemonSet in minikube reset and bats platform bootstrap
+* 'testing/bats/lib/kaisel.bash,pipeline/*/go.sum': fix kaisel E2E stuck setup — fail hard on missing images; teardown --wait=false; tidy go.sum for docker builds
+* 'testing/bats/e2e/kaisel-capture': full-route E2E Monarch→prod→Kaisel→igris→shadow pods (traceparent + multicast + nginx access logs)
 * 'pipeline/siphon removed': deleted Siphon module; ShadowTest.spec.samplePercentage + status.kaiselPhase; HTTP ingress is Kaisel-only
 * 'pipeline/igrises/igris-http': ResolveContext rejects missing/invalid traceparent (no mint); tracing is a prerequisite for HTTP multicast
 * 'pipeline/kaisel + KaiselRule': Step 3b Kaisel→igris export — admit/SampledIn/Forward routed by dst IP via KaiselRule.igrisBaseURL; igris-http unchanged

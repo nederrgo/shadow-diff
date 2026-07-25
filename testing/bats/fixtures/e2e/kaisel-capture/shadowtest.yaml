@@ -6,6 +6,9 @@ metadata:
 spec:
   targetDeployment: kaisel-capture-prod
   targetNamespace: default
+  # control-a/b use target Deployment image (nginx); candidate uses newImage.
+  oldImage: nginx:alpine
   newImage: nginx:alpine
   servicePort: 8080
   applicationPort: 80
+  samplePercentage: 100

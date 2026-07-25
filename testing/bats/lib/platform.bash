@@ -54,6 +54,8 @@ platform_health_matrix() {
   kubectl get deploy monarch-controller-manager -n monarch-system >/dev/null 2>&1 || { echo "health: Monarch deploy missing" >&2; ok=0; }
   kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=60s >/dev/null 2>&1 || { echo "health: Monarch not ready" >&2; ok=0; }
   kubectl get deploy beru -n beru-system >/dev/null 2>&1 || { echo "health: Beru deploy missing" >&2; ok=0; }
+  kubectl get daemonset kaisel -n kaisel-system >/dev/null 2>&1 || { echo "health: Kaisel DaemonSet missing" >&2; ok=0; }
+  kubectl rollout status daemonset/kaisel -n kaisel-system --timeout=60s >/dev/null 2>&1 || { echo "health: Kaisel not ready" >&2; ok=0; }
 
   if pixie_vizier_installed; then
     pixie_vizier_healthy || { echo "health: Pixie not CS_HEALTHY" >&2; ok=0; }
@@ -90,6 +92,12 @@ platform_bootstrap_install() {
   kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
 
   kubectl apply -f "${REPO}/pipeline/beru/deploy/"
+
+  # shellcheck source=testing/bats/lib/kaisel.bash
+  source "${REPO}/testing/bats/lib/kaisel.bash"
+  echo "==> [bats] Kaisel DaemonSet (${KAISEL_IMG:-kaisel:dev})"
+  kaisel_daemonset_deploy
+  kaisel_daemonset_wait_ready 120
 
   if ! pixie_vizier_installed; then
     MINIKUBE_DRIVER="${MINIKUBE_DRIVER}" \
