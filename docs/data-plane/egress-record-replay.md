@@ -111,7 +111,7 @@ reconcileRecorderStack  → Recorder Deployment + Service (SHOP_HTTP_URL → Sho
 recorderDeploymentReady → requeue until available
 ```
 
-`PixieStreamRule.spec.recorderOtelEndpoint` is always set so pixie-stream-bridge runs the egress PxL.
+`PixieStreamRule.spec.recorderOtelEndpoint` is always set so pixie-gate runs the egress PxL.
 
 ---
 
@@ -169,6 +169,6 @@ Worker identity comes from `PixieStreamRule.targetLabels` (copied from the targe
 - Envoy egress ext_proc: [`pipeline/shop/internal/envoyextproc/egress.go`](../../pipeline/shop/internal/envoyextproc/egress.go)
 - Mock keys: [`pipeline/shop/internal/replay/keys.go`](../../pipeline/shop/internal/replay/keys.go)
 - Shop Put dedup: [`pipeline/shop/internal/replay/mockstore.go`](../../pipeline/shop/internal/replay/mockstore.go)
-- Egress PxL template: [`testing/bats/manifests/pixie-bridge/configmap.yaml`](../../testing/bats/manifests/pixie-bridge/configmap.yaml)
+- Egress PxL template: [`pipeline/pixie-gate/deploy/configmap.yaml`](../../pipeline/pixie-gate/deploy/configmap.yaml)
 - Monarch Recorder: [`pipeline/monarch/internal/controller/shadowtest_recorder.go`](../../pipeline/monarch/internal/controller/shadowtest_recorder.go)
 - Bats seed helper: [`testing/bats/lib/traffic.bash`](../../testing/bats/lib/traffic.bash) — `wait_recorder_seed`

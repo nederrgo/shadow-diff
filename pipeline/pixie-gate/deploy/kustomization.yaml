@@ -4,3 +4,4 @@ namespace: monarch-system
 resources:
   - rbac.yaml
   - configmap.yaml
+  - deployment.yaml

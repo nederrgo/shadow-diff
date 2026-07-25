@@ -368,7 +368,7 @@ Expected: process stops accepting new connections, waits for in-flight multicast
 
 ## Phase 3b — Pixie eBPF → Siphon OTLP (ingress capture)
 
-Siphon receives **OTLP gRPC** on `:4317` (logs and traces) from Pixie `px.export`, parses HTTP fields, and POSTs to **igris-http** in the shadow namespace. Monarch writes a `PixieStreamRule` per ShadowTest; **pixie-stream-bridge** renders PxL and runs `px.export` to `spec.otelEndpoint`.
+Siphon receives **OTLP gRPC** on `:4317` (logs and traces) from Pixie `px.export`, parses HTTP fields, and POSTs to **igris-http** in the shadow namespace. Monarch writes a `PixieStreamRule` per ShadowTest; **pixie-gate** renders PxL and runs `px.export` to `spec.otelEndpoint`.
 
 ### Pixie local sandbox (Minikube kvm2)
 
@@ -455,7 +455,7 @@ make uninstall
 | `grpcurl` connection refused | Beru not ready or no port-forward | Check `beru-system` pods; re-run port-forward |
 | Wrong cluster | Multiple kube contexts | `kubectl config current-context` |
 | Siphon `Degraded`, empty capture | TC not on CNI iface / no prod traffic | Check `/v1/status`; hit prod Service URL |
-| No Igris logs after prod curl | `sampleRate` 0 or wrong pod IPs | `kubectl get shadowtest -o yaml` → `captureTargets` |
+| No Igris logs after prod curl | `samplePercentage` sampling the trace out, missing `traceparent`, or wrong pod IPs | `kubectl get shadowtest -o yaml` → `siphon.samplePercentage` / `igrisRabbitmq.samplePercentage`; ensure W3C `traceparent` on the request |
 
 ---
 

@@ -176,10 +176,26 @@ func TestIgrisRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	byName := map[string]string{}
 	for _, e := range env {
+		byName[e.Name] = e.Value
 		if e.Name == envControlAAMQPURL && !strings.Contains(e.Value, ":5672/") {
 			t.Fatalf("CONTROL_A_AMQP_URL = %q, want port 5672", e.Value)
 		}
+	}
+	if byName[envSamplePercentage] != "100" {
+		t.Fatalf("IGRIS_RMQ_SAMPLE_PERCENTAGE = %q, want default 100", byName[envSamplePercentage])
+	}
+}
+
+func TestIgrisRabbitMQSamplePercentage(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{}
+	if got := igrisRabbitMQSamplePercentage(st); got != defaultIgrisRMQSamplePercentage {
+		t.Fatalf("default: got %d want %d", got, defaultIgrisRMQSamplePercentage)
+	}
+	st.Spec.IgrisRabbitMQ = &enginev1alpha1.IgrisRabbitMQSpec{SamplePercentage: 15}
+	if got := igrisRabbitMQSamplePercentage(st); got != 15 {
+		t.Fatalf("override: got %d want 15", got)
 	}
 }
 

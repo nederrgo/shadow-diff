@@ -41,7 +41,7 @@ done
 | `@test` | Traffic + `beru_wait_log` / `beru_wait_verdict_settled` |
 | `teardown_file` | Delete ShadowTest + prod stack (once); skipped when `BATS_KEEP=1` |
 
-The pixie-stream-bridge runs continuously — tests never `pkill` or restart it.
+The pixie-gate runs continuously — tests never `pkill` or restart it.
 
 ### Keep stack for dashboard UI
 

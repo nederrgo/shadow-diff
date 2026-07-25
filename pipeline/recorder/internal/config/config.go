@@ -17,21 +17,29 @@ const (
 
 // Config holds Recorder process configuration.
 type Config struct {
-	ListenAddr    string
-	OTLPGRPCAddr  string
-	ShopHTTPURL   string
-	PairTimeout   time.Duration
-	MaxFrameBytes int
+	ListenAddr       string
+	OTLPGRPCAddr     string
+	ShopHTTPURL      string
+	PairTimeout      time.Duration
+	MaxFrameBytes    int
+	SamplePercentage int
 }
 
 // Load reads configuration from the environment.
 func Load() Config {
 	cfg := Config{
-		ListenAddr:    envOr("RECORDER_LISTEN_ADDR", defaultListenAddr),
-		OTLPGRPCAddr:  envOr("RECORDER_OTLP_GRPC_ADDR", defaultOTLPGRPCAddr),
-		ShopHTTPURL:   strings.TrimSpace(os.Getenv("SHOP_HTTP_URL")),
-		PairTimeout:   defaultPairTimeout,
-		MaxFrameBytes: defaultMaxFrameBytes,
+		ListenAddr:       envOr("RECORDER_LISTEN_ADDR", defaultListenAddr),
+		OTLPGRPCAddr:     envOr("RECORDER_OTLP_GRPC_ADDR", defaultOTLPGRPCAddr),
+		ShopHTTPURL:      strings.TrimSpace(os.Getenv("SHOP_HTTP_URL")),
+		PairTimeout:      defaultPairTimeout,
+		MaxFrameBytes:    defaultMaxFrameBytes,
+		SamplePercentage: 100,
+	}
+	if v := os.Getenv("RECORDER_SAMPLE_PERCENTAGE"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+			cfg.SamplePercentage = n
+		}
 	}
 	if v := os.Getenv("RECORDER_PAIR_TIMEOUT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {

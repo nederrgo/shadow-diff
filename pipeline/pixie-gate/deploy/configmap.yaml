@@ -1,28 +1,29 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: pixie-stream-bridge
+  name: pixie-gate
   namespace: monarch-system
 data:
   http-ingress-export.pxl.tmpl: |
     import px
-
+    
     df = px.DataFrame(table='http_events', start_time='-60s', end_time=px.now())
-
+    
     df.namespace = df.ctx['namespace']
     df.pod = df.ctx['pod']
     df.service = df.ctx['service']
-
+    
     df = df[df.trace_role == 2]
     df = df[df.namespace == '__TARGET_NAMESPACE__']
+    df.trace_hdr = px.pluck(df.req_headers, 'traceparent')
     __LABEL_FILTERS__
     __EXCLUDE_PATH_FILTERS__
     __PORT_FILTERS__
-
+    __SAMPLE_FILTERS__
+    
     df.body = df.req_body
-    df.trace_hdr = px.pluck(df.req_headers, 'traceparent')
     df.end_time = df.time_ + df.latency
-
+    
     px.export(df, px.otel.Data(
       endpoint=px.otel.Endpoint(
         url='__OTEL_ENDPOINT__',
@@ -49,21 +50,25 @@ data:
     ))
   mongodb-export.pxl.tmpl: |
     import px
-
+    
     df = px.DataFrame(table='mongodb_events', start_time='-60s', end_time=px.now())
-
+    
     df.namespace = df.ctx['namespace']
     df.pod       = df.ctx['pod']
     df.service   = df.ctx['service']
-
+    
     df = df[df.namespace == '__SHADOW_NAMESPACE__']
     df = df[df.trace_role == 2]
     df = df[px.contains(df.req_body, '"comment"')]
-
+    
+    # ponytail: no samplePercentage here — mongo is captured on shadow pods only;
+    # ingress sampling (siphon / igris-rabbitmq) already decided which traces enter
+    # the shadow stack. Re-sampling would drop side-effects for in-stack traces.
+    
     df.end_time  = df.time_ + df.latency
     df.span_name = 'mongodb.egress'
     df.db_system = 'mongodb'
-
+    
     px.export(df, px.otel.Data(
       endpoint=px.otel.Endpoint(url='__MONGO_OTEL_ENDPOINT__', insecure=True),
       resource={
@@ -85,11 +90,11 @@ data:
     ))
   http-egress-export.pxl.tmpl: |
     import px
-
+    
     # ponytail: two exports — PxL has no reliable OR. Client branch covers outside HTTP
     # (trace_role=1 on worker); server branch covers in-cluster (trace_role=2 on
     # downstream, scoped by remote client == worker). Shop Put keeps first 2xx.
-
+    
     # --- client / external ---
     df = px.DataFrame(table='http_events', start_time='-60s', end_time=px.now())
     df.namespace = df.ctx['namespace']
@@ -98,10 +103,11 @@ data:
     df = df[df.namespace == '__TARGET_NAMESPACE__']
     df = df[df.trace_role == 1]
     df.req_host = px.pluck(df.req_headers, 'Host')
+    df.traceparent = px.pluck(df.req_headers, 'traceparent')
     __LABEL_FILTERS__
     __EXCLUDE_PATH_FILTERS__
+    __SAMPLE_FILTERS__
     df.end_time = df.time_ + df.latency
-    df.traceparent = px.pluck(df.req_headers, 'traceparent')
     px.export(df, px.otel.Data(
       endpoint=px.otel.Endpoint(
         url='__RECORDER_OTEL_ENDPOINT__',
@@ -129,7 +135,7 @@ data:
         ),
       ],
     ))
-
+    
     # --- server / in-cluster ---
     df = px.DataFrame(table='http_events', start_time='-60s', end_time=px.now())
     df.namespace = df.ctx['namespace']
@@ -139,10 +145,11 @@ data:
     df = df[df.trace_role == 2]
     df.req_host = px.pluck(df.req_headers, 'Host')
     df.client_pod = px.pod_id_to_pod_name(px.ip_to_pod_id(df.remote_addr))
+    df.traceparent = px.pluck(df.req_headers, 'traceparent')
     __REMOTE_CLIENT_FILTERS__
     __EXCLUDE_PATH_FILTERS__
+    __SAMPLE_FILTERS__
     df.end_time = df.time_ + df.latency
-    df.traceparent = px.pluck(df.req_headers, 'traceparent')
     px.export(df, px.otel.Data(
       endpoint=px.otel.Endpoint(
         url='__RECORDER_OTEL_ENDPOINT__',

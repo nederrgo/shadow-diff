@@ -1,6 +1,6 @@
 # Siphon
 
-**Siphon** is the **L1 — capture** ingress path for HTTP ShadowTests. **Pixie** eBPF (Vizier PEM) captures production `http_events`; **pixie-stream-bridge** runs `px.export` OTLP traces to Siphon **:4317**; Siphon parses span attributes and **HTTP POST**s to **igris-http (L2)** for multicast to shadow clones.
+**Siphon** is the **L1 — capture** ingress path for HTTP ShadowTests. **Pixie** eBPF (Vizier PEM) captures production `http_events`; **pixie-gate** runs `px.export` OTLP traces to Siphon **:4317**; Siphon parses span attributes and **HTTP POST**s to **igris-http (L2)** for multicast to shadow clones.
 
 RabbitMQ ShadowTests do not use Siphon — AMQP uses broker-native routing ([igris-rabbitmq](../igrises/igris-rabbitmq/)).
 
@@ -14,7 +14,7 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
   prod my-prod-app:80
         │
         ▼ (Pixie PEM eBPF — http_events)
-  pixie-stream-bridge (host: px run + px.export OTLP traces)
+  pixie-gate (monarch-system: px run + px.export OTLP traces)
         │
         ▼ gRPC OTLP (gzip)
   Siphon :4317  ──HTTP POST──►  igris-http  ──►  control-a / control-b / candidate
@@ -23,7 +23,7 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 | Component | Purpose |
 | --------- | ------- |
 | `PixieStreamRule` CR | Monarch declares prod pod labels, ports, and `otelEndpoint` (shadow Siphon Service) |
-| **pixie-stream-bridge** | Reconciles rules → PxL scripts; polls `px run` (not in-cluster) |
+| **pixie-gate** | Reconciles rules → PxL scripts; polls `px run` (in-cluster Deployment) |
 | Siphon OTLP receiver | One gRPC server for logs + traces → `HTTPRecord` → igris forwarder |
 | Shadow `Service/siphon` | Cluster DNS export target for Pixie (`siphon.<shadow-ns>.svc.cluster.local:4317`) |
 
@@ -63,7 +63,7 @@ make siphon-docker-build SIPHON_IMG=siphon:dev
 
 OTLP **trace** span attributes (from Pixie PxL): `http.request.method`, `url.path`, `traceparent`, `http.request.body` (string). Siphon forwards `traceparent` to Igris as an HTTP header.
 
-**Pixie PxL notes:** use `px.pluck(df.req_headers, 'traceparent')`; filter prod pods with `px.contains(df.pod, '<app>')` (not `df.service`); precompute `df.end_time = df.time_ + df.latency` for `px.otel.trace.Span`. Template: `testing/bats/manifests/pixie-bridge/configmap.yaml`.
+**Pixie PxL notes:** use `px.pluck(df.req_headers, 'traceparent')`; filter prod pods with `px.contains(df.pod, '<app>')` (not `df.service`); precompute `df.end_time = df.time_ + df.latency` for `px.otel.trace.Span`. Template: `pipeline/pixie-gate/deploy/configmap.yaml`.
 
 ---
 
@@ -72,11 +72,8 @@ OTLP **trace** span attributes (from Pixie PxL): `http.request.method`, `url.pat
 **Pixie + Minikube (verified eBPF path):**
 
 ```sh
-MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh   # Vizier in pl + px auth
+MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh   # Vizier + pixie-gate
 ./testing/tools/e2e-reset-minikube.sh --no-reset
-
-# background bridge (requires px auth — use px auth login --manual on WSL)
-nohup ./testing/bats/pixie-stream-bridge.sh > .cache/pixie-bridge/bridge.log 2>&1 &
 
 make test-bats-integration
 ```

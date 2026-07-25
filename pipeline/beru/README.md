@@ -12,7 +12,7 @@ Monarch provisions Beru automatically. When `spec.beruGRPCAddress` is unset, Mon
 | Path                     | How Beru receives data                          | What Beru does                                                       |
 | ------------------------ | ----------------------------------------------- | -------------------------------------------------------------------- |
 | **Ingress (HTTP)**       | Envoy sidecar **ingress `ext_proc`** (gRPC)     | Collects one response per role per trace → **diff-of-diffs**         |
-| **Egress diff (MongoDB)** | Pixie eBPF on MongoDB server pods → pixie-stream-bridge → **beru-local OTLP `:4317`** | Appends spans per trace → **sequence diff** with N+1 detection (re-diff on each arrival) |
+| **Egress diff (MongoDB)** | Pixie eBPF on MongoDB server pods → pixie-gate → **beru-local OTLP `:4317`** | Appends spans per trace → **sequence diff** with N+1 detection (re-diff on each arrival) |
 | **Egress diff (AMQP)**   | **egress-relay-rabbitmq** HTTP API              | Compares outbound broker publishes across the three roles (same sequence engine) |
 
 
@@ -197,11 +197,11 @@ Protobuf: `[api/proto/beru/v1/traffic.proto](api/proto/beru/v1/traffic.proto)` (
 Monarch sets `PixieStreamRule.mongoOtelEndpoint` to `beru-local.<shadow-ns>.svc.cluster.local:4317` when a MongoDB dependency is declared. The capture path is entirely server-side — no application instrumentation required:
 
 1. **Pixie PEM** captures `mongodb_events` on the MongoDB server pods (`trace_role == 2`, wire-protocol bytes).
-2. **pixie-stream-bridge** runs `mongodb-export.pxl.tmpl` — filters by shadow namespace and presence of `"comment"` in `req_body`, then exports OTLP to beru-local.
+2. **pixie-gate** runs `mongodb-export.pxl.tmpl` — filters by shadow namespace and presence of `"comment"` in `req_body`, then exports OTLP to beru-local.
 3. **Beru OTLP receiver** reads `db.raw_payload` (two-object MongoDB wire format: command doc + document body), extracts the `traceparent` injected by the worker into the `$comment` field, and derives the shadow role from the MongoDB pod name pattern.
 4. Beru strips `_id`, `lsid`, `comment`, and `$db` from the document body before diffing.
 
-The signature `mongodb:{operation}:{collection}` is derived from the wire command doc (e.g. `{"insert":"orders",…}` → `mongodb:insert:orders`). Beru deduplicates Pixie re-exports by span start time (pixie-stream-bridge runs every 3 s over a rolling window).
+The signature `mongodb:{operation}:{collection}` is derived from the wire command doc (e.g. `{"insert":"orders",…}` → `mongodb:insert:orders`). Beru deduplicates Pixie re-exports by span start time (pixie-gate runs every 3 s over a rolling window).
 
 Example: control-a and control-b each perform one `insert` into `orders`; the candidate performs that insert plus an extra `insert` → Beru logs `Egress count regression … expected 1 query but got 2`.
 
@@ -253,7 +253,7 @@ Root Makefile aliases: `make beru-build`, `make beru-test`, and Monarch's `make 
 | Path | How trace reaches Beru |
 | ---- | ---------------------- |
 | **HTTP ingress (Igris → Envoy)** | Igris injects W3C `traceparent` on multicast; Envoy ingress `ext_proc` reports responses. Apps usually need no trace code. |
-| **Mongo egress (Pixie → Beru)** | Pixie eBPF captures MongoDB wire bytes on server pods; pixie-stream-bridge exports OTLP to beru-local `:4317`. Workers inject `traceparent` into the MongoDB `$comment` field — no other app instrumentation required. |
+| **Mongo egress (Pixie → Beru)** | Pixie eBPF captures MongoDB wire bytes on server pods; pixie-gate exports OTLP to beru-local `:4317`. Workers inject `traceparent` into the MongoDB `$comment` field — no other app instrumentation required. |
 | **RabbitMQ egress (relay)** | Workers publish with W3C context (OTel `amqplib` / `pika` injection); egress-relay-rabbitmq reads Firehose and posts to Beru HTTP API (dedupes duplicate Firehose events by trace+span+payload). |
 
 RabbitMQ egress-relay deduplicates duplicate Firehose publishes (by trace+span+payload). Manual `traceparent` propagation is supported for libraries that cannot auto-inject — see `testing/example-apps/rmq-test-worker` with `RMQ_WORKER_MANUAL_TRACE=1`.

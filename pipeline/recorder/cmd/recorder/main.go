@@ -27,7 +27,7 @@ func main() {
 	store := ingest.NewSessionStore(client, cfg.PairTimeout, cfg.MaxFrameBytes)
 	defer store.Stop()
 
-	otlpRecv := otlprecv.NewOTLPReceiver(client, 4, 512, slog.Default())
+	otlpRecv := otlprecv.NewOTLPReceiver(client, 4, 512, cfg.SamplePercentage, slog.Default())
 	defer otlpRecv.Stop()
 
 	tcpSrv := ingest.NewServer(cfg.ListenAddr, store)

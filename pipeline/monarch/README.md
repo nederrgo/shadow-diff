@@ -2,7 +2,7 @@
 
 **Monarch** is the **control plane** for Shadow-Diff — it orchestrates **L0 through L5** from a single **`ShadowTest`** custom resource. The Kubebuilder operator reads your production target Deployment, provisions an isolated shadow namespace with three roles (control-a, control-b, candidate), and wires Pixie capture, Igris, Siphon, Shop, Recorder, AMQP relays, Envoy sidecars, and dependencies.
 
-Monarch does **not** run diffing or store traces (**Beru** does that). Shadow pods are **Envoy-only** (app + sidecar); apps must already propagate W3C `traceparent`. You install Pixie Vizier, pixie-stream-bridge, and (optionally) shared Beru separately; Monarch reconciles `PixieStreamRule` and cluster DNS wiring.
+Monarch does **not** run diffing or store traces (**Beru** does that). Shadow pods are **Envoy-only** (app + sidecar); apps must already propagate W3C `traceparent`. You install Pixie Vizier, pixie-gate, and (optionally) shared Beru separately; Monarch reconciles `PixieStreamRule` and cluster DNS wiring.
 
 See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) for layer definitions and data flow.
 
@@ -85,7 +85,7 @@ Field-level reference and examples: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 Deletion removes shadow namespace resources, prod AMQP queue (if applicable), and `PixieStreamRule`.
 
-**HTTP capture runtime (outside Monarch):** install Pixie Vizier (`testing/bats/setup/setup-local-pixie.sh`) and run **pixie-stream-bridge** on a host with `px` CLI + Pixie auth. The bridge runs **ingress and egress** `px.export` scripts when the rule exposes the corresponding endpoints. Monarch deploys the Siphon OTLP receiver in the shadow namespace for HTTP ingress.
+**HTTP capture runtime (outside Monarch):** install Pixie Vizier and **pixie-gate** (`testing/bats/setup/setup-local-pixie.sh`). pixie-gate runs **ingress and egress** `px.export` scripts when the rule exposes the corresponding endpoints. Monarch deploys the Siphon OTLP receiver in the shadow namespace for HTTP ingress.
 
 ### RabbitMQ shadow dependencies
 
@@ -158,7 +158,7 @@ Recommend **8GB+ Minikube memory** for the hybrid test (six dependency pods + th
 | --------- | ------------ | -------------- |
 | **Beru** | You (`pipeline/beru/deploy/`), or omit `beruGRPCAddress` | Wire Envoy `ext_proc` / ingest; or provision **beru-local** |
 | **Pixie Vizier** | You (`testing/bats/setup/setup-local-pixie.sh`) | Reconciles `PixieStreamRule` targeting prod labels |
-| **pixie-stream-bridge** | You (host process) | Not deployed by Monarch — runs ingress + egress `px.export` |
+| **pixie-gate** | You (`pipeline/pixie-gate/deploy/`) | Not deployed by Monarch — runs ingress + egress `px.export` |
 | **Siphon OTLP receiver** | Monarch (when HTTP ingress Siphon on) | Provisions `Service/siphon` + `Deployment/siphon` (`SIPHON_IGRIS_BASE_URL` → shadow igris-http) |
 | **Shop + Recorder** | Monarch (always) | Mock store + Pixie egress OTLP → `POST /v1/record_egress` |
 | **Production target** | You | Read-only mirror source; apps must propagate `traceparent` |

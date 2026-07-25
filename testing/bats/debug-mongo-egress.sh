@@ -52,38 +52,34 @@ fi
 SHADOW_NS="${SHADOW_NS:-}"
 MONGO_EP="${MONGO_EP:-}"
 
-# ── Layer 2: pixie-stream-bridge ─────────────────────────────────────────────
-hdr "Layer 2: pixie-stream-bridge process"
+# ── Layer 2: pixie-gate ──────────────────────────────────────────────────────
+hdr "Layer 2: pixie-gate Deployment"
 
-pid_file="${PIXIE_BRIDGE_STATE_DIR}/bridge.pid"
-if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
-  ok "bridge running pid=$(cat "$pid_file")"
+# shellcheck source=testing/bats/helpers/pixie-bridge.sh
+source "${REPO}/testing/bats/helpers/pixie-bridge.sh"
+if pixie_gate_ready; then
+  ok "pixie-gate Deployment Ready in monarch-system"
 else
-  fail "pixie-stream-bridge is NOT running (pid file: ${pid_file})"
+  fail "pixie-gate is NOT Ready"
   echo "      → Start with: ./testing/bats/setup/start-pixie-stream-bridge.sh"
 fi
 
-hdr "Layer 2b: rendered PxL files"
+hdr "Layer 2b: PixieStreamRule status"
 
-mongo_pxl=$(ls "${PIXIE_BRIDGE_STATE_DIR}/${SHADOWTEST_NS}-${rule_name}-mongo.pxl" 2>/dev/null || true)
-if [[ -n "$mongo_pxl" ]]; then
-  ok "mongo PxL rendered: ${mongo_pxl}"
-  echo
-  echo "      ── PxL content ──────────────────────────────────────"
-  sed 's/^/      /' "$mongo_pxl"
-  echo "      ─────────────────────────────────────────────────────"
+phase=$(kubectl get pixiestreamrule "$rule_name" -n "$SHADOWTEST_NS" \
+  -o jsonpath='{.status.phase}' 2>/dev/null || true)
+msg=$(kubectl get pixiestreamrule "$rule_name" -n "$SHADOWTEST_NS" \
+  -o jsonpath='{.status.message}' 2>/dev/null || true)
+if [[ "$phase" == "Active" ]]; then
+  ok "PixieStreamRule ${SHADOWTEST_NS}/${rule_name} Active (${msg})"
 else
-  fail "No mongo PxL file found at ${PIXIE_BRIDGE_STATE_DIR}/${SHADOWTEST_NS}-${rule_name}-mongo.pxl"
-  echo "      → Either the bridge hasn't run yet, or mongoOtelEndpoint was empty when it ran"
-  echo "      → Check bridge log: ${PIXIE_BRIDGE_STATE_DIR}/bridge.log"
+  fail "PixieStreamRule phase=${phase:-?} message=${msg:-}"
+  echo "      → Check: kubectl logs -n monarch-system -l app.kubernetes.io/name=pixie-gate"
 fi
 
-hdr "Layer 2c: bridge log (last 30 lines)"
-if [[ -f "${PIXIE_BRIDGE_STATE_DIR}/bridge.log" ]]; then
-  tail -30 "${PIXIE_BRIDGE_STATE_DIR}/bridge.log" | sed 's/^/      /'
-else
-  warn "No bridge.log found at ${PIXIE_BRIDGE_STATE_DIR}/bridge.log"
-fi
+hdr "Layer 2c: pixie-gate logs (last 30 lines)"
+kubectl logs -n monarch-system -l app.kubernetes.io/name=pixie-gate --tail=30 2>/dev/null | sed 's/^/      /' \
+  || warn "No pixie-gate logs"
 
 # ── Layer 3: Pixie tcp_events probe ──────────────────────────────────────────
 hdr "Layer 3: Pixie tcp_events — is port 27017 captured?"
@@ -186,7 +182,7 @@ fi
 hdr "What to check next based on findings"
 cat <<'HINTS'
   Layer 1 FAIL  → Monarch didn't create PixieStreamRule. Check `hasMongoDependency` and `pixieCaptureEnabled`.
-  Layer 2 FAIL  → Bridge not running. Run: ./testing/bats/setup/start-pixie-stream-bridge.sh
+  Layer 2 FAIL  → pixie-gate not Ready. Run: ./testing/bats/setup/start-pixie-stream-bridge.sh
   Layer 2b FAIL → Bridge ran but didn't render mongo.pxl. mongoOtelEndpoint was empty when bridge ran.
                   Restart bridge after Monarch sets the endpoint.
   Layer 3 FAIL  → Pixie isn't seeing MongoDB traffic. Verify:

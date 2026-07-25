@@ -128,23 +128,22 @@ http_otel_rmq_setup_pixie() {
   wait_pixie_vizier_healthy 120
   wait_pixie_http_events_ready 180
   wait_pixie_stream_rule "$shadowtest" "$shadowtest_ns" 120 1
-  echo "==> Restarting pixie-stream-bridge to pick up current PxL template"
-  stop_pixie_stream_bridge
-  start_pixie_stream_bridge_background 1
-  kubectl apply -k "$repo/testing/bats/manifests/pixie-bridge/" >/dev/null
+  echo "==> Ensuring pixie-gate has current PxL templates"
+  kubectl apply -k "$repo/pipeline/pixie-gate/deploy/" >/dev/null
+  restart_pixie_gate
   wait_pixie_mongo_pxl_ready "$shadowtest" "$shadowtest_ns" 60
 
   # Pixie's eBPF probe decodes MongoDB wire protocol only for connections it observes
   # from the initial TCP handshake. Shadow worker pods connect to MongoDB at startup,
   # before Pixie starts watching — restart them so the connections are re-established
-  # while the bridge is running. The rollout status waits in the caller handle readiness.
+  # while the gate is running. The rollout status waits in the caller handle readiness.
   local shadow_ns="shadow-${shadowtest_ns}-${shadowtest}"
   echo "==> Restarting shadow workers so MongoDB connections start under Pixie observation"
   for role in control-a control-b candidate; do
     kubectl rollout restart "deployment/${shadowtest}-${role}" -n "$shadow_ns" 2>/dev/null || true
   done
 
-  echo "==> Waiting 35s for bridge first export cycle"
+  echo "==> Waiting 35s for pixie-gate first export cycle"
   sleep 35
 }
 

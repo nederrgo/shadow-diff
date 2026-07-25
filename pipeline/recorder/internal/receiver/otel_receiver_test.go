@@ -30,7 +30,6 @@ func kvInt(key string, val int64) *commonpb.KeyValue {
 }
 
 func TestParseEgressRecordFromSpan_basic(t *testing.T) {
-	// Pixie-generated trace ID (different from the W3C trace ID below).
 	traceIDBytes := []byte{0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36}
 	const w3cTraceID = "aabb00112233445566778899ccddeeff"
 	span := &tracepb.Span{
@@ -57,13 +56,12 @@ func TestParseEgressRecordFromSpan_basic(t *testing.T) {
 	if rec.Response.Status != 200 || rec.Response.Body != "ok" {
 		t.Fatalf("response %+v", rec.Response)
 	}
-	// W3C traceparent attribute takes priority over span.TraceId.
 	if rec.TraceID != w3cTraceID {
 		t.Fatalf("trace ID %q, want %q", rec.TraceID, w3cTraceID)
 	}
 }
 
-func TestParseEgressRecordFromSpan_fallsBackToSpanTraceID(t *testing.T) {
+func TestParseEgressRecordFromSpan_requiresTraceparent(t *testing.T) {
 	traceIDBytes := []byte{0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36}
 	span := &tracepb.Span{
 		TraceId: traceIDBytes,
@@ -74,20 +72,15 @@ func TestParseEgressRecordFromSpan_fallsBackToSpanTraceID(t *testing.T) {
 			kvInt("http.response.status_code", 200),
 		},
 	}
-	rec, ok := parseEgressRecordFromSpan(span, nil)
-	if !ok {
-		t.Fatal("expected record")
-	}
-	// No traceparent attribute — falls back to hex(span.TraceId).
-	if rec.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
-		t.Fatalf("trace ID %q", rec.TraceID)
+	if _, ok := parseEgressRecordFromSpan(span, nil); ok {
+		t.Fatal("expected drop without W3C traceparent")
 	}
 }
 
 func TestExportTraces_enqueues(t *testing.T) {
 	ch := make(chan shop.RecordPayload, 1)
 	client := shop.NewClient("http://127.0.0.1:9")
-	r := NewOTLPReceiver(client, 1, 1, nil)
+	r := NewOTLPReceiver(client, 1, 1, 100, nil)
 	r.jobs = ch
 
 	req := &coltracepb.ExportTraceServiceRequest{
@@ -97,6 +90,7 @@ func TestExportTraces_enqueues(t *testing.T) {
 					Attributes: []*commonpb.KeyValue{
 						kvString("http.host", "egress-httpbin.default.svc.cluster.local"),
 						kvString("url.path", "/get"),
+						kvString("traceparent", "00-aabb00112233445566778899ccddeeff-00f067aa0ba902b7-01"),
 					},
 				}},
 			}},

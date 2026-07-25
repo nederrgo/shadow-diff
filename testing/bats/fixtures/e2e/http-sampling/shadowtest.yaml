@@ -1,0 +1,25 @@
+# HTTP sampling proof — siphon.samplePercentage: 10 (Pixie + Siphon defense)
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-http-sampling
+  namespace: default
+spec:
+  targetDeployment: http-rmq-go-prod
+  newImage: http-rmq-go-worker:dev
+
+  siphon:
+    samplePercentage: 10
+
+  inputs:
+    - port: 8888
+      driver: http_request
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

@@ -12,7 +12,7 @@ bats_init_env() {
   export REPO
 
   export BATS_STATE_DIR="${BATS_STATE_DIR:-${REPO}/.cache/shadow-diff-bats}"
-  export PIXIE_BRIDGE_STATE_DIR="${PIXIE_BRIDGE_STATE_DIR:-${REPO}/.cache/pixie-bridge}"
+  export PIXIE_GATE_IMG="${PIXIE_GATE_IMG:-pixie-gate:dev}"
 
   export MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
   export BERU_IMG="${BERU_IMG:-beru:dev}"

@@ -85,7 +85,7 @@ func TestParseHTTPRecordFromSpan_bodyAttribute(t *testing.T) {
 
 func TestExportTraces_enqueuesSpan(t *testing.T) {
 	fwd := &stubForwarder{}
-	r := NewOTLPReceiver(fwd, 1, 8, nil)
+	r := NewOTLPReceiver(fwd, 1, 8, 100, nil)
 
 	req := &coltracepb.ExportTraceServiceRequest{
 		ResourceSpans: []*tracepb.ResourceSpans{{
@@ -135,7 +135,7 @@ func (s *stubForwarder) Forward(ctx context.Context, record forwarder.HTTPRecord
 
 func TestExport_enqueuesWithoutBlockingOnFullQueue(t *testing.T) {
 	fwd := &stubForwarder{}
-	r := NewOTLPReceiver(fwd, 1, 1, nil)
+	r := NewOTLPReceiver(fwd, 1, 1, 100, nil)
 
 	req := &collogspb.ExportLogsServiceRequest{
 		ResourceLogs: []*logspb.ResourceLogs{{
@@ -143,9 +143,11 @@ func TestExport_enqueuesWithoutBlockingOnFullQueue(t *testing.T) {
 				LogRecords: []*logspb.LogRecord{
 					{Attributes: []*commonpb.KeyValue{
 						kvString("url.path", "/a"),
+						kvString("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
 					}},
 					{Attributes: []*commonpb.KeyValue{
 						kvString("url.path", "/b"),
+						kvString("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
 					}},
 				},
 			}},

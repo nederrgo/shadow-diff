@@ -1,14 +1,12 @@
-# Pixie bridge helpers — no stop/restart between tests.
+# Pixie gate helpers — no stop/restart between tests.
 # shellcheck shell=bash
 
 bats_assert_bridge_running() {
   bats_source_pixie_helpers
-  local pid
-  pid=$(_pixie_bridge_running_pid 2>/dev/null || true)
-  [[ -n "$pid" ]] || {
-    echo "pixie-stream-bridge is not running" >&2
+  if ! pixie_gate_ready; then
+    echo "pixie-gate Deployment is not Ready in monarch-system" >&2
     return 1
-  }
+  fi
   return 0
 }
 
@@ -22,4 +20,4 @@ bats_wait_pixie_after_shadowtest() {
   fi
 }
 
-# Banned in tests: stop_pixie_stream_bridge, start_pixie_stream_bridge_background 1
+# Banned in tests: restart_pixie_gate (platform infra; avoid per-test churn)

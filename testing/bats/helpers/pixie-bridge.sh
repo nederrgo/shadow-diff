@@ -1,5 +1,5 @@
-# Pixie Vizier install + PixieStreamRule PxL bridge helpers.
-# Source from setup-local-pixie.sh and pixie-stream-bridge.sh; do not execute directly.
+# Pixie Vizier install + pixie-gate deploy helpers.
+# Source from setup-local-pixie.sh; do not execute directly.
 
 PIXIE_NAMESPACE="${PIXIE_NAMESPACE:-pl}"
 PIXIE_CLUSTER_NAME="${PIXIE_CLUSTER_NAME:-monarch-local}"
@@ -294,7 +294,7 @@ pixie_bridge_repo() {
 pixie_pxl_template() {
   local kind="${1:-ingress}" repo tpl marker
   repo=$(pixie_bridge_repo)
-  tpl="${repo}/testing/bats/manifests/pixie-bridge/configmap.yaml"
+  tpl="${repo}/pipeline/pixie-gate/deploy/configmap.yaml"
   case "$kind" in
     ingress) marker='http-ingress-export.pxl.tmpl' ;;
     egress) marker='http-egress-export.pxl.tmpl' ;;
@@ -310,28 +310,31 @@ pixie_pxl_template() {
 
 _render_pixie_pxl() {
   local rule_json="$1" out="$2" kind="$3"
-  local labels excludes ports hosts label_lines exclude_lines port_lines host_lines remote_client_lines tpl tmp_rule
+  local labels excludes ports hosts sample label_lines exclude_lines port_lines host_lines remote_client_lines sample_lines tpl tmp_rule
   labels=$(echo "$rule_json" | jq -c '.spec.targetLabels // {}')
   excludes=$(echo "$rule_json" | jq -c '.spec.excludePaths // []')
   ports=$(echo "$rule_json" | jq -c '.spec.targetPorts // []')
   hosts=$(echo "$rule_json" | jq -c '.spec.recordAndReplayHosts // []')
+  sample=$(echo "$rule_json" | jq -r '.spec.samplePercentage // 100')
   exclude_lines=$(pixie_exclude_path_lines "$excludes")
   remote_client_lines="# no remote client filters"
   if [[ "$kind" == "ingress" ]]; then
     label_lines=$(pixie_label_filter_lines "$labels")
     port_lines=$(pixie_port_filter_lines "$ports")
     host_lines="# ingress: prod pod label filters"
+    sample_lines=$(pixie_sample_filter_lines "$sample" trace_hdr)
   else
     label_lines=$(pixie_label_filter_lines "$labels")
     remote_client_lines=$(pixie_remote_client_filter_lines "$labels")
     port_lines="# egress: no local_port filter"
     host_lines="# egress: dual-branch client+server"
+    sample_lines=$(pixie_sample_filter_lines "$sample" traceparent)
   fi
   tpl=$(pixie_pxl_template "$kind")
   mkdir -p "$(dirname "$out")"
   tmp_rule=$(mktemp)
   printf '%s' "$rule_json" >"$tmp_rule"
-  PIXL_TPL="$tpl" PIXL_KIND="$kind" PIXL_LABELS="$label_lines" PIXL_REMOTE_CLIENT="$remote_client_lines" PIXL_EXCLUDES="$exclude_lines" PIXL_PORTS="$port_lines" PIXL_EGRESS_HOSTS="$host_lines" \
+  PIXL_TPL="$tpl" PIXL_KIND="$kind" PIXL_LABELS="$label_lines" PIXL_REMOTE_CLIENT="$remote_client_lines" PIXL_EXCLUDES="$exclude_lines" PIXL_PORTS="$port_lines" PIXL_EGRESS_HOSTS="$host_lines" PIXL_SAMPLE="$sample_lines" \
     python3 - "$tmp_rule" "$out" <<'PY'
 import json, sys, os
 
@@ -348,6 +351,7 @@ text = text.replace('__REMOTE_CLIENT_FILTERS__', os.environ.get('PIXL_REMOTE_CLI
 text = text.replace('__EXCLUDE_PATH_FILTERS__', os.environ.get('PIXL_EXCLUDES', '').strip())
 text = text.replace('__PORT_FILTERS__', os.environ.get('PIXL_PORTS', '').strip())
 text = text.replace('__EGRESS_HOST_FILTERS__', os.environ.get('PIXL_EGRESS_HOSTS', '').strip())
+text = text.replace('__SAMPLE_FILTERS__', os.environ.get('PIXL_SAMPLE', '').strip())
 with open(out, 'w') as f:
     f.write(text)
 PY
@@ -363,6 +367,8 @@ render_pixie_egress_pxl() {
 }
 
 render_pixie_mongo_pxl() {
+  # ponytail: mongo PxL targets the shadow namespace only — no samplePercentage
+  # (ingress already sampled which traces reach shadow pods).
   local rule_json="$1" out="$2" tpl tmp_rule
   tpl=$(pixie_pxl_template mongo)
   mkdir -p "$(dirname "$out")"
@@ -441,6 +447,37 @@ pixie_exclude_path_lines() {
   done
 }
 
+# ponytail: px.atoi(s, default) is NOT radix — second arg is parse-failure default.
+# Build V from two hex nibbles via nested px.select (0-9a-f after tolower).
+pixie_hex_nibble_expr() {
+  local col="$1" e="-1" pair ch val
+  for pair in f:15 e:14 d:13 c:12 b:11 a:10 9:9 8:8 7:7 6:6 5:5 4:4 3:3 2:2 1:1 0:0; do
+    ch="${pair%%:*}"
+    val="${pair##*:}"
+    e="px.select(${col} == '${ch}', ${val}, ${e})"
+  done
+  echo "$e"
+}
+
+pixie_sample_filter_lines() {
+  # Shared prod-gate rule with Go: V = int(trace_id[0:2], 16);
+  # keep iff (V*100) < (N*256). Column holds full W3C traceparent (tid starts at index 3).
+  # Always drop empty/missing tracing; omit percentage filter when N>=100.
+  local pct="$1" column="${2:-trace_hdr}"
+  echo "df = df[df.${column} != '']"
+  if [[ -z "$pct" || "$pct" == "null" || "$pct" -ge 100 ]]; then
+    return 0
+  fi
+  echo "df._h0 = px.tolower(px.substring(df.${column}, 3, 1))"
+  echo "df._h1 = px.tolower(px.substring(df.${column}, 4, 1))"
+  echo "df._n0 = $(pixie_hex_nibble_expr "df._h0")"
+  echo "df._n1 = $(pixie_hex_nibble_expr "df._h1")"
+  echo "df = df[df._n0 >= 0]"
+  echo "df = df[df._n1 >= 0]"
+  echo "df._sample_v = df._n0 * 16 + df._n1"
+  echo "df = df[(df._sample_v * 100) < (${pct} * 256)]"
+}
+
 pixie_port_filter_lines() {
   local ports_json="$1" p
   if [[ -z "$ports_json" || "$ports_json" == "null" || "$ports_json" == "[]" ]]; then
@@ -482,115 +519,99 @@ patch_pixie_stream_rule_status() {
 }
 
 apply_pixie_bridge_manifests() {
+  apply_pixie_gate_manifests
+}
+
+# Ensure PIXIE_API_KEY Secret for the in-cluster pixie-gate Deployment.
+ensure_pixie_gate_secret() {
+  local key="${PIXIE_API_KEY:-${PX_API_KEY:-}}"
+  kubectl create namespace monarch-system --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  if [[ -z "$key" ]]; then
+    if kubectl get secret pixie-gate -n monarch-system >/dev/null 2>&1; then
+      echo "    reusing existing monarch-system/pixie-gate Secret"
+      return 0
+    fi
+    echo "ERROR: PIXIE_API_KEY required to deploy pixie-gate (or pre-create secret/pixie-gate)" >&2
+    return 1
+  fi
+  kubectl create secret generic pixie-gate -n monarch-system \
+    --from-literal=PIXIE_API_KEY="$key" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  echo "    applied monarch-system/pixie-gate Secret"
+}
+
+# Apply least-privilege RBAC + ConfigMap + Deployment for pixie-gate.
+apply_pixie_gate_manifests() {
+  local repo img="${PIXIE_GATE_IMG:-pixie-gate:dev}"
+  repo=$(pixie_bridge_repo)
+  ensure_pixie_gate_secret
+  kubectl apply -k "${repo}/pipeline/pixie-gate/deploy/" >/dev/null
+  kubectl set image deployment/pixie-gate -n monarch-system pixie-gate="$img" >/dev/null
+  echo "    applied pixie-gate (image=${img}) in monarch-system"
+}
+
+pixie_gate_ready() {
+  local ready
+  ready=$(kubectl get deploy pixie-gate -n monarch-system \
+    -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)
+  [[ "${ready:-0}" -ge 1 ]]
+}
+
+wait_pixie_gate_ready() {
+  local max_wait="${1:-180}"
+  echo "==> Wait for pixie-gate Deployment Ready (timeout=${max_wait}s)"
+  if ! kubectl rollout status deployment/pixie-gate -n monarch-system --timeout="${max_wait}s"; then
+    echo "ERROR: pixie-gate Deployment not Ready" >&2
+    kubectl describe deploy pixie-gate -n monarch-system 2>/dev/null | sed 's/^/       /' >&2 || true
+    kubectl logs -n monarch-system -l app.kubernetes.io/name=pixie-gate --tail=40 2>/dev/null | sed 's/^/       /' >&2 || true
+    return 1
+  fi
+  echo "    pixie-gate Ready"
+}
+
+deploy_pixie_gate() {
+  apply_pixie_gate_manifests
+  wait_pixie_gate_ready "${1:-180}"
+}
+
+restart_pixie_gate() {
+  echo "==> Restarting pixie-gate Deployment"
+  kubectl rollout restart deployment/pixie-gate -n monarch-system
+  wait_pixie_gate_ready 180
+}
+
+# Deprecated host-daemon helpers — redirect to Deployment.
+pixie_bridge_start_hint() {
   local repo
   repo=$(pixie_bridge_repo)
-  kubectl create namespace monarch-system --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  kubectl apply -k "${repo}/testing/bats/manifests/pixie-bridge/"
-  echo "    applied pixie-stream-bridge RBAC + ConfigMap in monarch-system"
+  echo "deploy_pixie_gate (see ${repo}/pipeline/pixie-gate/deploy/)"
+}
+
+_pixie_bridge_running_pid() {
+  # Back-compat for callers that still check a PID: succeed when Deployment is Ready.
+  if pixie_gate_ready; then
+    echo "deploy"
+    return 0
+  fi
+  return 1
+}
+
+stop_pixie_stream_bridge() {
+  # Host daemon no longer used; leave Deployment running (platform infrastructure).
+  return 0
+}
+
+start_pixie_stream_bridge_background() {
+  # force arg ignored — Deployment is reconciled via apply + wait.
+  deploy_pixie_gate 180
 }
 
 run_pixie_export_once() {
   local pxl_file="$1" err cluster_id
   cluster_id=$(_resolve_pixie_cluster_id)
-  # ponytail: px run blocks on OTLP export; timeout keeps bridge killable via SIGTERM
+  # ponytail: host-side debug helper only; production path is pixie-gate
   if ! err=$(timeout 25 px run ${cluster_id:+-c "$cluster_id"} -f "$pxl_file" 2>&1); then
     echo "WARN: px run export failed for ${pxl_file}: $(echo "$err" | tail -1)" >&2
     return 1
   fi
-}
-
-pixie_bridge_start_hint() {
-  local repo
-  repo=$(pixie_bridge_repo)
-  echo "${repo}/testing/bats/setup/start-pixie-stream-bridge.sh"
-}
-
-_pixie_bridge_pid_valid() {
-  local pid="$1"
-  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && \
-    grep -qF "testing/bats/pixie-stream-bridge.sh" "/proc/${pid}/cmdline" 2>/dev/null
-}
-
-_pixie_bridge_running_pid() {
-  local pid_file="${1:-}"
-  local existing_pid="" p
-  if [[ -n "$pid_file" && -f "$pid_file" ]]; then
-    existing_pid=$(cat "$pid_file" 2>/dev/null || true)
-    if _pixie_bridge_pid_valid "$existing_pid"; then
-      echo "$existing_pid"
-      return 0
-    fi
-  fi
-  for p in $(pgrep -f "testing/bats/pixie-stream-bridge\.sh" 2>/dev/null || true); do
-    if _pixie_bridge_pid_valid "$p"; then
-      echo "$p"
-      return 0
-    fi
-  done
-  return 1
-}
-
-# ponytail: wait covers one px run cycle (timeout 25s); upgrade path = supervisor with preStop grace
-stop_pixie_stream_bridge() {
-  local repo max_wait="${1:-35}" i=0 pid_file existing_pid
-  repo=$(pixie_bridge_repo)
-  PIXIE_BRIDGE_STATE_DIR="${PIXIE_BRIDGE_STATE_DIR:-${repo}/.cache/pixie-bridge}"
-  pid_file="${PIXIE_BRIDGE_STATE_DIR}/bridge.pid"
-  existing_pid=$(_pixie_bridge_running_pid "$pid_file" 2>/dev/null || true)
-  if [[ -z "$existing_pid" ]]; then
-    rm -f "$pid_file"
-    return 0
-  fi
-  echo "==> Stopping pixie-stream-bridge pid=${existing_pid}"
-  kill -TERM "$existing_pid" 2>/dev/null || true
-  pkill -TERM -f "pixie-stream-bridge\.sh" 2>/dev/null || true
-  while [[ "$i" -lt "$max_wait" ]]; do
-    existing_pid=$(_pixie_bridge_running_pid "$pid_file" 2>/dev/null || true)
-    [[ -z "$existing_pid" ]] && break
-    sleep 1
-    i=$((i + 1))
-  done
-  existing_pid=$(_pixie_bridge_running_pid "$pid_file" 2>/dev/null || true)
-  if [[ -n "$existing_pid" ]]; then
-    echo "WARN: pixie-stream-bridge still running after ${max_wait}s — sending SIGKILL" >&2
-    kill -KILL "$existing_pid" 2>/dev/null || true
-    pkill -KILL -f "pixie-stream-bridge\.sh" 2>/dev/null || true
-    sleep 1
-  fi
-  rm -f "$pid_file"
-}
-
-# mkdir before nohup redirect — shell opens bridge.log before pixie-stream-bridge.sh runs.
-start_pixie_stream_bridge_background() {
-  local repo pid_file new_pid force="${1:-0}"
-  repo=$(pixie_bridge_repo)
-  export REPO="$repo"
-  PIXIE_BRIDGE_STATE_DIR="${PIXIE_BRIDGE_STATE_DIR:-${repo}/.cache/pixie-bridge}"
-  mkdir -p "$PIXIE_BRIDGE_STATE_DIR"
-  pid_file="${PIXIE_BRIDGE_STATE_DIR}/bridge.pid"
-  if [[ "$force" == "1" ]]; then
-    stop_pixie_stream_bridge
-  else
-    local existing_pid=""
-    existing_pid=$(_pixie_bridge_running_pid "$pid_file" 2>/dev/null || true)
-    if [[ -n "$existing_pid" ]]; then
-      echo "pixie-stream-bridge already running pid=${existing_pid}"
-      echo "$existing_pid" >"$pid_file"
-      return 0
-    fi
-    rm -f "$pid_file"
-  fi
-  # ponytail: close inherited bats platform flock (fd 9) — otherwise later setup_files block on flock forever
-  nohup bash -c 'exec 9>&- 2>/dev/null; exec "$1"' _ "${repo}/testing/bats/pixie-stream-bridge.sh" \
-    >"${PIXIE_BRIDGE_STATE_DIR}/bridge.log" 2>&1 &
-  new_pid=$!
-  echo "$new_pid" >"$pid_file"
-  sleep 1
-  if ! kill -0 "$new_pid" 2>/dev/null || ! _pixie_bridge_pid_valid "$new_pid"; then
-    echo "ERROR: pixie-stream-bridge failed to start (pid=${new_pid})" >&2
-    tail -20 "${PIXIE_BRIDGE_STATE_DIR}/bridge.log" 2>/dev/null | sed 's/^/       /' >&2 || true
-    rm -f "$pid_file"
-    return 1
-  fi
-  echo "pixie-stream-bridge started pid=${new_pid} log=${PIXIE_BRIDGE_STATE_DIR}/bridge.log"
 }

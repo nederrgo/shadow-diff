@@ -6,7 +6,7 @@ End-to-end fixtures for **zero-touch W3C trace propagation** across RabbitMQ con
 
 - Minikube with Monarch + Beru (`./testing/tools/e2e-reset-minikube.sh`)
 - Monarch operator with **`MONARCH_MODE=dev`** (set by reset / bats platform bootstrap)
-- Pixie Vizier + pixie-stream-bridge for Mongo/HTTP capture paths used by hybrid suites
+- Pixie Vizier + pixie-gate for Mongo/HTTP capture paths used by hybrid suites
 
 ## Run
 

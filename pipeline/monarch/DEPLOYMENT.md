@@ -207,6 +207,7 @@ Used when any input has `driver: rabbitmq_message`.
 |-------|-------------|
 | `igrisRabbitmq` | Override **igris-rabbitmq** Deployment (prod queue → three shadow brokers) |
 | `igrisRabbitmq.image` | Default `igris-rabbitmq:latest` |
+| `igrisRabbitmq.samplePercentage` | Prod AMQP gate: shared `(V*100)<(N*256)` on W3C trace id (1–100; default `100`). Empty traceparent dropped. |
 | `egressRelayRabbitmq` | Override **egress-relay-rabbitmq** (Firehose → Beru egress API) |
 | `egressRelayRabbitmq.image` | Default `egress-relay-rabbitmq:latest` |
 | `egressRelayRabbitmq.replicas` | Default `1` |
@@ -219,7 +220,7 @@ Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`** and se
 |-------|-------------|
 | `siphon.enabled` | `true` enables capture; **`false` disables**. When omitted, Siphon is **on** if an HTTP/TCP input port matches `servicePort`, `applicationPort`, or a declared container port — otherwise **off** |
 | `siphon.image` | DaemonSet image (default `siphon:latest` / `siphon:dev`) |
-| `siphon.sampleRate` | Percentage of new TCP flows to sample (0–100; default `100`) |
+| `siphon.samplePercentage` | Prod HTTP gate (Pixie + Siphon/Recorder defense): shared `(V*100)<(N*256)` on first two hex digits of the trace id (1–100; default `100`). Empty `traceparent` dropped. Shadow Mongo is not sampled. |
 
 Monarch reconciles `PixieStreamRule` + shadow `Service/siphon` + `Deployment/siphon` for HTTP ingress (image via `spec.siphon.image` / `SIPHON_IMAGE` / `MONARCH_MODE`). **`status.siphonPhase`**: `Ready`, `Degraded`, or `Disabled`.
 

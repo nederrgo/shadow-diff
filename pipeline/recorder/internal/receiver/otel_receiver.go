@@ -2,7 +2,6 @@ package receiver
 
 import (
 	"context"
-	"encoding/hex"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -15,33 +14,39 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
 	"github.com/shadow-diff/recorder/internal/parse"
+	"github.com/shadow-diff/recorder/internal/sample"
 	"github.com/shadow-diff/recorder/internal/shop"
 )
 
 // OTLPReceiver ingests Pixie egress OTLP traces and posts to Shop.
 type OTLPReceiver struct {
-	shopClient *shop.Client
-	jobs       chan shop.RecordPayload
-	wg         sync.WaitGroup
-	dropped    atomic.Uint64
-	log        *slog.Logger
-	stopOnce   sync.Once
+	shopClient       *shop.Client
+	jobs             chan shop.RecordPayload
+	wg               sync.WaitGroup
+	dropped          atomic.Uint64
+	samplePercentage int
+	log              *slog.Logger
+	stopOnce         sync.Once
 }
 
-func NewOTLPReceiver(client *shop.Client, workers, queueSize int, log *slog.Logger) *OTLPReceiver {
+func NewOTLPReceiver(client *shop.Client, workers, queueSize, samplePercentage int, log *slog.Logger) *OTLPReceiver {
 	if workers <= 0 {
 		workers = 4
 	}
 	if queueSize <= 0 {
 		queueSize = 512
 	}
+	if samplePercentage <= 0 {
+		samplePercentage = 100
+	}
 	if log == nil {
 		log = slog.Default()
 	}
 	r := &OTLPReceiver{
-		shopClient: client,
-		jobs:       make(chan shop.RecordPayload, queueSize),
-		log:        log,
+		shopClient:       client,
+		jobs:             make(chan shop.RecordPayload, queueSize),
+		samplePercentage: samplePercentage,
+		log:              log,
 	}
 	for i := 0; i < workers; i++ {
 		r.wg.Add(1)
@@ -77,7 +82,7 @@ func (r *OTLPReceiver) ExportTraces(ctx context.Context, req *coltracepb.ExportT
 		for _, ss := range rs.GetScopeSpans() {
 			for _, span := range ss.GetSpans() {
 				record, ok := parseEgressRecordFromSpan(span, rs.GetResource())
-				if !ok {
+				if !ok || !r.admit(record.TraceID) {
 					continue
 				}
 				select {
@@ -89,6 +94,10 @@ func (r *OTLPReceiver) ExportTraces(ctx context.Context, req *coltracepb.ExportT
 		}
 	}
 	return &coltracepb.ExportTraceServiceResponse{}, nil
+}
+
+func (r *OTLPReceiver) admit(traceID string) bool {
+	return sample.SampledIn(traceID, r.samplePercentage)
 }
 
 func parseEgressRecordFromSpan(
@@ -128,12 +137,11 @@ func parseEgressRecordFromSpan(
 
 	respBody := firstAttr(attrs, "http.response.body")
 
-	// Prefer the W3C traceparent attribute stamped by the PxL script; fall
-	// back to the Pixie-generated span.TraceId (which won't match the shadow
-	// workers' traceparent and will cause a 599 regression).
-	traceID := traceIDFromTraceparent(firstAttr(attrs, "traceparent"))
-	if traceID == "" {
-		traceID = hex.EncodeToString(span.TraceId)
+	// Prefer the W3C traceparent attribute stamped by the PxL script.
+	// Tracing is required — do not fall back to Pixie span.TraceId for admission.
+	traceID, ok := sample.TraceIDFromTraceparent(firstAttr(attrs, "traceparent"))
+	if !ok {
+		return shop.RecordPayload{}, false
 	}
 
 	return shop.RecordPayload{
@@ -185,16 +193,6 @@ func firstAttr(attrs map[string]string, keys ...string) string {
 		if v := strings.TrimSpace(attrs[k]); v != "" {
 			return v
 		}
-	}
-	return ""
-}
-
-// traceIDFromTraceparent extracts the 32-char trace ID from a W3C traceparent header.
-// Returns empty string if the value is absent or malformed.
-func traceIDFromTraceparent(v string) string {
-	parts := strings.SplitN(v, "-", 4)
-	if len(parts) >= 2 && len(parts[1]) == 32 {
-		return parts[1]
 	}
 	return ""
 }

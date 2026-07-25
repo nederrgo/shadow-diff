@@ -93,7 +93,7 @@ Listens on ports from `/etc/igris/listeners.json` (written by Monarch). Stamps W
 Consumes the Monarch-declared shadow queue on the prod broker, republishes to 3× shadow RabbitMQ brokers with trace headers.
 
 **`pipeline/siphon/`** — Pixie ingress bridge  
-Receives compressed OTLP gRPC from pixie-stream-bridge on `:4317`, parses span attributes → `HTTPRecord`, POSTs to igris-http. Monarch deploys Siphon into the shadow namespace when HTTP ingress capture is enabled.
+Receives compressed OTLP gRPC from pixie-gate on `:4317`, parses span attributes → `HTTPRecord`, POSTs to igris-http. Monarch deploys Siphon into the shadow namespace when HTTP ingress capture is enabled.
 
 **`pipeline/shop/`** — Per-ShadowTest HTTP egress mock store  
 In-memory mock store deployed by Monarch into each shadow namespace alongside Recorder. gRPC ext_proc on `:50051` (Envoy egress replay), HTTP `:8080` (`POST /v1/record_egress` seeding). Mocks keyed by `trace:<traceID>:<METHOD>:<host>:<path>`.
@@ -106,9 +106,9 @@ Subscribes to Firehose on each shadow broker, deduplicates (OTel pika double-pub
 
 ### Pixie integration
 
-`PixieStreamRule` CR is reconciled by Monarch → the **pixie-stream-bridge** host process (`testing/bats/pixie-stream-bridge.sh`) polls rules and runs `px run -f <pxl>` → Pixie emits OTLP → Siphon (ingress) or Recorder (egress) or beru-local OTLP port (MongoDB).  
-PxL templates live in `testing/bats/manifests/pixie-bridge/configmap.yaml`.  
-Rendering helpers: `testing/bats/helpers/pixie-bridge.sh`.
+`PixieStreamRule` CR is reconciled by Monarch → the **pixie-gate** Deployment (`pipeline/pixie-gate/`) polls rules and runs `px run -f <pxl>` → Pixie emits OTLP → Siphon (ingress) or Recorder (egress) or beru-local OTLP port (MongoDB).  
+PxL templates live in `pipeline/pixie-gate/deploy/configmap.yaml` (and embedded under `internal/pxl/templates/`).  
+Bootstrap helpers: `testing/bats/helpers/pixie-bridge.sh` (Vizier install + `deploy_pixie_gate`).
 
 ### Beru-local
 

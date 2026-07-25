@@ -69,6 +69,14 @@ spec:
                 description: RecorderOTelEndpoint is gRPC OTLP export for egress spans
                   (client or in-cluster server-side).
                 type: string
+              samplePercentage:
+                description: |-
+                  SamplePercentage is the percentage of prod HTTP traces to capture for
+                  ingress and egress (1-100, default 100). Rendered into PxL as the shared
+                  (V*100)<(N*256) filter; Mongo export (shadow namespace) ignores this field.
+                maximum: 100
+                minimum: 1
+                type: integer
               shadowNamespace:
                 description: |-
                   ShadowNamespace is the shadow namespace containing shadow app pods.

@@ -1,0 +1,29 @@
+# RMQ sampling proof — igrisRabbitmq.samplePercentage: 10
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-rmq-sampling
+  namespace: default
+spec:
+  targetDeployment: nodejs-prod-worker
+  newImage: nodejs-hybrid-worker:dev
+
+  igrisRabbitmq:
+    samplePercentage: 10
+
+  inputs:
+    - driver: rabbitmq_message
+      amqp:
+        prodUrl: amqp://guest:guest@rmq-prod-broker.default.svc.cluster.local:5672/
+        exchange: orders
+        routingKey: order.created
+        targetDependency: rabbitmq
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

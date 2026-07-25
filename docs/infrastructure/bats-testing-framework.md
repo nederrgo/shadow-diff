@@ -37,8 +37,9 @@ testing/bats/
   fixtures/               # per-suite CR YAML
   vendor/                 # bats-core, bats-support, bats-assert (vendored)
   package.json            # tap-mocha-reporter pin (Jest-like output)
-  pixie-stream-bridge.sh  # long-running Pixie export loop
   debug-mongo-egress.sh   # interactive 5-layer egress diagnostic
+
+pipeline/pixie-gate/      # in-cluster PixieStreamRule → PxL gateway (platform infra)
 
 testing/tools/            # standalone developer utilities (not called by bats)
   e2e-reset-minikube.sh   # bootstrap a local minikube cluster from scratch
@@ -52,7 +53,7 @@ testing/tools/            # standalone developer utilities (not called by bats)
 - Minikube (kvm2/virtualbox)
 - Monarch CRDs + operator (`MONARCH_MODE=dev`)
 - Beru (`beru-system`)
-- Pixie Vizier + **continuous** pixie-stream-bridge (no per-test restart)
+- Pixie Vizier + **continuous** pixie-gate (no per-test restart)
 - Siphon RBAC
 
 Escape hatches: `SKIP_PLATFORM_BOOTSTRAP`, `SKIP_BUILD`, `SKIP_LOAD`, `BATS_FORCE_PLATFORM_BOOTSTRAP`.

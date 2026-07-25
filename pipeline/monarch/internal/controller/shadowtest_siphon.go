@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -21,9 +22,10 @@ import (
 )
 
 const (
-	defaultSiphonMaxPayloadSize = 65536
-	shadowSiphonServiceName     = "siphon"
-	shadowSiphonOTLPPort        = 4317
+	defaultSiphonMaxPayloadSize   = 65536
+	defaultSiphonSamplePercentage = 100
+	shadowSiphonServiceName       = "siphon"
+	shadowSiphonOTLPPort          = 4317
 )
 
 func pixieCaptureEnabled(_ *enginev1alpha1.ShadowTest, _ *appsv1.Deployment) bool {
@@ -80,6 +82,13 @@ func siphonMaxPayloadSize(st *enginev1alpha1.ShadowTest) int64 {
 		return st.Spec.Siphon.MaxPayloadSize
 	}
 	return defaultSiphonMaxPayloadSize
+}
+
+func siphonSamplePercentage(st *enginev1alpha1.ShadowTest) int {
+	if st.Spec.Siphon != nil && st.Spec.Siphon.SamplePercentage > 0 {
+		return st.Spec.Siphon.SamplePercentage
+	}
+	return defaultSiphonSamplePercentage
 }
 
 func siphonExcludePaths(st *enginev1alpha1.ShadowTest) []string {
@@ -172,6 +181,7 @@ func buildPixieStreamRuleSpec(
 		TargetLabels:         copyStringMap(target.Spec.Template.Labels),
 		MaxPayloadSize:       siphonMaxPayloadSize(st),
 		ExcludePaths:         siphonExcludePaths(st),
+		SamplePercentage:     siphonSamplePercentage(st),
 		RecorderOTelEndpoint: shadowRecorderOTelEndpoint(st, shadowNS),
 	}
 	if ingress {
@@ -261,6 +271,7 @@ func (r *ShadowTestReconciler) ensureShadowSiphonDeployment(
 			Env: []corev1.EnvVar{
 				{Name: "SIPHON_OTLP_GRPC_ADDR", Value: fmt.Sprintf(":%d", shadowSiphonOTLPPort)},
 				{Name: "SIPHON_IGRIS_BASE_URL", Value: igrisURL},
+				{Name: envSiphonSamplePct, Value: strconv.Itoa(siphonSamplePercentage(st))},
 			},
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{

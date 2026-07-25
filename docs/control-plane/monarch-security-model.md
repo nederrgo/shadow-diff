@@ -33,6 +33,7 @@ A primary security constraint of Shadow-Diff is that the central operator must n
 ┌────────────────────────────────┐
 │      monarch-system NS         │
 │  [ Monarch Operator ]          │
+│  [ pixie-gate Deployment ]     │ ──► Narrow CRD RBAC + PIXIE_API_KEY only
 └──────────────┬─────────────────┘
 │
 │ Writes Low-Privilege CRD Manifest
@@ -42,18 +43,18 @@ A primary security constraint of Shadow-Diff is that the central operator must n
 │  [ PixieStreamRule CR ]        │
 └──────────────┬─────────────────┘
 │
-│ Read out-of-band by host process
+│ Read out-of-band by pixie-gate
 ▼
 ┌────────────────────────────────┐
 │         K8s Host Node          │
-│  [ Pixie Vizier / Bridge ]     │ ──► Requires Host Kernel Access (SYS_ADMIN)
+│  [ Pixie Vizier PEM ]          │ ──► Requires Host Kernel Access (SYS_ADMIN)
 └────────────────────────────────┘     (Completely isolated from Monarch)
 
 
 ### Decoupled eBPF Architecture
 * **Strict Operator Segregation**: Monarch **does not deploy or manage Pixie Vizier or eBPF kernel tracing sensors**. Because eBPF operators require advanced cluster privileges (such as running in the host pid namespace with `CAP_SYS_ADMIN`), installation and management are completely externalized to the platform team.
 * **The Declarative Interface (`PixieStreamRule`)**: Instead of handling eBPF logic inline, Monarch outputs a completely unprivileged custom manifest called a `PixieStreamRule`. This contains metadata instructions (production target pod labels, shadow ports, and OTLP endpoints).
-* **The Bridge Gateway**: An external, out-of-band component (`pixie-stream-bridge`) running as an independent host daemon consumes this manifest. It executes the high-privilege PxL scripts required to mirror the traffic. If the bridge or kernel instrumentation malfunctions, Monarch's control plane loop remains completely insulated and untouched.
+* **The Pixie Gateway (`pixie-gate`)**: An external, out-of-band Deployment in `monarch-system` consumes this manifest with least-privilege RBAC. It renders PxL and runs `px run` against Vizier. If pixie-gate or kernel instrumentation malfunctions, Monarch's control plane loop remains completely insulated and untouched. See [pixie-gate.md](/control-plane/pixie-gate.md).
 
 ---
 

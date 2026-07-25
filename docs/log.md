@@ -11,6 +11,11 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-24]
 ### Added
+* 'pipeline/pixie-gate': Add least-privilege in-cluster Go service replacing host pixie-stream-bridge; wire setup/bats/docs
+* 'testing/bats/helpers/pixie-bridge.sh,docs/control-plane/monarch-controller.md': Fix PxL sampling hex decode — px.atoi has no radix; use nibble select so load shed stays in Pixie
+* 'pipeline/siphon,pipeline/recorder,pipeline/igrises/igris-rabbitmq,testing/bats': Prod-gate shared sampling (V*100)<(N*256) in Pixie+Go; empty trace drop; RMQ/HTTP bats proofs
+* 'testing/bats/manifests/pixie-bridge,testing/bats/helpers/pixie-bridge.sh': Removed samplePercentage from shadow-pod Mongo PxL (ingress already samples)
+* 'pipeline/monarch,pipeline/igrises/igris-rabbitmq,testing/bats/helpers/pixie-bridge.sh': Added samplePercentage trace-based sampling across Pixie HTTP/Mongo capture and RabbitMQ ingress
 * 'testing/bats/verdict_ui': wait beru-local only; skip full ShadowTest Ready
 * 'testing/bats': verdict_ui seed suite uses direct assert (no quiescence settle)
 * 'testing/bats': UI seed MATCH when timestamp field differs across A/B/C (natural noise)

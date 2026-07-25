@@ -8,14 +8,15 @@ import (
 )
 
 type Config struct {
-	ProdURL                  string
-	ShadowQueueName          string
-	ShadowPublishExchange    string
+	ProdURL                   string
+	ShadowQueueName           string
+	ShadowPublishExchange     string
 	ShadowPublishExchangeType string
-	ControlAURL              string
-	ControlBURL              string
-	CandidateURL             string
-	Prefetch                 int
+	ControlAURL               string
+	ControlBURL               string
+	CandidateURL              string
+	Prefetch                  int
+	SamplePercentage          int
 }
 
 func Load() (Config, error) {
@@ -28,6 +29,7 @@ func Load() (Config, error) {
 		ControlBURL:               strings.TrimSpace(os.Getenv("CONTROL_B_AMQP_URL")),
 		CandidateURL:              strings.TrimSpace(os.Getenv("CANDIDATE_AMQP_URL")),
 		Prefetch:                  10,
+		SamplePercentage:          100,
 	}
 	if cfg.ShadowPublishExchangeType == "" {
 		cfg.ShadowPublishExchangeType = "topic"
@@ -38,6 +40,13 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("invalid PREFETCH %q", v)
 		}
 		cfg.Prefetch = n
+	}
+	if v := strings.TrimSpace(os.Getenv("IGRIS_RMQ_SAMPLE_PERCENTAGE")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 100 {
+			return Config{}, fmt.Errorf("invalid IGRIS_RMQ_SAMPLE_PERCENTAGE %q", v)
+		}
+		cfg.SamplePercentage = n
 	}
 	if cfg.ProdURL == "" {
 		return Config{}, fmt.Errorf("PROD_URL is required")

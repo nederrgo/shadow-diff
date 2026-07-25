@@ -118,23 +118,23 @@ wait_pixie_stream_rule() {
 
 wait_pixie_mongo_pxl_ready() {
   local shadowtest="$1" shadowtest_ns="$2" max_wait="${3:-60}"
-  local name="pixie-${shadowtest}" i=0 shadow_ns="" mongo_pxl repo
-  repo="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
-  PIXIE_BRIDGE_STATE_DIR="${PIXIE_BRIDGE_STATE_DIR:-${repo}/.cache/pixie-bridge}"
-  mongo_pxl="${PIXIE_BRIDGE_STATE_DIR}/${shadowtest_ns}-${name}-mongo.pxl"
+  local name="pixie-${shadowtest}" i=0 phase="" msg="" shadow_ns=""
   while [[ "$i" -lt "$max_wait" ]]; do
+    phase=$(kubectl get pixiestreamrule "$name" -n "$shadowtest_ns" \
+      -o jsonpath='{.status.phase}' 2>/dev/null || true)
+    msg=$(kubectl get pixiestreamrule "$name" -n "$shadowtest_ns" \
+      -o jsonpath='{.status.message}' 2>/dev/null || true)
     shadow_ns=$(kubectl get pixiestreamrule "$name" -n "$shadowtest_ns" \
       -o jsonpath='{.spec.shadowNamespace}' 2>/dev/null || true)
-    if [[ -n "$shadow_ns" && -f "$mongo_pxl" ]] && grep -qF "$shadow_ns" "$mongo_pxl"; then
-      echo "    mongo PxL ready: ${mongo_pxl} (namespace=${shadow_ns})"
+    if [[ "$phase" == "Active" && -n "$shadow_ns" ]]; then
+      echo "    PixieStreamRule ${shadowtest_ns}/${name} Active (mongo via pixie-gate; ns=${shadow_ns})"
       return 0
     fi
-    echo "    waiting for mongo PxL ${mongo_pxl} (${i}s/${max_wait}s)"
+    echo "    waiting for PixieStreamRule ${name} Active (${i}s/${max_wait}s phase=${phase:-?} msg=${msg:-})"
     sleep 2
     i=$((i + 2))
   done
-  echo "ERROR: mongo PxL not rendered for ${shadowtest_ns}/${name}" >&2
-  [[ -f "$mongo_pxl" ]] && sed -n '1,20p' "$mongo_pxl" 2>/dev/null | sed 's/^/       /' >&2 || true
+  echo "ERROR: PixieStreamRule ${shadowtest_ns}/${name} not Active for mongo export" >&2
   return 1
 }
 

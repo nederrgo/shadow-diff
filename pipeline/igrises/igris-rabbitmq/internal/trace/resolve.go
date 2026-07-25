@@ -13,14 +13,26 @@ type ResolvedContext struct {
 	Traceparent string
 }
 
+// TryInbound returns a resolved context only when a valid inbound traceparent exists.
+// Used by the prod sampling gate — tracing is required; missing/invalid → drop.
+func TryInbound(headers amqp.Table) (ResolvedContext, bool) {
+	inboundTP, _ := extractAMQPString(headers, HeaderTraceparent)
+	if inboundTP == "" {
+		return ResolvedContext{}, false
+	}
+	tid, ok := ParseTraceparent(inboundTP)
+	if !ok {
+		return ResolvedContext{}, false
+	}
+	return ResolvedContext{TraceID: tid, Traceparent: inboundTP}, true
+}
+
 // ResolveContext reads inbound AMQP headers and returns the trace context to stamp on all clones.
 // Inbound traceparent is preserved literally; otherwise a new W3C pair is generated.
+// Prefer TryInbound at the sampling gate so untraced messages are not admitted.
 func ResolveContext(headers amqp.Table) (ResolvedContext, error) {
-	inboundTP, _ := extractAMQPString(headers, HeaderTraceparent)
-	if inboundTP != "" {
-		if tid, ok := ParseTraceparent(inboundTP); ok {
-			return ResolvedContext{TraceID: tid, Traceparent: inboundTP}, nil
-		}
+	if resolved, ok := TryInbound(headers); ok {
+		return resolved, nil
 	}
 
 	traceID, err := GenerateTraceID()

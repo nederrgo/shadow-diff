@@ -6,6 +6,7 @@ use (
 	./pipeline/igrises/igris-http
 	./pipeline/igrises/igris-rabbitmq
 	./pipeline/monarch
+	./pipeline/pixie-gate
 	./pipeline/recorder
 	./pipeline/shop
 	./pipeline/siphon

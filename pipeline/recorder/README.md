@@ -13,7 +13,7 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 ```
 Prod app outbound HTTP
     │
-    ├── Pixie eBPF egress PxL → pixie-stream-bridge px.export → OTLP gRPC :4317 (gzip)  [primary]
+    ├── Pixie eBPF egress PxL → pixie-gate px.export → OTLP gRPC :4317 (gzip)  [primary]
     │
     └── (legacy) Siphon TCP relay :8080 — length-prefixed R/S frames
     │
@@ -28,7 +28,7 @@ Shadow app → Envoy :10001 → shop_ext_proc → recorded response (or 599)
 
 | Stage | Component | What happens |
 | ----- | --------- | ------------ |
-| **Capture** | **Pixie** + **pixie-stream-bridge** | Egress PxL on prod-ns `http_events` (see server-side caveat in docs); OTLP to Recorder |
+| **Capture** | **Pixie** + **pixie-gate** | Egress PxL on prod-ns `http_events` (see server-side caveat in docs); OTLP to Recorder |
 | **Parse + store** | **Recorder** | Maps OTLP attrs → payload; posts **all** spans to Shop |
 | **Replay** | **Envoy** + **Shop** | Shadow egress `:10001` → Shop gRPC mock lookup |
 
@@ -40,7 +40,7 @@ Shadow app → Envoy :10001 → shop_ext_proc → recorded response (or 599)
 
 ### 1. Pixie OTLP egress (primary)
 
-**pixie-stream-bridge** runs a separate egress PxL script when `PixieStreamRule.spec.recorderOtelEndpoint` is set. Monarch points this at:
+**pixie-gate** runs a separate egress PxL script when `PixieStreamRule.spec.recorderOtelEndpoint` is set. Monarch points this at:
 
 ```
 <shadowtest>-recorder.<shadow-namespace>.svc.cluster.local:4317

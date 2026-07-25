@@ -28,6 +28,17 @@ func TestSiphonMaxPayloadSize(t *testing.T) {
 	}
 }
 
+func TestSiphonSamplePercentage(t *testing.T) {
+	st := &enginev1alpha1.ShadowTest{}
+	if got := siphonSamplePercentage(st); got != defaultSiphonSamplePercentage {
+		t.Fatalf("default: got %d want %d", got, defaultSiphonSamplePercentage)
+	}
+	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{SamplePercentage: 10}
+	if got := siphonSamplePercentage(st); got != 10 {
+		t.Fatalf("override: got %d want 10", got)
+	}
+}
+
 func TestFormatCaptureTargets_sortedAndStable(t *testing.T) {
 	labels := map[string]string{"app": "api", "version": "v2", "env": "prod"}
 	first := formatCaptureTargets(labels)
@@ -59,8 +70,9 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	st.Spec.ServicePort = 8080
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{Port: 80, Driver: "http_request"}}
 	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{
-		MaxPayloadSize: 4096,
-		ExcludePaths:   []string{`^/healthz$`},
+		MaxPayloadSize:   4096,
+		ExcludePaths:     []string{`^/healthz$`},
+		SamplePercentage: 25,
 	}
 
 	dep := &appsv1.Deployment{
@@ -101,6 +113,9 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	}
 	if len(spec.ExcludePaths) != 1 || spec.ExcludePaths[0] != `^/healthz$` {
 		t.Fatalf("exclude %v", spec.ExcludePaths)
+	}
+	if spec.SamplePercentage != 25 {
+		t.Fatalf("sample percentage %d", spec.SamplePercentage)
 	}
 	if len(spec.TargetPorts) == 0 {
 		t.Fatal("expected default ingress port")

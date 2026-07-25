@@ -4,7 +4,7 @@ title: Monarch Controller — Envoy-Only Shadow Injection
 description: Reconcile contract for telemetry-dependent shadow pods after Plan 1 realignment.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [architecture, control-plane, monarch, envoy, kubernetes]
-timestamp: 2026-07-12T14:20:00Z
+timestamp: 2026-07-24T20:30:00Z
 ---
 
 # Monarch Controller — Envoy-Only Shadow Injection
@@ -51,6 +51,8 @@ Per-role ConfigMap `{shadowtest}-{role}-envoy` renders:
 
 - `spec.beruGRPCAddress` — ext_proc gRPC target (default: local `beru-local` or `beru.beru-system`)
 - `spec.beruIngestAddress` — wire-payload ingest target (default: same host resolution as HTTP above)
+- `spec.siphon.samplePercentage` — percentage (1-100, default 100) of **prod** HTTP traces admitted. Pixie PxL filters with the shared rule `V=int(trace_id[0:2],16); keep iff (V*100)<(N*256)` (hex nibbles via `tolower` + nested `px.select` — `px.atoi`'s second arg is a default, not a radix); Siphon and Recorder apply the same rule as defense. Empty/missing `traceparent` is always dropped. Shadow-pod Mongo is not sampled.
+- `spec.igrisRabbitmq.samplePercentage` — same shared rule on the **prod** AMQP shadow-diff queue before fan-out. Set equal to `siphon.samplePercentage` when HTTP and AMQP should agree on which traces are in.
 
 ## Beru wire ingest (Plan 2)
 

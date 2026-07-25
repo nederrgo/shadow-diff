@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Bootstrap Minikube for Pixie eBPF + install Vizier (pl) + PixieStreamRule bridge.
+# Bootstrap Minikube for Pixie eBPF + install Vizier (pl) + pixie-gate Deployment.
 #
 # Prerequisites:
 #   - Linux host with kvm2 (recommended) or virtualbox Minikube driver
 #   - Free Pixie Cloud account (PIXIE_API_KEY or px auth login)
+#   - pixie-gate image available to the cluster (PIXIE_GATE_IMG, default pixie-gate:dev)
 #
 # Usage:
-#   MINIKUBE_DRIVER=kvm2 ./testing/bats/setup-local-pixie.sh
-#   ./testing/bats/setup-local-pixie.sh --skip-minikube-start --foreground-bridge
+#   MINIKUBE_DRIVER=kvm2 PIXIE_API_KEY=... ./testing/bats/setup/setup-local-pixie.sh
+#   ./testing/bats/setup/setup-local-pixie.sh --skip-minikube-start
 #
 set -euo pipefail
 
@@ -22,11 +23,10 @@ source "$REPO/testing/bats/helpers/pixie-bridge.sh"
 SKIP_MINIKUBE_START=0
 SKIP_PIXIE_INSTALL=0
 NO_BRIDGE=0
-FOREGROUND_BRIDGE=0
 
 usage() {
   sed -n '2,14p' "$0"
-  echo "Flags: --skip-minikube-start --skip-pixie-install --no-bridge --foreground-bridge -h"
+  echo "Flags: --skip-minikube-start --skip-pixie-install --no-bridge -h"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -34,7 +34,9 @@ while [[ $# -gt 0 ]]; do
     --skip-minikube-start) SKIP_MINIKUBE_START=1 ;;
     --skip-pixie-install)  SKIP_PIXIE_INSTALL=1 ;;
     --no-bridge)           NO_BRIDGE=1 ;;
-    --foreground-bridge)   FOREGROUND_BRIDGE=1 ;;
+    --foreground-bridge)
+      echo "WARN: --foreground-bridge removed; pixie-gate runs as an in-cluster Deployment" >&2
+      ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown flag: $1" >&2; usage; exit 1 ;;
   esac
@@ -102,22 +104,15 @@ else
   wait_pixie_vizier_ready 120
 fi
 
-apply_pixie_bridge_manifests
-
 if [[ "$NO_BRIDGE" -eq 1 ]]; then
-  echo "==> Skip bridge daemon (--no-bridge)"
-  echo "    Run manually: ./testing/bats/pixie-stream-bridge.sh"
+  echo "==> Skip pixie-gate Deployment (--no-bridge)"
+  echo "    Deploy manually: kubectl apply -k pipeline/pixie-gate/deploy/"
   exit 0
 fi
 
-if [[ "$FOREGROUND_BRIDGE" -eq 1 ]]; then
-  echo "==> Starting pixie-stream-bridge in foreground"
-  exec "$REPO/testing/bats/pixie-stream-bridge.sh"
-fi
-
-start_pixie_stream_bridge_background
+deploy_pixie_gate
 
 echo ""
-echo "Pixie local sandbox ready."
+echo "Pixie local sandbox ready (Vizier + pixie-gate)."
 echo "  Next: ./testing/tools/e2e-reset-minikube.sh --no-reset"
 echo "  Then: curl prod Service with traceparent (see docs/verification/VERIFICATION.md)"

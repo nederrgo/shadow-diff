@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -75,6 +76,7 @@ func (r *ShadowTestReconciler) reconcileRecorderDeployment(
 				{Name: envShopHTTPURL, Value: fmt.Sprintf("http://%s", shopHTTPHostFor(shadowNS))},
 				{Name: envRecorderListenAddr, Value: ":8080"},
 				{Name: envRecorderOTLPGRPCAddr, Value: ":4317"},
+				{Name: envRecorderSamplePct, Value: strconv.Itoa(siphonSamplePercentage(st))},
 			},
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{

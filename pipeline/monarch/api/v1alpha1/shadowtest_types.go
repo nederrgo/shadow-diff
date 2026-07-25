@@ -81,6 +81,16 @@ type SiphonSpec struct {
 	// ExcludePaths are regex strings to drop healthchecks/traffic at the kernel layer.
 	// +optional
 	ExcludePaths []string `json:"excludePaths,omitempty"`
+
+	// SamplePercentage is the percentage of prod HTTP traces Pixie captures for
+	// ingress and egress (1-100, default 100). Enforced in Pixie PxL and defended
+	// in Siphon/Recorder with the same (V*100)<(N*256) rule. Does not apply to
+	// shadow-pod Mongo capture — that traffic is already limited by ingress sampling.
+	// Empty/missing traceparent is always dropped (tracing is required).
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	SamplePercentage int `json:"samplePercentage,omitempty"`
 }
 
 // DependencySpec declares an ephemeral backing service provisioned per shadow role.
@@ -156,6 +166,14 @@ type IgrisRabbitMQSpec struct {
 	// Resources for the igris-rabbitmq container.
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// SamplePercentage is the percentage of AMQP messages to forward to shadow brokers (1-100, default 100).
+	// Uses the same (V*100)<(N*256) rule as HTTP prod sampling. Messages without a valid
+	// inbound traceparent are dropped (tracing is required).
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	SamplePercentage int `json:"samplePercentage,omitempty"`
 }
 
 // IgrisSpec overrides the always-deployed Igris workload.

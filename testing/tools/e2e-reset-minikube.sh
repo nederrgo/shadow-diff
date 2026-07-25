@@ -43,6 +43,7 @@ SHOP_IMG="${SHOP_IMG:-shop:dev}"
 IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
 SIPHON_IMG="${SIPHON_IMG:-siphon:dev}"
 RECORDER_IMG="${RECORDER_IMG:-recorder:dev}"
+PIXIE_GATE_IMG="${PIXIE_GATE_IMG:-pixie-gate:dev}"
 
 SHADOWTEST="${SHADOWTEST:-my-app-shadow}"
 SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
@@ -111,13 +112,13 @@ fi
 ensure_minikube_ready
 
 if [[ "${SETUP_PIXIE:-1}" -eq 1 && "${SKIP_PIXIE:-0}" -eq 0 ]]; then
-  echo "==> Pixie eBPF (Vizier in pl + stream bridge)"
+  echo "==> Pixie eBPF (Vizier in pl + pixie-gate)"
   chmod +x "$REPO/testing/bats/setup/setup-local-pixie.sh"
   "$REPO/testing/bats/setup/setup-local-pixie.sh" --skip-minikube-start
 fi
 
 echo "==> Monarch E2E reset (minikube profile=${MINIKUBE_PROFILE}, driver=${MINIKUBE_DRIVER}, cni=${MINIKUBE_CNI:-flannel})"
-echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG shop=$SHOP_IMG (beru-local) igris=$IGRIS_IMG siphon=$SIPHON_IMG recorder=$RECORDER_IMG"
+echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG shop=$SHOP_IMG (beru-local) igris=$IGRIS_IMG siphon=$SIPHON_IMG recorder=$RECORDER_IMG pixie-gate=$PIXIE_GATE_IMG"
 if [[ "$SKIP_BUILD" -eq 1 ]]; then
   echo "WARN: --skip-build reuses existing minikube docker images; code changes are NOT included until you rebuild"
 fi
@@ -141,11 +142,12 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   make igris-docker-build IGRIS_IMG="$IGRIS_IMG"
   make siphon-docker-build SIPHON_IMG="$SIPHON_IMG"
   make recorder-docker-build RECORDER_IMG="$RECORDER_IMG"
+  make pixie-gate-docker-build PIXIE_GATE_IMG="$PIXIE_GATE_IMG"
 fi
 
 if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
   echo "==> Sync local images into containerd (none driver)"
-  load_minikube_images "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$SIPHON_IMG" "$RECORDER_IMG"
+  load_minikube_images "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$SIPHON_IMG" "$RECORDER_IMG" "$PIXIE_GATE_IMG"
 fi
 
 if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
@@ -184,6 +186,11 @@ e2e_reset_deploy_stack() {
 
   echo "==> Siphon RBAC (per-shadow OTLP receiver; Monarch writes PixieStreamRule)"
   kubectl apply -f pipeline/siphon/deploy/rbac.yaml
+
+  # shellcheck source=testing/bats/helpers/pixie-bridge.sh
+  source "$REPO/testing/bats/helpers/pixie-bridge.sh"
+  echo "==> pixie-gate (monarch-system image=${PIXIE_GATE_IMG})"
+  deploy_pixie_gate
 
   echo "==> Production app (echo on :80, memory limits)"
   kubectl apply -f "$REPO/testing/bats/manifests/e2e-prod-app.yaml"

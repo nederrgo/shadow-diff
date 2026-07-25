@@ -76,7 +76,7 @@ sequenceDiagram
   participant Test as Bats
   participant Prod as Prod Service pod
   participant Pixie as Pixie PEM
-  participant Bridge as pixie-stream-bridge
+  participant Bridge as pixie-gate
   participant Siphon as Siphon
   participant Igris as igris-http
   participant Shadow as Shadow workers

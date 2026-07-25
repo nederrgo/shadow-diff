@@ -1,13 +1,19 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: pixie-stream-bridge
+  name: pixie-gate
   namespace: monarch-system
+  labels:
+    app.kubernetes.io/name: pixie-gate
+    app.kubernetes.io/component: pixie-gateway
+automountServiceAccountToken: true
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: pixie-stream-bridge
+  name: pixie-gate
+  labels:
+    app.kubernetes.io/name: pixie-gate
 rules:
   - apiGroups: ["engine.shadow-diff.io"]
     resources: ["pixiestreamrules"]
@@ -19,12 +25,14 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: pixie-stream-bridge
+  name: pixie-gate
+  labels:
+    app.kubernetes.io/name: pixie-gate
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: pixie-stream-bridge
+  name: pixie-gate
 subjects:
   - kind: ServiceAccount
-    name: pixie-stream-bridge
+    name: pixie-gate
     namespace: monarch-system

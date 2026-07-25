@@ -33,7 +33,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	recv := receiver.NewOTLPReceiver(fwd, envInt("SIPHON_WORKER_COUNT", 8), envInt("SIPHON_JOB_QUEUE_SIZE", 1024), log)
+	recv := receiver.NewOTLPReceiver(fwd, envInt("SIPHON_WORKER_COUNT", 8), envInt("SIPHON_JOB_QUEUE_SIZE", 1024), envInt("SIPHON_SAMPLE_PERCENTAGE", 100), log)
 	addr := envOr("SIPHON_OTLP_GRPC_ADDR", ":4317")
 
 	lis, err := net.Listen("tcp", addr)

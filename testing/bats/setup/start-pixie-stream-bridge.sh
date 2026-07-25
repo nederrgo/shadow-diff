@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Start pixie-stream-bridge in the background (creates .cache/pixie-bridge first).
+# Deploy / ensure pixie-gate (in-cluster PixieStreamRule → PxL gateway).
 #
-# Usage (from any directory):
-#   /home/projects/monarch/testing/bats/setup/start-pixie-stream-bridge.sh
+# Usage:
+#   ./testing/bats/setup/start-pixie-stream-bridge.sh
 #
 set -euo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 # shellcheck source=testing/bats/helpers/pixie-bridge.sh
 source "$REPO/testing/bats/helpers/pixie-bridge.sh"
-start_pixie_stream_bridge_background
+
+deploy_pixie_gate

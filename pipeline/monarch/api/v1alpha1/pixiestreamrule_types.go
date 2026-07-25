@@ -64,6 +64,14 @@ type PixieStreamRuleSpec struct {
 	// ExcludePaths are regex strings dropped at the kernel layer.
 	// +optional
 	ExcludePaths []string `json:"excludePaths,omitempty"`
+
+	// SamplePercentage is the percentage of prod HTTP traces to capture for
+	// ingress and egress (1-100, default 100). Rendered into PxL as the shared
+	// (V*100)<(N*256) filter; Mongo export (shadow namespace) ignores this field.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	SamplePercentage int `json:"samplePercentage,omitempty"`
 }
 
 // PixieStreamRuleStatus defines the observed state of PixieStreamRule.

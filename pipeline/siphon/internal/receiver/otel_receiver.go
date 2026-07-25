@@ -16,6 +16,7 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
 	"github.com/shadow-diff/siphon/internal/forwarder"
+	"github.com/shadow-diff/siphon/internal/sample"
 )
 
 type httpForwarder interface {
@@ -24,28 +25,33 @@ type httpForwarder interface {
 
 // OTLPReceiver implements shared OTLP log/trace ingestion and forwarding.
 type OTLPReceiver struct {
-	fwd      httpForwarder
-	jobs     chan forwarder.HTTPRecord
-	wg       sync.WaitGroup
-	dropped  atomic.Uint64
-	log      *slog.Logger
-	stopOnce sync.Once
+	fwd              httpForwarder
+	jobs             chan forwarder.HTTPRecord
+	wg               sync.WaitGroup
+	dropped          atomic.Uint64
+	samplePercentage int
+	log              *slog.Logger
+	stopOnce         sync.Once
 }
 
-func NewOTLPReceiver(fwd httpForwarder, workers, queueSize int, log *slog.Logger) *OTLPReceiver {
+func NewOTLPReceiver(fwd httpForwarder, workers, queueSize, samplePercentage int, log *slog.Logger) *OTLPReceiver {
 	if workers <= 0 {
 		workers = 8
 	}
 	if queueSize <= 0 {
 		queueSize = 1024
 	}
+	if samplePercentage <= 0 {
+		samplePercentage = 100
+	}
 	if log == nil {
 		log = slog.Default()
 	}
 	r := &OTLPReceiver{
-		fwd:  fwd,
-		jobs: make(chan forwarder.HTTPRecord, queueSize),
-		log:  log,
+		fwd:              fwd,
+		jobs:             make(chan forwarder.HTTPRecord, queueSize),
+		samplePercentage: samplePercentage,
+		log:              log,
 	}
 	for i := 0; i < workers; i++ {
 		r.wg.Add(1)
@@ -83,7 +89,7 @@ func (r *OTLPReceiver) ExportLogs(ctx context.Context, req *collogspb.ExportLogs
 		for _, sl := range rl.GetScopeLogs() {
 			for _, lr := range sl.GetLogRecords() {
 				record, ok := parseHTTPRecord(lr, rl.GetResource())
-				if !ok {
+				if !ok || !r.admit(record.Traceparent) {
 					continue
 				}
 				select {
@@ -107,7 +113,7 @@ func (r *OTLPReceiver) ExportTraces(ctx context.Context, req *coltracepb.ExportT
 		for _, ss := range rs.GetScopeSpans() {
 			for _, span := range ss.GetSpans() {
 				record, ok := parseHTTPRecordFromSpan(span, rs.GetResource())
-				if !ok {
+				if !ok || !r.admit(record.Traceparent) {
 					continue
 				}
 				select {
@@ -119,6 +125,15 @@ func (r *OTLPReceiver) ExportTraces(ctx context.Context, req *coltracepb.ExportT
 		}
 	}
 	return &coltracepb.ExportTraceServiceResponse{}, nil
+}
+
+// admit drops untraced traffic and applies the shared prod sampling rule.
+func (r *OTLPReceiver) admit(traceparent string) bool {
+	tid, ok := sample.TraceIDFromTraceparent(traceparent)
+	if !ok {
+		return false
+	}
+	return sample.SampledIn(tid, r.samplePercentage)
 }
 
 func parseHTTPRecord(lr *logspb.LogRecord, res *resourcepb.Resource) (forwarder.HTTPRecord, bool) {
