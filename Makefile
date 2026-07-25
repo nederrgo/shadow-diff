@@ -6,6 +6,7 @@ IGRIS_DIR := pipeline/igrises/igris-http
 SIPHON_DIR := pipeline/siphon
 RECORDER_DIR := pipeline/recorder
 PIXIE_GATE_DIR := pipeline/pixie-gate
+KAISEL_DIR := pipeline/kaisel
 IGRIS_RABBITMQ_DIR := pipeline/igrises/igris-rabbitmq
 EGRESS_RELAY_RABBITMQ_DIR := pipeline/egress-relay-rabbitmq
 RECORDER_IMG ?= recorder:latest
@@ -31,6 +32,7 @@ $(MONARCH_TARGETS):
 	siphon-test siphon-build siphon-docker-build \
 	recorder-test recorder-build recorder-docker-build \
 	pixie-gate-test pixie-gate-build pixie-gate-docker-build \
+	kaisel-test kaisel-build kaisel-generate kaisel-verify-generate \
 	igris-rabbitmq-test igris-rabbitmq-build igris-rabbitmq-docker-build \
 	nodejs-test-worker-docker-build python-test-worker-docker-build \
 	egress-relay-rabbitmq-test egress-relay-rabbitmq-build egress-relay-rabbitmq-docker-build
@@ -85,6 +87,18 @@ pixie-gate-build: ## Build pixie-gate binary.
 pixie-gate-docker-build: ## Build pixie-gate container image.
 	@$(MAKE) -C $(PIXIE_GATE_DIR) docker-build PIXIE_GATE_IMG=$(PIXIE_GATE_IMG)
 
+kaisel-test: ## Run kaisel unit tests.
+	@$(MAKE) -C $(KAISEL_DIR) test
+
+kaisel-build: ## Build kaisel binary.
+	@$(MAKE) -C $(KAISEL_DIR) build
+
+kaisel-generate: ## Regenerate kaisel eBPF bindings (needs clang >= 12).
+	@$(MAKE) -C $(KAISEL_DIR) generate
+
+kaisel-verify-generate: ## Check the committed kaisel eBPF binding matches capture.c.
+	@$(MAKE) -C $(KAISEL_DIR) verify-generate
+
 igris-rabbitmq-test: ## Run igris-rabbitmq unit tests.
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
 
@@ -114,7 +128,7 @@ egress-relay-rabbitmq-build: ## Build egress-relay-rabbitmq binary.
 egress-relay-rabbitmq-docker-build: ## Build egress-relay-rabbitmq container image.
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) docker-build EGRESS_RELAY_RABBITMQ_IMG=$(EGRESS_RELAY_RABBITMQ_IMG)
 
-test-all: ## Run Monarch, Beru, Shop, Igris, Siphon, Recorder, pixie-gate, igris-rabbitmq, and egress-relay-rabbitmq tests.
+test-all: ## Run Monarch, Beru, Shop, Igris, Siphon, Recorder, pixie-gate, kaisel, igris-rabbitmq, and egress-relay-rabbitmq tests.
 	@$(MAKE) -C $(MONARCH_DIR) test
 	@$(MAKE) -C $(BERU_DIR) test
 	@$(MAKE) -C $(SHOP_DIR) test
@@ -122,6 +136,7 @@ test-all: ## Run Monarch, Beru, Shop, Igris, Siphon, Recorder, pixie-gate, igris
 	@$(MAKE) -C $(SIPHON_DIR) test
 	@$(MAKE) -C $(RECORDER_DIR) test
 	@$(MAKE) -C $(PIXIE_GATE_DIR) test
+	@$(MAKE) -C $(KAISEL_DIR) test
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
 .PHONY: test-bats test-bats-integration test-bats-e2e

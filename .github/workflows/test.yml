@@ -30,4 +30,30 @@ jobs:
           cd ../igrises/igris-http && go mod tidy && make test
           cd ../../siphon && go mod tidy && make test
           cd ../recorder && go mod tidy && make test
+          cd ../kaisel && go mod tidy && make test
           cd ../igrises/igris-rabbitmq && go mod tidy && make test
+
+  bpf-generate:
+    permissions:
+      contents: read
+    name: Verify kaisel eBPF bindings
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: pipeline/monarch/go.mod
+
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang-18 llvm-18
+
+      # Regenerates and diffs the Go binding only. Object bytes differ across
+      # clang patch versions, so a strict .o diff would fail on a clean tree.
+      - name: Verify committed bindings match capture.c
+        run: make verify-generate BPF2GO_CC=clang-18
+        working-directory: pipeline/kaisel

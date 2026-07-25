@@ -40,6 +40,9 @@ func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.Nam
 	if err := r.deletePixieStreamRule(ctx, &shadowTest); err != nil {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, err
 	}
+	if err := r.deleteKaiselRule(ctx, &shadowTest); err != nil {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, err
+	}
 
 	var ns corev1.Namespace
 	err := r.Get(ctx, types.NamespacedName{Name: shadowNS}, &ns)

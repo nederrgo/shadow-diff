@@ -10,13 +10,6 @@ import (
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
-func TestShadowSiphonOTelEndpoint(t *testing.T) {
-	want := "siphon.shadow-default-my-st.svc.cluster.local:4317"
-	if got := shadowSiphonOTelEndpoint("shadow-default-my-st"); got != want {
-		t.Fatalf("got %q want %q", got, want)
-	}
-}
-
 func TestSiphonMaxPayloadSize(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{}
 	if got := siphonMaxPayloadSize(st); got != defaultSiphonMaxPayloadSize {
@@ -101,8 +94,9 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	if spec.TargetLabels["app"] != "api" || spec.TargetLabels["tier"] != "web" {
 		t.Fatalf("labels %v", spec.TargetLabels)
 	}
-	if spec.OTelEndpoint != shadowSiphonOTelEndpoint("shadow-default-my-st") {
-		t.Fatalf("endpoint %q", spec.OTelEndpoint)
+	// Ingress OTelEndpoint is intentionally empty: kaisel handles ingress capture.
+	if spec.OTelEndpoint != "" {
+		t.Fatalf("expected empty OTelEndpoint (kaisel owns ingress), got %q", spec.OTelEndpoint)
 	}
 	want := shadowRecorderOTelEndpoint(st, "shadow-default-my-st")
 	if spec.RecorderOTelEndpoint != want {
@@ -116,9 +110,6 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	}
 	if spec.SamplePercentage != 25 {
 		t.Fatalf("sample percentage %d", spec.SamplePercentage)
-	}
-	if len(spec.TargetPorts) == 0 {
-		t.Fatal("expected default ingress port")
 	}
 }
 
@@ -137,9 +128,9 @@ func TestBuildPixieStreamRuleSpecAlwaysHasRecorderEndpoint(t *testing.T) {
 		},
 	}
 	spec := buildPixieStreamRuleSpec(st, "shadow-default-egress-st", dep)
-	// Empty inputs resolve to http_request on servicePort → ingress siphon enabled.
-	if spec.OTelEndpoint != shadowSiphonOTelEndpoint("shadow-default-egress-st") {
-		t.Fatalf("ingress endpoint %q", spec.OTelEndpoint)
+	// Ingress OTelEndpoint is always empty: kaisel owns ingress.
+	if spec.OTelEndpoint != "" {
+		t.Fatalf("expected empty OTelEndpoint, got %q", spec.OTelEndpoint)
 	}
 	want := shadowRecorderOTelEndpoint(st, "shadow-default-egress-st")
 	if spec.RecorderOTelEndpoint != want {
@@ -157,52 +148,6 @@ func TestTargetNamespaceFor_defaultsToCRNamespace(t *testing.T) {
 	st.Spec.TargetNamespace = "prod"
 	if got := targetNamespaceFor(st); got != "prod" {
 		t.Fatalf("got %q want prod", got)
-	}
-}
-
-func TestShadowSiphonIgrisBaseURL(t *testing.T) {
-	st := &enginev1alpha1.ShadowTest{
-		ObjectMeta: metav1.ObjectMeta{Name: "bats-http"},
-		Spec:       enginev1alpha1.ShadowTestSpec{ServicePort: 8888},
-	}
-	want := "http://bats-http-igris.shadow-default-bats-http.svc.cluster.local:8888"
-	if got := shadowSiphonIgrisBaseURL(st, "shadow-default-bats-http"); got != want {
-		t.Fatalf("got %q want %q", got, want)
-	}
-}
-
-func TestSiphonImageFor(t *testing.T) {
-	st := &enginev1alpha1.ShadowTest{}
-	t.Setenv("MONARCH_MODE", "dev")
-	t.Setenv("SIPHON_IMAGE", "")
-	if got := siphonImageFor(st); got != "siphon:dev" {
-		t.Fatalf("default mode: got %q want siphon:dev", got)
-	}
-	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{Image: "siphon:custom"}
-	if got := siphonImageFor(st); got != "siphon:custom" {
-		t.Fatalf("CR override: got %q", got)
-	}
-}
-
-func TestEnsureShadowSiphonServicePatch_selector(t *testing.T) {
-	svc := &corev1.Service{}
-	patch := func() error {
-		svc.Spec.Type = corev1.ServiceTypeClusterIP
-		svc.Spec.Selector = map[string]string{
-			"app.kubernetes.io/name": shadowSiphonServiceName,
-		}
-		svc.Spec.Ports = []corev1.ServicePort{{
-			Name:     "otlp-grpc",
-			Port:     shadowSiphonOTLPPort,
-			Protocol: corev1.ProtocolTCP,
-		}}
-		return nil
-	}
-	if err := patch(); err != nil {
-		t.Fatal(err)
-	}
-	if svc.Spec.Selector["app.kubernetes.io/name"] != shadowSiphonServiceName {
-		t.Fatalf("selector = %v", svc.Spec.Selector)
 	}
 }
 
@@ -273,7 +218,7 @@ func TestSiphonEnabled(t *testing.T) {
 	}
 	ports := siphonIngressPorts(st)
 	if len(ports) != 1 || ports[0] != 8080 {
-		t.Fatalf("expected Pixie target port applicationPort 8080, got %v", ports)
+		t.Fatalf("expected application port 8080, got %v", ports)
 	}
 
 	st = &enginev1alpha1.ShadowTest{
@@ -284,5 +229,39 @@ func TestSiphonEnabled(t *testing.T) {
 	}
 	if siphonEnabled(st, dep) {
 		t.Fatal("explicit false should override matching port")
+	}
+}
+
+func TestInt32ToUint16Ports(t *testing.T) {
+	got := int32ToUint16Ports([]int32{80, 8080, 0, 65536, 443})
+	want := []uint16{80, 8080, 443}
+	if len(got) != len(want) {
+		t.Fatalf("len %d want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] got %d want %d", i, got[i], want[i])
+		}
+	}
+}
+
+func TestKaiselRuleIPSetsEqual(t *testing.T) {
+	if !ipSetsEqual([]string{"10.0.0.1", "10.0.0.2"}, []string{"10.0.0.1", "10.0.0.2"}) {
+		t.Error("identical sets should be equal")
+	}
+	if ipSetsEqual([]string{"10.0.0.1"}, []string{"10.0.0.2"}) {
+		t.Error("different sets should not be equal")
+	}
+	if ipSetsEqual([]string{"10.0.0.1"}, []string{"10.0.0.1", "10.0.0.2"}) {
+		t.Error("different lengths should not be equal")
+	}
+}
+
+func TestKaiselRulePortSetsEqual(t *testing.T) {
+	if !portSetsEqual([]uint16{80, 443}, []uint16{443, 80}) {
+		t.Error("same ports in different order should be equal")
+	}
+	if portSetsEqual([]uint16{80}, []uint16{443}) {
+		t.Error("different ports should not be equal")
 	}
 }

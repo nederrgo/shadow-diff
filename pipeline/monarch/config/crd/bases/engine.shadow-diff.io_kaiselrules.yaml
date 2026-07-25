@@ -1,0 +1,78 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: kaiselrules.engine.shadow-diff.io
+spec:
+  group: engine.shadow-diff.io
+  names:
+    kind: KaiselRule
+    listKind: KaiselRuleList
+    plural: kaiselrules
+    shortNames:
+    - kr
+    singular: kaiselrule
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: KaiselRule configures eBPF ingress capture for one ShadowTest.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: KaiselRuleSpec defines the eBPF capture targets for a ShadowTest.
+            properties:
+              targetIPs:
+                description: |-
+                  TargetIPs are the live IPv4 addresses of Running target pods.
+                  Monarch resolves these by listing pods with the target Deployment's labels.
+                items:
+                  type: string
+                type: array
+              targetPorts:
+                description: |-
+                  TargetPorts restricts capture to these TCP ports (matched on source and
+                  destination so both request and response directions are captured).
+                  Empty means capture all TCP ports for the target IPs.
+                items:
+                  maximum: 65535
+                  minimum: 1
+                  type: integer
+                type: array
+            type: object
+          status:
+            description: KaiselRuleStatus reflects the observed state of the KaiselRule.
+            properties:
+              activeNodes:
+                description: ActiveNodes is how many kaisel DaemonSet pods have acknowledged
+                  this rule.
+                format: int32
+                type: integer
+              phase:
+                description: Phase is Active, Inactive, or Error.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

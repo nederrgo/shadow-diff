@@ -5,6 +5,7 @@ use (
 	./pipeline/egress-relay-rabbitmq
 	./pipeline/igrises/igris-http
 	./pipeline/igrises/igris-rabbitmq
+	./pipeline/kaisel
 	./pipeline/monarch
 	./pipeline/pixie-gate
 	./pipeline/recorder

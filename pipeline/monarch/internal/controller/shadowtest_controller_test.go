@@ -154,7 +154,7 @@ var _ = Describe("ShadowTest Controller", func() {
 				}
 				markDeploymentAvailable(shopServiceName())
 				markDeploymentAvailable(recorderDeploymentName(st))
-				markDeploymentAvailable(shadowSiphonServiceName)
+				// Siphon is no longer deployed; kaisel takes over ingress capture.
 			}
 
 			shadowNS = shadowNamespaceForCR(&enginev1alpha1.ShadowTest{
@@ -163,7 +163,7 @@ var _ = Describe("ShadowTest Controller", func() {
 
 			var deps appsv1.DeploymentList
 			Expect(k8sClient.List(ctx, &deps, client.InNamespace(shadowNS))).To(Succeed())
-			Expect(deps.Items).To(HaveLen(7))
+			Expect(deps.Items).To(HaveLen(7)) // beru-local, igris, control-a/b/candidate, shop, recorder (no Siphon)
 
 			roles := map[string]struct{}{}
 			var shadowDeps []appsv1.Deployment

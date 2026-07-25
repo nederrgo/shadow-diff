@@ -9,6 +9,14 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-25]
+### Added
+* 'pipeline/kaisel': Drop and count fragmented IPv4 datagrams in the kernel filter — gopacket already declines to decode fragments, so this adds a stated cause for an otherwise silent flow; covered by a loopback integration test asserting the counter
+* 'docs/data-plane/kaisel-ebpf.md': Added Kaisel eBPF capture spec — filter chain, chunked perf transport for GSO super-packets, design rationale (socket-filter fail-open, perf array vs ringbuf, why sampling cannot protect the ring) and limitations; mapped in data-plane index
+* 'pipeline/kaisel/internal/capture': Unified target_ips on host-order keys — capture.c composes both IPv4 addresses byte-wise from one 8-byte header read, so map keys no longer depend on node endianness and Go seeds with BigEndian instead of NativeEndian
+* 'pipeline/kaisel': Chunked eBPF capture for GSO super-packets — 128KB reach, TCP+port kernel filters, 1MB/CPU ring, netns integration suite
+* 'pipeline/kaisel': Add lean eBPF collector core — SOCKET_FILTER capture, perf-array PacketSource seam, CNI-agnostic decode, HTTP stream reassembly
+
 ## [2026-07-24]
 ### Added
 * 'pipeline/pixie-gate': Add least-privilege in-cluster Go service replacing host pixie-stream-bridge; wire setup/bats/docs

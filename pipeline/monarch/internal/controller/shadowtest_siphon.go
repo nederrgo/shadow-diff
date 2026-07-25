@@ -4,13 +4,11 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -24,13 +22,7 @@ import (
 const (
 	defaultSiphonMaxPayloadSize   = 65536
 	defaultSiphonSamplePercentage = 100
-	shadowSiphonServiceName       = "siphon"
-	shadowSiphonOTLPPort          = 4317
 )
-
-func pixieCaptureEnabled(_ *enginev1alpha1.ShadowTest, _ *appsv1.Deployment) bool {
-	return true // recorder is always provisioned; egress PxL always needed
-}
 
 func targetPrimaryContainerPorts(target *appsv1.Deployment) map[int32]bool {
 	ports := map[int32]bool{}
@@ -55,8 +47,6 @@ func siphonIngressCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.D
 		if d != "http_request" && d != "tcp_stream" {
 			continue
 		}
-		// Match declared container ports, or servicePort/applicationPort when the
-		// input is the Envoy listen port (common fixture: inputs.port == servicePort).
 		if targetPorts[in.Port] || in.Port == appPort || in.Port == svcPort {
 			return true
 		}
@@ -116,14 +106,13 @@ func formatCaptureTargets(labels map[string]string) []string {
 	return out
 }
 
-func shadowSiphonOTelEndpoint(shadowNS string) string {
-	return fmt.Sprintf("%s.%s.svc.cluster.local:%d", shadowSiphonServiceName, shadowNS, shadowSiphonOTLPPort)
-}
-
 func shadowRecorderOTelEndpoint(st *enginev1alpha1.ShadowTest, shadowNS string) string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local:%d", recorderServiceName(st), shadowNS, recorderOTLPPort)
 }
 
+// pixieStreamRuleName / pixieStreamRuleKey remain: PixieStreamRule is still
+// reconciled for egress (recorderOtelEndpoint, mongoOtelEndpoint). Ingress
+// (otelEndpoint) is left empty — kaisel takes over ingress capture.
 func pixieStreamRuleName(st *enginev1alpha1.ShadowTest) string {
 	return "pixie-" + st.Name
 }
@@ -136,7 +125,6 @@ func siphonIngressPorts(st *enginev1alpha1.ShadowTest) []int32 {
 	if isAMQPOnlyShadowTest(st) {
 		return nil
 	}
-	// Pixie filters prod-pod local_port; capture the app port, not Envoy servicePort.
 	if app := applicationPortFor(st); app > 0 {
 		return []int32{app}
 	}
@@ -167,13 +155,27 @@ func copyStringMap(in map[string]string) map[string]string {
 	return out
 }
 
+// int32ToUint16Ports converts application port numbers to uint16, skipping
+// invalid values. Port 0 and values above 65535 are not valid TCP ports.
+func int32ToUint16Ports(ports []int32) []uint16 {
+	out := make([]uint16, 0, len(ports))
+	for _, p := range ports {
+		if p > 0 && p <= 65535 {
+			out = append(out, uint16(p))
+		}
+	}
+	return out
+}
+
+// ── PixieStreamRule (egress only) ──────────────────────────────────────────
+
 func buildPixieStreamRuleSpec(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 	target *appsv1.Deployment,
 ) enginev1alpha1.PixieStreamRuleSpec {
-	ingress := siphonEnabled(st, target)
-
+	// OTelEndpoint is intentionally left empty: ingress capture is now handled
+	// by KaiselRule + the kaisel eBPF daemon, not pixie-gate.
 	spec := enginev1alpha1.PixieStreamRuleSpec{
 		ShadowTestRef:        st.Namespace + "/" + st.Name,
 		Active:               true,
@@ -184,118 +186,11 @@ func buildPixieStreamRuleSpec(
 		SamplePercentage:     siphonSamplePercentage(st),
 		RecorderOTelEndpoint: shadowRecorderOTelEndpoint(st, shadowNS),
 	}
-	if ingress {
-		spec.OTelEndpoint = shadowSiphonOTelEndpoint(shadowNS)
-		spec.TargetPorts = siphonIngressPorts(st)
-	}
 	if hasMongoDependency(st) {
 		spec.ShadowNamespace = shadowNS
 		spec.MongoOTelEndpoint = fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruOTLPPort)
 	}
 	return spec
-}
-
-func (r *ShadowTestReconciler) ensureShadowSiphonService(ctx context.Context, shadowNS string) error {
-	svc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: shadowNS,
-			Name:      shadowSiphonServiceName,
-			Labels: map[string]string{
-				labelManagedBy:           valueManagedBy,
-				"app.kubernetes.io/name": shadowSiphonServiceName,
-			},
-		},
-	}
-	_, err := ctrl.CreateOrPatch(ctx, r.Client, svc, func() error {
-		svc.Labels = map[string]string{
-			labelManagedBy:           valueManagedBy,
-			"app.kubernetes.io/name": shadowSiphonServiceName,
-		}
-		svc.Spec.Type = corev1.ServiceTypeClusterIP
-		svc.Spec.Selector = map[string]string{
-			"app.kubernetes.io/name": shadowSiphonServiceName,
-		}
-		svc.Spec.Ports = []corev1.ServicePort{{
-			Name:     "otlp-grpc",
-			Port:     shadowSiphonOTLPPort,
-			Protocol: corev1.ProtocolTCP,
-		}}
-		return nil
-	})
-	return err
-}
-
-func shadowSiphonIgrisBaseURL(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d",
-		igrisServiceName(st), shadowNS, servicePortFor(st))
-}
-
-func (r *ShadowTestReconciler) ensureShadowSiphonDeployment(
-	ctx context.Context,
-	st *enginev1alpha1.ShadowTest,
-	shadowNS string,
-) error {
-	labels := map[string]string{
-		labelManagedBy:           valueManagedBy,
-		labelShadowTestName:      st.Name,
-		labelShadowTestCRNS:      st.Namespace,
-		labelShadowTestUID:       string(st.UID),
-		"app.kubernetes.io/name": shadowSiphonServiceName,
-	}
-	deploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: shadowNS,
-			Name:      shadowSiphonServiceName,
-		},
-	}
-	replicas := int32(1)
-	igrisURL := shadowSiphonIgrisBaseURL(st, shadowNS)
-	_, err := ctrl.CreateOrPatch(ctx, r.Client, deploy, func() error {
-		deploy.Labels = labels
-		deploy.Spec.Replicas = &replicas
-		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{
-			"app.kubernetes.io/name": shadowSiphonServiceName,
-		}}
-		deploy.Spec.Template.ObjectMeta.Labels = map[string]string{
-			"app.kubernetes.io/name": shadowSiphonServiceName,
-		}
-		deploy.Spec.Template.Spec.Containers = []corev1.Container{{
-			Name:            shadowSiphonServiceName,
-			Image:           siphonImageFor(st),
-			ImagePullPolicy: corev1.PullIfNotPresent,
-			Ports: []corev1.ContainerPort{{
-				Name:          "otlp-grpc",
-				ContainerPort: shadowSiphonOTLPPort,
-				Protocol:      corev1.ProtocolTCP,
-			}},
-			Env: []corev1.EnvVar{
-				{Name: "SIPHON_OTLP_GRPC_ADDR", Value: fmt.Sprintf(":%d", shadowSiphonOTLPPort)},
-				{Name: "SIPHON_IGRIS_BASE_URL", Value: igrisURL},
-				{Name: envSiphonSamplePct, Value: strconv.Itoa(siphonSamplePercentage(st))},
-			},
-			Resources: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("50m"),
-					corev1.ResourceMemory: resource.MustParse("64Mi"),
-				},
-				Limits: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("200m"),
-					corev1.ResourceMemory: resource.MustParse("128Mi"),
-				},
-			},
-		}}
-		return nil
-	})
-	return err
-}
-
-func (r *ShadowTestReconciler) siphonDeploymentReady(ctx context.Context, shadowNS string) (bool, error) {
-	var deploy appsv1.Deployment
-	key := client.ObjectKey{Namespace: shadowNS, Name: shadowSiphonServiceName}
-	if err := r.Get(ctx, key, &deploy); err != nil {
-		return false, err
-	}
-	return deploy.Status.AvailableReplicas > 0, nil
 }
 
 func (r *ShadowTestReconciler) reconcilePixieStreamRule(
@@ -372,35 +267,154 @@ func (r *ShadowTestReconciler) deletePixieStreamRule(ctx context.Context, st *en
 	return nil
 }
 
-func (r *ShadowTestReconciler) reconcileSiphonCapture(
+// ── KaiselRule (ingress capture) ───────────────────────────────────────────
+
+func kaiselRuleName(st *enginev1alpha1.ShadowTest) string {
+	return "kaisel-" + st.Name
+}
+
+func kaiselRuleKey(st *enginev1alpha1.ShadowTest) types.NamespacedName {
+	return types.NamespacedName{Namespace: st.Namespace, Name: kaiselRuleName(st)}
+}
+
+// reconcileKaiselRule creates or updates a KaiselRule whose targetIPs are the
+// live, Running pod IPs for the target Deployment. Only pods that are Running,
+// have a non-empty PodIP, and have no DeletionTimestamp are included.
+func (r *ShadowTestReconciler) reconcileKaiselRule(
+	ctx context.Context,
+	st *enginev1alpha1.ShadowTest,
+	target *appsv1.Deployment,
+) error {
+	var podList corev1.PodList
+	if err := r.List(ctx, &podList,
+		client.InNamespace(targetNamespaceFor(st)),
+		client.MatchingLabels(target.Spec.Template.Labels),
+	); err != nil {
+		return fmt.Errorf("list target pods: %w", err)
+	}
+
+	var ips []string
+	for _, pod := range podList.Items {
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		if pod.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		if pod.Status.PodIP == "" {
+			continue
+		}
+		ips = append(ips, pod.Status.PodIP)
+	}
+	sort.Strings(ips)
+
+	ports := int32ToUint16Ports(siphonIngressPorts(st))
+
+	// Read the existing rule to skip the patch when nothing changed.
+	var existing enginev1alpha1.KaiselRule
+	existingErr := r.Get(ctx, kaiselRuleKey(st), &existing)
+	if existingErr == nil && ipSetsEqual(existing.Spec.TargetIPs, ips) && portSetsEqual(existing.Spec.TargetPorts, ports) {
+		// No change; avoid a spurious write.
+		return nil
+	}
+
+	rule := &enginev1alpha1.KaiselRule{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: st.Namespace,
+			Name:      kaiselRuleName(st),
+		},
+	}
+	_, err := ctrl.CreateOrPatch(ctx, r.Client, rule, func() error {
+		rule.Labels = map[string]string{
+			labelManagedBy:      valueManagedBy,
+			labelShadowTestName: st.Name,
+		}
+		rule.Spec = enginev1alpha1.KaiselRuleSpec{
+			TargetIPs:   ips,
+			TargetPorts: ports,
+		}
+		return controllerutil.SetControllerReference(st, rule, r.Scheme)
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := r.Get(ctx, kaiselRuleKey(st), rule); err != nil {
+		return err
+	}
+	if rule.Status.Phase == "Active" {
+		return nil
+	}
+	base := rule.DeepCopy()
+	rule.Status.Phase = "Active"
+	return r.Status().Patch(ctx, rule, client.MergeFrom(base))
+}
+
+func (r *ShadowTestReconciler) deleteKaiselRule(ctx context.Context, st *enginev1alpha1.ShadowTest) error {
+	rule := &enginev1alpha1.KaiselRule{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: st.Namespace,
+			Name:      kaiselRuleName(st),
+		},
+	}
+	if err := r.Delete(ctx, rule); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+// ipSetsEqual reports whether two sorted IP lists are identical.
+func ipSetsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// portSetsEqual reports whether two port lists are identical (order independent).
+func portSetsEqual(a, b []uint16) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[uint16]bool, len(a))
+	for _, p := range a {
+		m[p] = true
+	}
+	for _, p := range b {
+		if !m[p] {
+			return false
+		}
+	}
+	return true
+}
+
+// ── reconcileKaiselCapture (main orchestrator, replaces reconcileSiphonCapture) ─
+
+func (r *ShadowTestReconciler) reconcileKaiselCapture(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 	target *appsv1.Deployment,
-) (captureTargets []string, siphonPhase string, err error) {
+) (captureTargets []string, phase string, err error) {
 	labels := copyStringMap(target.Spec.Template.Labels)
-	ingress := siphonEnabled(st, target)
 
-	if !pixieCaptureEnabled(st, target) {
-		if err := r.deletePixieStreamRule(ctx, st); err != nil {
-			return formatCaptureTargets(labels), "Degraded", err
-		}
-		return nil, "Disabled", nil
-	}
-
-	if ingress {
-		if err := r.ensureShadowSiphonService(ctx, shadowNS); err != nil {
-			return formatCaptureTargets(labels), "Degraded", err
-		}
-		if err := r.ensureShadowSiphonDeployment(ctx, st, shadowNS); err != nil {
-			return formatCaptureTargets(labels), "Degraded", err
-		}
-	}
+	// Egress recording still uses PixieStreamRule for recorderOtelEndpoint
+	// and mongoOtelEndpoint. The ingress OTelEndpoint is left empty.
 	if err := r.reconcilePixieStreamRule(ctx, st, shadowNS, target); err != nil {
+		return formatCaptureTargets(labels), "Degraded", err
+	}
+	if err := r.reconcileKaiselRule(ctx, st, target); err != nil {
 		return formatCaptureTargets(labels), "Degraded", err
 	}
 	return formatCaptureTargets(labels), "Ready", nil
 }
+
+// ── Deployment→ShadowTest watch mapper ────────────────────────────────────
 
 func (r *ShadowTestReconciler) mapDeploymentToShadowTests(ctx context.Context, obj client.Object) []reconcile.Request {
 	dep, ok := obj.(*appsv1.Deployment)
