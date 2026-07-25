@@ -366,9 +366,9 @@ Expected: process stops accepting new connections, waits for in-flight multicast
 
 ---
 
-## Phase 3b — Pixie eBPF → Siphon OTLP (ingress capture)
+## Phase 3b — Pixie eBPF → Kaisel OTLP (ingress capture)
 
-Siphon receives **OTLP gRPC** on `:4317` (logs and traces) from Pixie `px.export`, parses HTTP fields, and POSTs to **igris-http** in the shadow namespace. Monarch writes a `PixieStreamRule` per ShadowTest; **pixie-gate** renders PxL and runs `px.export` to `spec.otelEndpoint`.
+Kaisel receives **OTLP gRPC** on `:4317` (logs and traces) from Pixie `px.export`, parses HTTP fields, and POSTs to **igris-http** in the shadow namespace. Monarch writes a `PixieStreamRule` per ShadowTest; **pixie-gate** renders PxL and runs `px.export` to `spec.otelEndpoint`.
 
 ### Pixie local sandbox (Minikube kvm2)
 
@@ -388,7 +388,7 @@ kubectl get pixiestreamrule -A
 
 ### Curl production Service (out-of-band tap)
 
-Traffic hits **prod** `my-prod-app` Service; Pixie eBPF exports to shadow **Siphon** separately:
+Traffic hits **prod** `my-prod-app` Service; Pixie eBPF exports to shadow **Kaisel** separately:
 
 ```bash
 TRACE_ID="pixie-$(date +%s)"
@@ -416,13 +416,13 @@ MINIKUBE_DRIVER=kvm2 ./testing/tools/e2e-reset-minikube.sh --setup-pixie
 make test-bats-e2e
 ```
 
-### Build Siphon locally
+### Build Kaisel locally
 
 ```bash
-cd "$REPO/pipeline/siphon"
+cd "$REPO/pipeline/kaisel"
 make build
-make docker-build SIPHON_IMG=siphon:dev
-minikube image load siphon:dev   # if using Minikube
+make docker-build KAISEL_IMG=kaisel:dev
+minikube image load kaisel:dev   # if using Minikube
 ```
 
 ---
@@ -430,7 +430,7 @@ minikube image load siphon:dev   # if using Minikube
 ## 9. Cleanup (optional)
 
 ```bash
-kubectl delete -k "$REPO/pipeline/siphon/deploy/"
+# Kaisel DaemonSet: kubectl delete -k "$REPO/pipeline/kaisel/deploy/"
 ```
 
 ```bash
@@ -454,8 +454,8 @@ make uninstall
 | Pods `1/2` not Ready | Envoy sidecar failing | `kubectl logs ... -c envoy-sidecar` |
 | `grpcurl` connection refused | Beru not ready or no port-forward | Check `beru-system` pods; re-run port-forward |
 | Wrong cluster | Multiple kube contexts | `kubectl config current-context` |
-| Siphon `Degraded`, empty capture | TC not on CNI iface / no prod traffic | Check `/v1/status`; hit prod Service URL |
-| No Igris logs after prod curl | `samplePercentage` sampling the trace out, missing `traceparent`, or wrong pod IPs | `kubectl get shadowtest -o yaml` → `siphon.samplePercentage` / `igrisRabbitmq.samplePercentage`; ensure W3C `traceparent` on the request |
+| Kaisel `Degraded`, empty capture | TC not on CNI iface / no prod traffic | Check `/v1/status`; hit prod Service URL |
+| No Igris logs after prod curl | `samplePercentage` sampling the trace out, missing `traceparent`, or wrong pod IPs | `kubectl get shadowtest -o yaml` → `spec.samplePercentage` / `igrisRabbitmq.samplePercentage`; ensure W3C `traceparent` on the request |
 
 ---
 
@@ -592,7 +592,7 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | \
 
 ## Phase 4a.2 — Egress recorder (auto-seed from prod)
 
-Siphon captures prod outbound HTTP (cleartext), pairs request/response on each TCP connection, and POSTs to Beru `POST /v1/record_egress`. Beru hashes the request and stores the response in `MockStore` — no manual `seed_mock` required.
+Kaisel captures prod outbound HTTP (cleartext), pairs request/response on each TCP connection, and POSTs to Beru `POST /v1/record_egress`. Beru hashes the request and stores the response in `MockStore` — no manual `seed_mock` required.
 
 ### Automated Kind E2E
 
@@ -622,25 +622,25 @@ kubectl exec -n "$SHADOW_NS" deploy/my-app-shadow-control-a -c app -- \
     -H 'Content-Type: application/json' -d '{"e2e_record":1}'
 ```
 
-Watch Siphon for `egress forwarder: recorded` and Beru for incoming `/v1/record_egress`.
+Watch Kaisel for `egress forwarder: recorded` and Beru for incoming `/v1/record_egress`.
 
 ### Unit tests (Sprint 4a.2)
 
 ```bash
-make -C siphon test
+make -C kaisel test
 # or:
-cd siphon && go test ./internal/capture/... ./internal/egress/... ./internal/config/... -v -count=1
+cd kaisel && go test ./internal/capture/... ./internal/egress/... ./internal/config/... -v -count=1
 ```
 
 Covers: BPF ingress+egress clauses, `FlushOlderThan` goroutine lifecycle, keep-alive HTTP pairing (two transactions per connection), `ignore_paths` on records.
 
 ### Verification checklist (4a.2)
 
-1. Rebuild/load `siphon`, `beru`, `monarch` into Kind (use fresh image tags after code changes).
+1. Rebuild/load `kaisel`, `beru`, `monarch` into Kind (use fresh image tags after code changes).
 2. Apply a ShadowTest fixture (Shop+Recorder are always-on; no `spec.recordAndReplay` field). Hybrid examples: `testing/bats/fixtures/e2e/rabbit-ingress-nodejs/shadowtest.yaml`.
-3. Prod curl to `httpbin.org/post` → Siphon logs `egress forwarder: recorded …`.
+3. Prod curl to `httpbin.org/post` → Kaisel logs `egress forwarder: recorded …`.
 4. `make test-bats-e2e` → shadow egress **200** without `seed_mock`.
-5. Siphon status: `record_and_replay_count>0`, `recorder_host_configured=true` (Monarch POST via hostIP).
+5. Kaisel status: `record_and_replay_count>0`, `recorder_host_configured=true` (Monarch POST via hostIP).
 6. `go test ./internal/egress/...` — keep-alive parser test passes.
 
 ---
@@ -654,7 +654,7 @@ Covers: BPF ingress+egress clauses, `FlushOlderThan` goroutine lifecycle, keep-a
 
 ## Phase 5b: RabbitMQ shadow ingress
 
-AMQP-only ShadowTests use **`igris-rabbitmq`** (not HTTP Igris or Siphon ingress). Monarch declares the prod queue once; see [`testing/bats/manifests/rabbitmq-e2e/README.md`](testing/bats/manifests/rabbitmq-e2e/README.md).
+AMQP-only ShadowTests use **`igris-rabbitmq`** (not HTTP Igris or Kaisel ingress). Monarch declares the prod queue once; see [`testing/bats/manifests/rabbitmq-e2e/README.md`](testing/bats/manifests/rabbitmq-e2e/README.md).
 
 **W3C parity (with Phase 5_OTel):** `igris-rabbitmq` injects **`traceparent`** and **`traceparent`** on multicast when missing. Resolution: shadow header → parse `traceparent` → generate 32-char hex trace id. E2E publishes **32-hex `traceparent`** and **traceparent-only** messages; workers forward both headers on HTTP ingress/egress. OTel operator on shadow pods may additionally propagate context when AMQP/HTTP are instrumented; set `RMQ_WORKER_MANUAL_TRACE=0` to rely on the agent only.
 
@@ -839,8 +839,8 @@ cd monarch && go test ./internal/controller/ -run 'TestOtel|TestRenderEnvoy'
 - [ ] OTel injection verified on shadow pods before E2E traffic (Phase 5_OTel — `assert-otel-injected.sh`)
 - [ ] Egress mock seeded via `POST /v1/seed_mock` and proxied curl returns mock (Phase 4a.1)
 - [ ] Unseeded egress returns HTTP 599 and Beru logs `Egress Regression` (Phase 4a.1)
-- [ ] Prod egress auto-recorded by Siphon and shadow replay returns 200 without `seed_mock` (Phase 4a.2 — `make test-bats-e2e`)
-- [ ] `make -C siphon test` passes (BPF egress, FlushOlderThan, keep-alive parser)
+- [ ] Prod egress auto-recorded by Kaisel and shadow replay returns 200 without `seed_mock` (Phase 4a.2 — `make test-bats-e2e`)
+- [ ] `make -C kaisel test` passes (BPF egress, FlushOlderThan, keep-alive parser)
 - [ ] RabbitMQ E2E: `make test-bats-e2e` (Phase 5b — prod queue + igris-rabbitmq multicast)
 - [ ] RMQ+Mongo E2E: `make test-bats-e2e` (Phase 5c — traceparent prod publish, mongo logs, Beru ingress + rabbitmq egress)
 - [ ] HTTP+Mongo E2E: `make test-bats-e2e` (Phase 5d — igris-http ingress, mongo logs, Beru ingress + rabbitmq egress)

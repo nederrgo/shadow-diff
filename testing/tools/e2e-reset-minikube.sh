@@ -11,7 +11,7 @@
 # Images: VM drivers use eval $(minikube docker-env); none driver uses host docker + minikube image load.
 #
 # Port model (do not change without updating manifests):
-#   prod pod          -> :80   (HTTP_PORT=80; Pixie eBPF -> OTLP -> shadow Siphon :4317)
+#   prod pod          -> :80   (HTTP_PORT=80; Kaisel eBPF capture -> igris-http)
 #   Igris listener    -> :80   (replays captured prod traffic)
 #   Envoy ingress     -> :8888 (Igris multicasts to shadow Services here)
 #   shadow app (echo) -> :80   (applicationPort; env copied from prod)
@@ -29,8 +29,6 @@ set -euo pipefail
 # testing/tools/<script> → repo root is ../..
 REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 cd "$REPO"
-# shellcheck source=testing/bats/helpers/siphon-config.sh
-source "$REPO/testing/bats/helpers/siphon-config.sh"
 # shellcheck source=testing/bats/helpers/e2e-helpers.sh
 source "$REPO/testing/bats/helpers/e2e-helpers.sh"
 # shellcheck source=testing/bats/helpers/cluster-minikube.sh
@@ -41,7 +39,6 @@ MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
 BERU_IMG="${BERU_IMG:-beru:dev}"
 SHOP_IMG="${SHOP_IMG:-shop:dev}"
 IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
-SIPHON_IMG="${SIPHON_IMG:-siphon:dev}"
 RECORDER_IMG="${RECORDER_IMG:-recorder:dev}"
 PIXIE_GATE_IMG="${PIXIE_GATE_IMG:-pixie-gate:dev}"
 
@@ -75,7 +72,7 @@ done
 
 export SKIP_BUILD SKIP_LOAD NO_RESET SETUP_PIXIE SKIP_PIXIE
 
-export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG SHOP_IMG IGRIS_IMG SIPHON_IMG RECORDER_IMG
+export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG SHOP_IMG IGRIS_IMG RECORDER_IMG
 
 # Pixie HTTP ingress: VM driver + flannel CNI (avoid calico/flannel mix on same profile).
 # shellcheck source=testing/bats/helpers/pixie-bridge.sh
@@ -118,7 +115,7 @@ if [[ "${SETUP_PIXIE:-1}" -eq 1 && "${SKIP_PIXIE:-0}" -eq 0 ]]; then
 fi
 
 echo "==> Monarch E2E reset (minikube profile=${MINIKUBE_PROFILE}, driver=${MINIKUBE_DRIVER}, cni=${MINIKUBE_CNI:-flannel})"
-echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG shop=$SHOP_IMG (beru-local) igris=$IGRIS_IMG siphon=$SIPHON_IMG recorder=$RECORDER_IMG pixie-gate=$PIXIE_GATE_IMG"
+echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG shop=$SHOP_IMG (beru-local) igris=$IGRIS_IMG recorder=$RECORDER_IMG pixie-gate=$PIXIE_GATE_IMG"
 if [[ "$SKIP_BUILD" -eq 1 ]]; then
   echo "WARN: --skip-build reuses existing minikube docker images; code changes are NOT included until you rebuild"
 fi
@@ -140,14 +137,13 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   make beru-docker-build BERU_IMG="$BERU_IMG"
   make shop-docker-build SHOP_IMG="$SHOP_IMG"
   make igris-docker-build IGRIS_IMG="$IGRIS_IMG"
-  make siphon-docker-build SIPHON_IMG="$SIPHON_IMG"
   make recorder-docker-build RECORDER_IMG="$RECORDER_IMG"
   make pixie-gate-docker-build PIXIE_GATE_IMG="$PIXIE_GATE_IMG"
 fi
 
 if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
   echo "==> Sync local images into containerd (none driver)"
-  load_minikube_images "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$SIPHON_IMG" "$RECORDER_IMG" "$PIXIE_GATE_IMG"
+  load_minikube_images "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$RECORDER_IMG" "$PIXIE_GATE_IMG"
 fi
 
 if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
@@ -184,9 +180,6 @@ e2e_reset_deploy_stack() {
   kubectl set image deployment/beru -n beru-system beru="$BERU_IMG"
   kubectl rollout status deployment/beru -n beru-system --timeout=180s
 
-  echo "==> Siphon RBAC (per-shadow OTLP receiver; Monarch writes PixieStreamRule)"
-  kubectl apply -f pipeline/siphon/deploy/rbac.yaml
-
   # shellcheck source=testing/bats/helpers/pixie-bridge.sh
   source "$REPO/testing/bats/helpers/pixie-bridge.sh"
   echo "==> pixie-gate (monarch-system image=${PIXIE_GATE_IMG})"
@@ -204,31 +197,27 @@ e2e_reset_deploy_stack() {
     echo "ERROR: ShadowTest $SHADOWTEST_NS/$SHADOWTEST missing after apply" >&2
     exit 1
   fi
-  nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
 
-  echo "==> Wait for ShadowTest Ready (Monarch reconciles PixieStreamRule + shadow Siphon Service)"
-  local i phase siphon message shadow_ns
+  echo "==> Wait for ShadowTest Ready (Monarch reconciles PixieStreamRule + KaiselRule)"
+  local i phase kaisel message shadow_ns
   for i in $(seq 1 36); do
     phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)
-    siphon=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.siphonPhase}' 2>/dev/null || true)
+    kaisel=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.kaiselPhase}' 2>/dev/null || true)
     message=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.message}' 2>/dev/null || true)
     shadow_ns=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.shadowNamespace}' 2>/dev/null || true)
-    if [[ "$phase" == "Ready" && "$siphon" == "Ready" ]]; then
+    if [[ "$phase" == "Ready" && "$kaisel" == "Ready" ]]; then
       break
     fi
-    if [[ "$phase" == "Ready" && "$i" -ge 6 ]]; then
-      nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
-    fi
-    echo "    phase=$phase siphon=$siphon msg=${message:-<none>} (${i}/36)"
+    echo "    phase=$phase kaisel=$kaisel msg=${message:-<none>} (${i}/36)"
     sleep 5
   done
 
   kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o custom-columns=\
-PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTURE:.status.captureTargets
+PHASE:.status.phase,KAISEL:.status.kaiselPhase,NS:.status.shadowNamespace,CAPTURE:.status.captureTargets
 
   SHADOW_NS=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.shadowNamespace}')
   phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.phase}')
-  siphon_phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.siphonPhase}')
+  kaisel_phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.kaiselPhase}')
   if [[ "$phase" != "Ready" ]]; then
     echo "ERROR: ShadowTest not Ready — check: kubectl describe shadowtest $SHADOWTEST -n $SHADOWTEST_NS" >&2
     if [[ -n "${E2E_IMAGE_REBUILD_HINT:-}" ]]; then
@@ -236,14 +225,8 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
     fi
     exit 1
   fi
-  if [[ "$siphon_phase" == "Degraded" ]]; then
-    echo "WARN: siphonPhase=Degraded — check PixieStreamRule and monarch-controller logs"
-  fi
-
-  if [[ -n "${SHADOW_NS:-}" && "$siphon_phase" == "Ready" ]]; then
-    echo "==> Shadow Siphon OTLP receiver (Pixie export destination)"
-    wait_pixie_capture_ready "$SHADOWTEST" "$SHADOWTEST_NS" "$SHADOW_NS" 120
-    wait_shadow_siphon_otlp "$SHADOW_NS"
+  if [[ "$kaisel_phase" == "Degraded" ]]; then
+    echo "WARN: kaiselPhase=Degraded — check KaiselRule / PixieStreamRule and monarch-controller logs"
   fi
 
   if [[ -n "${SHADOW_NS:-}" ]]; then
@@ -255,10 +238,6 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
     wait_recorder_rollout "$SHADOWTEST" "$SHADOWTEST_NS" "$SHADOW_NS" "$RECORDER_IMG" 120s
   fi
 
-  echo "==> Nudge Monarch reconcile (recorder_host after Recorder is up)"
-  nudge_siphon_config "$SHADOWTEST" "$SHADOWTEST_NS"
-  sleep 3
-
   echo ""
   echo "E2E stack is up."
   echo "  Shadow namespace: $SHADOW_NS"
@@ -266,9 +245,8 @@ PHASE:.status.phase,SIPHON:.status.siphonPhase,NS:.status.shadowNamespace,CAPTUR
   prod_ip=$(kubectl get pods -n default -l app=my-prod-app -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2>/dev/null | head -1)
   echo "  Prod IP:          ${prod_ip:-<pending>}"
   echo "  Capture labels:   $(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.captureTargets}' 2>/dev/null || echo '<pending>')"
-  echo "  Pixie export:     siphon.${SHADOW_NS}.svc.cluster.local:4317"
+  echo "  Kaisel ingress:   KaiselRule kaisel-${SHADOWTEST} -> igris in ${SHADOW_NS}"
   echo "  Beru (local):     beru-local.${SHADOW_NS}.svc.cluster.local:50051"
-  echo "  (ingress capture requires Pixie — ./testing/bats/setup/setup-local-pixie.sh)"
   echo ""
   echo "Run bats tests:     make test-bats-e2e"
 }

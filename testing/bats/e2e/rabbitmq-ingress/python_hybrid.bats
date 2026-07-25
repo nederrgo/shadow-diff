@@ -33,7 +33,7 @@ setup_file() {
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
   wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" \
-    --require-mongo --require-rmq --require-siphon
+    --require-mongo --require-rmq --require-kaisel
 
   SHADOW_NS="$(shadow_namespace)"
   export SHADOW_NS

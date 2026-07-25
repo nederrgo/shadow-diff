@@ -13,16 +13,22 @@ import (
 
 // StreamFactory reassembles TCP streams and parses HTTP requests out of them.
 //
-// OnRequest is both the test hook and the Step 2 seam: it is where the handler
-// will build the record shape pipeline/siphon/internal/forwarder/record.go
-// defines (Method, RequestURI, Host, Body, Traceparent). That type is copied
-// into kaisel rather than imported -- it lives under another module's
-// internal/, so importing it is not possible. pipeline/recorder does the same.
+// OnRequest is both the test hook and the export seam: main builds an
+// HTTPRecord (Method, RequestURI, Host, Body, Traceparent) and POSTs to igris.
+// That type lives in internal/forwarder (cannot import
+// another module's internal/).
+// logBodyCap bounds how much captured body content a single log line can
+// carry, so one oversized request can't flood the log with its full payload.
+const logBodyCap = 4096
+
 type StreamFactory struct {
 	Log *slog.Logger
 	// OnRequest is called for every successfully parsed request. When nil,
 	// requests are logged instead.
 	OnRequest func(netFlow, transportFlow gopacket.Flow, req *http.Request)
+	// LogBodies includes body content (truncated to logBodyCap) in the
+	// default log line. Only takes effect when OnRequest is nil.
+	LogBodies bool
 }
 
 // New implements tcpassembly.StreamFactory.
@@ -56,13 +62,23 @@ func (s *StreamFactory) run(netFlow, transportFlow gopacket.Flow, r *tcpreader.R
 			req.Body.Close()
 			continue
 		}
-		body := tcpreader.DiscardBytesToEOF(req.Body)
+		bodyBytes, _ := io.ReadAll(req.Body)
 		req.Body.Close()
-		s.logger().Info("http request",
+		fields := []any{
 			"src", netFlow.Src().String(), "dst", netFlow.Dst().String(),
 			"ports", transportFlow.String(),
 			"method", req.Method, "host", req.Host, "uri", req.RequestURI,
-			"body_bytes", body)
+			"body_bytes", len(bodyBytes),
+		}
+		if s.LogBodies {
+			truncated := bodyBytes
+			if len(truncated) > logBodyCap {
+				truncated = truncated[:logBodyCap]
+			}
+			fields = append(fields, "body", string(truncated),
+				"body_truncated", len(bodyBytes) > logBodyCap)
+		}
+		s.logger().Info("http request", fields...)
 	}
 }
 

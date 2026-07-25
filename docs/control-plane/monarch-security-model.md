@@ -63,7 +63,7 @@ Whenever a `ShadowTest` resource is initialized, Monarch programmatically instan
 
 ### Container Security Principles
 * **No Privilege Escalation**: Injected Envoy proxy sidecars and dependency stacks (e.g., automated Redis or Mongo test stores) run strictly within unprivileged contexts (`allowPrivilegeEscalation: false`, `runAsNonRoot: true`).
-* **Automated Sandbox Network Policies**: Monarch instantiates strict `NetworkPolicies` dropping all incoming ingress traffic except for out-of-band telemetry pipelines authorized through the `Siphon` gateway service (`:4317`).
+* **Automated Sandbox Network Policies**: Monarch instantiates strict `NetworkPolicies` dropping all incoming ingress traffic except for out-of-band telemetry pipelines (Kaisel → igris-http; Pixie OTLP → Recorder / beru-local).
 * **Egress Traffic Interception**: Monarch injects an Envoy proxy configured with forceful egress filtering rules. Any attempt by a shadow component (`candidate` or `control`) to call external production APIs (e.g., Stripe, SendGrid) is trapped, cut off, and directed to mock stubs.
 
 ---

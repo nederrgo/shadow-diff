@@ -2,7 +2,7 @@
 
 **egress-relay-rabbitmq** is the **L4a — analysis ingest** service for **AMQP egress diffing** in Shadow-Diff. It subscribes to **RabbitMQ Firehose** on each **shadow broker** (control-a, control-b, candidate), extracts trace ids from published message headers, and posts egress reports to Beru so Beru can run **diff-of-diffs** on outbound AMQP payloads across the three roles.
 
-This observes **shadow** broker publishes only — not production traffic. It is separate from **Recorder (L4b)**, which records prod HTTP egress via Siphon, and from **Envoy ingress `ext_proc`**, which handles HTTP response diffing.
+This observes **shadow** broker publishes only — not production traffic. It is separate from **Recorder (L4b)**, which records prod HTTP egress via Pixie → Recorder, and from **Envoy ingress `ext_proc`**, which handles HTTP response diffing.
 
 See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) for the full pipeline.
 

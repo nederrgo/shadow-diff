@@ -65,7 +65,7 @@ make test-bats               # both suites
 
 ```
 L0  ShadowTest CR           Monarch reconciler
-L1  Capture                 Siphon (HTTP via Pixie eBPF) / igris-rabbitmq (AMQP queue bind)
+L1  Capture                 Kaisel (HTTP eBPF) / igris-rabbitmq (AMQP queue bind)
 L2  Ingress hub             igris-http (HTTP/TCP multicast) or igris-rabbitmq (AMQP fan-out)
 L3  Shadow stack            3× app Deployment + Envoy sidecar + ephemeral deps per role
 L4a AMQP egress             egress-relay-rabbitmq (Firehose → Beru)
@@ -76,9 +76,9 @@ L5  Analysis sink           Beru (diff-of-diffs, SQLite, dashboard) + Shop (per-
 ### Key components
 
 **`pipeline/monarch/`** — Kubebuilder operator (`github.com/shadow-diff/monarch`)  
-Reconcile flow: validate → shadow namespace → dependencies → igris → 3× shadow deployments + Envoy ConfigMaps → Shop + Recorder (always-on) → Siphon Service+Deployment (HTTP ingress) + PixieStreamRule → status patch.  
+Reconcile flow: validate → shadow namespace → dependencies → igris → 3× shadow deployments + Envoy ConfigMaps → Shop + Recorder (always-on) → KaiselRule + PixieStreamRule (egress) → status patch.  
 Shadow namespace is always `shadow-<crNamespace>-<crName>`.  
-Key files: `internal/controller/shadowtest_controller.go` (main loop), `shadowtest_envoy.go` (Envoy YAML rendering), `shadowtest_dependencies.go` (dep env injection), `shadowtest_siphon.go` (Siphon + PixieStreamRule), `shadowtest_beru_local.go` (per-ShadowTest beru-local pod).
+Key files: `internal/controller/shadowtest_controller.go` (main loop), `shadowtest_envoy.go` (Envoy YAML rendering), `shadowtest_dependencies.go` (dep env injection), `shadowtest_kaisel.go` (KaiselRule + PixieStreamRule), `shadowtest_beru_local.go` (per-ShadowTest beru-local pod).
 
 **`pipeline/beru/`** — L5 analysis sink (`github.com/shadow-diff/beru`)  
 Three ports: gRPC `:50051` (Envoy ext_proc + TrafficReporter), OTLP gRPC `:4317`, HTTP `:8080` (REST API, dashboard, egress diff).  
@@ -92,8 +92,8 @@ Listens on ports from `/etc/igris/listeners.json` (written by Monarch). Stamps W
 **`pipeline/igrises/igris-rabbitmq/`** — AMQP fan-out  
 Consumes the Monarch-declared shadow queue on the prod broker, republishes to 3× shadow RabbitMQ brokers with trace headers.
 
-**`pipeline/siphon/`** — Pixie ingress bridge  
-Receives compressed OTLP gRPC from pixie-gate on `:4317`, parses span attributes → `HTTPRecord`, POSTs to igris-http. Monarch deploys Siphon into the shadow namespace when HTTP ingress capture is enabled.
+**`pipeline/kaisel/`** — Self-hosted eBPF HTTP ingress capture  
+AF_PACKET + socket filter → TCP reassembly → admit/sample → HTTP POST to per-ShadowTest igris. Driven by `KaiselRule` CRs from Monarch.
 
 **`pipeline/shop/`** — Per-ShadowTest HTTP egress mock store  
 In-memory mock store deployed by Monarch into each shadow namespace alongside Recorder. gRPC ext_proc on `:50051` (Envoy egress replay), HTTP `:8080` (`POST /v1/record_egress` seeding). Mocks keyed by `trace:<traceID>:<METHOD>:<host>:<path>`.
@@ -106,7 +106,7 @@ Subscribes to Firehose on each shadow broker, deduplicates (OTel pika double-pub
 
 ### Pixie integration
 
-`PixieStreamRule` CR is reconciled by Monarch → the **pixie-gate** Deployment (`pipeline/pixie-gate/`) polls rules and runs `px run -f <pxl>` → Pixie emits OTLP → Siphon (ingress) or Recorder (egress) or beru-local OTLP port (MongoDB).  
+`PixieStreamRule` CR is reconciled by Monarch → the **pixie-gate** Deployment (`pipeline/pixie-gate/`) polls rules and runs `px run -f <pxl>` → Pixie emits OTLP → Recorder (egress) or beru-local OTLP port (MongoDB). Ingress HTTP capture is Kaisel (empty `otelEndpoint`).  
 PxL templates live in `pipeline/pixie-gate/deploy/configmap.yaml` (and embedded under `internal/pxl/templates/`).  
 Bootstrap helpers: `testing/bats/helpers/pixie-bridge.sh` (Vizier install + `deploy_pixie_gate`).
 

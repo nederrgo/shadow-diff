@@ -1,4 +1,4 @@
-# HTTP sampling proof — siphon.samplePercentage: 10 (Pixie + Siphon defense)
+# HTTP sampling proof — samplePercentage: 10 (Kaisel + Pixie egress / Recorder)
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest
 metadata:
@@ -8,8 +8,7 @@ spec:
   targetDeployment: http-rmq-go-prod
   newImage: http-rmq-go-worker:dev
 
-  siphon:
-    samplePercentage: 10
+  samplePercentage: 10
 
   inputs:
     - port: 8888

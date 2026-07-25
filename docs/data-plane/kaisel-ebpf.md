@@ -4,7 +4,7 @@ title: Kaisel eBPF Capture Daemon
 description: Self-hosted eBPF ingress capture — AF_PACKET socket filter, kernel-side address/protocol/port filtering, chunked perf transport for GSO super-packets, and user-space TCP reassembly.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel
 tags: [data-plane, kaisel, ebpf, capture, networking, gso]
-timestamp: 2026-07-25T16:40:00Z
+timestamp: 2026-07-25T18:40:00Z
 ---
 
 # Kaisel eBPF Capture Daemon
@@ -19,9 +19,9 @@ Kaisel is a daemon driven by **`KaiselRule` CRs** emitted by Monarch's `ShadowTe
 | --- | --- |
 | Packet capture, filtering, reassembly, HTTP request parsing | Implemented |
 | `KaiselRule` CRD reconciliation (live IP sync, no restart) | Implemented |
-| Export to igris / OTLP | Not started |
+| Export to igris | Implemented — userspace POST to per-ShadowTest `spec.igrisBaseURL`, routed by destination IP; see [/data-plane/siphon-audit.md](/data-plane/siphon-audit.md) |
 | HTTP response parsing and request/response correlation | Not started |
-| Sampling | Not started |
+| Sampling | Implemented — admit (drop untraced) + `SampledIn` in Kaisel before POST; `spec.samplePercentage` on `KaiselRule` |
 
 ## Design premise
 
@@ -37,7 +37,14 @@ AF_PACKET raw socket (bound to one interface)
                  └─ decode.Packet   Ethernet or raw-L3, autodetected
                       └─ tcpassembly   TCP streams
                            └─ http.ReadRequest   →  OnRequest
+                                └─ dst IP → KaiselRule route
+                                     └─ admit (traceparent + SampledIn)
+                                          └─ HTTP POST → igris-http
 ```
+
+### Export routing
+
+Monarch writes `spec.igrisBaseURL` and `spec.samplePercentage` on each `KaiselRule`. Kaisel rebuilds an in-memory `dstIP → route` table from all rules. Captured request direction uses the destination address as the join key to the correct shadow-namespace igris Service. IP conflicts keep the lexicographically first `namespace/name` and warn. Missing/invalid `traceparent` is dropped in Kaisel before POST; igris-http also rejects untraced requests (tracing is required; no mint).
 
 ## Kernel filter chain
 
@@ -128,6 +135,7 @@ The `covered` watermark serves as both the completeness check and truncation det
 | `-port` | all | Seed TCP port for BPF maps (manual/test runs) |
 | `-l2-off` | `-1` | `-1` autodetect (defaults to Ethernet when `-iface any`, since there is no single sysfs entry to read), `0` raw L3, `14` Ethernet |
 | `-percpu-buffer` | 1 MB | Per-CPU perf ring bytes |
+| `-log-bodies` | `false` | Include captured request body content (truncated to 4KB) in logs. Off by default — bodies are real production data and pod logs are commonly shipped off-node. The DaemonSet exposes this as `logBodies` in the `kaisel-config` ConfigMap |
 
 In daemon mode, targets and ports come from `KaiselRule` CRs via the controller. The `-target` and `-port` flags seed the initial BPF maps before the controller has reconciled; they are additive with whatever the controller pushes later.
 

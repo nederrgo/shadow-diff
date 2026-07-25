@@ -42,9 +42,9 @@ bats_http_otel_rollout_stack() {
     kubectl rollout status "deployment/mongodb-${role}" -n "$shadow_ns" --timeout=180s
     kubectl rollout status "deployment/${shadowtest}-${role}" -n "$shadow_ns" --timeout=180s
   done
-  # Monarch provisions Deployment/siphon when HTTP ingress capture is enabled.
-  echo "==> wait for Monarch Siphon OTLP receiver"
-  kubectl rollout status deployment/siphon -n "$shadow_ns" --timeout=120s
+  echo "==> wait for KaiselRule (ingress capture)"
+  kubectl get kaiselrule "kaisel-${shadowtest}" -n "${SHADOWTEST_NS:-default}" \
+    -o jsonpath='{.spec.targetIPs[0]}' | grep -q . 
   _bats_http_otel_warmup_extproc "$shadow_ns"
 }
 

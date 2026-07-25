@@ -34,12 +34,18 @@ spec:
         imagePullPolicy: IfNotPresent
         args:
         - -iface=$(KAISEL_IFACE)
+        - -log-bodies=$(KAISEL_LOG_BODIES)
         env:
         - name: KAISEL_IFACE
           valueFrom:
             configMapKeyRef:
               name: kaisel-config
               key: iface
+        - name: KAISEL_LOG_BODIES
+          valueFrom:
+            configMapKeyRef:
+              name: kaisel-config
+              key: logBodies
         securityContext:
           # Not privileged:true — only the three capabilities actually needed.
           # CAP_BPF:     load eBPF programs and maps (kernel 5.8+)

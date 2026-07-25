@@ -30,18 +30,19 @@ func TestResolveIgrisURL_preservesQueryString(t *testing.T) {
 }
 
 func TestClient_Forward_postsWithTraceparent(t *testing.T) {
-	var gotMethod, gotPath, gotTP string
+	var gotMethod, gotPath, gotTP, gotHost string
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotPath = r.URL.RequestURI()
 		gotTP = r.Header.Get(headerTraceparent)
+		gotHost = r.Host
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer srv.Close()
 
-	client, err := NewClient(srv.URL, 2*time.Second, nil)
+	client, err := NewClient(srv.URL, 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,6 +50,7 @@ func TestClient_Forward_postsWithTraceparent(t *testing.T) {
 	err = client.Forward(context.Background(), HTTPRecord{
 		Method:      http.MethodPost,
 		RequestURI:  "/echo?active=true",
+		Host:        "prod.example.com",
 		Body:        []byte(`{"ok":true}`),
 		Traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
 	})
@@ -64,13 +66,16 @@ func TestClient_Forward_postsWithTraceparent(t *testing.T) {
 	if gotTP != "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" {
 		t.Fatalf("traceparent %q", gotTP)
 	}
+	if gotHost != "prod.example.com" {
+		t.Fatalf("host %q", gotHost)
+	}
 	if string(gotBody) != `{"ok":true}` {
 		t.Fatalf("body %q", gotBody)
 	}
 }
 
 func TestNewClient_requiresBaseURL(t *testing.T) {
-	if _, err := NewClient("", time.Second, nil); err == nil {
+	if _, err := NewClient("", time.Second); err == nil {
 		t.Fatal("expected error for empty base URL")
 	}
 }

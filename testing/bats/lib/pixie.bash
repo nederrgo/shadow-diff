@@ -12,8 +12,7 @@ bats_assert_bridge_running() {
 
 bats_wait_pixie_after_shadowtest() {
   local shadowtest="$1" ns="$2"
-  # shellcheck source=testing/bats/helpers/siphon-config.sh
-  source "${REPO}/testing/bats/helpers/siphon-config.sh"
+  bats_source_pixie_helpers
   wait_pixie_stream_rule "$shadowtest" "$ns" 120 "${3:-0}"
   if [[ "${3:-0}" == "1" ]]; then
     wait_pixie_mongo_pxl_ready "$shadowtest" "$ns" 60

@@ -10,23 +10,32 @@ import (
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 	"github.com/shadow-diff/kaisel/internal/capture"
+	"github.com/shadow-diff/kaisel/internal/export"
 )
 
 type ruleState struct {
-	ips   map[string]bool
-	ports map[uint16]bool
+	ips              map[string]bool
+	ports            map[uint16]bool
+	igrisBaseURL     string
+	samplePercentage int
 }
 
 // Reconciler watches KaiselRule CRs and sends MapUpdates into the capture loop.
 type Reconciler struct {
 	client  client.Client
 	updates chan<- capture.MapUpdate
+	router  *export.Router
 	mu      sync.Mutex
 	byRule  map[string]ruleState
 }
 
-func New(c client.Client, updates chan<- capture.MapUpdate) *Reconciler {
-	return &Reconciler{client: c, updates: updates, byRule: make(map[string]ruleState)}
+func New(c client.Client, updates chan<- capture.MapUpdate, router *export.Router) *Reconciler {
+	return &Reconciler{
+		client:  c,
+		updates: updates,
+		router:  router,
+		byRule:  make(map[string]ruleState),
+	}
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -54,6 +63,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		r.byRule[req.String()] = next
 	}
 
+	r.rebuildRouter()
+
 	if hasChanges(upd) {
 		// ponytail: non-blocking; next reconcile resyncs if the channel is full
 		select {
@@ -65,6 +76,26 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	return ctrl.Result{}, nil
 }
 
+func (r *Reconciler) rebuildRouter() {
+	if r.router == nil {
+		return
+	}
+	rules := make([]export.RuleExport, 0, len(r.byRule))
+	for key, st := range r.byRule {
+		ips := make([]string, 0, len(st.ips))
+		for ip := range st.ips {
+			ips = append(ips, ip)
+		}
+		rules = append(rules, export.RuleExport{
+			Key:              key,
+			IPs:              ips,
+			IgrisBaseURL:     st.igrisBaseURL,
+			SamplePercentage: st.samplePercentage,
+		})
+	}
+	r.router.Rebuild(rules)
+}
+
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&enginev1alpha1.KaiselRule{}).
@@ -73,8 +104,10 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 func stateFrom(spec enginev1alpha1.KaiselRuleSpec) ruleState {
 	s := ruleState{
-		ips:   make(map[string]bool, len(spec.TargetIPs)),
-		ports: make(map[uint16]bool, len(spec.TargetPorts)),
+		ips:              make(map[string]bool, len(spec.TargetIPs)),
+		ports:            make(map[uint16]bool, len(spec.TargetPorts)),
+		igrisBaseURL:     spec.IgrisBaseURL,
+		samplePercentage: spec.SamplePercentage,
 	}
 	for _, ip := range spec.TargetIPs {
 		s.ips[ip] = true

@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// Server accepts TCP connections from Siphon and deframes egress relay traffic.
+// Server accepts TCP connections from peer and deframes egress relay traffic.
 type Server struct {
 	listenAddr string
 	store      *SessionStore
@@ -50,7 +50,7 @@ func (s *Server) Listen(ctx context.Context) error {
 			return err
 		}
 		connID := s.store.RegisterConn()
-		log.Printf("recorder debug: siphon conn=%d from %s", connID, conn.RemoteAddr())
+		log.Printf("recorder debug: peer conn=%d from %s", connID, conn.RemoteAddr())
 		s.wg.Add(1)
 		go func(c net.Conn, id uint64) {
 			defer s.wg.Done()

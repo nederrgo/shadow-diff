@@ -196,7 +196,7 @@ func (r *ShadowTestReconciler) patchStatusFull(
 	st *enginev1alpha1.ShadowTest,
 	phase, message, shadowNS string,
 	captureTargets []string,
-	siphonPhase, igrisEndpoint, igrisRabbitMQPhase string,
+	kaiselPhase, igrisEndpoint, igrisRabbitMQPhase string,
 ) error {
 	base := st.DeepCopy()
 	st.Status.Phase = phase
@@ -205,8 +205,8 @@ func (r *ShadowTestReconciler) patchStatusFull(
 	if captureTargets != nil {
 		st.Status.CaptureTargets = captureTargets
 	}
-	if siphonPhase != "" {
-		st.Status.SiphonPhase = siphonPhase
+	if kaiselPhase != "" {
+		st.Status.KaiselPhase = kaiselPhase
 	}
 	if igrisEndpoint != "" {
 		st.Status.IgrisEndpoint = igrisEndpoint

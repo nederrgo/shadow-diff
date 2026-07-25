@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 )
@@ -22,16 +23,20 @@ func TestResolveContext_preservesInboundTraceparent(t *testing.T) {
 	}
 }
 
-func TestResolveContext_generatesNaked(t *testing.T) {
+func TestResolveContext_rejectsNaked(t *testing.T) {
 	t.Parallel()
-	got, err := ResolveContext(http.Header{})
-	if err != nil {
-		t.Fatal(err)
+	_, err := ResolveContext(http.Header{})
+	if !errors.Is(err, ErrMissingTraceparent) {
+		t.Fatalf("err = %v, want ErrMissingTraceparent", err)
 	}
-	if _, ok := ParseTraceparent(got.Traceparent); !ok {
-		t.Fatalf("traceparent %q", got.Traceparent)
-	}
-	if got.TraceID == "" {
-		t.Fatal("empty trace id")
+}
+
+func TestResolveContext_rejectsInvalid(t *testing.T) {
+	t.Parallel()
+	h := http.Header{}
+	h.Set(HeaderTraceparent, "not-a-traceparent")
+	_, err := ResolveContext(h)
+	if !errors.Is(err, ErrMissingTraceparent) {
+		t.Fatalf("err = %v, want ErrMissingTraceparent", err)
 	}
 }

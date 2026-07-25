@@ -101,8 +101,6 @@ platform_bootstrap_install() {
   wait_pixie_http_events_ready 180 2>/dev/null || true
 
   deploy_pixie_gate
-
-  kubectl apply -f "${REPO}/pipeline/siphon/deploy/rbac.yaml"
 }
 
 _ensure_platform_ready_body() {
@@ -142,7 +140,7 @@ build_test_images_if_needed() {
   make -C "${REPO}/pipeline/beru" docker-build BERU_IMG="${BERU_IMG}"
   make -C "${REPO}/pipeline/shop" docker-build SHOP_IMG="${SHOP_IMG}"
   make -C "${REPO}/pipeline/igrises/igris-http" docker-build IGRIS_IMG="${IGRIS_IMG}"
-  make -C "${REPO}/pipeline/siphon" docker-build SIPHON_IMG="${SIPHON_IMG}"
+  make -C "${REPO}/pipeline/kaisel" docker-build KAISEL_IMG="${KAISEL_IMG:-kaisel:dev}" 2>/dev/null || true
   make -C "${REPO}/pipeline/recorder" docker-build RECORDER_IMG="${RECORDER_IMG}" 2>/dev/null || true
   make -C "${REPO}/pipeline/pixie-gate" docker-build PIXIE_GATE_IMG="${PIXIE_GATE_IMG}"
   make -C "${REPO}/pipeline/igrises/igris-rabbitmq" docker-build IGRIS_RABBITMQ_IMG="${IGRIS_RABBITMQ_IMG}"
@@ -162,7 +160,7 @@ load_test_images_if_needed() {
   if [[ "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
     use_minikube_docker_env
   fi
-  for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$SIPHON_IMG" "$RECORDER_IMG" \
+  for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "${KAISEL_IMG:-kaisel:dev}" "$RECORDER_IMG" \
     "$PIXIE_GATE_IMG" \
     "$IGRIS_RABBITMQ_IMG" "$EGRESS_RELAY_RABBITMQ_IMG" "$PYTHON_TEST_WORKER_IMG" \
     "$NODEJS_HYBRID_WORKER_IMG" "$HTTP_RMQ_PYTHON_WORKER_IMG" "$HTTP_RMQ_NODEJS_WORKER_IMG" "$HTTP_RMQ_GO_WORKER_IMG" \

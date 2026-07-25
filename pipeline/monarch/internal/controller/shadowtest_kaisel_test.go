@@ -10,25 +10,34 @@ import (
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
-func TestSiphonMaxPayloadSize(t *testing.T) {
+func TestHTTPSamplePercentage(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{}
-	if got := siphonMaxPayloadSize(st); got != defaultSiphonMaxPayloadSize {
-		t.Fatalf("default: got %d want %d", got, defaultSiphonMaxPayloadSize)
+	if got := httpSamplePercentage(st); got != defaultHTTPSamplePercentage {
+		t.Fatalf("default: got %d want %d", got, defaultHTTPSamplePercentage)
 	}
-	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{MaxPayloadSize: 8192}
-	if got := siphonMaxPayloadSize(st); got != 8192 {
-		t.Fatalf("override: got %d want 8192", got)
+	st.Spec.SamplePercentage = 10
+	if got := httpSamplePercentage(st); got != 10 {
+		t.Fatalf("override: got %d want 10", got)
 	}
 }
 
-func TestSiphonSamplePercentage(t *testing.T) {
+func TestKaiselIgrisBaseURL(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{}
-	if got := siphonSamplePercentage(st); got != defaultSiphonSamplePercentage {
-		t.Fatalf("default: got %d want %d", got, defaultSiphonSamplePercentage)
+	st.Namespace = "default"
+	st.Name = "bats-kaisel-capture"
+	st.Spec.ServicePort = 8080
+
+	got := kaiselIgrisBaseURL(st)
+	want := "http://bats-kaisel-capture-igris.shadow-default-bats-kaisel-capture.svc.cluster.local:8080"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
 	}
-	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{SamplePercentage: 10}
-	if got := siphonSamplePercentage(st); got != 10 {
-		t.Fatalf("override: got %d want 10", got)
+
+	st.Spec.ServicePort = 0
+	got = kaiselIgrisBaseURL(st)
+	want = "http://bats-kaisel-capture-igris.shadow-default-bats-kaisel-capture.svc.cluster.local:8888"
+	if got != want {
+		t.Fatalf("default port: got %q want %q", got, want)
 	}
 }
 
@@ -62,11 +71,7 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	st.Spec.TargetNamespace = "prod"
 	st.Spec.ServicePort = 8080
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{Port: 80, Driver: "http_request"}}
-	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{
-		MaxPayloadSize:   4096,
-		ExcludePaths:     []string{`^/healthz$`},
-		SamplePercentage: 25,
-	}
+	st.Spec.SamplePercentage = 25
 
 	dep := &appsv1.Deployment{
 		Spec: appsv1.DeploymentSpec{
@@ -94,7 +99,6 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	if spec.TargetLabels["app"] != "api" || spec.TargetLabels["tier"] != "web" {
 		t.Fatalf("labels %v", spec.TargetLabels)
 	}
-	// Ingress OTelEndpoint is intentionally empty: kaisel handles ingress capture.
 	if spec.OTelEndpoint != "" {
 		t.Fatalf("expected empty OTelEndpoint (kaisel owns ingress), got %q", spec.OTelEndpoint)
 	}
@@ -102,10 +106,10 @@ func TestBuildPixieStreamRuleSpec(t *testing.T) {
 	if spec.RecorderOTelEndpoint != want {
 		t.Fatalf("recorder endpoint %q want %q", spec.RecorderOTelEndpoint, want)
 	}
-	if spec.MaxPayloadSize != 4096 {
+	if spec.MaxPayloadSize != defaultPixieMaxPayloadSize {
 		t.Fatalf("max payload %d", spec.MaxPayloadSize)
 	}
-	if len(spec.ExcludePaths) != 1 || spec.ExcludePaths[0] != `^/healthz$` {
+	if len(spec.ExcludePaths) != 0 {
 		t.Fatalf("exclude %v", spec.ExcludePaths)
 	}
 	if spec.SamplePercentage != 25 {
@@ -128,7 +132,6 @@ func TestBuildPixieStreamRuleSpecAlwaysHasRecorderEndpoint(t *testing.T) {
 		},
 	}
 	spec := buildPixieStreamRuleSpec(st, "shadow-default-egress-st", dep)
-	// Ingress OTelEndpoint is always empty: kaisel owns ingress.
 	if spec.OTelEndpoint != "" {
 		t.Fatalf("expected empty OTelEndpoint, got %q", spec.OTelEndpoint)
 	}
@@ -151,9 +154,7 @@ func TestTargetNamespaceFor_defaultsToCRNamespace(t *testing.T) {
 	}
 }
 
-func boolPtr(v bool) *bool { return &v }
-
-func TestSiphonEnabled(t *testing.T) {
+func TestHTTPIngressCaptureEnabled(t *testing.T) {
 	dep := &appsv1.Deployment{
 		Spec: appsv1.DeploymentSpec{
 			Template: corev1.PodTemplateSpec{
@@ -167,19 +168,8 @@ func TestSiphonEnabled(t *testing.T) {
 	}
 
 	st := &enginev1alpha1.ShadowTest{}
-	// Empty inputs resolve to http_request on servicePort → siphon enabled.
-	if !siphonEnabled(st, dep) {
-		t.Fatal("default http_request input on servicePort should enable siphon")
-	}
-
-	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)}
-	if siphonEnabled(st, dep) {
-		t.Fatal("explicit false should disable")
-	}
-
-	st.Spec.Siphon = &enginev1alpha1.SiphonSpec{Enabled: boolPtr(true)}
-	if !siphonEnabled(st, dep) {
-		t.Fatal("explicit true should enable")
+	if !httpIngressCaptureEnabled(st, dep) {
+		t.Fatal("default http_request input on servicePort should enable capture")
 	}
 
 	st = &enginev1alpha1.ShadowTest{
@@ -187,16 +177,15 @@ func TestSiphonEnabled(t *testing.T) {
 			Inputs: []enginev1alpha1.InputSpec{{Port: 80, Driver: "http_request"}},
 		},
 	}
-	if !siphonEnabled(st, dep) {
-		t.Fatal("matching ingress port should enable siphon")
+	if !httpIngressCaptureEnabled(st, dep) {
+		t.Fatal("matching ingress port should enable capture")
 	}
 
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{Port: 9999, Driver: "http_request"}}
-	if siphonEnabled(st, dep) {
-		t.Fatal("non-matching port should not enable siphon")
+	if httpIngressCaptureEnabled(st, dep) {
+		t.Fatal("non-matching port should not enable capture")
 	}
 
-	// inputs.port == servicePort (Envoy listen) with no matching container port
 	st = &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{
 			ServicePort:     8888,
@@ -213,22 +202,12 @@ func TestSiphonEnabled(t *testing.T) {
 			},
 		},
 	}
-	if !siphonEnabled(st, depNoPorts) {
-		t.Fatal("http_request on servicePort should enable siphon even without container ports")
+	if !httpIngressCaptureEnabled(st, depNoPorts) {
+		t.Fatal("http_request on servicePort should enable capture even without container ports")
 	}
-	ports := siphonIngressPorts(st)
+	ports := kaiselIngressPorts(st)
 	if len(ports) != 1 || ports[0] != 8080 {
 		t.Fatalf("expected application port 8080, got %v", ports)
-	}
-
-	st = &enginev1alpha1.ShadowTest{
-		Spec: enginev1alpha1.ShadowTestSpec{
-			Inputs: []enginev1alpha1.InputSpec{{Port: 80, Driver: "http_request"}},
-			Siphon: &enginev1alpha1.SiphonSpec{Enabled: boolPtr(false)},
-		},
-	}
-	if siphonEnabled(st, dep) {
-		t.Fatal("explicit false should override matching port")
 	}
 }
 

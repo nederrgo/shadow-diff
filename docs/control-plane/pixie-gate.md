@@ -1,15 +1,15 @@
 ---
 type: Architecture Specification
 title: pixie-gate PixieStreamRule Gateway
-description: Least-privilege in-cluster Go service that renders PixieStreamRule CRs into PxL and runs px.export to Siphon, Recorder, and beru-local.
+description: Least-privilege in-cluster Go service that renders PixieStreamRule CRs into PxL and runs px.export to Recorder and beru-local.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/pixie-gate
 tags: [architecture, control-plane, security, pixie, ebpf, pixiestreamrule]
-timestamp: 2026-07-24T18:00:00Z
+timestamp: 2026-07-25T18:40:00Z
 ---
 
 # pixie-gate
 
-`pixie-gate` is the Pixie capture gateway for Shadow-Diff. Monarch writes unprivileged `PixieStreamRule` CRs; pixie-gate polls those CRs, renders ingress/egress/mongo PxL templates, and runs `px run` so Vizier PEM exports OTLP to Siphon, Recorder, or beru-local.
+`pixie-gate` is the Pixie capture gateway for Shadow-Diff. Monarch writes unprivileged `PixieStreamRule` CRs; pixie-gate polls those CRs, renders egress/mongo PxL templates (ingress `otelEndpoint` is unused — Kaisel owns HTTP ingress), and runs `px run` so Vizier PEM exports OTLP to Recorder or beru-local.
 
 It is **not** part of the Monarch operator. Kernel/eBPF privilege stays inside Pixie Vizier (`pl`); pixie-gate only needs narrow CRD RBAC plus a Pixie Cloud API key.
 
@@ -45,7 +45,7 @@ make pixie-gate-docker-build PIXIE_GATE_IMG=pixie-gate:dev
 
 1. Every `PIXIE_EXPORT_INTERVAL_SEC` (default 3s), list all `PixieStreamRule` objects.
 2. For each active rule, render and export any configured endpoints in parallel:
-   * `otelEndpoint` → ingress PxL → Siphon
+   * `otelEndpoint` → ingress PxL (unused when empty; HTTP ingress is Kaisel)
    * `recorderOtelEndpoint` → egress PxL → Recorder
    * `mongoOtelEndpoint` → mongo PxL → beru-local
 3. Patch `status.phase` to `Active`, `Error`, or `Inactive`.

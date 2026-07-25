@@ -409,6 +409,15 @@ spec:
                     description: Image overrides the default Recorder container image.
                     type: string
                 type: object
+              samplePercentage:
+                description: |-
+                  SamplePercentage is the percentage of prod HTTP traces admitted for capture
+                  (1-100, default 100). Applied in Kaisel userspace and Pixie egress PxL /
+                  Recorder with the shared (V*100)<(N*256) rule. Empty/missing traceparent
+                  is always dropped. Does not apply to shadow-pod Mongo capture.
+                maximum: 100
+                minimum: 1
+                type: integer
               servicePort:
                 description: |-
                   ServicePort is the TCP port the Envoy ingress listener binds on in shadow pods.
@@ -425,39 +434,6 @@ spec:
                   image:
                     description: Image overrides the default Shop container image.
                     type: string
-                type: object
-              siphon:
-                description: Siphon configures kernel-level traffic capture to Igris.
-                properties:
-                  enabled:
-                    description: Enabled disables Pixie stream rules when explicitly
-                      false.
-                    type: boolean
-                  excludePaths:
-                    description: ExcludePaths are regex strings to drop healthchecks/traffic
-                      at the kernel layer.
-                    items:
-                      type: string
-                    type: array
-                  image:
-                    description: Image overrides the default Siphon OTLP receiver
-                      container image.
-                    type: string
-                  maxPayloadSize:
-                    description: MaxPayloadSize is the max bytes to parse per HTTP/2
-                      frame (default 65536).
-                    format: int64
-                    type: integer
-                  samplePercentage:
-                    description: |-
-                      SamplePercentage is the percentage of prod HTTP traces Pixie captures for
-                      ingress and egress (1-100, default 100). Enforced in Pixie PxL and defended
-                      in Siphon/Recorder with the same (V*100)<(N*256) rule. Does not apply to
-                      shadow-pod Mongo capture — that traffic is already limited by ingress sampling.
-                      Empty/missing traceparent is always dropped (tracing is required).
-                    maximum: 100
-                    minimum: 1
-                    type: integer
                 type: object
               targetDeployment:
                 description: |-
@@ -494,6 +470,10 @@ spec:
                 description: IgrisRabbitMQPhase summarizes igris-rabbitmq deployment
                   readiness.
                 type: string
+              kaiselPhase:
+                description: KaiselPhase summarizes Kaisel ingress capture reconciliation
+                  (Ready, Degraded).
+                type: string
               message:
                 description: Message carries human-readable detail, including MVP
                   limitations (skipped envFrom, etc.).
@@ -505,10 +485,6 @@ spec:
               shadowNamespace:
                 description: ShadowNamespace is the dedicated namespace where control/candidate
                   Deployments run.
-                type: string
-              siphonPhase:
-                description: SiphonPhase summarizes Pixie stream rule reconciliation
-                  (Ready, Degraded, Disabled).
                 type: string
             type: object
         required:

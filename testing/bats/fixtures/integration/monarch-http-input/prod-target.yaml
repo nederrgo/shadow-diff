@@ -1,6 +1,6 @@
 # Minimal prod target for Monarch HTTP input integration tests.
 # Monarch reads this Deployment's container ports during ShadowTest reconciliation
-# to confirm the input port matches (siphon auto-enable port-match check).
+# to confirm the input port matches (HTTP ingress capture port-match check).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

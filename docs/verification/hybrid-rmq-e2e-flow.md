@@ -45,7 +45,7 @@ flowchart TD
   plat[ensure_platform_ready] --> prod[Deploy prod RMQ Mongo user-service worker]
   prod --> onlyOne[Delete competing language worker]
   onlyOne --> st[Apply ShadowTest CR]
-  st --> wait[wait_shadowtest_ready mongo rmq siphon]
+  st --> wait[wait_shadowtest_ready mongo rmq kaisel]
   wait --> beru[wait_local_beru_rollout]
   beru --> pixie[bats_wait_pixie_after_shadowtest]
 ```

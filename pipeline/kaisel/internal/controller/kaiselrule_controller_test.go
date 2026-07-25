@@ -15,6 +15,7 @@ import (
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 	"github.com/shadow-diff/kaisel/internal/capture"
+	"github.com/shadow-diff/kaisel/internal/export"
 )
 
 func testScheme(t *testing.T) *runtime.Scheme {
@@ -73,7 +74,8 @@ func TestReconciler_RuleCreated(t *testing.T) {
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(rule).Build()
 	ch := make(chan capture.MapUpdate, 16)
-	r := New(fakeClient, ch)
+	router := export.NewRouter(nil)
+	r := New(fakeClient, ch, router)
 
 	upd, ok := reconcileRule(t, r, ch, "r1", "default")
 	if !ok {
@@ -102,7 +104,7 @@ func TestReconciler_RuleUpdated_IPRemoved(t *testing.T) {
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(rule).Build()
 	ch := make(chan capture.MapUpdate, 16)
-	r := New(fakeClient, ch)
+	r := New(fakeClient, ch, export.NewRouter(nil))
 
 	// First reconcile: establish state
 	reconcileRule(t, r, ch, "r1", "default")
@@ -146,7 +148,7 @@ func TestReconciler_RuleDeleted(t *testing.T) {
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(rule).Build()
 	ch := make(chan capture.MapUpdate, 16)
-	r := New(fakeClient, ch)
+	r := New(fakeClient, ch, export.NewRouter(nil))
 
 	reconcileRule(t, r, ch, "r1", "default") // result discarded; drains one item from ch
 
@@ -183,7 +185,7 @@ func TestReconciler_NoOpOnNoChange(t *testing.T) {
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(rule).Build()
 	ch := make(chan capture.MapUpdate, 16)
-	r := New(fakeClient, ch)
+	r := New(fakeClient, ch, export.NewRouter(nil))
 
 	reconcileRule(t, r, ch, "r1", "default") // result discarded; drains one item from ch
 
@@ -191,5 +193,32 @@ func TestReconciler_NoOpOnNoChange(t *testing.T) {
 	_, ok := reconcileRule(t, r, ch, "r1", "default")
 	if ok {
 		t.Error("got spurious MapUpdate on re-reconcile with no change")
+	}
+}
+
+func TestReconciler_ExportRouterPopulated(t *testing.T) {
+	s := testScheme(t)
+	rule := &enginev1alpha1.KaiselRule{
+		ObjectMeta: metav1.ObjectMeta{Name: "r1", Namespace: "default"},
+		Spec: enginev1alpha1.KaiselRuleSpec{
+			TargetIPs:        []string{"10.0.0.1"},
+			TargetPorts:      []uint16{8080},
+			IgrisBaseURL:     "http://st-igris.shadow-default-st.svc.cluster.local:8080",
+			SamplePercentage: 25,
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(rule).Build()
+	ch := make(chan capture.MapUpdate, 16)
+	router := export.NewRouter(nil)
+	r := New(fakeClient, ch, router)
+
+	reconcileRule(t, r, ch, "r1", "default")
+
+	got, ok := router.Lookup("10.0.0.1")
+	if !ok {
+		t.Fatal("expected export route")
+	}
+	if got.IgrisBaseURL != rule.Spec.IgrisBaseURL || got.SamplePercentage != 25 {
+		t.Fatalf("got %+v", got)
 	}
 }

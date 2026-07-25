@@ -25,7 +25,7 @@ type connSession struct {
 	parserDone   chan struct{}
 }
 
-// SessionStore tracks in-flight pairing per Siphon TCP connection.
+// SessionStore tracks in-flight pairing per peer TCP connection.
 type SessionStore struct {
 	mu          sync.Mutex
 	sessions    map[uint64]*connSession
@@ -99,7 +99,7 @@ func (s *SessionStore) RegisterConn() uint64 {
 	return id
 }
 
-// WriteFrame buffers payload until FinishConn (Siphon TCP close).
+// WriteFrame buffers payload until FinishConn (peer TCP close).
 func (s *SessionStore) WriteFrame(connID uint64, dir byte, payload []byte) error {
 	if len(payload) == 0 {
 		return nil

@@ -10,7 +10,7 @@ Parallel load test for the shadow stack: steady JSON traffic, noisy payloads (Be
 
 ## Prerequisites
 
-1. Minikube E2E stack is **Ready** (Monarch, Beru, Igris, shadows, optional Siphon):
+1. Minikube E2E stack is **Ready** (Monarch, Beru, Igris, shadows, optional Kaisel):
 
    ```bash
    ./testing/tools/e2e-reset-minikube.sh

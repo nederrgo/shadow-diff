@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// HandleConn reads framed bytes from Siphon until EOF or error.
+// HandleConn reads framed bytes from peer until EOF or error.
 func HandleConn(conn net.Conn, store *SessionStore, connID uint64) {
 	defer func() { _ = conn.Close() }()
 

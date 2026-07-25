@@ -64,35 +64,6 @@ type InputSpec struct {
 	Addon string `json:"addon,omitempty"`
 }
 
-// SiphonSpec configures Pixie eBPF streaming capture for L1 ingress.
-type SiphonSpec struct {
-	// Enabled disables Pixie stream rules when explicitly false.
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Image overrides the default Siphon OTLP receiver container image.
-	// +optional
-	Image string `json:"image,omitempty"`
-
-	// MaxPayloadSize is the max bytes to parse per HTTP/2 frame (default 65536).
-	// +optional
-	MaxPayloadSize int64 `json:"maxPayloadSize,omitempty"`
-
-	// ExcludePaths are regex strings to drop healthchecks/traffic at the kernel layer.
-	// +optional
-	ExcludePaths []string `json:"excludePaths,omitempty"`
-
-	// SamplePercentage is the percentage of prod HTTP traces Pixie captures for
-	// ingress and egress (1-100, default 100). Enforced in Pixie PxL and defended
-	// in Siphon/Recorder with the same (V*100)<(N*256) rule. Does not apply to
-	// shadow-pod Mongo capture — that traffic is already limited by ingress sampling.
-	// Empty/missing traceparent is always dropped (tracing is required).
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=100
-	// +optional
-	SamplePercentage int `json:"samplePercentage,omitempty"`
-}
-
 // DependencySpec declares an ephemeral backing service provisioned per shadow role.
 type DependencySpec struct {
 	// Name is the logical dependency id; used in resource names and DNS labels.
@@ -255,9 +226,14 @@ type ShadowTestSpec struct {
 	// +optional
 	EgressRelayRabbitMQ *EgressRelayRabbitMQSpec `json:"egressRelayRabbitmq,omitempty"`
 
-	// Siphon configures kernel-level traffic capture to Igris.
+	// SamplePercentage is the percentage of prod HTTP traces admitted for capture
+	// (1-100, default 100). Applied in Kaisel userspace and Pixie egress PxL /
+	// Recorder with the shared (V*100)<(N*256) rule. Empty/missing traceparent
+	// is always dropped. Does not apply to shadow-pod Mongo capture.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
 	// +optional
-	Siphon *SiphonSpec `json:"siphon,omitempty"`
+	SamplePercentage int `json:"samplePercentage,omitempty"`
 
 	// Recorder overrides the Recorder image (always provisioned per shadow namespace).
 	// +optional
@@ -294,9 +270,9 @@ type ShadowTestStatus struct {
 	// +optional
 	CaptureTargets []string `json:"captureTargets,omitempty"`
 
-	// SiphonPhase summarizes Pixie stream rule reconciliation (Ready, Degraded, Disabled).
+	// KaiselPhase summarizes Kaisel ingress capture reconciliation (Ready, Degraded).
 	// +optional
-	SiphonPhase string `json:"siphonPhase,omitempty"`
+	KaiselPhase string `json:"kaiselPhase,omitempty"`
 
 	// IgrisEndpoint is the DNS host:port Monarch configured for capture forwarding.
 	// +optional

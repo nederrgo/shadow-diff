@@ -21,3 +21,8 @@ data:
   # single named interface (e.g. eth0) to shrink that surface back down if
   # same-node pod-to-pod capture is not required.
   iface: any
+  # Include captured request body content (truncated to 4KB) in kaisel's logs.
+  # Off by default: bodies are real production data, and pod logs are commonly
+  # shipped off-node by cluster-wide log aggregation. Flip to "true" only for
+  # short-lived debugging, then set it back.
+  logBodies: "false"

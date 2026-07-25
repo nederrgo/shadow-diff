@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# E2E proof: HTTP prod sampling at 10% (Pixie PxL + Siphon defense, shared rule).
+# E2E proof: HTTP prod sampling at 10% (Kaisel + Pixie egress/Recorder defense, shared rule).
 # Golden keep: V=0x00; golden drop: V=0x1a.
 
 load '../../test_helper'
@@ -31,7 +31,7 @@ setup_file() {
   bats_prepare_shadowtest_slot "$SHADOWTEST" "$SHADOWTEST_NS"
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
-  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-mongo --require-rmq-egress --require-siphon
+  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-mongo --require-rmq-egress --require-kaisel
 
   SHADOW_NS="$(shadow_namespace)"
   export SHADOW_NS
@@ -47,7 +47,7 @@ setup_file() {
   bats_write_suite_state
 }
 
-@test "HTTP sampling: in-sample trace reaches Beru via Siphon/igris" {
+@test "HTTP sampling: in-sample trace reaches Beru via Kaisel/igris" {
   bats_http_otel_reverify_pixie
   run publish_prod_http "$SAMPLE_KEEP_TID"
   assert_success

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# E2E: HTTP ingress (prod pod → Pixie → Siphon → igris) → Mongo + RabbitMQ Firehose egress — Go worker.
+# E2E: HTTP ingress (prod pod → Kaisel → igris) → Mongo + RabbitMQ Firehose egress — Go worker.
 
 load '../../test_helper'
 
@@ -28,7 +28,7 @@ setup_file() {
   bats_prepare_shadowtest_slot "$SHADOWTEST" "$SHADOWTEST_NS"
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
-  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-mongo --require-rmq-egress --require-siphon
+  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-mongo --require-rmq-egress --require-kaisel
 
   SHADOW_NS="$(shadow_namespace)"
   export SHADOW_NS

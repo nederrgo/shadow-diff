@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	defaultSiphonMaxPayloadSize   = 65536
-	defaultSiphonSamplePercentage = 100
+	defaultPixieMaxPayloadSize = 65536
+	defaultHTTPSamplePercentage = 100
 )
 
 func targetPrimaryContainerPorts(target *appsv1.Deployment) map[int32]bool {
@@ -35,7 +35,7 @@ func targetPrimaryContainerPorts(target *appsv1.Deployment) map[int32]bool {
 	return ports
 }
 
-func siphonIngressCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) bool {
+func httpIngressCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) bool {
 	if isAMQPOnlyShadowTest(st) {
 		return false
 	}
@@ -54,40 +54,11 @@ func siphonIngressCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.D
 	return false
 }
 
-func siphonEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) bool {
-	if st.Spec.Siphon != nil && st.Spec.Siphon.Enabled != nil && !*st.Spec.Siphon.Enabled {
-		return false
+func httpSamplePercentage(st *enginev1alpha1.ShadowTest) int {
+	if st.Spec.SamplePercentage > 0 {
+		return st.Spec.SamplePercentage
 	}
-	if st.Spec.Siphon != nil && st.Spec.Siphon.Enabled != nil && *st.Spec.Siphon.Enabled {
-		return true
-	}
-	if siphonIngressCaptureEnabled(st, target) {
-		return true
-	}
-	return false
-}
-
-func siphonMaxPayloadSize(st *enginev1alpha1.ShadowTest) int64 {
-	if st.Spec.Siphon != nil && st.Spec.Siphon.MaxPayloadSize > 0 {
-		return st.Spec.Siphon.MaxPayloadSize
-	}
-	return defaultSiphonMaxPayloadSize
-}
-
-func siphonSamplePercentage(st *enginev1alpha1.ShadowTest) int {
-	if st.Spec.Siphon != nil && st.Spec.Siphon.SamplePercentage > 0 {
-		return st.Spec.Siphon.SamplePercentage
-	}
-	return defaultSiphonSamplePercentage
-}
-
-func siphonExcludePaths(st *enginev1alpha1.ShadowTest) []string {
-	if st.Spec.Siphon == nil || len(st.Spec.Siphon.ExcludePaths) == 0 {
-		return nil
-	}
-	out := make([]string, len(st.Spec.Siphon.ExcludePaths))
-	copy(out, st.Spec.Siphon.ExcludePaths)
-	return out
+	return defaultHTTPSamplePercentage
 }
 
 func formatCaptureTargets(labels map[string]string) []string {
@@ -121,7 +92,7 @@ func pixieStreamRuleKey(st *enginev1alpha1.ShadowTest) types.NamespacedName {
 	return types.NamespacedName{Namespace: st.Namespace, Name: pixieStreamRuleName(st)}
 }
 
-func siphonIngressPorts(st *enginev1alpha1.ShadowTest) []int32 {
+func kaiselIngressPorts(st *enginev1alpha1.ShadowTest) []int32 {
 	if isAMQPOnlyShadowTest(st) {
 		return nil
 	}
@@ -181,9 +152,8 @@ func buildPixieStreamRuleSpec(
 		Active:               true,
 		TargetNamespace:      targetNamespaceFor(st),
 		TargetLabels:         copyStringMap(target.Spec.Template.Labels),
-		MaxPayloadSize:       siphonMaxPayloadSize(st),
-		ExcludePaths:         siphonExcludePaths(st),
-		SamplePercentage:     siphonSamplePercentage(st),
+		MaxPayloadSize:       defaultPixieMaxPayloadSize,
+		SamplePercentage:     httpSamplePercentage(st),
 		RecorderOTelEndpoint: shadowRecorderOTelEndpoint(st, shadowNS),
 	}
 	if hasMongoDependency(st) {
@@ -277,6 +247,12 @@ func kaiselRuleKey(st *enginev1alpha1.ShadowTest) types.NamespacedName {
 	return types.NamespacedName{Namespace: st.Namespace, Name: kaiselRuleName(st)}
 }
 
+// kaiselIgrisBaseURL is the ClusterIP Service URL Kaisel POSTs admitted
+// ingress copies to for this ShadowTest.
+func kaiselIgrisBaseURL(st *enginev1alpha1.ShadowTest) string {
+	return shadowServiceURL(shadowNamespaceForCR(st), igrisServiceName(st), servicePortFor(st))
+}
+
 // reconcileKaiselRule creates or updates a KaiselRule whose targetIPs are the
 // live, Running pod IPs for the target Deployment. Only pods that are Running,
 // have a non-empty PodIP, and have no DeletionTimestamp are included.
@@ -308,12 +284,18 @@ func (r *ShadowTestReconciler) reconcileKaiselRule(
 	}
 	sort.Strings(ips)
 
-	ports := int32ToUint16Ports(siphonIngressPorts(st))
+	ports := int32ToUint16Ports(kaiselIngressPorts(st))
+	igrisURL := kaiselIgrisBaseURL(st)
+	samplePct := httpSamplePercentage(st)
 
 	// Read the existing rule to skip the patch when nothing changed.
 	var existing enginev1alpha1.KaiselRule
 	existingErr := r.Get(ctx, kaiselRuleKey(st), &existing)
-	if existingErr == nil && ipSetsEqual(existing.Spec.TargetIPs, ips) && portSetsEqual(existing.Spec.TargetPorts, ports) {
+	if existingErr == nil &&
+		ipSetsEqual(existing.Spec.TargetIPs, ips) &&
+		portSetsEqual(existing.Spec.TargetPorts, ports) &&
+		existing.Spec.IgrisBaseURL == igrisURL &&
+		existing.Spec.SamplePercentage == samplePct {
 		// No change; avoid a spurious write.
 		return nil
 	}
@@ -330,8 +312,10 @@ func (r *ShadowTestReconciler) reconcileKaiselRule(
 			labelShadowTestName: st.Name,
 		}
 		rule.Spec = enginev1alpha1.KaiselRuleSpec{
-			TargetIPs:   ips,
-			TargetPorts: ports,
+			TargetIPs:        ips,
+			TargetPorts:      ports,
+			IgrisBaseURL:     igrisURL,
+			SamplePercentage: samplePct,
 		}
 		return controllerutil.SetControllerReference(st, rule, r.Scheme)
 	})
@@ -393,7 +377,7 @@ func portSetsEqual(a, b []uint16) bool {
 	return true
 }
 
-// ── reconcileKaiselCapture (main orchestrator, replaces reconcileSiphonCapture) ─
+// ── reconcileKaiselCapture (Pixie egress rule + KaiselRule ingress) ─────────
 
 func (r *ShadowTestReconciler) reconcileKaiselCapture(
 	ctx context.Context,

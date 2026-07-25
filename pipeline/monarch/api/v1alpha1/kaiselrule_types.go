@@ -34,6 +34,18 @@ type KaiselRuleSpec struct {
 	// +kubebuilder:validation:items:Maximum=65535
 	// +optional
 	TargetPorts []uint16 `json:"targetPorts,omitempty"`
+
+	// IgrisBaseURL is the per-ShadowTest igris-http Service URL Kaisel POSTs
+	// admitted requests to (scheme://host:port, no path).
+	// +optional
+	IgrisBaseURL string `json:"igrisBaseURL,omitempty"`
+
+	// SamplePercentage is the prod sampling gate (1–100) applied in Kaisel
+	// userspace before forward. 100 keeps all traced traffic.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	SamplePercentage int `json:"samplePercentage,omitempty"`
 }
 
 // KaiselRuleStatus reflects the observed state of the KaiselRule.

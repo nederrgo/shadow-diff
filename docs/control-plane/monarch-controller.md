@@ -51,8 +51,8 @@ Per-role ConfigMap `{shadowtest}-{role}-envoy` renders:
 
 - `spec.beruGRPCAddress` — ext_proc gRPC target (default: local `beru-local` or `beru.beru-system`)
 - `spec.beruIngestAddress` — wire-payload ingest target (default: same host resolution as HTTP above)
-- `spec.siphon.samplePercentage` — percentage (1-100, default 100) of **prod** HTTP traces admitted. Pixie PxL filters with the shared rule `V=int(trace_id[0:2],16); keep iff (V*100)<(N*256)` (hex nibbles via `tolower` + nested `px.select` — `px.atoi`'s second arg is a default, not a radix); Siphon and Recorder apply the same rule as defense. Empty/missing `traceparent` is always dropped. Shadow-pod Mongo is not sampled.
-- `spec.igrisRabbitmq.samplePercentage` — same shared rule on the **prod** AMQP shadow-diff queue before fan-out. Set equal to `siphon.samplePercentage` when HTTP and AMQP should agree on which traces are in.
+- `spec.samplePercentage` — percentage (1-100, default 100) of **prod** HTTP traces admitted. Kaisel userspace and Pixie egress PxL / Recorder apply the shared rule `V=int(trace_id[0:2],16); keep iff (V*100)<(N*256)`. Empty/missing `traceparent` is always dropped. Shadow-pod Mongo is not sampled.
+- `spec.igrisRabbitmq.samplePercentage` — same shared rule on the **prod** AMQP shadow-diff queue before fan-out. Set equal to `samplePercentage` when HTTP and AMQP should agree on which traces are in.
 
 ## Beru wire ingest (Plan 2)
 

@@ -10,6 +10,5 @@ use (
 	./pipeline/pixie-gate
 	./pipeline/recorder
 	./pipeline/shop
-	./pipeline/siphon
 	./testing/example-apps/db-test-app
 )

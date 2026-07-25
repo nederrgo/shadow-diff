@@ -122,8 +122,6 @@ http_otel_rmq_setup_pixie() {
   fi
   # shellcheck source=testing/bats/helpers/pixie-bridge.sh
   source "$repo/testing/bats/helpers/pixie-bridge.sh"
-  # shellcheck source=testing/bats/helpers/siphon-config.sh
-  source "$repo/testing/bats/helpers/siphon-config.sh"
   wait_pixie_vizier_pem 120
   wait_pixie_vizier_healthy 120
   wait_pixie_http_events_ready 180

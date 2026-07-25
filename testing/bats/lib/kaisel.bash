@@ -61,7 +61,10 @@ wait_kaiselrule_ready() {
       -o jsonpath='{.spec.targetIPs[0]}' 2>/dev/null || true)
 
     if [[ -n "$ip" ]]; then
-      echo "    KaiselRule ${name} targetIPs[0]=${ip}"
+      local igris_url
+      igris_url=$(kubectl get kaiselrule "$name" -n "$ns" \
+        -o jsonpath='{.spec.igrisBaseURL}' 2>/dev/null || true)
+      echo "    KaiselRule ${name} targetIPs[0]=${ip} igrisBaseURL=${igris_url:-<empty>}"
       return 0
     fi
 
@@ -75,6 +78,65 @@ wait_kaiselrule_ready() {
     echo "    waiting KaiselRule ${ns}/${name} IPs (${elapsed}s/${timeout}s)..."
     sleep 3
     elapsed=$((elapsed + 3))
+  done
+}
+
+# Wait for a KaiselRule's targetIPs[0] to become a specific value -- used after
+# a pod is replaced, to confirm Monarch's Pod watch re-reconciled the rule.
+# Usage: wait_kaiselrule_targetip_is <name> <namespace> <want_ip> [timeout_seconds]
+wait_kaiselrule_targetip_is() {
+  local name="$1" ns="${2:-default}" want_ip="$3" timeout="${4:-120}"
+  local elapsed=0 ip
+
+  echo "==> [kaisel] wait KaiselRule ${ns}/${name} targetIPs[0] == ${want_ip} (timeout=${timeout}s)"
+  while true; do
+    ip=$(kubectl get kaiselrule "$name" -n "$ns" \
+      -o jsonpath='{.spec.targetIPs[0]}' 2>/dev/null || true)
+
+    if [[ "$ip" == "$want_ip" ]]; then
+      echo "    KaiselRule ${name} targetIPs[0]=${ip}"
+      return 0
+    fi
+
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "FAIL: timed out waiting for KaiselRule ${ns}/${name} targetIPs[0] to become ${want_ip} (still ${ip:-<empty>})" >&2
+      kubectl get kaiselrule "$name" -n "$ns" -o yaml 2>/dev/null >&2 || true
+      return 1
+    fi
+
+    echo "    waiting KaiselRule targetIPs[0]=${ip:-<empty>}, want ${want_ip} (${elapsed}s/${timeout}s)..."
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+}
+
+# Wait for a Running pod matching the label selector whose IP differs from
+# old_ip -- used after deleting a pod, to find its Deployment-created
+# replacement. Prints the new IP on stdout; fails if none appears in time.
+# Usage: new_ip=$(wait_new_pod_ip <label_selector> <namespace> <old_ip> [timeout_seconds])
+wait_new_pod_ip() {
+  local selector="$1" ns="${2:-default}" old_ip="$3" timeout="${4:-90}"
+  local elapsed=0 ip
+
+  echo "==> [kaisel] wait for a Running pod (selector=${selector}) with IP != ${old_ip} (timeout=${timeout}s)" >&2
+  while true; do
+    ip=$(kubectl get pod -l "$selector" -n "$ns" --field-selector=status.phase=Running \
+      -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)
+
+    if [[ -n "$ip" && "$ip" != "$old_ip" ]]; then
+      echo "    new pod IP: ${ip}" >&2
+      echo "$ip"
+      return 0
+    fi
+
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "FAIL: timed out waiting for a replacement pod with a new IP (still ${ip:-<none>})" >&2
+      kubectl get pod -l "$selector" -n "$ns" -o wide >&2 || true
+      return 1
+    fi
+
+    sleep 2
+    elapsed=$((elapsed + 2))
   done
 }
 

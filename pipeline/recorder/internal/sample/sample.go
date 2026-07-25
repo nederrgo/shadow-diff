@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// SampledIn is the shared prod-gate rule (Pixie PxL + Siphon/Recorder/igris):
+// SampledIn is the shared prod-gate rule (Pixie PxL + Kaisel/Recorder/igris):
 // V = int(traceID[:2], 16); keep iff (V*100) < (N*256).
 func SampledIn(traceID string, samplePercentage int) bool {
 	if samplePercentage <= 0 || samplePercentage >= 100 {

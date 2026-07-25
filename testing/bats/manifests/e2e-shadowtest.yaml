@@ -1,4 +1,4 @@
-# ShadowTest tuned for Minikube E2E: prod (port 80) -> Siphon -> Igris:80 -> Envoy:8888 -> echo:80 -> Beru
+# ShadowTest tuned for Minikube E2E: prod (port 80) -> Kaisel -> Igris:80 -> Envoy:8888 -> echo:80 -> Beru
 #
 # Shop + Recorder are always-on (no spec.recordAndReplay).
 #
@@ -24,7 +24,7 @@ spec:
   applicationPort: 80
 
   # Igris listen ports:
-  #   80  — Siphon replays captured prod traffic (prod pod dst port 80)
+  #   80  — Kaisel/Igris replays captured prod traffic (prod pod dst port 80)
   #   8888 — optional manual tests: curl igris:8888/get
   inputs:
     - port: 80

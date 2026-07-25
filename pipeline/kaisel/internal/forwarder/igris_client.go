@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,29 +17,24 @@ const headerTraceparent = "traceparent"
 type Client struct {
 	base   *url.URL
 	client *http.Client
-	log    *slog.Logger
 }
 
-func NewClient(baseURL string, timeout time.Duration, log *slog.Logger) (*Client, error) {
+func NewClient(baseURL string, timeout time.Duration) (*Client, error) {
 	u, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil {
-		return nil, fmt.Errorf("parse SIPHON_IGRIS_BASE_URL: %w", err)
+		return nil, fmt.Errorf("parse igris base URL: %w", err)
 	}
 	if u.Scheme == "" || u.Host == "" {
-		return nil, fmt.Errorf("SIPHON_IGRIS_BASE_URL must include scheme and host")
+		return nil, fmt.Errorf("igris base URL must include scheme and host")
 	}
 	if timeout <= 0 {
 		timeout = 5 * time.Second
-	}
-	if log == nil {
-		log = slog.Default()
 	}
 	return &Client{
 		base: u,
 		client: &http.Client{
 			Timeout: timeout,
 		},
-		log: log,
 	}, nil
 }
 

@@ -35,33 +35,27 @@ func testConfig(targets ...*httptest.Server) config.Config {
 	}
 }
 
-func TestTransformInjectsTraceparent(t *testing.T) {
+func TestTransformPreservesInboundTraceparent(t *testing.T) {
 	t.Parallel()
 	d := New(testMaxBodySize)
+	inbound := "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set(trace.HeaderTraceparent, inbound)
 	sess := &Session{Request: req, Body: nil}
 	meta, err := d.ParseMetadata(sess)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(meta.TraceID) != 32 {
-		t.Fatalf("trace id len %d, want 32 hex", len(meta.TraceID))
+	if meta.TraceID != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("trace id = %q", meta.TraceID)
 	}
 	msg, err := d.Transform(sess, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
 	hm := msg.(*message)
-	tp := hm.headers.Get(trace.HeaderTraceparent)
-	if tp == "" {
-		t.Fatal("missing traceparent")
-	}
-	parsed, ok := trace.ParseTraceparent(tp)
-	if !ok || parsed != meta.TraceID {
-		t.Fatalf("traceparent trace=%q meta=%q", parsed, meta.TraceID)
-	}
-	if !strings.HasPrefix(tp, "00-") || !strings.HasSuffix(tp, "-01") {
-		t.Fatalf("traceparent format: %q", tp)
+	if got := hm.headers.Get(trace.HeaderTraceparent); got != inbound {
+		t.Fatalf("traceparent = %q, want %q", got, inbound)
 	}
 }
 
@@ -91,22 +85,13 @@ func TestParseMetadataFromTraceparentOnly(t *testing.T) {
 	}
 }
 
-func TestTransformGeneratesTraceparentWhenNoneProvided(t *testing.T) {
+func TestParseMetadataRejectsMissingTraceparent(t *testing.T) {
 	t.Parallel()
 	d := New(testMaxBodySize)
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	sess := &Session{Request: req, Body: nil}
-	meta, err := d.ParseMetadata(sess)
-	if err != nil {
-		t.Fatal(err)
-	}
-	msg, err := d.Transform(sess, meta)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hm := msg.(*message)
-	if _, ok := trace.ParseTraceparent(hm.headers.Get(trace.HeaderTraceparent)); !ok {
-		t.Fatalf("invalid traceparent %q", hm.headers.Get(trace.HeaderTraceparent))
+	_, err := d.ParseMetadata(&Session{Request: req, Body: nil})
+	if err == nil {
+		t.Fatal("expected error for missing traceparent")
 	}
 }
 
@@ -232,11 +217,15 @@ func TestTransformRedactsHeaders(t *testing.T) {
 	t.Parallel()
 	d := New(testMaxBodySize)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(trace.HeaderTraceparent, "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Cookie", "a=b")
 	req.Header.Set("X-Keep", "yes")
 	sess := &Session{Request: req}
-	meta, _ := d.ParseMetadata(sess)
+	meta, err := d.ParseMetadata(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
 	msg, err := d.Transform(sess, meta)
 	if err != nil {
 		t.Fatal(err)
@@ -296,7 +285,13 @@ func TestHandlerReturns202WithTrace(t *testing.T) {
 	}))
 	defer mux.Close()
 
-	resp, err := http.Get(mux.URL + "/hello")
+	inboundTP := "00-" + strings.Repeat("e", 32) + "-" + strings.Repeat("b", 16) + "-01"
+	req, err := http.NewRequest(http.MethodGet, mux.URL+"/hello", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(trace.HeaderTraceparent, inboundTP)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,15 +300,15 @@ func TestHandlerReturns202WithTrace(t *testing.T) {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 	respTP := resp.Header.Get(trace.HeaderTraceparent)
-	if respTP == "" {
-		t.Fatal("missing traceparent on 202")
+	if respTP != inboundTP {
+		t.Fatalf("response traceparent %q, want %q", respTP, inboundTP)
 	}
 	hub.WaitPendingAtomic()
 	for i := 0; i < 3; i++ {
 		select {
 		case got := <-backendTrace:
-			if got != respTP {
-				t.Fatalf("backend traceparent %q != response %q", got, respTP)
+			if got != inboundTP {
+				t.Fatalf("backend traceparent %q != inbound %q", got, inboundTP)
 			}
 		case <-time.After(2 * time.Second):
 			t.Fatalf("timeout waiting for backend %d", i)

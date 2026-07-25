@@ -15,4 +15,4 @@ Operational verification guides and E2E flow maps for Shadow-Diff pipelines.
 
 * [/verification/VERIFICATION.md](/verification/VERIFICATION.md) — Step-by-step Monarch / Beru / Igris verification commands.
 * [/verification/hybrid-rmq-e2e-flow.md](/verification/hybrid-rmq-e2e-flow.md) — Node/Python hybrid bats flow: RMQ ingress, HTTP record/replay, Mongo + RMQ egress regressions.
-* [/verification/http-ingress-e2e-flow.md](/verification/http-ingress-e2e-flow.md) — Node/Python/Go http-ingress bats flow: Pixie → Siphon → igris-http, clean Mongo + RMQ egress diffs.
+* [/verification/http-ingress-e2e-flow.md](/verification/http-ingress-e2e-flow.md) — Node/Python/Go http-ingress bats flow: Kaisel → igris-http, clean Mongo + RMQ egress diffs.

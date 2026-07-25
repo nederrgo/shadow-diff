@@ -6,7 +6,7 @@ Monarch deploys one of two variants depending on the `ShadowTest` input driver:
 
 | Component | When Monarch uses it | Input |
 | --------- | -------------------- | ----- |
-| **[igris-http](igris-http/)** | HTTP or TCP ingress ShadowTests | Siphon replay, synthetic curl, or direct POST to Igris |
+| **[igris-http](igris-http/)** | HTTP or TCP ingress ShadowTests | Kaisel capture, synthetic curl, or direct POST to Igris |
 | **[igris-rabbitmq](igris-rabbitmq/)** | AMQP ingress ShadowTests (`inputs[].driver: rabbitmq_message`) | Prod RabbitMQ queue bound by Monarch |
 
 See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) for the full pipeline.
@@ -18,7 +18,7 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 ```
 Prod traffic
     │
-    ├─ HTTP/TCP ──► Siphon (optional) ──► igris-http ──► 3× shadow Services (:8888)
+    ├─ HTTP/TCP ──► Kaisel ──► igris-http ──► 3× shadow Services (:8888)
     │                                              └──► Envoy sidecar ──► app ──► Beru (ingress diff)
     │
     └─ AMQP ──────► prod shadow-diff queue ──► igris-rabbitmq ──► 3× shadow RabbitMQ brokers
@@ -36,7 +36,7 @@ Pluggable **HTTP and TCP** ingress hub.
 ### HTTP driver (`http_request`)
 
 - Listens on ports defined in `/etc/igris/listeners.json` (Monarch writes this from `ShadowTest.spec.inputs`).
-- Resolves trace context **once** per request via `ResolveContext` (`traceparent` literal preserved when inbound; else valid 32-hex `traceparent`; else generate W3C ids).
+- Resolves trace context **once** per request via `ResolveContext` (inbound `traceparent` preserved literally). Missing or invalid `traceparent` is rejected — tracing is a prerequisite; igris-http does not mint IDs.
 - Returns **202 Accepted** immediately with the resolved trace headers (async multicast).
 - Clones method, path, body, and sanitized headers to three shadow URLs in parallel; deletes then re-stamps trace headers on each clone to avoid duplicate casings.
 

@@ -1,6 +1,6 @@
 package ingest
 
-// Frame wire format from Siphon (5-byte header + payload).
+// Frame wire format from peer (5-byte header + payload).
 const (
 	DirRequest       = 'R'
 	DirResponse      = 'S'

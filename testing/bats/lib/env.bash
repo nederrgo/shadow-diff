@@ -19,7 +19,6 @@ bats_init_env() {
   export BERU_IMG="${BERU_IMG:-beru:dev}"
   export SHOP_IMG="${SHOP_IMG:-shop:dev}"
   export IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
-  export SIPHON_IMG="${SIPHON_IMG:-siphon:dev}"
   export RECORDER_IMG="${RECORDER_IMG:-recorder:dev}"
   export PYTHON_TEST_WORKER_IMG="${PYTHON_TEST_WORKER_IMG:-python-test-worker:dev}"
   export NODEJS_HYBRID_WORKER_IMG="${NODEJS_HYBRID_WORKER_IMG:-nodejs-hybrid-worker:dev}"

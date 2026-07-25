@@ -106,12 +106,25 @@ monarch_wait_igris_running() {
     -n "$shadow_ns" --timeout="${timeout}s"
 }
 
-# Wait for the siphon Deployment (always named 'siphon') to be Available.
-monarch_wait_siphon_running() {
-  local shadow_ns="$1" timeout="${2:-120}"
-  echo "==> [monarch] wait siphon Available in ${shadow_ns}"
-  kubectl wait --for=condition=Available deployment/siphon \
-    -n "$shadow_ns" --timeout="${timeout}s"
+# Wait for KaiselRule to have at least one target IP (ingress capture wired).
+monarch_wait_kaisel_rule_ready() {
+  local name="$1" ns="${2:-default}" timeout="${3:-120}"
+  local elapsed=0 ip
+  echo "==> [monarch] wait KaiselRule ${ns}/${name} has targetIPs"
+  while true; do
+    ip=$(kubectl get kaiselrule "$name" -n "$ns" \
+      -o jsonpath='{.spec.targetIPs[0]}' 2>/dev/null || true)
+    if [[ -n "$ip" ]]; then
+      echo "    KaiselRule ${name} targetIPs[0]=${ip}"
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "FAIL: timed out waiting for KaiselRule ${ns}/${name}" >&2
+      return 1
+    fi
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
 }
 
 # Poll until ShadowTest Failed phase. Returns 0 when Failed is confirmed;

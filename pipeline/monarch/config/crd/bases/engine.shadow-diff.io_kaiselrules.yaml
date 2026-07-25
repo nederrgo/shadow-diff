@@ -41,6 +41,18 @@ spec:
           spec:
             description: KaiselRuleSpec defines the eBPF capture targets for a ShadowTest.
             properties:
+              igrisBaseURL:
+                description: |-
+                  IgrisBaseURL is the per-ShadowTest igris-http Service URL Kaisel POSTs
+                  admitted requests to (scheme://host:port, no path).
+                type: string
+              samplePercentage:
+                description: |-
+                  SamplePercentage is the prod sampling gate (1–100) applied in Kaisel
+                  userspace before forward. 100 keeps all traced traffic.
+                maximum: 100
+                minimum: 1
+                type: integer
               targetIPs:
                 description: |-
                   TargetIPs are the live IPv4 addresses of Running target pods.

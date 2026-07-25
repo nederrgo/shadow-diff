@@ -3,17 +3,21 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
 
+	"github.com/gopacket/gopacket"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -26,6 +30,7 @@ import (
 	"github.com/shadow-diff/kaisel/internal/capture"
 	kaiselcontroller "github.com/shadow-diff/kaisel/internal/controller"
 	"github.com/shadow-diff/kaisel/internal/decode"
+	"github.com/shadow-diff/kaisel/internal/export"
 )
 
 var scheme = runtime.NewScheme()
@@ -73,6 +78,7 @@ func main() {
 	flag.Var(&prts, "port", "TCP port to capture (repeatable, comma-separated; empty = all ports)")
 	l2Off := flag.Int("l2-off", -1, "link-layer header size: -1 autodetect, 0 raw L3, 14 Ethernet")
 	perCPU := flag.Int("percpu-buffer", 0, "per-CPU perf ring bytes (0 = default)")
+	logBodies := flag.Bool("log-bodies", false, "include request body content (truncated to 4KB) in logs; captured bodies are real production data")
 	// Some k8s packages register -kubeconfig in init(); look it up rather than
 	// re-registering to avoid the "flag redefined" panic.
 	if flag.Lookup("kubeconfig") == nil {
@@ -118,8 +124,10 @@ func main() {
 	}
 
 	updates := make(chan capture.MapUpdate, 16)
+	exporter := export.NewExporter(export.NewRouter(log), 0, 0, log)
+	defer exporter.Stop()
 
-	if err := kaiselcontroller.New(mgr.GetClient(), updates).SetupWithManager(mgr); err != nil {
+	if err := kaiselcontroller.New(mgr.GetClient(), updates, exporter.Router()).SetupWithManager(mgr); err != nil {
 		log.Error("setup controller", "err", err)
 		os.Exit(1)
 	}
@@ -131,7 +139,29 @@ func main() {
 		Framing:      framing,
 		PerCPUBuffer: *perCPU,
 		Log:          log,
+		LogBodies:    *logBodies,
 		Updates:      updates,
+		OnRequest: func(netFlow, transportFlow gopacket.Flow, req *http.Request) {
+			body, _ := io.ReadAll(req.Body)
+			fields := []any{
+				"src", netFlow.Src().String(), "dst", netFlow.Dst().String(),
+				"ports", transportFlow.String(),
+				"method", req.Method, "host", req.Host, "uri", req.RequestURI,
+				"body_bytes", len(body),
+			}
+			if *logBodies {
+				truncated := body
+				const logBodyCap = 4096
+				if len(truncated) > logBodyCap {
+					truncated = truncated[:logBodyCap]
+				}
+				fields = append(fields, "body", string(truncated),
+					"body_truncated", len(body) > logBodyCap)
+			}
+			log.Info("http request", fields...)
+			req.Body = io.NopCloser(bytes.NewReader(body))
+			exporter.Handle(netFlow, req)
+		},
 	}
 
 	captureErr := make(chan error, 1)

@@ -4,7 +4,7 @@ title: Platform Bootstrap and ShadowTest Lifecycle
 description: How to install Monarch, Pixie Vizier, and pixie-gate once; create and delete ShadowTests without resetting Pixie.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [operations, control-plane, monarch, pixie, pixiestreamrule, shadowtest, deployment, pixie-gate]
-timestamp: 2026-07-24T18:00:00Z
+timestamp: 2026-07-25T18:40:00Z
 ---
 
 # Platform Bootstrap and ShadowTest Lifecycle
@@ -36,13 +36,13 @@ sequenceDiagram
   Ops->>Gate: Deploy once (no reset per test)
 
   User->>Monarch: kubectl apply ShadowTest
-  Monarch->>Monarch: shadow namespace + workloads + PixieStreamRule
+  Monarch->>Monarch: shadow namespace + workloads + KaiselRule + PixieStreamRule
   Gate->>Monarch: poll PixieStreamRule (every ~3s)
-  Gate->>Pixie: px run mongo/ingress/egress PxL
-  Pixie->>Monarch: OTLP to siphon / beru-local / recorder
+  Gate->>Pixie: px run egress/mongo PxL
+  Pixie->>Monarch: OTLP to recorder / beru-local
 
   User->>Monarch: kubectl delete ShadowTest
-  Monarch->>Monarch: deactivate + delete PixieStreamRule
+  Monarch->>Monarch: deactivate + delete KaiselRule + PixieStreamRule
   Monarch->>Monarch: delete shadow namespace
   Gate->>Gate: stop exports for removed rule (next poll)
 ```
@@ -109,11 +109,11 @@ Hardening (see [pixie-gate.md](/control-plane/pixie-gate.md)):
 
 pixie-gate polls all `PixieStreamRule` objects cluster-wide every `PIXIE_EXPORT_INTERVAL_SEC` (default 3s).
 
-### 5. Siphon OTLP receiver (HTTP Pixie ingress only)
+### 5. Kaisel DaemonSet (HTTP ingress)
 
-When HTTP ingress capture is enabled, Monarch creates `Service/siphon` and `Deployment/siphon` in the shadow namespace. The Deployment receives OTLP on `:4317` and POSTs to the shadow Igris Service (`SIPHON_IGRIS_BASE_URL`). No separate bats/chart apply is required.
+Install Kaisel once per cluster (`kubectl apply -k pipeline/kaisel/deploy/`). When HTTP ingress capture is enabled, Monarch creates a `KaiselRule` with target pod IPs, ports, `igrisBaseURL`, and `samplePercentage`. Kaisel POSTs admitted requests to the shadow Igris Service.
 
-MongoDB egress and AMQP paths do not require Siphon.
+MongoDB egress and AMQP paths do not use Kaisel.
 
 ### Bootstrap verification
 
@@ -154,8 +154,8 @@ Example fields: `targetDeployment`, `oldImage` / `newImage`, `inputs`, `dependen
 
 | Field | When set | OTLP destination |
 |-------|----------|------------------|
-| `spec.otelEndpoint` | HTTP ingress Siphon enabled (`http_request`/`tcp_stream` on servicePort, applicationPort, or container port) | `siphon.<shadow-ns>.svc.cluster.local:4317` |
-| `spec.targetPorts` | When ingress Siphon enabled | `applicationPort` (prod app port for Pixie `local_port`, not Envoy `servicePort`) |
+| `spec.otelEndpoint` | Always empty (HTTP ingress is Kaisel, not Pixie OTLP) | — |
+| `spec.targetPorts` | When egress/mongo Pixie capture needs them | Prod app ports for Pixie filters |
 | `spec.recorderOtelEndpoint` | Always (Shop+Recorder always-on) | `<shadowtest>-recorder.<shadow-ns>:4317` |
 | `spec.mongoOtelEndpoint` | MongoDB `dependencies[]` | `beru-local.<shadow-ns>.svc.cluster.local:4317` |
 | `spec.shadowNamespace` | MongoDB dependency | Filters mongo PxL to shadow pods only |

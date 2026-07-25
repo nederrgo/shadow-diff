@@ -20,8 +20,6 @@ spec:
         routingKey: order.created
         targetDependency: rabbitmq
 
-  siphon:
-    enabled: false
 
   dependencies:
     - name: rabbitmq

@@ -15,7 +15,7 @@ Prod app outbound HTTP
     │
     ├── Pixie eBPF egress PxL → pixie-gate px.export → OTLP gRPC :4317 (gzip)  [primary]
     │
-    └── (legacy) Siphon TCP relay :8080 — length-prefixed R/S frames
+    └── (legacy) Kaisel TCP relay :8080 — length-prefixed R/S frames
     │
     ▼
 Recorder (shadow namespace, always-on)
@@ -59,9 +59,9 @@ Recorder listens for **gzip-compressed OTLP gRPC** traces and maps span attribut
 
 Recorder forwards **every** HTTP span to Shop (no host allowlist / no `recordAndReplay.json`). In-cluster calls are often visible on the **server-side** pod in Pixie; workers should still set a stable logical `Host` for Shop keying. See [/data-plane/egress-record-replay.md](../../docs/data-plane/egress-record-replay.md).
 
-### 2. Legacy Siphon → Recorder TCP format
+### 2. Legacy Kaisel → Recorder TCP format
 
-Each prod egress TCP flow opens a connection to Recorder `:8080`. Siphon sends **5-byte framed chunks**:
+Each prod egress TCP flow opens a connection to Recorder `:8080`. Kaisel sends **5-byte framed chunks**:
 
 | Byte | Meaning |
 | ---- | ------- |
@@ -74,7 +74,7 @@ Recorder buffers both legs on **per-connection pipes** until request and respons
 
 ### 3. Request/response pairing (TCP path)
 
-For each Siphon TCP connection, `SessionStore`:
+For each Kaisel TCP connection, `SessionStore`:
 
 1. Accumulates `R` frames into a request pipe and `S` frames into a response pipe.
 2. Starts `parse.RunBidirectional` when both legs exist.
@@ -133,10 +133,10 @@ make docker-build RECORDER_IMG=recorder:dev
 | Variable | Required | Default | Description |
 | -------- | -------- | ------- | ----------- |
 | `SHOP_HTTP_URL` | Yes | — | Shop HTTP base URL (e.g. `http://shop.<shadow-ns>.svc.cluster.local:8080`) |
-| `RECORDER_LISTEN_ADDR` | No | `:8080` | TCP address for legacy Siphon egress relay connections |
+| `RECORDER_LISTEN_ADDR` | No | `:8080` | TCP address for legacy Kaisel egress relay connections |
 | `RECORDER_OTLP_GRPC_ADDR` | No | `:4317` | gRPC OTLP trace receiver (Pixie egress `px.export`) |
 | `RECORDER_PAIR_TIMEOUT` | No | `30s` | Drop incomplete request/response pairs after this duration (TCP path) |
-| `RECORDER_MAX_FRAME_BYTES` | No | `5242880` (5 MiB) | Max single frame payload from Siphon (TCP path) |
+| `RECORDER_MAX_FRAME_BYTES` | No | `5242880` (5 MiB) | Max single frame payload from Kaisel (TCP path) |
 
 Monarch sets `SHOP_HTTP_URL` and both listen addresses. There is no `recordAndReplay.json` ConfigMap.
 
@@ -176,6 +176,6 @@ Manual seeding (without Recorder): Shop `POST /v1/seed_mock`.
 
 - [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — prod HTTP auto-record vs AMQP egress diff
 - [/data-plane/egress-record-replay.md](../../docs/data-plane/egress-record-replay.md) — always-on Shop+Recorder; Pixie server-side caveat
-- [pipeline/siphon/](../siphon/) — OTLP ingress receiver (separate from Recorder egress path)
+- [pipeline/kaisel/](../kaisel/) — OTLP ingress receiver (separate from Recorder egress path)
 - [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — ShadowTest / PixieStreamRule
 - [pipeline/shop/README.md](../shop/README.md) — mock store + Envoy egress replay

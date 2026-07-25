@@ -11,7 +11,7 @@ df = df[df.trace_role == 2]
 df = df[px.contains(df.req_body, '"comment"')]
 
 # ponytail: no samplePercentage here — mongo is captured on shadow pods only;
-# ingress sampling (siphon / igris-rabbitmq) already decided which traces enter
+# ingress sampling (Kaisel / igris-rabbitmq) already decided which traces enter
 # the shadow stack. Re-sampling would drop side-effects for in-stack traces.
 
 df.end_time  = df.time_ + df.latency

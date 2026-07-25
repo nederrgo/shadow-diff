@@ -54,7 +54,7 @@ testing/tools/            # standalone developer utilities (not called by bats)
 - Monarch CRDs + operator (`MONARCH_MODE=dev`)
 - Beru (`beru-system`)
 - Pixie Vizier + **continuous** pixie-gate (no per-test restart)
-- Siphon RBAC
+- Kaisel DaemonSet (`pipeline/kaisel/deploy/`)
 
 Escape hatches: `SKIP_PLATFORM_BOOTSTRAP`, `SKIP_BUILD`, `SKIP_LOAD`, `BATS_FORCE_PLATFORM_BOOTSTRAP`.
 
@@ -102,7 +102,7 @@ make test-bats
 
 | File | Scenario |
 |------|----------|
-| `monarch/http_input.bats` | HTTP input stack Ready (igris-http, siphon, roles, deps) |
+| `monarch/http_input.bats` | HTTP input stack Ready (igris-http, KaiselRule, roles, deps) |
 | `monarch/ambiguous_ports.bats` | Multi-port target → `Failed` with `applicationPort` message |
 | `monarch/lifecycle.bats` | Delete mid-bring-up, re-apply while deleting, recreate → Ready, delete after Ready |
 | `monarch/deps_update.bats` | Live `spec.dependencies` add → dep Deployments + shadow app pod rollout with injected env |

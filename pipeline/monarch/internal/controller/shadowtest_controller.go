@@ -94,8 +94,8 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	if len(shadowTest.Spec.Inputs) == 0 && shadowTest.Spec.TargetDeployment != "" && !siphonEnabled(&shadowTest, &target) {
-		log.Info("live capture inactive: spec.inputs is empty and Siphon is disabled",
+	if len(shadowTest.Spec.Inputs) == 0 && shadowTest.Spec.TargetDeployment != "" && !httpIngressCaptureEnabled(&shadowTest, &target) {
+		log.Info("live capture inactive: no HTTP/TCP ingress input matched target ports",
 			"level", "warn",
 			"shadowtest", fmt.Sprintf("%s/%s", shadowTest.Namespace, shadowTest.Name))
 	}
@@ -107,10 +107,10 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// KaiselRule only needs target pod IPs — create it immediately, independent
 	// of beru-local/igris/shadow-stack readiness so eBPF capture starts as soon
 	// as the target pods exist.
-	captureTargets, siphonPhase, err := r.reconcileKaiselCapture(ctx, &shadowTest, shadowNS, &target)
+	captureTargets, kaiselPhase, err := r.reconcileKaiselCapture(ctx, &shadowTest, shadowNS, &target)
 	if err != nil {
 		log.Error(err, "Kaisel capture reconcile failed")
-		siphonPhase = "Degraded"
+		kaiselPhase = "Degraded"
 	}
 
 	if err := r.reconcileLocalBeruIfNeeded(ctx, &shadowTest, shadowNS); err != nil {
@@ -212,11 +212,11 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	} else {
 		msg = fmt.Sprintf("%s; ingress [%s]", msg, listenersSummary(&shadowTest))
 	}
-	if siphonPhase != "" && siphonPhase != "Disabled" {
-		msg = fmt.Sprintf("%s; Kaisel %s", msg, siphonPhase)
+	if kaiselPhase != "" && kaiselPhase != "Disabled" {
+		msg = fmt.Sprintf("%s; Kaisel %s", msg, kaiselPhase)
 	}
 
-	if err := r.patchStatusFull(ctx, &shadowTest, "Ready", msg, shadowNS, captureTargets, siphonPhase, igrisEndpoint, igrisRMQPhase); err != nil {
+	if err := r.patchStatusFull(ctx, &shadowTest, "Ready", msg, shadowNS, captureTargets, kaiselPhase, igrisEndpoint, igrisRMQPhase); err != nil {
 		return ctrl.Result{}, err
 	}
 

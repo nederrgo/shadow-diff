@@ -65,6 +65,10 @@ type Config struct {
 	Log          *slog.Logger
 	// OnRequest receives every parsed HTTP request. Nil logs instead.
 	OnRequest func(netFlow, transportFlow gopacket.Flow, req *http.Request)
+	// LogBodies includes request body content (truncated) in the default log
+	// line when OnRequest is nil. Off by default: captured bodies are real
+	// production data, and logs are commonly shipped off-node.
+	LogBodies bool
 	// Ready, if set, is called once the filter is attached and the perf reader
 	// is open. Traffic generated before this fires is not guaranteed to be
 	// seen; tests use it instead of sleeping.
@@ -269,7 +273,7 @@ func applyUpdate(objs *bpfObjects, upd MapUpdate, portFilterOn uint32, log *slog
 
 // consume drives the read loop: source -> decode -> reassembly.
 func consume(ctx context.Context, src PacketSource, cfg Config, log *slog.Logger, stats func() (uint64, uint64), frags func() uint64, objs *bpfObjects, portFilterOn uint32) error {
-	factory := &decode.StreamFactory{Log: log, OnRequest: cfg.OnRequest}
+	factory := &decode.StreamFactory{Log: log, OnRequest: cfg.OnRequest, LogBodies: cfg.LogBodies}
 	asm := tcpassembly.NewAssembler(tcpassembly.NewStreamPool(factory))
 
 	ticker := time.NewTicker(flushInterval)

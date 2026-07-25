@@ -58,6 +58,16 @@ setup_file() {
   bats_write_suite_state
 }
 
+@test "monarch writes igrisBaseURL on KaiselRule for Kaisel export" {
+  bats_load_suite_state
+
+  local url
+  url=$(kubectl get kaiselrule "kaisel-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
+    -o jsonpath='{.spec.igrisBaseURL}')
+  [[ -n "$url" ]] || fail "KaiselRule.spec.igrisBaseURL is empty"
+  [[ "$url" == http://*igris* ]] || fail "unexpected igrisBaseURL: ${url}"
+}
+
 teardown_file() {
   if [[ "${BATS_KEEP:-0}" != "1" ]]; then
     delete_shadowtest_and_verify "$SHADOWTEST" "$SHADOWTEST_NS" || true
@@ -112,5 +122,40 @@ teardown_file() {
   bats_load_suite_state
   # 192.0.2.1 is TEST-NET-1 (RFC 5737); never targeted by any KaiselRule.
   run kaisel_assert_not_captured "dst=192.0.2.1"
+  assert_success
+}
+
+@test "monarch and kaisel self-heal after the prod pod crashes and is replaced" {
+  bats_load_suite_state
+
+  local old_pod old_ip new_ip probe
+  old_pod=$(kubectl get pod -l app=kaisel-capture-prod -n default \
+    -o jsonpath='{.items[0].metadata.name}')
+  old_ip=$(kubectl get pod -l app=kaisel-capture-prod -n default \
+    -o jsonpath='{.items[0].status.podIP}')
+  [[ -n "$old_pod" && -n "$old_ip" ]] || skip "prod pod not found"
+
+  # Simulate a crash: force-delete the pod. The Deployment controller
+  # immediately schedules a replacement with a new pod IP.
+  kubectl delete pod "$old_pod" -n default --grace-period=0 --force 2>&1 | tail -3
+
+  new_ip=$(wait_new_pod_ip "app=kaisel-capture-prod" "default" "$old_ip" 90)
+  [[ -n "$new_ip" ]] || fail "no replacement pod IP appeared"
+  [[ "$new_ip" != "$old_ip" ]]
+
+  # Monarch's Pod watch must re-reconcile the ShadowTest and rewrite the
+  # KaiselRule to the new pod's IP -- no manual intervention, no restart.
+  wait_kaiselrule_targetip_is "kaisel-${SHADOWTEST}" "$SHADOWTEST_NS" "$new_ip" 60
+
+  # kaisel's controller-runtime reconciler must diff the updated KaiselRule
+  # and push the new IP into the live BPF map -- again, no daemon restart.
+  sleep 5
+
+  probe="/post-crash-probe-${RANDOM}"
+  kubectl run kaisel-crash-probe --restart=Never --rm -i --image=curlimages/curl:latest \
+    -n default -- curl -s --max-time 10 "http://${new_ip}:80${probe}" || true
+
+  sleep 2
+  run kaisel_assert_captured "uri=${probe}"
   assert_success
 }

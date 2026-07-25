@@ -1,4 +1,4 @@
-# Production target for python-hybrid ShadowTest (Siphon captures HTTP egress).
+# Production target for python-hybrid ShadowTest (Recorder/Pixie captures HTTP egress).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

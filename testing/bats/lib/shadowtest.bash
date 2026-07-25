@@ -98,19 +98,19 @@ bats_wait_namespace_gone() {
 wait_shadowtest_ready() {
   local name="$1" ns="$2"
   shift 2
-  local require_mongo=0 require_rmq=0 require_rmq_egress=0 require_siphon=0
+  local require_mongo=0 require_rmq=0 require_rmq_egress=0 require_kaisel=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --require-mongo) require_mongo=1; shift ;;
       --require-rmq) require_rmq=1; shift ;;
       --require-rmq-egress) require_rmq_egress=1; shift ;;
-      --require-siphon) require_siphon=1; shift ;;
+      --require-kaisel) require_kaisel=1; shift ;;
       *) shift ;;
     esac
   done
 
   bats_source_e2e_helpers
-  local i phase siphon message actual_ns relay_ok mongo_ok rabbitmq_ok queue
+  local i phase kaisel message actual_ns relay_ok mongo_ok rabbitmq_ok queue
   local max_loops="${SHADOW_WAIT_LOOPS:-90}"
 
   for ((i = 1; i <= max_loops; i++)); do
@@ -118,7 +118,7 @@ wait_shadowtest_ready() {
     message=$(kubectl get shadowtest "$name" -n "$ns" -o jsonpath='{.status.message}' 2>/dev/null || true)
     queue=$(kubectl get shadowtest "$name" -n "$ns" -o jsonpath='{.status.amqpQueueName}' 2>/dev/null || true)
     actual_ns=$(kubectl get shadowtest "$name" -n "$ns" -o jsonpath='{.status.shadowNamespace}' 2>/dev/null || true)
-    siphon=$(kubectl get shadowtest "$name" -n "$ns" -o jsonpath='{.status.siphonPhase}' 2>/dev/null || true)
+    kaisel=$(kubectl get shadowtest "$name" -n "$ns" -o jsonpath='{.status.kaiselPhase}' 2>/dev/null || true)
     relay_ok=1 mongo_ok=1 rabbitmq_ok=1
 
     # Fast-fail: once the shadow namespace exists, check every iteration for
@@ -134,7 +134,7 @@ wait_shadowtest_ready() {
         || true)
       if [[ -n "$bad_pods" ]]; then
         echo "==> [wait_shadowtest_ready] terminal pod failure in ${actual_ns} — failing fast:"
-        echo "    ShadowTest phase=${phase:-<none>} siphon=${siphon:-<none>} msg=${message:-<none>}"
+        echo "    ShadowTest phase=${phase:-<none>} kaisel=${kaisel:-<none>} msg=${message:-<none>}"
         echo "    matched rows:"
         echo "$bad_pods" | sed 's/^/      /'
         echo "    all pods:"
@@ -176,7 +176,7 @@ wait_shadowtest_ready() {
     local ready=0
     if [[ "$phase" == "Ready" && -n "$actual_ns" ]]; then
       ready=1
-      [[ "$require_siphon" == "1" && "$siphon" != "Ready" ]] && ready=0
+      [[ "$require_kaisel" == "1" && "$kaisel" != "Ready" ]] && ready=0
       [[ "$require_rmq" == "1" && ( -z "$queue" || "$relay_ok" != "1" || "$rabbitmq_ok" != "1" ) ]] && ready=0
       [[ "$require_rmq_egress" == "1" && ( "$relay_ok" != "1" || "$rabbitmq_ok" != "1" ) ]] && ready=0
       [[ "$require_mongo" == "1" && "$mongo_ok" != "1" ]] && ready=0
@@ -194,7 +194,7 @@ wait_shadowtest_ready() {
       return 1
     fi
 
-    echo "    wait Ready (${i}/${max_loops}) phase=${phase:-<none>} siphon=${siphon:-<none>} relay=${relay_ok} mongo=${mongo_ok} queue=${queue:-<none>}"
+    echo "    wait Ready (${i}/${max_loops}) phase=${phase:-<none>} kaisel=${kaisel:-<none>} relay=${relay_ok} mongo=${mongo_ok} queue=${queue:-<none>}"
     sleep 5
   done
 

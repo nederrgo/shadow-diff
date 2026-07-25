@@ -88,7 +88,7 @@ func HexNibbleExpr(col string) string {
 	return e
 }
 
-// SampleFilterLines emits the shared prod-gate sampling rule with Go siphon:
+// SampleFilterLines emits the shared prod-gate sampling rule with Go Kaisel/Recorder:
 // V = int(trace_id[0:2], 16); keep iff (V*100) < (N*256).
 func SampleFilterLines(pct int, column string) string {
 	if column == "" {
