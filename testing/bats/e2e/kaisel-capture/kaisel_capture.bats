@@ -235,6 +235,84 @@ teardown_file() {
   assert_success
 }
 
+@test "scenario large-body: 500KB dependency response is seeded into Shop" {
+  bats_load_suite_state
+
+  local trace_id
+  run kaisel_prod_egress_scenario "large-body"
+  assert_success
+  trace_id="$(echo "$output" | tail -1)"
+
+  run kaisel_assert_egress_recorded "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_HOST}:/dep/size/512000" 90
+  assert_success
+  # Same Kaisel log line carries body_bytes; 512000 is under the 1 MiB drop cap.
+  run kaisel_assert_egress_recorded "body_bytes=512000" 10
+  assert_success
+}
+
+@test "scenario external: outside-cluster egress is recorded with httpbin.org host" {
+  bats_load_suite_state
+
+  local trace_id
+  run kaisel_prod_egress_scenario "external"
+  assert_success
+  trace_id="$(echo "$output" | tail -1)"
+
+  run kaisel_assert_egress_recorded "trace:${trace_id}:GET:${KAISEL_EGRESS_EXTERNAL_HOST}:/get" 120
+  assert_success
+}
+
+@test "scenario in-cluster: svc.cluster.local FQDN is the recorded Host" {
+  bats_load_suite_state
+
+  local trace_id
+  run kaisel_prod_egress_scenario "in-cluster"
+  assert_success
+  trace_id="$(echo "$output" | tail -1)"
+
+  run kaisel_assert_egress_recorded "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_FQDN}:/dep/echo" 90
+  assert_success
+}
+
+@test "scenario parallel: distinct routes under one trace produce distinct mocks" {
+  bats_load_suite_state
+
+  local trace_id
+  run kaisel_prod_egress_scenario "parallel"
+  assert_success
+  trace_id="$(echo "$output" | tail -1)"
+
+  run kaisel_assert_egress_recorded "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_HOST}:/dep/echo?route=a" 90
+  assert_success
+  run kaisel_assert_egress_recorded "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_HOST}:/dep/echo?route=b" 90
+  assert_success
+  run kaisel_assert_egress_recorded "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_HOST}:/dep/status/200" 90
+  assert_success
+}
+
+@test "kaisel seed → Shop → Envoy replay from copied prod traffic" {
+  bats_load_suite_state
+  [[ -n "${SHADOW_NS:-}" ]] || fail "SHADOW_NS unset — setup did not reach Ready"
+
+  # One prod curl: Kaisel copies ingress (headers + X-Egress-Scenario) to igris,
+  # seeds Shop from the prod egress pair, and shadow roles dial the same FQDN
+  # path. Shadows retry 599/500 until the mock lands — no separate igris redrive.
+  local mark path_enc trace_id
+  mark="shopreplay${RANDOM}"
+  path_enc="/dep/echo%3Freplay=${mark}"
+
+  run kaisel_prod_egress_scenario "in-cluster" "" "$path_enc"
+  assert_success
+  trace_id="$(echo "$output" | tail -1)"
+
+  run kaisel_assert_egress_recorded \
+    "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_FQDN}:/dep/echo?replay=${mark}" 90
+  assert_success
+
+  run kaisel_assert_shadow_egress_replay "replay=${mark}"
+  assert_success
+}
+
 @test "kaisel does not record egress for an untraced outbound call" {
   bats_load_suite_state
 

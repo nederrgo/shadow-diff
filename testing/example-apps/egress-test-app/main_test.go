@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -98,5 +99,118 @@ func TestDepSizeReturnsExactBytes(t *testing.T) {
 	}
 	if strings.Trim(rec.Body.String(), "z") != "" {
 		t.Error("body should be all 'z' filler")
+	}
+}
+
+func TestEgressRunDispatchesScenarios(t *testing.T) {
+	seen := map[string]int{}
+	dep := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen[r.URL.RequestURI()]++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer dep.Close()
+
+	ext := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen["external:"+r.URL.RequestURI()]++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ext.Close()
+
+	cfg := egressConfig{
+		depBase:     dep.URL,
+		depCluster:  dep.URL,
+		externalURL: ext.URL + "/get",
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	h := handleEgressRun(client, cfg)
+
+	cases := []struct {
+		scenario string
+		url      string
+		wantURI  string
+	}{
+		{scenarioLargeBody, "/egress/run", "/dep/size/512000"},
+		{scenarioInCluster, "/egress/run", "/dep/echo"},
+		{scenarioInCluster, "/egress/run?path=/dep/echo%3Fmark=1", "/dep/echo?mark=1"},
+		{scenarioExternal, "/egress/run", "external:/get"},
+	}
+	for _, tc := range cases {
+		seen = map[string]int{}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+		req.Header.Set(scenarioHeader, tc.scenario)
+		h(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d body %s", tc.scenario, rec.Code, rec.Body.String())
+		}
+		if seen[tc.wantURI] != 1 {
+			t.Fatalf("%s: saw %v, want %q once", tc.scenario, seen, tc.wantURI)
+		}
+	}
+}
+
+func TestCallFillsStatusForEgressLog(t *testing.T) {
+	dep := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer dep.Close()
+
+	res := call(&http.Client{Timeout: 5 * time.Second},
+		httptest.NewRequest(http.MethodGet, "/", nil),
+		http.MethodGet, dep.URL+"/dep/echo", nil)
+	if res.Status != 200 {
+		t.Fatalf("status=%d", res.Status)
+	}
+}
+
+func TestEgressRunParallelDistinctPaths(t *testing.T) {
+	seen := map[string]bool{}
+	var mu sync.Mutex
+	dep := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.URL.RequestURI()] = true
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer dep.Close()
+
+	cfg := egressConfig{depBase: dep.URL, depCluster: dep.URL, externalURL: "http://example.invalid/"}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/egress/run", nil)
+	req.Header.Set(scenarioHeader, scenarioParallel)
+	handleEgressRun(&http.Client{Timeout: 5 * time.Second}, cfg)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var out egressResponse
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Calls) != 3 {
+		t.Fatalf("calls = %d, want 3", len(out.Calls))
+	}
+	want := []string{"/dep/echo?route=a", "/dep/echo?route=b", "/dep/status/200"}
+	for _, p := range want {
+		if !seen[p] {
+			t.Errorf("missing path %q in %v", p, seen)
+		}
+	}
+}
+
+func TestEgressRunRejectsBadScenario(t *testing.T) {
+	cfg := egressConfig{depBase: "http://127.0.0.1:9", depCluster: "http://127.0.0.1:9"}
+	h := handleEgressRun(&http.Client{Timeout: time.Second}, cfg)
+
+	for _, scenario := range []string{"", "nope"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/egress/run", nil)
+		if scenario != "" {
+			req.Header.Set(scenarioHeader, scenario)
+		}
+		h(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("scenario %q: status %d, want 400", scenario, rec.Code)
+		}
 	}
 }

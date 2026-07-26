@@ -13,6 +13,10 @@ KAISEL_PROD_PORT="8080"
 # mock's Host field; Shop strips the port when it derives the key, on both the
 # seed and the ext_proc lookup side.
 KAISEL_EGRESS_DEP_HOST="kaisel-egress-dep"
+# FQDN form used by X-Egress-Scenario: in-cluster.
+KAISEL_EGRESS_DEP_FQDN="kaisel-egress-dep.default.svc.cluster.local"
+# Outside-cluster host used by X-Egress-Scenario: external.
+KAISEL_EGRESS_EXTERNAL_HOST="httpbin.org"
 
 # Self-contained platform setup for Kaisel E2E: builds + loads Monarch, Kaisel,
 # and the HTTP shadow-stack images (igris-http, beru, shop), installs
@@ -327,6 +331,99 @@ kaisel_prod_egress_call() {
     -H "traceparent: ${trace_tp}" \
     "http://${prod_ip}:${KAISEL_PROD_PORT}/egress/get?path=${dep_path}" >&2 || true
   printf '%s\n' "$trace_id"
+}
+
+# Drive /egress/run with an X-Egress-Scenario header (large-body, external,
+# in-cluster, parallel). Echoes the trace id on the last line.
+# Usage: kaisel_prod_egress_scenario <scenario> [trace_id_hex32] [path_query]
+# path_query is appended as ?path=… on /egress/run (in-cluster honors it).
+kaisel_prod_egress_scenario() {
+  local scenario="$1"
+  local trace_id="${2:-$(openssl rand -hex 16)}"
+  local path_q="${3:-}"
+  local span_hex
+  span_hex="$(openssl rand -hex 8)"
+  local trace_tp="00-${trace_id}-${span_hex}-01"
+  local prod_ip url
+  prod_ip=$(kubectl get pod -l "app=${KAISEL_PROD_DEPLOY}" -n default \
+    -o jsonpath='{.items[0].status.podIP}')
+  if [[ -z "$prod_ip" ]]; then
+    echo "kaisel_prod_egress_scenario: prod pod has no IP" >&2
+    return 1
+  fi
+  url="http://${prod_ip}:${KAISEL_PROD_PORT}/egress/run"
+  if [[ -n "$path_q" ]]; then
+    url="${url}?path=${path_q}"
+  fi
+
+  echo "==> [kaisel] prod egress scenario=${scenario} trace_id=${trace_id}" >&2
+  kubectl run "kaisel-scenario-${RANDOM}" --restart=Never --rm -i \
+    --image=curlimages/curl:latest -n default -- \
+    curl -sS --max-time 30 \
+    -H "traceparent: ${trace_tp}" \
+    -H "X-Egress-Scenario: ${scenario}" \
+    "$url" >&2 || true
+  printf '%s\n' "$trace_id"
+}
+
+# Re-drive shadow roles via igris AFTER Shop is seeded (same trace id + scenario).
+# Needed so Envoy looks up a mock that already exists (prod→igris can race the
+# Kaisel→Shop seed). Port comes from the igris Service (16080 when the
+# ShadowTest applicationPort is 8080 — not the http-otel :8888 convention).
+# Usage: kaisel_igris_egress_scenario <scenario> <trace_id_hex32> [path_query]
+kaisel_igris_egress_scenario() {
+  local scenario="$1"
+  local trace_id="$2"
+  local path_q="${3:-}"
+  local shadow_ns="${SHADOW_NS:?SHADOW_NS unset}"
+  local shadowtest="${SHADOWTEST:?SHADOWTEST unset}"
+  local span_hex trace_tp url igris_port
+  span_hex="$(openssl rand -hex 8)"
+  trace_tp="00-${trace_id}-${span_hex}-01"
+
+  if ! kubectl get svc "${shadowtest}-igris" -n "$shadow_ns" >/dev/null 2>&1; then
+    echo "kaisel_igris_egress_scenario: no ${shadowtest}-igris in ${shadow_ns}" >&2
+    return 2
+  fi
+  igris_port=$(kubectl get svc "${shadowtest}-igris" -n "$shadow_ns" \
+    -o jsonpath='{.spec.ports[0].port}')
+  [[ -n "$igris_port" ]] || { echo "kaisel_igris_egress_scenario: empty igris port" >&2; return 2; }
+
+  url="http://${shadowtest}-igris.${shadow_ns}.svc.cluster.local:${igris_port}/egress/run"
+  if [[ -n "$path_q" ]]; then
+    url="${url}?path=${path_q}"
+  fi
+
+  echo "==> [kaisel] igris egress scenario=${scenario} port=${igris_port} trace_id=${trace_id}" >&2
+  kubectl run "kaisel-igris-replay-${RANDOM}" --restart=Never --rm -i \
+    --image=curlimages/curl:latest -n default -- \
+    curl -sS --max-time 30 -o /dev/null \
+    -H "traceparent: ${trace_tp}" \
+    -H "X-Egress-Scenario: ${scenario}" \
+    "$url" >&2 || true
+}
+
+# Assert each shadow role logged an Envoy→Shop mock hit for the unique URL mark.
+# Usage: kaisel_assert_shadow_egress_replay <url_substring>
+kaisel_assert_shadow_egress_replay() {
+  local mark="$1"
+  local role
+  for role in control-a control-b candidate; do
+    echo "==> [kaisel] wait shadow role=${role} replay hit mark=${mark}"
+    # Unique mark ties the 200 to this test; status=200 is the Shop mock hit
+    # (Envoy shop_ext_proc returns 599 on miss).
+    assert_worker_log_grep "$role" "http egress status=200" || {
+      echo "FAIL: role=${role} missing http egress status=200" >&2
+      local pod
+      pod=$(bats_shadow_app_pod "$role" 2>/dev/null || true)
+      [[ -n "$pod" ]] && kubectl logs -n "${SHADOW_NS}" "$pod" -c app --tail=40 >&2 || true
+      return 1
+    }
+    assert_worker_log_grep "$role" "$mark" || {
+      echo "FAIL: role=${role} missing egress url mark ${mark}" >&2
+      return 1
+    }
+  done
 }
 
 # Wait for kaisel to log an egress record that Shop accepted.

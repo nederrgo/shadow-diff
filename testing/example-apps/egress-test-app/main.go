@@ -16,6 +16,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -45,11 +47,30 @@ type egressResponse struct {
 	Calls       []callResult `json:"calls"`
 }
 
+// Scenario header values for GET /egress/run. Kaisel E2E picks one per test.
+const (
+	scenarioLargeBody = "large-body"
+	scenarioExternal  = "external"
+	scenarioInCluster = "in-cluster"
+	scenarioParallel  = "parallel"
+
+	scenarioHeader = "X-Egress-Scenario"
+
+	largeBodyBytes = 512000
+)
+
 func main() {
 	addr := envOr("LISTEN_ADDR", ":8080")
 	depBase := strings.TrimSuffix(envOr("DEPENDENCY_BASE_URL", "http://localhost:8080"), "/")
+	depCluster := strings.TrimSuffix(envOr("DEPENDENCY_CLUSTER_URL", depBase), "/")
+	externalURL := envOr("EXTERNAL_BASE_URL", "http://httpbin.org/get")
 
 	client := &http.Client{Timeout: 15 * time.Second}
+	cfg := egressConfig{
+		depBase:     depBase,
+		depCluster:  depCluster,
+		externalURL: externalURL,
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -62,13 +83,15 @@ func main() {
 	mux.HandleFunc("POST /egress/post", handleEgress(client, depBase, http.MethodPost))
 	mux.HandleFunc("GET /egress/head", handleEgress(client, depBase, http.MethodHead))
 	mux.HandleFunc("GET /egress/multi", handleEgressMulti(client, depBase))
+	mux.HandleFunc("GET /egress/run", handleEgressRun(client, cfg))
 
 	// ── dependency side ────────────────────────────────────────────────────
 	mux.HandleFunc("/dep/echo", handleDepEcho)
 	mux.HandleFunc("/dep/size/{n}", handleDepSize)
 	mux.HandleFunc("/dep/status/{code}", handleDepStatus)
 
-	log.Printf("egress-test-app listening on %s (dependency=%s)", addr, depBase)
+	log.Printf("egress-test-app listening on %s (dependency=%s cluster=%s external=%s)",
+		addr, depBase, depCluster, externalURL)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           accessLog(mux),
@@ -77,6 +100,12 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
+}
+
+type egressConfig struct {
+	depBase     string
+	depCluster  string
+	externalURL string
 }
 
 // accessLog prints one line per inbound request. Shadow-stack assertions grep
@@ -121,8 +150,8 @@ func handleEgressMulti(client *http.Client, depBase string) http.HandlerFunc {
 		}
 		calls := make([]callResult, 0, n)
 		for i := 0; i < n; i++ {
-			url := fmt.Sprintf("%s/dep/echo?call=%d", depBase, i)
-			calls = append(calls, call(client, r, http.MethodGet, url, nil))
+			u := fmt.Sprintf("%s/dep/echo?call=%d", depBase, i)
+			calls = append(calls, call(client, r, http.MethodGet, u, nil))
 		}
 		writeJSON(w, egressResponse{
 			Traceparent: r.Header.Get("traceparent"),
@@ -131,7 +160,96 @@ func handleEgressMulti(client *http.Client, depBase string) http.HandlerFunc {
 	}
 }
 
+// handleEgressRun picks an outbound behaviour from X-Egress-Scenario so each
+// Kaisel E2E test drives one capture property with a single inbound curl.
+func handleEgressRun(client *http.Client, cfg egressConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scenario := strings.TrimSpace(r.Header.Get(scenarioHeader))
+		calls, err := runScenario(client, r, cfg, scenario)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, egressResponse{
+			Traceparent: r.Header.Get("traceparent"),
+			Calls:       calls,
+		})
+	}
+}
+
+func runScenario(client *http.Client, inbound *http.Request, cfg egressConfig, scenario string) ([]callResult, error) {
+	switch scenario {
+	case scenarioLargeBody:
+		return []callResult{call(client, inbound, http.MethodGet,
+			fmt.Sprintf("%s/dep/size/%d", cfg.depBase, largeBodyBytes), nil)}, nil
+	case scenarioExternal:
+		return []callResult{call(client, inbound, http.MethodGet, cfg.externalURL, nil)}, nil
+	case scenarioInCluster:
+		path := inbound.URL.Query().Get("path")
+		if path == "" {
+			path = "/dep/echo"
+		}
+		return []callResult{call(client, inbound, http.MethodGet,
+			cfg.depCluster+path, nil)}, nil
+	case scenarioParallel:
+		paths := []string{"/dep/echo?route=a", "/dep/echo?route=b", "/dep/status/200"}
+		return callParallel(client, inbound, cfg.depBase, paths), nil
+	case "":
+		return nil, fmt.Errorf("missing %s header", scenarioHeader)
+	default:
+		return nil, fmt.Errorf("unknown %s %q", scenarioHeader, scenario)
+	}
+}
+
+// callParallel fires concurrent GETs to distinct paths on the same host so
+// Kaisel pairing can be asserted under one inbound trace.
+func callParallel(client *http.Client, inbound *http.Request, depBase string, paths []string) []callResult {
+	calls := make([]callResult, len(paths))
+	var wg sync.WaitGroup
+	for i, p := range paths {
+		wg.Add(1)
+		go func(i int, p string) {
+			defer wg.Done()
+			calls[i] = call(client, inbound, http.MethodGet, depBase+p, nil)
+		}(i, p)
+	}
+	wg.Wait()
+	return calls
+}
+
+// egressRetryBudget matches the hybrid workers: shadows may dial before Kaisel
+// has seeded Shop; Envoy returns 599 (miss) or sometimes 500 until the mock lands.
+const egressRetryBudget = 60 * time.Second
+
 func call(client *http.Client, inbound *http.Request, method, url string, body io.Reader) callResult {
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(body)
+		if err != nil {
+			res := callResult{Method: method, URL: url, Error: err.Error()}
+			logEgress(res)
+			return res
+		}
+	}
+
+	deadline := time.Now().Add(egressRetryBudget)
+	var res callResult
+	for {
+		var rdr io.Reader
+		if bodyBytes != nil {
+			rdr = bytes.NewReader(bodyBytes)
+		}
+		res = callOnce(client, inbound, method, url, rdr)
+		if res.Error != "" || (res.Status != 599 && res.Status != 500) || time.Now().After(deadline) {
+			logEgress(res)
+			return res
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func callOnce(client *http.Client, inbound *http.Request, method, url string, body io.Reader) callResult {
 	res := callResult{Method: method, URL: url}
 
 	req, err := http.NewRequestWithContext(inbound.Context(), method, url, body)
@@ -162,6 +280,17 @@ func call(client *http.Client, inbound *http.Request, method, url string, body i
 	res.BodyBytes = int(read)
 	res.ContentTyp = resp.Header.Get("Content-Type")
 	return res
+}
+
+// logEgress is greppable by bats on shadow pods. status=200 after a Shop seed
+// is the Envoy→Shop mock hit (miss is 599). SHADOW_ROLE lives on the Envoy
+// sidecar today, not the app, so we do not label via=replay here.
+func logEgress(res callResult) {
+	if res.Error != "" {
+		log.Printf("http egress error=%s url=%s", res.Error, res.URL)
+		return
+	}
+	log.Printf("http egress status=%d url=%s", res.Status, res.URL)
 }
 
 // handleDepEcho returns a deterministic JSON body plus the headers the export

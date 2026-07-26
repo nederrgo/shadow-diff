@@ -157,6 +157,7 @@ func (e *Exporter) Handle(netFlow gopacket.Flow, req *http.Request) {
 		Host:        req.Host,
 		Body:        body,
 		Traceparent: tp,
+		Headers:     forwarder.CloneRequestHeaders(req.Header),
 	}
 
 	select {

@@ -32,6 +32,12 @@ spec:
             # key, on both the seed and the ext_proc lookup side.
             - name: DEPENDENCY_BASE_URL
               value: http://kaisel-egress-dep:8080
+            # FQDN form for X-Egress-Scenario: in-cluster (same Service).
+            - name: DEPENDENCY_CLUSTER_URL
+              value: http://kaisel-egress-dep.default.svc.cluster.local:8080
+            # Outside-cluster target for X-Egress-Scenario: external.
+            - name: EXTERNAL_BASE_URL
+              value: http://httpbin.org/get
           readinessProbe:
             httpGet:
               path: /healthz

@@ -11,6 +11,10 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-26]
 ### Added
+* 'testing/bats/e2e/kaisel-capture': Replay E2E from copied prod traffic (no igris redrive)
+* 'pipeline/kaisel': Forward captured request headers to igris (drop hop-by-hop)
+* 'testing/bats/e2e/kaisel-capture': Kaisel→Shop→Envoy egress replay E2E
+* 'testing/example-apps/egress-test-app': Header-driven egress scenarios for Kaisel E2E
 * 'testing/bats/lib/platform.bash': Dropped the cluster-wide Beru health gate and bootstrap deploy — no suite points a ShadowTest at beru-system; beru-local (same image) is provisioned per ShadowTest
 * 'pipeline/pixie-gate,pipeline/recorder': Removed Pixie and Recorder — Kaisel is now the sole HTTP capture path; MongoDB egress diffing withdrawn while Beru's OTLP receiver, wire parser and diff stay dormant
 * 'docs/data-plane/kaisel-ebpf.md': Documented the egress pairing gate — evaluated on the request direction for both half-streams, and why reversing beats widening the predicate

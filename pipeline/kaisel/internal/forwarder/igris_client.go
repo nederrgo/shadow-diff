@@ -71,6 +71,7 @@ func (c *Client) Forward(ctx context.Context, record HTTPRecord) error {
 	if err != nil {
 		return err
 	}
+	copyForwardHeaders(req.Header, record.Headers)
 	if host := strings.TrimSpace(record.Host); host != "" {
 		req.Host = host
 		req.Header.Set("Host", host)
@@ -93,4 +94,41 @@ func (c *Client) Forward(ctx context.Context, record HTTPRecord) error {
 		return fmt.Errorf("igris returned %s", resp.Status)
 	}
 	return nil
+}
+
+// hopByHopHeaders must not be replayed onto the igris request. Host and
+// Content-Length are owned by Forward (record.Host / body length).
+var hopByHopHeaders = map[string]bool{
+	"connection":          true,
+	"keep-alive":          true,
+	"proxy-authenticate":  true,
+	"proxy-authorization": true,
+	"te":                  true,
+	"trailers":            true,
+	"transfer-encoding":   true,
+	"upgrade":             true,
+	"host":                true,
+	"content-length":      true,
+}
+
+// CloneRequestHeaders copies capture headers for igris forward, dropping
+// hop-by-hop framing. Caller still sets Host and Traceparent explicitly.
+func CloneRequestHeaders(h http.Header) http.Header {
+	if len(h) == 0 {
+		return nil
+	}
+	out := make(http.Header, len(h))
+	copyForwardHeaders(out, h)
+	return out
+}
+
+func copyForwardHeaders(dst, src http.Header) {
+	for k, vals := range src {
+		if hopByHopHeaders[strings.ToLower(k)] {
+			continue
+		}
+		for _, v := range vals {
+			dst.Add(k, v)
+		}
+	}
 }

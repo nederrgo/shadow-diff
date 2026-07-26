@@ -4,7 +4,7 @@ title: Kaisel eBPF Capture Daemon
 description: Self-hosted eBPF ingress and egress capture — AF_PACKET socket filter, kernel-side address/protocol/port filtering, chunked perf transport for GSO super-packets, user-space TCP reassembly, and request/response pairing for egress mocks.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel
 tags: [data-plane, kaisel, ebpf, capture, networking, gso, egress]
-timestamp: 2026-07-26T09:00:00Z
+timestamp: 2026-07-26T13:05:00Z
 ---
 
 # Kaisel eBPF Capture Daemon
@@ -55,6 +55,12 @@ AF_PACKET raw socket (bound to one interface)
 ### Export routing
 
 Monarch writes `spec.igrisBaseURL` and `spec.samplePercentage` on each `KaiselRule`. Kaisel rebuilds an in-memory `dstIP → route` table from all rules. Captured request direction uses the destination address as the join key to the correct shadow-namespace igris Service. IP conflicts keep the lexicographically first `namespace/name` and warn. Missing/invalid `traceparent` is dropped in Kaisel before POST; igris-http also rejects untraced requests (tracing is required; no mint).
+
+The igris forward carries the captured request **headers** (including custom
+headers such as `X-Egress-Scenario`), minus hop-by-hop framing (`Connection`,
+`Transfer-Encoding`, `Host`, `Content-Length`, …). `Host` and `traceparent` are
+still set explicitly from the admit path. Igris may further redact secrets
+(`Authorization`, `Cookie`) before multicasting to the shadow roles.
 
 ## Kernel filter chain
 
@@ -406,6 +412,24 @@ its outbound calls) and `/dep/*` as the dependency (deterministic status, size
 and header responses). Using a purpose-built app rather than a static server is
 what lets an egress test exercise a specific behaviour — a `503` dependency, a
 large body, several calls under one trace — instead of only the happy path.
+
+`GET /egress/run` selects that behaviour from the `X-Egress-Scenario` header so
+each E2E case is one curl into the prod pod:
+
+| `X-Egress-Scenario` | Outbound call | Asserted Shop host / path |
+| --- | --- | --- |
+| `large-body` | `{DEPENDENCY_BASE_URL}/dep/size/512000` | short Service name; Kaisel log `body_bytes=512000` |
+| `external` | `{EXTERNAL_BASE_URL}` (default `http://httpbin.org/get`) | `httpbin.org` / `/get` |
+| `in-cluster` | `{DEPENDENCY_CLUSTER_URL}/dep/echo` (`*.svc.cluster.local`) | FQDN Service host / `/dep/echo` |
+| `parallel` | Concurrent GETs to `/dep/echo?route=a`, `/dep/echo?route=b`, `/dep/status/200` | three distinct mock keys under one trace |
+
+The path/query `/egress/get?path=` routes remain for the original single-call tests.
+
+**Envoy replay.** One prod curl is enough: Kaisel forwards the ingress request
+(including `X-Egress-Scenario`) to igris, seeds Shop from the paired prod egress,
+and the three shadow roles dial the same FQDN path under that `traceparent`.
+Shadows retry Envoy `599`/`500` until the mock lands (same idea as the hybrid
+workers). Each shadow app logs `http egress status=200` on a Shop hit.
 
 The integration suite builds a bridge and two network namespaces, loads the real BPF program, and drives real traffic:
 
