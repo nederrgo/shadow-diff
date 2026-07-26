@@ -1,6 +1,6 @@
 # Shop — HTTP Egress Mock Store
 
-Shop is a lightweight in-memory service that records production HTTP egress responses and replays them back to shadow workloads during Envoy egress interception. It lives in the shadow namespace, **always** deployed by Monarch (there is no `spec.recordAndReplay` field).
+Shop is a lightweight in-memory service that records production HTTP egress responses and replays them back to shadow workloads during Envoy egress interception. It lives in the shadow namespace, **always** deployed by Monarch (there is no `spec.recordAndReplay` field). After each mock reply it asynchronously reports the outbound call to Beru for HTTP egress diff-of-diffs.
 
 ## Role in the pipeline
 
@@ -9,13 +9,15 @@ Prod outbound HTTP
   → Kaisel eBPF egress capture (request + response paired)
   → Shop POST /v1/record_egress   ← seed path
                 ↑
-Shadow app HTTP_PROXY
-  → Envoy egress :10001
+Shadow app
+  → Envoy egress :10001 (BUFFERED body)
   → shop_ext_proc gRPC :50051     ← replay path
   → recorded response (or 599)
+                │
+                └── async POST /api/v1/egress/diff → Beru
 ```
 
-Shop bridges the gap between prod observation and shadow replay. Beru handles diff-of-diffs for ingress and MongoDB/AMQP egress; Shop handles HTTP egress exclusively.
+Shop bridges prod observation and shadow replay. Beru handles ingress and AMQP egress diff-of-diffs; Shop owns HTTP egress **replay** and **reports** HTTP egress to Beru for analysis.
 
 ## Ports
 
@@ -33,22 +35,38 @@ Each stored mock is keyed by:
 trace:<traceID>:<METHOD>:<host>:<path>
 ```
 
-- `traceID` — the W3C trace ID from the `traceparent` or `traceparent` header, injected by Igris before multicasting. All three shadow roles for the same prod request share the same trace ID.
+- `traceID` — the W3C trace ID from the `traceparent` header, injected by Igris before multicasting. All three shadow roles for the same prod request share the same trace ID.
 - `METHOD` — HTTP method (e.g. `POST`)
-- `host` — request `Host` header (e.g. `user-service.prod.internal:8080`)
+- `host` — request `Host` header without port
 - `path` — URL path (e.g. `/v1/log`)
 
-This key means the same request from different roles will hit the same stored mock, which is the intended behaviour: all three shadow workers (control-a, control-b, candidate) see identical recorded responses when replaying the same prod egress call.
+## Beru report payload
+
+```json
+{
+  "trace_id": "...",
+  "workload": "control-a|control-b|candidate",
+  "protocol": "http",
+  "shadow_test_name": "...",
+  "payload": {
+    "method": "POST",
+    "host": "billing.internal",
+    "path": "/v1/charges",
+    "status": 201,
+    "body": {"amount": 100}
+  }
+}
+```
+
+Signature in Beru: `http:{METHOD}:{path}`. Reporting is skipped when `BERU_HTTP_URL` is unset.
 
 ## Deployment
 
-Monarch deploys Shop automatically for every ShadowTest. The deployment order is:
+Monarch deploys Shop automatically for every ShadowTest and waits for `AvailableReplicas > 0`.
 
-1. **Shop** — deployed first; Monarch waits for `AvailableReplicas > 0`
+Envoy on each shadow pod gets a `shop_ext_proc` cluster pointing at `shop.<shadow-ns>.svc.cluster.local:50051` with `request_body_mode: BUFFERED`.
 
-Envoy on each shadow pod gets a `shop_ext_proc` cluster pointing at `shop.<shadow-ns>.svc.cluster.local:50051`. The egress listener uses this cluster for ext_proc calls (not the `beru_ext_proc` cluster, which handles ingress diff-of-diffs only).
-
-Image resolution follows the standard Monarch helper-image pattern:
+Image resolution:
 
 1. `SHOP_IMAGE` env var on the Monarch controller (explicit override)
 2. `shop:dev` when `MONARCH_MODE=dev`
@@ -56,7 +74,7 @@ Image resolution follows the standard Monarch helper-image pattern:
 
 ## State
 
-All mock state is **in-memory** only. State is lost if the Shop pod restarts. For the E2E flow this is fine: Kaisel re-seeds mocks from live prod traffic. A persistent store (e.g. Redis) could be substituted here if longer-lived replay is needed.
+All mock state is **in-memory** only. State is lost if the Shop pod restarts.
 
 ## Building
 
@@ -72,3 +90,5 @@ make docker-build   # builds shop:dev
 |----------|---------|-------------|
 | `SHOP_GRPC_ADDR` | `:50051` | gRPC ext_proc listen address |
 | `SHOP_HTTP_ADDR` | `:8080` | HTTP API listen address |
+| `BERU_HTTP_URL` | (empty) | Beru HTTP base URL; when set, enables async egress reports |
+| `SHADOW_TEST_NAME` | (empty) | Optional `shadow_test_name` on Beru reports |

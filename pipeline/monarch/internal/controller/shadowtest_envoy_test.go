@@ -125,7 +125,7 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 		"address: 0.0.0.0",
 		"x-shadow-mode",
 		"value: \"egress\"",
-		"request_body_mode: NONE",
+		"request_body_mode: BUFFERED",
 		"response_body_mode: NONE",
 		"failure_mode_allow: false",
 		"shop_ext_proc",
@@ -138,9 +138,17 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 			t.Fatalf("expected %q in envoy yaml:\n%s", c, yaml)
 		}
 	}
+	idx := strings.Index(yaml, "name: egress_http_listener")
+	if idx < 0 {
+		t.Fatal("missing egress_http_listener")
+	}
+	egressSection := yaml[idx:]
+	if !strings.Contains(egressSection, "request_body_mode: BUFFERED") {
+		t.Fatal("egress listener must buffer request body for Shop→Beru reporting")
+	}
 	for _, forbidden := range []string{
 		"egress_stub", "egress_blackhole", "beru_ingest", "envoy.filters.http.lua",
-		"x-shadow-record-and-replay-config", "api.stripe.com:*", "request_body_mode: BUFFERED",
+		"x-shadow-record-and-replay-config", "api.stripe.com:*",
 		"name: external_apis", "name: egress_record_and_replay",
 	} {
 		if strings.Contains(yaml, forbidden) {

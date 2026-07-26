@@ -4,7 +4,7 @@ title: Bats-Core Modular Testing Framework
 description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, settlement-based Beru assertions, Jest-like reporter for BATS_PARALLEL_JOBS=1, and idempotent platform bootstrap.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats
 tags: [infrastructure, testing, bats, e2e, integration, monarch, beru]
-timestamp: 2026-07-24T08:00:00Z
+timestamp: 2026-07-26T13:30:00Z
 ---
 
 # Bats-Core Modular Testing Framework
@@ -118,7 +118,7 @@ Helpers: `monarch_wait_shadowtest_bringup_started`, `monarch_wait_shadowtest_cle
 | `http_otel_rmq_python.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Python) |
 | `http_otel_rmq_nodejs.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Node.js) |
 | `http_ingress_rmq_go.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Go) |
-| `kaisel-capture/kaisel_capture.bats` | Full HTTP route: Monarch → prod → Kaisel → igris-http → three shadow pods (`make test-bats-kaisel`) |
+| `kaisel-capture/kaisel_capture.bats` | Full HTTP route + Kaisel→Shop→Envoy replay→Beru HTTP egress match (`make test-bats-kaisel`) |
 
 Hybrid suite flow map: [/verification/hybrid-rmq-e2e-flow.md](/verification/hybrid-rmq-e2e-flow.md).  
 HTTP ingress suite flow map: [/verification/http-ingress-e2e-flow.md](/verification/http-ingress-e2e-flow.md).

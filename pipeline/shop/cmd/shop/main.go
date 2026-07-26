@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/shadow-diff/shop/internal/api"
+	"github.com/shadow-diff/shop/internal/beru"
 	"github.com/shadow-diff/shop/internal/envoyextproc"
 	"github.com/shadow-diff/shop/internal/replay"
 )
@@ -38,8 +39,17 @@ func main() {
 		}
 	}()
 
+	extProc := &envoyextproc.Server{
+		Mocks:          mocks,
+		ShadowTestName: os.Getenv("SHADOW_TEST_NAME"),
+	}
+	if beruURL := os.Getenv("BERU_HTTP_URL"); beruURL != "" {
+		extProc.Beru = beru.NewClient(beruURL)
+		log.Info("Shop Beru egress reporting enabled", "url", extProc.Beru.URL)
+	}
+
 	grpcSrv := grpc.NewServer()
-	extprocv3.RegisterExternalProcessorServer(grpcSrv, &envoyextproc.Server{Mocks: mocks})
+	extprocv3.RegisterExternalProcessorServer(grpcSrv, extProc)
 
 	go func() {
 		log.Info("Shop gRPC server listening", "addr", grpcAddr)

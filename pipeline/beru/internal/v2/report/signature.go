@@ -35,6 +35,8 @@ func EgressSignature(protocol string, payload []byte) string {
 		return databaseSignature(protocol, obj)
 	case "rabbitmq", "kafka":
 		return queueSignature(protocol, obj)
+	case "http":
+		return HTTPSignature(stringField(obj, "method"), stringField(obj, "path"))
 	default:
 		return fallbackSignature(protocol, payload)
 	}

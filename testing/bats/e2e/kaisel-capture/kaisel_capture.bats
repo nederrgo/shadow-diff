@@ -11,6 +11,8 @@
 #   5. The target app calls its dependency, propagating the inbound traceparent.
 #   6. Kaisel pairs the outbound request with the inbound response and POSTs the
 #      pair to the shadow namespace's Shop as a replayable mock.
+#   7. Shadows replay via Envoy shop_ext_proc; Shop async-reports to Beru for
+#      HTTP egress diff-of-diffs (protocol=http, direction=egress).
 #
 # Requirements:
 #   - Cluster with docker/kind/minikube image load
@@ -310,6 +312,39 @@ teardown_file() {
   assert_success
 
   run kaisel_assert_shadow_egress_replay "replay=${mark}"
+  assert_success
+}
+
+@test "kaisel seed → Shop → Envoy → Beru HTTP egress match" {
+  bats_load_suite_state
+  [[ -n "${SHADOW_NS:-}" ]] || fail "SHADOW_NS unset — setup did not reach Ready"
+
+  # Full chain: Kaisel seeds Shop from prod egress → shadows replay via Envoy
+  # shop_ext_proc → Shop async POSTs /api/v1/egress/diff → Beru diff-of-diffs.
+  local mark path_enc trace_id want_sig
+  mark="beruegress${RANDOM}"
+  path_enc="/dep/echo%3Fberu=${mark}"
+  want_sig="http:GET:/dep/echo?beru=${mark}"
+
+  run kaisel_prod_egress_scenario "in-cluster" "" "$path_enc"
+  assert_success
+  trace_id="$(echo "$output" | tail -1)"
+
+  run kaisel_assert_egress_recorded \
+    "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_FQDN}:/dep/echo?beru=${mark}" 90
+  assert_success
+
+  run kaisel_assert_shadow_egress_replay "beru=${mark}"
+  assert_success
+
+  # Shop must be wired to beru-local (Monarch injects BERU_HTTP_URL).
+  local beru_url
+  beru_url=$(kubectl get deploy shop -n "$SHADOW_NS" \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="BERU_HTTP_URL")].value}')
+  [[ -n "$beru_url" ]] || fail "Shop missing BERU_HTTP_URL"
+  [[ "$beru_url" == *beru-local* ]] || fail "Shop BERU_HTTP_URL unexpected: ${beru_url}"
+
+  run beru_wait_http_egress_match "$trace_id" --timeout=120 --signature="$want_sig"
   assert_success
 }
 

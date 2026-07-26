@@ -11,6 +11,8 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-26]
 ### Added
+* 'testing/bats, pipeline/beru': Kaisel→Shop→Envoy→Beru HTTP egress E2E; mirrorLegacyLogs handles http egress direction; beru_wait_http_egress_match helper
+* 'pipeline/shop, pipeline/beru, pipeline/monarch, docs': Shop buffers egress request body and async-reports HTTP egress to Beru /api/v1/egress/diff; EgressSignature http case; Shop BERU_HTTP_URL env
 * 'testing/bats/e2e/kaisel-capture': Replay E2E from copied prod traffic (no igris redrive)
 * 'pipeline/kaisel': Forward captured request headers to igris (drop hop-by-hop)
 * 'testing/bats/e2e/kaisel-capture': Kaisel→Shop→Envoy egress replay E2E

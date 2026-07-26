@@ -134,7 +134,7 @@ func appendEgressExtProcFilterYAML(b *strings.Builder, role, beruTimeout string)
 	b.WriteString("              failure_mode_allow: false\n")
 	b.WriteString("              processing_mode:\n")
 	b.WriteString("                request_header_mode: SEND\n")
-	b.WriteString("                request_body_mode: NONE\n")
+	b.WriteString("                request_body_mode: BUFFERED\n")
 	b.WriteString("                response_header_mode: SKIP\n")
 	b.WriteString("                response_body_mode: NONE\n")
 }

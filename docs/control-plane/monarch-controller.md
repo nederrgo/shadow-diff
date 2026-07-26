@@ -1,10 +1,10 @@
 ---
 type: Architecture Specification
 title: Monarch Controller — Envoy-Only Shadow Injection
-description: Reconcile contract for telemetry-dependent shadow pods after Plan 1 realignment.
+description: Reconcile contract for telemetry-dependent shadow pods after Plan 1 realignment; Shop HTTP egress report to Beru.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
-tags: [architecture, control-plane, monarch, envoy, kubernetes]
-timestamp: 2026-07-24T20:30:00Z
+tags: [architecture, control-plane, monarch, envoy, shop, beru]
+timestamp: 2026-07-26T13:20:00Z
 ---
 
 # Monarch Controller — Envoy-Only Shadow Injection
@@ -35,17 +35,15 @@ Shadow app pods run an init container that redirects outbound TCP on ports **80*
 
 Per-role ConfigMap `{shadowtest}-{role}-envoy` renders:
 
-1. **Ingress listener** — `ext_proc` → `beru_ext_proc` (gRPC, unchanged)
-2. **Egress HTTP listener** (`127.0.0.1:10001`) — filter order: `lua` → `ext_proc` → `router`; Lua truncates bodies at 64KB (`max_bytes = 65536`; Envoy v1.26 HCM has no `max_request_bytes` field)
-   - Lua extracts `traceparent`, method/path, and truncated (64KB) request/response bodies
-   - Lua `httpCall` async POST to `beru_ingest` cluster at `/api/v1/ingest/wire` (`string.format` JSON — no `json.encode`)
-   - Sidecar env: `SHADOW_ROLE`, `SHADOW_TEST_NAME`
-   - `ext_proc` (`shop_ext_proc`) always handles HTTP egress mock lookup against Shop
+1. **Ingress listener** — `ext_proc` → `beru_ext_proc` (gRPC)
+2. **Egress HTTP listener** (`127.0.0.1:10001`) — filter order: `ext_proc` (`shop_ext_proc`) → `router`
+   - `request_body_mode: BUFFERED` so Shop receives the full outbound request body
+   - `initial_metadata`: `x-shadow-mode=egress`, `x-shadow-role=<role>`
+   - Shop returns `ImmediateResponse` (mock or 599), then async `POST /api/v1/egress/diff` to Beru for HTTP egress diff-of-diffs
    - Apps keep prod egress URLs; iptables redirects :80/:8080 to Envoy `:10001`
-3. **Mongo egress** (`127.0.0.1:27017`) — `mongo_proxy` with `emit_dynamic_metadata: true` + `tcp_proxy` to sandbox Mongo (Envoy→Beru mongo wire POST is Phase 2b)
-4. **Clusters** — `beru_ext_proc`, `beru_ingest`, `dynamic_egress_cluster`, optional `mongo_upstream`
+3. **Clusters** — `beru_ext_proc`, `shop_ext_proc`, `local_app`
 
-`beru_ingest` resolves via `beruIngestAddressFor(st, shadowNS)`: explicit `spec.beruIngestAddress`, shared `beru-ingest.shadow-system.svc.cluster.local:8080` when `spec.beruGRPCAddress` points at beru-system, or `beru-local.{shadow-ns}.svc.cluster.local:8080` for per-shadow Beru.
+Shop Deployment env includes `BERU_HTTP_URL` (same host resolution as egress-relay / beru-local) and `SHADOW_TEST_NAME`. HTTP egress reporting is Shop fire-and-forget — not Envoy Lua / `beru_ingest`.
 
 ## Optional CRD fields
 

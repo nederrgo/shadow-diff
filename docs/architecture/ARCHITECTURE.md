@@ -1,10 +1,10 @@
 ---
 type: Architecture Specification
 title: Shadow-Diff Architecture
-description: Layer stack and data flows for Shadow-Diff; Kaisel eBPF ingress and egress capture; always-on Shop HTTP egress record/replay.
+description: Layer stack and data flows for Shadow-Diff; Kaisel eBPF capture; Shop HTTP egress record/replay plus async Beru egress reports.
 resource: https://github.com/shadow-diff/monarch
 tags: [architecture, monarch, beru, shop, kaisel, ebpf]
-timestamp: 2026-07-25T18:40:00Z
+timestamp: 2026-07-26T13:20:00Z
 ---
 
 # Shadow-Diff — Architecture
@@ -23,7 +23,7 @@ This document describes **how the components fit together and how data flows**. 
 | [`pipeline/igrises/igris-http/`](../../pipeline/igrises/igris-http/) | HTTP/TCP ingress hub — fan-out to three shadow pods |
 | [`pipeline/igrises/igris-rabbitmq/`](../../pipeline/igrises/igris-rabbitmq/) | AMQP ingress multicaster — prod queue → three shadow brokers |
 | [`pipeline/beru/`](../../pipeline/beru/) | Diff engine — ingress diff-of-diffs, MongoDB OTLP ingest, AMQP egress diff, dashboard |
-| [`pipeline/shop/`](../../pipeline/shop/) | Mock store — records prod HTTP egress responses; serves them back to shadow apps via Envoy egress ext_proc |
+| [`pipeline/shop/`](../../pipeline/shop/) | Mock store — records prod HTTP egress; replays via Envoy egress ext_proc; async-reports to Beru for HTTP egress diff |
 | [`pipeline/kaisel/`](../../pipeline/kaisel/) | eBPF HTTP ingress capture — admit/sample → POST to Igris |
 | [`pipeline/egress-relay-rabbitmq/`](../../pipeline/egress-relay-rabbitmq/) | Shadow broker Firehose → Beru egress diff (AMQP ShadowTests) |
 
@@ -33,7 +33,7 @@ Each service is a separate Go module. The repo root [`Makefile`](../../Makefile)
 
 ## Architecture layers
 
-Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that wires them from a single `ShadowTest` CR. **Beru** is always the analysis sink. **Shop** is always deployed per ShadowTest for HTTP egress record/replay.
+Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that wires them from a single `ShadowTest` CR. **Beru** is always the analysis sink. **Shop** is always deployed per ShadowTest for HTTP egress record/replay and reports outbound HTTP to Beru.
 
 ### Layer stack
 
@@ -137,7 +137,8 @@ HTTP record/replay and AMQP egress diff run as parallel mechanisms:
 
 | Path | Flow | Purpose |
 |------|------|---------|
-| **Shadow HTTP replay** | Shadow app → `HTTP_PROXY` → Envoy **:10001** → **Shop** gRPC ext_proc | Strict replay: look up mock by trace ID + request, return recorded response or **599** on miss |
+| **Shadow HTTP replay** | Shadow app → Envoy **:10001** → **Shop** gRPC ext_proc (`request_body_mode: BUFFERED`) | Strict replay: look up mock by trace ID + request, return recorded response or **599** on miss |
+| **Shadow HTTP egress diff** | Shop (after ImmediateResponse) → async `POST /api/v1/egress/diff` → **Beru** | Diff outbound HTTP method/path/body/status across the three roles |
 | **Prod HTTP auto-record** | Prod path → **Kaisel** pairs request+response → **Shop** `POST /v1/record_egress` | Always-on seed of Shop from prod outbound HTTP |
 | **Shadow AMQP egress diff** | Shadow publish → broker Firehose → **egress-relay-rabbitmq** → Beru | Compare outbound AMQP publishes across the three roles |
 
@@ -349,6 +350,7 @@ Beru and Shop receive shadow traffic through **complementary ingest paths**:
 | **Ingress diff-of-diffs** | Envoy ingress `beru_ext_proc` | **Beru** | Trace id: `traceparent` → W3C `traceparent` → Envoy `x-request-id`; role from `x-shadow-role` |
 | **Egress diff (AMQP)** | egress-relay-rabbitmq | **Beru** | Trace id from message headers (`traceparent` or `traceparent`) |
 | **Egress replay (HTTP)** | Envoy egress `shop_ext_proc` gRPC | **Shop** | Trace id from W3C `traceparent` in Envoy request headers; mock key includes `traceID:METHOD:host:path` |
+| **Egress diff (HTTP)** | Shop async report after mock reply | **Beru** | Same trace id + `x-shadow-role`; signature `http:METHOD:path`; payload includes request body + status |
 
 **Ingress multicast.** **Igris** and **igris-rabbitmq** resolve trace context once per event (`ResolveContext`), then stamp the **same** W3C `traceparent` on all three shadow clones. **igris-http** requires a valid inbound `traceparent` (no mint).
 

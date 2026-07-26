@@ -4,7 +4,7 @@ title: Kaisel eBPF Capture Daemon
 description: Self-hosted eBPF ingress and egress capture — AF_PACKET socket filter, kernel-side address/protocol/port filtering, chunked perf transport for GSO super-packets, user-space TCP reassembly, and request/response pairing for egress mocks.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel
 tags: [data-plane, kaisel, ebpf, capture, networking, gso, egress]
-timestamp: 2026-07-26T13:05:00Z
+timestamp: 2026-07-26T13:30:00Z
 ---
 
 # Kaisel eBPF Capture Daemon
@@ -425,11 +425,15 @@ each E2E case is one curl into the prod pod:
 
 The path/query `/egress/get?path=` routes remain for the original single-call tests.
 
-**Envoy replay.** One prod curl is enough: Kaisel forwards the ingress request
-(including `X-Egress-Scenario`) to igris, seeds Shop from the paired prod egress,
-and the three shadow roles dial the same FQDN path under that `traceparent`.
-Shadows retry Envoy `599`/`500` until the mock lands (same idea as the hybrid
-workers). Each shadow app logs `http egress status=200` on a Shop hit.
+**Envoy replay + Beru HTTP egress diff.** One prod curl is enough: Kaisel
+forwards the ingress request (including `X-Egress-Scenario`) to igris, seeds
+Shop from the paired prod egress, and the three shadow roles dial the same FQDN
+path under that `traceparent`. Shadows retry Envoy `599`/`500` until the mock
+lands (same idea as the hybrid workers). Each shadow app logs
+`http egress status=200` on a Shop hit. Shop then async-POSTs
+`/api/v1/egress/diff` to beru-local; the E2E asserts three egress roles,
+signature `http:GET:/dep/echo?…`, and Beru log
+`No egress regression for Trace … (http)` via `beru_wait_http_egress_match`.
 
 The integration suite builds a bridge and two network namespaces, loads the real BPF program, and drives real traffic:
 

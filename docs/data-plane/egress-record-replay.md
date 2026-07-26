@@ -1,10 +1,10 @@
 ---
 type: Architecture Specification
 title: Egress Record and Replay
-description: How Shadow-Diff captures production HTTP egress with Kaisel eBPF request/response pairing, seeds Shop with Put dedup, and replays via Envoy egress ext_proc.
+description: How Shadow-Diff captures production HTTP egress with Kaisel eBPF request/response pairing, seeds Shop with Put dedup, replays via Envoy egress ext_proc, and async-reports to Beru for diff-of-diffs.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel
-tags: [data-plane, kaisel, shop, envoy, egress, replay]
-timestamp: 2026-07-26T10:30:00Z
+tags: [data-plane, kaisel, shop, envoy, egress, replay, beru]
+timestamp: 2026-07-26T13:20:00Z
 ---
 
 # Egress Record and Replay
@@ -32,9 +32,10 @@ The diff-of-diffs model requires all three roles (control-a, control-b, candidat
 [Shadow Worker]                       │
     │  HTTP call (same host/path, traceparent header set)
     ▼                                 │
-[Envoy egress ext_proc] ──GET mock───▶│
+[Envoy egress ext_proc] ──headers+body──▶│
     │  immediateResponse(statusCode, headers, body)
-    ▼
+    │                                     │
+    ▼                                     └── async POST /api/v1/egress/diff ──▶ [Beru]
 [Shadow Worker receives mocked response]
 ```
 
@@ -67,19 +68,20 @@ Always-on in-memory mock store. Two interfaces:
 | `POST /v1/seed_mock` | Manual / test scripts | Seed a mock directly |
 | `GET /healthz` | Kubernetes probe | Liveness check |
 
-Envoy egress `shop_ext_proc` looks up mocks by trace-keyed host/path (gRPC `:50051`).
+Envoy egress `shop_ext_proc` looks up mocks by trace-keyed host/path (gRPC `:50051`). After returning the mock, Shop fire-and-forgets an HTTP egress report to Beru (`BERU_HTTP_URL`).
 
 ### Envoy egress ext_proc (`pipeline/shop/internal/envoyextproc/egress.go`)
 
-Intercepts outbound HTTP from shadow workers at the Envoy egress listener (`127.0.0.1:10001`, iptables redirect). On every request:
+Intercepts outbound HTTP from shadow workers at the Envoy egress listener (`127.0.0.1:10001`, iptables redirect). Monarch configures `request_body_mode: BUFFERED` so Shop receives the full request body. On every request:
 
-1. Extract `:authority` (or `host`) header → `host`
-2. Extract `:method`, `:path`, `traceparent` headers
+1. Extract `:authority` (or `host`) header → `host`; capture `:method`, `:path`, `traceparent`
+2. Continue until request body `end_of_stream` (empty for GET/DELETE)
 3. Build mock key: `replay.TraceKey(traceID, method, HostWithoutPort(host), path)`
 4. If key found → `immediateResponse(mock.StatusCode, mock.Headers, mock.Body)`
 5. If key not found → `immediateResponse(599, ..., "Egress Regression")`
+6. In a separate goroutine → `POST {BERU_HTTP_URL}/api/v1/egress/diff` with payload `{method, host, path, status, body}` (role from `x-shadow-role` metadata)
 
-Status 599 is the "miss" signal. Shadow workers are expected to retry on 599 while Kaisel is still seeding.
+Status 599 is the "miss" signal. Shadow workers are expected to retry on 599 while Kaisel is still seeding. Beru signature is `http:{METHOD}:{path}`; body participates in payload diff-of-diffs only.
 
 ---
 
@@ -105,7 +107,7 @@ reconcileShop           → Shop Deployment + Service
 shopDeploymentReady     → requeue until available
 ```
 
-`KaiselRule.spec.egressBaseURL` is set to the shadow namespace's Shop, which is where Kaisel POSTs each captured pair.
+`KaiselRule.spec.egressBaseURL` is set to the shadow namespace's Shop, which is where Kaisel POSTs each captured pair. Shop also gets `BERU_HTTP_URL` (same host resolution as egress-relay) and `SHADOW_TEST_NAME`.
 
 ---
 
@@ -116,7 +118,9 @@ shopDeploymentReady     → requeue until available
 2.  Prod worker calls its dependency
 3.  Kaisel captures both directions and pairs request with response
 4.  Kaisel POSTs /v1/record_egress → Shop derives the key and stores the mock
-5.  Shadow worker (same trace) hits Envoy :10001 → shop_ext_proc mock lookup
+5.  Shadow worker (same trace) hits Envoy :10001 → shop_ext_proc buffers body → mock lookup
+6.  Shop returns ImmediateResponse; async POST /api/v1/egress/diff → Beru TraceRouter
+7.  E2E (`kaisel_capture.bats`): `beru_wait_http_egress_match` asserts 3 roles + clean egress log
 ```
 
 ---
@@ -135,6 +139,7 @@ shopDeploymentReady     → requeue until available
 
 - Shop HTTP API: [`pipeline/shop/internal/api/http.go`](../../pipeline/shop/internal/api/http.go)
 - Envoy egress ext_proc: [`pipeline/shop/internal/envoyextproc/egress.go`](../../pipeline/shop/internal/envoyextproc/egress.go)
+- Shop→Beru client: [`pipeline/shop/internal/beru/client.go`](../../pipeline/shop/internal/beru/client.go)
 - Mock keys: [`pipeline/shop/internal/replay/keys.go`](../../pipeline/shop/internal/replay/keys.go)
 - Shop Put dedup: [`pipeline/shop/internal/replay/mockstore.go`](../../pipeline/shop/internal/replay/mockstore.go)
 - Bats seed helper: [`testing/bats/lib/kaisel.bash`](../../testing/bats/lib/kaisel.bash) — `wait_kaisel_egress_seed`

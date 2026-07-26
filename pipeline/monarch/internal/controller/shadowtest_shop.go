@@ -94,6 +94,8 @@ func (r *ShadowTestReconciler) reconcileShop(
 			Env: []corev1.EnvVar{
 				{Name: envShopGRPCAddr, Value: fmt.Sprintf(":%d", shopGRPCPort)},
 				{Name: envShopHTTPAddr, Value: fmt.Sprintf(":%d", shopHTTPPort)},
+				{Name: envBeruHTTPURL, Value: fmt.Sprintf("http://%s", beruHTTPHostFor(st, shadowNS))},
+				{Name: envShadowTestName, Value: st.Name},
 			},
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{

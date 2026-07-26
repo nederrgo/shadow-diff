@@ -76,3 +76,14 @@ func TestEgressSignature_mongodbDelegates(t *testing.T) {
 		t.Fatalf("got %q", sig)
 	}
 }
+
+func TestEgressSignature_http(t *testing.T) {
+	sig := EgressSignature("http", []byte(`{"method":"GET","host":"api.example.com","path":"/x","status":200,"body":""}`))
+	if sig != "http:GET:/x" {
+		t.Fatalf("got %q", sig)
+	}
+	sig = EgressSignature("http", []byte(`{"method":"POST","path":"/v1/charges","body":{"a":1}}`))
+	if sig != "http:POST:/v1/charges" {
+		t.Fatalf("got %q", sig)
+	}
+}

@@ -17,25 +17,32 @@ func mirrorLegacyLogs(traceID string, history []storage.RawReport, verdict *stor
 	}
 	log := slog.Default()
 	for _, protocol := range protocolsInHistory(history) {
-		if !protocolHasAllRoles(history, protocol) {
+		byProto := filterHistoryByProtocol(history, protocol)
+		if isIngressProtocol(protocol) {
+			// HTTP carries both ingress (Envoy ext_proc) and egress (Shop→Beru).
+			// Evaluate and mirror each direction independently.
+			ingress := filterHistoryByDirection(byProto, storage.DirectionIngress)
+			if len(ingress) > 0 && protocolHasAllRoles(ingress, protocol) {
+				if pv := diff.EvaluateTraceHistory(ingress, nil, diff.EvalOptions{}); pv != nil {
+					mirrorIngressLogs(log, traceID, pv)
+				}
+			}
+			egress := filterHistoryByDirection(byProto, storage.DirectionEgress)
+			if len(egress) > 0 && protocolHasAllRoles(egress, protocol) {
+				if pv := diff.EvaluateTraceHistory(egress, nil, diff.EvalOptions{}); pv != nil {
+					mirrorEgressLogs(log, traceID, protocol, egress, pv)
+				}
+			}
 			continue
 		}
-		subset := filterHistoryByProtocol(history, protocol)
-		if isIngressProtocol(protocol) {
-			subset = filterHistoryByDirection(subset, storage.DirectionIngress)
-			if len(subset) == 0 || !protocolHasAllRoles(subset, protocol) {
-				continue
-			}
+		if !protocolHasAllRoles(byProto, protocol) {
+			continue
 		}
-		pv := diff.EvaluateTraceHistory(subset, nil, diff.EvalOptions{})
+		pv := diff.EvaluateTraceHistory(byProto, nil, diff.EvalOptions{})
 		if pv == nil {
 			continue
 		}
-		if isIngressProtocol(protocol) {
-			mirrorIngressLogs(log, traceID, pv)
-			continue
-		}
-		mirrorEgressLogs(log, traceID, protocol, subset, pv)
+		mirrorEgressLogs(log, traceID, protocol, byProto, pv)
 	}
 }
 

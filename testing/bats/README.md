@@ -120,10 +120,14 @@ Beru only emits final `mirrorLegacyLogs` lines after all three roles report. Pre
 beru_wait_log --grep="$(beru_log_egress_count_regression "$BATS_TRACE_ID" rabbitmq)"
 beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" mongodb)"
 
+# Shop → Beru HTTP egress (kaisel-capture E2E)
+beru_wait_http_egress_match "$trace_id" --signature="http:GET:/dep/echo?beru=…"
+
 # Any custom substring
 beru_wait_log --grep="Egress regression for Trace ${BATS_TRACE_ID} (http): Field"
 ```
 
 For SQLite/API verdict rows use `beru_wait_verdict_settled` (completeness + quiescence).
+HTTP egress API queries need `?protocol=http&direction=egress` (`beru_http_get_trace`).
 
 See [docs/infrastructure/bats-testing-framework.md](/infrastructure/bats-testing-framework.md).
