@@ -188,15 +188,38 @@ func TestIgrisRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
 	}
 }
 
-func TestIgrisRabbitMQSamplePercentage(t *testing.T) {
-	st := &enginev1alpha1.ShadowTest{}
-	if got := igrisRabbitMQSamplePercentage(st); got != defaultIgrisRMQSamplePercentage {
-		t.Fatalf("default: got %d want %d", got, defaultIgrisRMQSamplePercentage)
+func TestIgrisRabbitMQSamplePercentageFromTopLevel(t *testing.T) {
+	r := &ShadowTestReconciler{}
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			SamplePercentage: 15,
+			Inputs: []enginev1alpha1.InputSpec{{
+				Driver: "rabbitmq_message",
+				AMQP: &enginev1alpha1.AMQPInputSpec{
+					ProdURL: "amqp://guest:guest@rmq-prod:5672/", Exchange: "orders", RoutingKey: "order.created",
+					TargetDependency: "rabbitmq",
+				},
+			}},
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL",
+			}},
+		},
+		Status: enginev1alpha1.ShadowTestStatus{AmqpQueueName: "shadow-diff.rmq-test"},
 	}
-	st.Spec.IgrisRabbitMQ = &enginev1alpha1.IgrisRabbitMQSpec{SamplePercentage: 15}
-	if got := igrisRabbitMQSamplePercentage(st); got != 15 {
-		t.Fatalf("override: got %d want 15", got)
+	env, err := r.igrisRabbitMQEnv(st, "shadow-default-rmq-test")
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, e := range env {
+		if e.Name == envSamplePercentage {
+			if e.Value != "15" {
+				t.Fatalf("IGRIS_RMQ_SAMPLE_PERCENTAGE = %q, want 15", e.Value)
+			}
+			return
+		}
+	}
+	t.Fatal("IGRIS_RMQ_SAMPLE_PERCENTAGE missing from env")
 }
 
 func TestNeedsEgressRelayRabbitMQ(t *testing.T) {

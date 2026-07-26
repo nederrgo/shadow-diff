@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -10,13 +11,13 @@ import (
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
-func TestHTTPSamplePercentage(t *testing.T) {
+func TestSamplePercentage(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{}
-	if got := httpSamplePercentage(st); got != defaultHTTPSamplePercentage {
-		t.Fatalf("default: got %d want %d", got, defaultHTTPSamplePercentage)
+	if got := samplePercentage(st); got != defaultSamplePercentage {
+		t.Fatalf("default: got %d want %d", got, defaultSamplePercentage)
 	}
 	st.Spec.SamplePercentage = 10
-	if got := httpSamplePercentage(st); got != 10 {
+	if got := samplePercentage(st); got != 10 {
 		t.Fatalf("override: got %d want 10", got)
 	}
 }
@@ -38,6 +39,19 @@ func TestKaiselIgrisBaseURL(t *testing.T) {
 	want = "http://bats-kaisel-capture-igris.shadow-default-bats-kaisel-capture.svc.cluster.local:8888"
 	if got != want {
 		t.Fatalf("default port: got %q want %q", got, want)
+	}
+}
+
+// Kaisel POSTs egress request/response pairs straight to the shadow
+// namespace's Shop, which derives the mock key its own ext_proc later looks up.
+func TestKaiselEgressBaseURL(t *testing.T) {
+	got := kaiselEgressBaseURL("shadow-default-bats-kaisel-capture")
+	want := "http://shop.shadow-default-bats-kaisel-capture.svc.cluster.local:8080"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if !strings.HasPrefix(got, "http://") {
+		t.Errorf("EgressBaseURL must carry a scheme; kaisel rejects one without: %q", got)
 	}
 }
 

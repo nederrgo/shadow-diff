@@ -9,8 +9,17 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-26]
+### Added
+* 'docs/data-plane/kaisel-ebpf.md': Documented the egress pairing gate — evaluated on the request direction for both half-streams, and why reversing beats widening the predicate
+* 'testing/bats/lib/kaisel.bash': Match the egress mock key itself rather than a hash= prefix — slog quotes values containing '=', so a key with a query string logged as hash=... never matched the bare-prefix pattern
+* 'pipeline/kaisel/internal/decode': Fixed egress pairing gate — WantTransaction is evaluated on the request direction for both half-streams; asking with the response half's own flow tested the dependency address and discarded every response before it could pair
+* 'testing/bats': Assert Recorder seeded nothing during kaisel egress tests, so a Shop mock is attributable to Kaisel rather than the concurrent Pixie/Recorder path
+* 'pipeline/kaisel,pipeline/monarch,testing': Egress capture — HTTP response parsing, per-connection FIFO request/response pairing, and direct Shop mock seeding via KaiselRule.egressBaseURL; adds egress-test-app E2E workload
+
 ## [2026-07-25]
 ### Added
+* 'pipeline/monarch samplePercentage': unified top-level field for HTTP and AMQP sampling
 * 'testing/tools/e2e-reset-minikube.sh,testing/bats/lib/platform.bash': deploy Kaisel DaemonSet in minikube reset and bats platform bootstrap
 * 'testing/bats/lib/kaisel.bash,pipeline/*/go.sum': fix kaisel E2E stuck setup — fail hard on missing images; teardown --wait=false; tidy go.sum for docker builds
 * 'testing/bats/e2e/kaisel-capture': full-route E2E Monarch→prod→Kaisel→igris→shadow pods (traceparent + multicast + nginx access logs)

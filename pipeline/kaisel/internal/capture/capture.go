@@ -65,6 +65,12 @@ type Config struct {
 	Log          *slog.Logger
 	// OnRequest receives every parsed HTTP request. Nil logs instead.
 	OnRequest func(netFlow, transportFlow gopacket.Flow, req *http.Request)
+	// OnTransaction receives a request paired with its response, for egress
+	// mock recording. Nil disables response parsing entirely.
+	OnTransaction func(netFlow, transportFlow gopacket.Flow, req *http.Request, resp *http.Response)
+	// WantTransaction gates response pairing per stream, so connections with
+	// no egress route never buffer a response body.
+	WantTransaction func(netFlow gopacket.Flow) bool
 	// LogBodies includes request body content (truncated) in the default log
 	// line when OnRequest is nil. Off by default: captured bodies are real
 	// production data, and logs are commonly shipped off-node.
@@ -273,7 +279,13 @@ func applyUpdate(objs *bpfObjects, upd MapUpdate, portFilterOn uint32, log *slog
 
 // consume drives the read loop: source -> decode -> reassembly.
 func consume(ctx context.Context, src PacketSource, cfg Config, log *slog.Logger, stats func() (uint64, uint64), frags func() uint64, objs *bpfObjects, portFilterOn uint32) error {
-	factory := &decode.StreamFactory{Log: log, OnRequest: cfg.OnRequest, LogBodies: cfg.LogBodies}
+	factory := &decode.StreamFactory{
+		Log:             log,
+		OnRequest:       cfg.OnRequest,
+		LogBodies:       cfg.LogBodies,
+		OnTransaction:   cfg.OnTransaction,
+		WantTransaction: cfg.WantTransaction,
+	}
 	asm := tcpassembly.NewAssembler(tcpassembly.NewStreamPool(factory))
 
 	ticker := time.NewTicker(flushInterval)
@@ -288,6 +300,9 @@ func consume(ctx context.Context, src PacketSource, cfg Config, log *slog.Logger
 				return
 			case <-ticker.C:
 				asm.FlushOlderThan(time.Now().Add(-flushAge))
+				// Same cadence as the assembler flush: a connection whose
+				// response half never arrived leaves pairing state behind.
+				factory.Sweep()
 				// A dropped fragment is a request we will never report. Rare
 				// enough to be worth a warning every time it happens.
 				if n := frags(); n > lastFrags {

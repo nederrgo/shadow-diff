@@ -26,11 +26,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 
-	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 	"github.com/shadow-diff/kaisel/internal/capture"
 	kaiselcontroller "github.com/shadow-diff/kaisel/internal/controller"
 	"github.com/shadow-diff/kaisel/internal/decode"
 	"github.com/shadow-diff/kaisel/internal/export"
+	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
 var scheme = runtime.NewScheme()
@@ -133,14 +133,16 @@ func main() {
 	}
 
 	cfg := capture.Config{
-		Iface:        *iface,
-		Targets:      tgts,
-		Ports:        prts,
-		Framing:      framing,
-		PerCPUBuffer: *perCPU,
-		Log:          log,
-		LogBodies:    *logBodies,
-		Updates:      updates,
+		Iface:           *iface,
+		Targets:         tgts,
+		Ports:           prts,
+		Framing:         framing,
+		PerCPUBuffer:    *perCPU,
+		Log:             log,
+		LogBodies:       *logBodies,
+		Updates:         updates,
+		OnTransaction:   exporter.HandleTransaction,
+		WantTransaction: exporter.WantTransaction,
 		OnRequest: func(netFlow, transportFlow gopacket.Flow, req *http.Request) {
 			body, _ := io.ReadAll(req.Body)
 			fields := []any{

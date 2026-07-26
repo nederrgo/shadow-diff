@@ -1,15 +1,24 @@
 ---
 type: Architecture Specification
 title: Kaisel eBPF Capture Daemon
-description: Self-hosted eBPF ingress capture — AF_PACKET socket filter, kernel-side address/protocol/port filtering, chunked perf transport for GSO super-packets, and user-space TCP reassembly.
+description: Self-hosted eBPF ingress and egress capture — AF_PACKET socket filter, kernel-side address/protocol/port filtering, chunked perf transport for GSO super-packets, user-space TCP reassembly, and request/response pairing for egress mocks.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel
-tags: [data-plane, kaisel, ebpf, capture, networking, gso]
-timestamp: 2026-07-25T19:00:00Z
+tags: [data-plane, kaisel, ebpf, capture, networking, gso, egress]
+timestamp: 2026-07-26T09:00:00Z
 ---
 
 # Kaisel eBPF Capture Daemon
 
-Kaisel captures HTTP traffic to a targeted workload directly off the wire using eBPF, with no third-party control plane, no agent registration, and no outbound telemetry. It is the self-hosted capture path for Shadow-Diff's L1 layer.
+Kaisel captures HTTP traffic to and from a targeted workload directly off the wire using eBPF, with no third-party control plane, no agent registration, and no outbound telemetry. It is the self-hosted capture path for Shadow-Diff's L1 layer.
+
+One kernel filter serves both directions, because it already matches a frame whose **source or** destination is a target pod. Which direction a capture belongs to is decided in user space by which address matched:
+
+| Direction | Match | Parsed | Sent to |
+| --- | --- | --- | --- |
+| Ingress | destination is a target pod | request only | `spec.igrisBaseURL` → igris-http |
+| Egress | source is a target pod | request **and** response | `spec.egressBaseURL` → the ShadowTest's Shop |
+
+A connection between two target pods produces both, correctly: it is a real ingress for the receiver and a real egress for the caller.
 
 ## Status
 
@@ -20,7 +29,8 @@ Kaisel is a daemon driven by **`KaiselRule` CRs** emitted by Monarch's `ShadowTe
 | Packet capture, filtering, reassembly, HTTP request parsing | Implemented |
 | `KaiselRule` CRD reconciliation (live IP sync, no restart) | Implemented |
 | Export to igris | Implemented — userspace POST to per-ShadowTest `spec.igrisBaseURL`, routed by destination IP; see [/data-plane/siphon-audit.md](/data-plane/siphon-audit.md) |
-| HTTP response parsing and request/response correlation | Not started |
+| HTTP response parsing and request/response correlation | Implemented — per-connection FIFO pairing; see [Egress capture](#egress-capture) |
+| Egress capture (request + response → Shop mock) | Implemented — `spec.egressBaseURL` on `KaiselRule`, POSTed to the shadow namespace's Shop |
 | Sampling | Implemented — admit (drop untraced) + `SampledIn` in Kaisel before POST; `spec.samplePercentage` on `KaiselRule` |
 
 ## Design premise
@@ -123,6 +133,122 @@ A packet is processed start to finish on one CPU, so its chunks land consecutive
 The `covered` watermark serves as both the completeness check and truncation detection, so `pkt_meta` needs no separate flag.
 
 `packetsDiscarded` is counted separately from the kernel's `LostSamples`: "records the ring dropped" and "packets we could not put back together" are different operational signals.
+
+
+## Egress capture
+
+An egress mock is useless without the response, so egress is the one path that
+must parse **both halves** of a TCP connection and join them.
+
+```
+        target pod  ──request──▶  dependency
+                    ◀─response──
+
+ tcpassembly delivers each DIRECTION as its own stream, on its own goroutine
+              │                                    │
+   peek != "HTTP/"                         peek == "HTTP/"
+   = request side                          = response side
+              │                                    │
+   http.ReadRequest                     streamBuffer (drains at full speed)
+              │                                    │
+        publish ──────────▶ connTable ────────▶ await
+                        (canonical 4-tuple)        │
+                                        http.ReadResponse(buf, req)
+                                                   │
+                                    src ∈ target_ips? → EgressRecord
+                                                   │
+                                        POST /v1/record_egress
+```
+
+### Why pairing is per-connection FIFO
+
+`http.ReadResponse` takes the request because response framing depends on it: a
+`HEAD` reply carries no body, `204` and `304` carry no body, and only the request
+disambiguates. Keying the join on the traceparent instead would leave
+`ReadResponse` guessing and mis-read those bodies. HTTP/1.1 responses return in
+request order on a connection, so FIFO is both correct and trivial.
+
+Direction is decided by peeking for the `HTTP/` prefix rather than by comparing
+addresses. That keeps `internal/decode` unaware of what a target is, and stays
+correct when *both* endpoints are targets.
+
+### Which connections get paired
+
+Parsing responses costs memory, and only egress consumes them, so pairing is
+gated per connection by a router lookup: does this connection's **source** have
+an `egressBaseURL`? Ingress connections answer no and their response streams are
+drained and discarded without buffering.
+
+The gate is defined on the **request direction**, which makes it subtle: the two
+half-streams arrive as separate flows, and the response half runs
+dependency→target. Asked with its own flow it would test the *dependency's*
+address, answer no, and discard the response half — leaving the request half with
+nothing to pair against and silently producing no egress records at all. `decode`
+therefore reverses the response half's flow before asking.
+
+Widening the predicate to accept either endpoint would also work, but would pair
+every ingress connection too and buffer response bodies nothing reads. Reversing
+keeps the gate exact.
+
+### Why the response side needs a buffer
+
+`tcpreader.ReaderStream` is synchronous — the assembler's `Reassembled` call is a
+blocking send that only completes once the stream's goroutine reads it. A
+response parser that stopped reading to wait for its request would therefore stop
+the assembler from delivering **that very request**: response waits for request,
+response blocks request. Nothing but a timeout breaks it, and whenever the
+assembler releases both directions response-first, pairing fails outright.
+
+A copier goroutine drains the reassembled stream into a bounded `streamBuffer`
+at full speed while the parser reads at its own pace. Past the limit the buffer
+marks itself overflowed and keeps accepting writes, so the copier still reaches
+EOF and the assembler still makes progress.
+
+### What gets recorded
+
+Kaisel sends **flat fields**; Shop derives the mock key:
+
+```json
+POST {egressBaseURL}/v1/record_egress
+{ "trace_id": "<32-hex>", "method": "GET", "host": "api.example.com:8443",
+  "path": "/v1/users?active=true",
+  "response": { "status": 200, "headers": {...}, "body": "..." } }
+```
+
+`replay.TraceKey` and `HostWithoutPort` run inside Shop, on **both** the seed path
+and the ext_proc lookup path. Kaisel computing its own key would be a second copy
+of the format, free to drift from what Envoy actually looks up.
+
+| Field | Rule |
+| --- | --- |
+| `host`, `method` | Sent **verbatim** off the wire. Shop upper-cases the method and strips the host's port on both sides, so normalizing here could only introduce a mismatch — lower-casing in particular, since the lookup side never lower-cases a mixed-case `:authority` |
+| `path` | `RequestURI`, **query string included**, matching Envoy's `:path` pseudo-header |
+| `trace_id` | Required. An untraced call cannot be keyed and is dropped before the POST |
+| `response.headers` | Allowlist — see below |
+| `response.body` | Capped at 1 MB. Over-cap records are **dropped, never truncated** |
+
+Shop returns `{"hash": "<key>"}`, which Kaisel logs. That hash is Shop's own
+computed key, so the log line shows the key Envoy will look up rather than one
+Kaisel guessed at.
+
+### Response header allowlist
+
+| Kept | Dropped | Reason for dropping |
+| --- | --- | --- |
+| `content-type`, `cache-control`, `etag`, `location`, `x-*` | `content-length`, `transfer-encoding` | Envoy synthesizes framing on the ext_proc immediate-response path; a captured length that no longer matches the replayed body truncates or hangs it |
+| | `connection`, `keep-alive`, `te`, `trailer`, `upgrade` | Hop-by-hop: they describe the captured connection, not the replayed one |
+| | `date`, `server` | Differ on every capture; pure diff noise attributable to nothing |
+
+Shop's stored `EarlyResponse.Headers` is a `map[string]string`, so a multi-value
+header collapses to its first value.
+
+### No kernel change
+
+The filter already matches `saddr` **or** `daddr` against `target_ips`, so egress
+frames pass with `capture.c` untouched. The deployed DaemonSet also passes no
+`-port` flags, so `port_filter_on` loads as `0` and all TCP for target IPs
+crosses to user space; `spec.targetPorts` is populated by Monarch but has no
+runtime effect until the daemon is restarted with `-port`.
 
 ## Configuration
 
@@ -245,7 +371,9 @@ Framing is autodetected by reading the interface's ARPHRD type from sysfs, and `
 | --- | --- | --- |
 | **TLS is opaque** | Packet-layer capture sees ciphertext; encrypted traffic yields zero records | Expected: no misparsing occurs. Plaintext-internal meshes only |
 | **128 KB packet ceiling** | `MAX_CHUNKS` bounds an unrolled loop, so `CHUNK × MAX_CHUNKS` is baked into the object and not runtime-tunable. BIG TCP can exceed it | Truncation is counted and logged, never silent |
-| **Requests only** | Response bytes are captured and reassembled but not parsed | Response parsing is a later step |
+| **Ingress responses unparsed** | Egress pairs request with response; ingress still forwards the request only, since nothing downstream consumes an ingress response | Response bytes are still captured and reassembled; parsing them is a later step |
+| **Egress pairing is best-effort** | A response whose request was never seen (missed packets) cannot be framed and is abandoned; a request whose response side never drains is dropped | Both are counted and logged as `unpaired` — never mispaired, which would seed a mock with the wrong response |
+| **1 MB egress response cap** | A larger dependency response is dropped rather than recorded | Deliberate: a truncated mock replayed to all three roles yields identical failures, a clean diff, and a green report that tested nothing |
 | **IPv4 only** | The filter reads IPv4 headers; IPv6 is rejected at the version nibble | — |
 | **No fragment reassembly** | Fragmented datagrams are dropped whole. gopacket independently declines to decode a transport layer from any fragment, so the kernel filter changes visibility rather than behaviour | Drops are counted in the kernel and logged, so an affected flow has a stated cause instead of vanishing. TCP negotiates MSS and sets DF, so fragmented TCP effectively does not occur in-cluster |
 | **Ring drops under burst** | Sampling cannot protect the ring, so a sufficiently large burst overruns it | Drops are logged with both counters; `-percpu-buffer` raises the ceiling |
@@ -261,7 +389,26 @@ Framing is autodetected by reading the interface's ARPHRD type from sysfs, and `
 | Codegen contract | `make verify-generate` | clang-18 |
 | Cluster E2E — Monarch → prod → Kaisel → igris → shadows | `make test-bats-kaisel` | cluster + image load |
 
-Cluster E2E (`testing/bats/e2e/kaisel-capture/kaisel_capture.bats`) waits for `ShadowTest` Ready + `kaiselPhase`, curls the prod pod with a W3C `traceparent`, then asserts Kaisel capture logs, igris `multicast complete` for that trace, and nginx access logs on control-a / control-b / candidate.
+Cluster E2E (`testing/bats/e2e/kaisel-capture/kaisel_capture.bats`) waits for `ShadowTest` Ready + `kaiselPhase`, curls the prod pod with a W3C `traceparent`, then asserts Kaisel capture logs, igris `multicast complete` for that trace, and app access logs on control-a / control-b / candidate. The egress tests drive the target into calling its dependency and assert the mock
+key Shop returned in its `hash` response field — Shop's own key, so a match proves
+seed and lookup agree. They match the key itself rather than a `hash=` prefix,
+because `slog` quotes any value containing `=`: a key carrying a query string is
+logged as `hash="…?active=true"` while one without is logged bare.
+
+**Attribution.** Kaisel and the Pixie→Recorder path both POST to the same
+`/v1/record_egress`, and `MockStore.Put` keeps the first 2xx, so observing a mock
+says nothing about which path produced it. Two things resolve that: the suite
+installs no Pixie, so Recorder receives no OTLP and is asserted silent
+(`kaisel_assert_recorder_did_not_seed`); and the logged `hash` proves Kaisel
+itself captured, paired and keyed the record correctly regardless of which copy
+`Put` ultimately stored.
+
+The prod workload is `testing/example-apps/egress-test-app`: one binary serving
+both roles, `/egress/*` as the caller (propagating the inbound trace context onto
+its outbound calls) and `/dep/*` as the dependency (deterministic status, size
+and header responses). Using a purpose-built app rather than a static server is
+what lets an egress test exercise a specific behaviour — a `503` dependency, a
+large body, several calls under one trace — instead of only the happy path.
 
 The integration suite builds a bridge and two network namespaces, loads the real BPF program, and drives real traffic:
 
@@ -274,6 +421,17 @@ The integration suite builds a bridge and two network namespaces, loads the real
 | `TestLargeRequestBodyIntact` | A 200 KB POST body arrives byte-complete, SHA-256 verified |
 | `TestTLSNotMisparsed` | Encrypted traffic yields no records rather than garbage |
 | `TestFragmentsAreDroppedAndCounted` | Fragments increment the drop counter; an identical unfragmented datagram does not |
+| `TestCapturesEgressTransaction` | The target as a **client**: outbound request paired with its response, query string retained, `Content-Type` captured off the wire |
+| `TestEgressResponseBodyIntact` | A 200 KB response body arrives byte-complete, SHA-256 verified |
+
+Pairing correctness is unit-tested without root in `internal/decode`: `HEAD` and
+`204` framing (the reason pairing exists at all), pipelined ordering, orphan
+eviction, over-cap drop, direction-independent connection keys, and that the
+pairing gate is evaluated on the request direction for **both** half-streams
+(`TestPairingGateUsesRequestDirectionForBothHalves`) — the one property whose
+absence disables egress recording entirely while every other test still passes. The
+seed/lookup key contract is pinned in `pipeline/shop/internal/replay/keys_test.go`
+— the one thing neither side could previously catch drifting.
 
 `verify-generate` diffs the generated Go binding only, never the `.o`: object bytes are not stable across clang patch versions, while the binding is what encodes the Go/C contract — maps, `pkt_meta` layout, and `.rodata` variables.
 
@@ -291,3 +449,6 @@ Reliable body capture ultimately wants a **syscall-layer probe** (`sock_sendmsg`
 * [`gopacket/gopacket`](https://github.com/gopacket/gopacket) — `tcpassembly` stream reassembly and layer decoding.
 * [`packet(7)`](https://man7.org/linux/man-pages/man7/packet.7.html) — `sll_ifindex == 0` matches any interface, the mechanism behind `iface: any` and `tcpdump -i any`.
 * [`struct __sk_buff` field order](https://github.com/torvalds/linux/blob/master/include/uapi/linux/bpf.h) — `ifindex` is the 11th `__u32` (byte offset 40), which the vendored `bpf_helpers.h` partial struct must match for the verifier's context-access rewriting to resolve it correctly.
+* [`http.ReadResponse`](https://pkg.go.dev/net/http#ReadResponse) — takes the originating request because response framing depends on it, which is why pairing is per-connection FIFO rather than traceparent-keyed.
+* [`tcpreader.ReaderStream`](https://pkg.go.dev/github.com/gopacket/gopacket/tcpassembly/tcpreader#ReaderStream) — synchronous handoff from the assembler, the reason the response side drains through a buffer instead of blocking on pairing.
+* [Shop mock keys](https://github.com/shadow-diff/monarch/blob/main/pipeline/shop/internal/replay/keys.go) — `TraceKey` and `HostWithoutPort`, applied by Shop on both the seed and the ext_proc lookup path.

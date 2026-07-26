@@ -29,7 +29,7 @@ Live L1:  Kaisel parse → admit + SampledIn → HTTP POST → igris-http
 
 | Field | Consumer |
 | --- | --- |
-| `spec.samplePercentage` | KaiselRule + PixieStreamRule + Recorder |
+| `spec.samplePercentage` | KaiselRule + PixieStreamRule + Recorder (HTTP); igris-rabbitmq (AMQP) |
 | `status.kaiselPhase` | Ready / Degraded from `reconcileKaiselCapture` |
 
 Dropped with SiphonSpec: `enabled`, `image`, `excludePaths`, `maxPayloadSize` (Pixie max payload uses Monarch default).

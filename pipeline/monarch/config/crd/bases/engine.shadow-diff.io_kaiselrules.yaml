@@ -19,7 +19,8 @@ spec:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: KaiselRule configures eBPF ingress capture for one ShadowTest.
+        description: KaiselRule configures eBPF ingress and egress capture for one
+          ShadowTest.
         properties:
           apiVersion:
             description: |-
@@ -41,6 +42,12 @@ spec:
           spec:
             description: KaiselRuleSpec defines the eBPF capture targets for a ShadowTest.
             properties:
+              egressBaseURL:
+                description: |-
+                  EgressBaseURL is the per-ShadowTest Shop Service URL Kaisel POSTs captured
+                  egress request/response pairs to (scheme://host:port, no path). Kaisel
+                  sends flat fields; Shop derives the mock key.
+                type: string
               igrisBaseURL:
                 description: |-
                   IgrisBaseURL is the per-ShadowTest igris-http Service URL Kaisel POSTs

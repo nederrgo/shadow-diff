@@ -209,7 +209,6 @@ Used when any input has `driver: rabbitmq_message`.
 |-------|-------------|
 | `igrisRabbitmq` | Override **igris-rabbitmq** Deployment (prod queue → three shadow brokers) |
 | `igrisRabbitmq.image` | Default `igris-rabbitmq:latest` |
-| `igrisRabbitmq.samplePercentage` | Prod AMQP gate: shared `(V*100)<(N*256)` on W3C trace id (1–100; default `100`). Empty traceparent dropped. |
 | `egressRelayRabbitmq` | Override **egress-relay-rabbitmq** (Firehose → Beru egress API) |
 | `egressRelayRabbitmq.image` | Default `egress-relay-rabbitmq:latest` |
 | `egressRelayRabbitmq.replicas` | Default `1` |
@@ -221,7 +220,7 @@ Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`** and se
 | Field | Description |
 |-------|-------------|
 | _(implicit)_ | HTTP/TCP inputs that match target ports enable KaiselRule capture |
-| `samplePercentage` | Prod HTTP gate (Kaisel + Pixie egress / Recorder): shared `(V*100)<(N*256)` (1–100; default `100`). Empty `traceparent` dropped. |
+| `samplePercentage` | Shared prod gate for all input types (`(V*100)<(N*256)`, 1–100; default `100`). HTTP → Kaisel + Pixie egress / Recorder; `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). Empty `traceparent` dropped. RabbitMQ does not use Kaisel. |
 
 Monarch reconciles `KaiselRule` for HTTP ingress and `PixieStreamRule` for egress/recorder. **`status.kaiselPhase`**: `Ready` or `Degraded`.
 

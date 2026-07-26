@@ -1,10 +1,10 @@
 ---
 type: Architecture Specification
 title: Egress Record and Replay
-description: How Shadow-Diff captures production HTTP egress via Pixie dual-branch export (client + server), seeds Shop with Put dedup, and replays via Envoy egress ext_proc.
+description: How Shadow-Diff captures production HTTP egress — Kaisel eBPF request/response pairing and Pixie dual-branch export — seeds Shop with Put dedup, and replays via Envoy egress ext_proc.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/recorder
-tags: [data-plane, recorder, shop, envoy, pixie, egress, replay]
-timestamp: 2026-07-16T12:35:00Z
+tags: [data-plane, kaisel, recorder, shop, envoy, pixie, egress, replay]
+timestamp: 2026-07-26T09:00:00Z
 ---
 
 # Egress Record and Replay
@@ -21,11 +21,17 @@ The diff-of-diffs model requires all three roles (control-a, control-b, candidat
 
 ## Component Map
 
+Two capture paths seed the same Shop keys. `MockStore.Put` keeps the **first
+2xx**, so they are idempotent with respect to each other and whichever observes
+a given call first wins.
+
 ```
 [Prod Worker]
     │  HTTP call to downstream
-    ▼
-[Pixie eBPF]  ──egress PxL──▶  [Recorder]  ──POST /v1/record_egress──▶  [Shop]
+    ├──────────────────────────▶ [Kaisel eBPF] ──POST /v1/record_egress──▶ [Shop]
+    │                              pairs request + response off the wire      ▲
+    ▼                                                                         │
+[Pixie eBPF]  ──egress PxL──▶  [Recorder]  ──POST /v1/record_egress──────────▶│
                                                                               │
 [Shadow Worker]                                                               │
     │  HTTP call (same host/path, traceparent header set)                     │
@@ -39,6 +45,21 @@ The diff-of-diffs model requires all three roles (control-a, control-b, candidat
 ---
 
 ## Components
+
+### Kaisel (`pipeline/kaisel/`)
+
+L1 eBPF capture. Reads both directions of a target pod's TCP connections off the
+wire and pairs each outbound request with its response, then POSTs the pair to
+`KaiselRule.spec.egressBaseURL` — the Shop in that ShadowTest's shadow namespace.
+
+Kaisel sends `host`, `method` and `path` **verbatim** off the wire and lets Shop
+derive the key, because Shop applies the identical transform on the ext_proc
+lookup path. `path` carries the query string, matching Envoy's `:path`.
+
+Response headers pass an allowlist before being stored: framing headers
+(`content-length`, `transfer-encoding`) are dropped because Envoy synthesizes its
+own on the immediate-response path, and `date`/`server` because they differ on
+every capture. See [/data-plane/kaisel-ebpf.md](/data-plane/kaisel-ebpf.md).
 
 ### Recorder (`pipeline/recorder/`)
 
@@ -67,7 +88,7 @@ Always-on in-memory mock store. Two interfaces:
 
 | Endpoint | Caller | Purpose |
 |---|---|---|
-| `POST /v1/record_egress` | Recorder | Seed a mock from a live-captured response |
+| `POST /v1/record_egress` | Kaisel, Recorder | Seed a mock from a live-captured response |
 | `POST /v1/seed_mock` | Manual / test scripts | Seed a mock directly |
 | `GET /healthz` | Kubernetes probe | Liveness check |
 
@@ -172,3 +193,6 @@ Worker identity comes from `PixieStreamRule.targetLabels` (copied from the targe
 - Egress PxL template: [`pipeline/pixie-gate/deploy/configmap.yaml`](../../pipeline/pixie-gate/deploy/configmap.yaml)
 - Monarch Recorder: [`pipeline/monarch/internal/controller/shadowtest_recorder.go`](../../pipeline/monarch/internal/controller/shadowtest_recorder.go)
 - Bats seed helper: [`testing/bats/lib/traffic.bash`](../../testing/bats/lib/traffic.bash) — `wait_recorder_seed`
+- Kaisel egress export: [`pipeline/kaisel/internal/export/exporter.go`](../../pipeline/kaisel/internal/export/exporter.go) — `HandleTransaction`
+- Kaisel request/response pairing: [`pipeline/kaisel/internal/decode/bidi.go`](../../pipeline/kaisel/internal/decode/bidi.go)
+- Egress test workload: [`testing/example-apps/egress-test-app`](../../testing/example-apps/egress-test-app)

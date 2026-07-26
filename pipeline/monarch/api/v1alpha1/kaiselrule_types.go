@@ -40,6 +40,12 @@ type KaiselRuleSpec struct {
 	// +optional
 	IgrisBaseURL string `json:"igrisBaseURL,omitempty"`
 
+	// EgressBaseURL is the per-ShadowTest Shop Service URL Kaisel POSTs captured
+	// egress request/response pairs to (scheme://host:port, no path). Kaisel
+	// sends flat fields; Shop derives the mock key.
+	// +optional
+	EgressBaseURL string `json:"egressBaseURL,omitempty"`
+
 	// SamplePercentage is the prod sampling gate (1–100) applied in Kaisel
 	// userspace before forward. 100 keeps all traced traffic.
 	// +kubebuilder:validation:Minimum=1
@@ -63,7 +69,7 @@ type KaiselRuleStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=kr
 
-// KaiselRule configures eBPF ingress capture for one ShadowTest.
+// KaiselRule configures eBPF ingress and egress capture for one ShadowTest.
 type KaiselRule struct {
 	metav1.TypeMeta `json:",inline"`
 

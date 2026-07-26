@@ -1,4 +1,4 @@
-# RMQ sampling proof — igrisRabbitmq.samplePercentage: 10
+# RMQ sampling proof — samplePercentage: 10 (igris-rabbitmq)
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest
 metadata:
@@ -7,9 +7,7 @@ metadata:
 spec:
   targetDeployment: nodejs-prod-worker
   newImage: nodejs-hybrid-worker:dev
-
-  igrisRabbitmq:
-    samplePercentage: 10
+  samplePercentage: 10
 
   inputs:
     - driver: rabbitmq_message

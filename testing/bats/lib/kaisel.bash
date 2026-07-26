@@ -4,6 +4,16 @@
 KAISEL_NS="kaisel-system"
 KAISEL_DEPLOY_DIR="${REPO}/pipeline/kaisel/deploy"
 
+# Prod target: egress-test-app, which both serves HTTP (ingress capture) and
+# calls a dependency (egress capture).
+KAISEL_PROD_DEPLOY="kaisel-capture-prod"
+KAISEL_PROD_PORT="8080"
+
+# The dependency the target calls. This host:port is what lands in the recorded
+# mock's Host field; Shop strips the port when it derives the key, on both the
+# seed and the ext_proc lookup side.
+KAISEL_EGRESS_DEP_HOST="kaisel-egress-dep"
+
 # Self-contained platform setup for Kaisel E2E: builds + loads Monarch, Kaisel,
 # and the HTTP shadow-stack images (igris-http, beru, shop, recorder), installs
 # CRDs, and deploys the Monarch operator. Callers still deploy the Kaisel
@@ -26,6 +36,7 @@ kaisel_setup_platform() {
     make -C "${REPO}/pipeline/shop" docker-build SHOP_IMG="${SHOP_IMG}"
     make -C "${REPO}/pipeline/igrises/igris-http" docker-build IGRIS_IMG="${IGRIS_IMG}"
     make -C "${REPO}/pipeline/recorder" docker-build RECORDER_IMG="${RECORDER_IMG}"
+    make -C "${REPO}/testing/example-apps/egress-test-app" docker-build EGRESS_TEST_IMG="${EGRESS_TEST_IMG}"
   fi
 
   if [[ "${SKIP_LOAD:-0}" != "1" ]]; then
@@ -40,7 +51,7 @@ kaisel_setup_platform() {
       docker pull nginx:alpine
     fi
     for img in "${MONARCH_IMG}" "${KAISEL_IMG}" "${BERU_IMG}" "${SHOP_IMG}" \
-      "${IGRIS_IMG}" "${RECORDER_IMG}" nginx:alpine; do
+      "${IGRIS_IMG}" "${RECORDER_IMG}" "${EGRESS_TEST_IMG}" nginx:alpine; do
       e2e_load_image "${img}"
     done
   fi
@@ -222,12 +233,12 @@ kaisel_publish_prod_traced() {
     return 1
   fi
 
-  echo "==> [kaisel] prod GET http://${prod_ip}:80${path} trace_id=${trace_id}" >&2
+  echo "==> [kaisel] prod GET http://${prod_ip}:${KAISEL_PROD_PORT}${path} trace_id=${trace_id}" >&2
   kubectl run "kaisel-route-${RANDOM}" --restart=Never --rm -i \
     --image=curlimages/curl:latest -n default -- \
     curl -sS --max-time 10 \
     -H "traceparent: ${trace_tp}" \
-    "http://${prod_ip}:80${path}" >/dev/null || true
+    "http://${prod_ip}:${KAISEL_PROD_PORT}${path}" >/dev/null || true
   # stdout is only the trace id (safe under `run` + tail).
   printf '%s\n' "$trace_id"
 }
@@ -286,4 +297,91 @@ kaisel_assert_shadow_roles_saw_path() {
       return 1
     }
   done
+}
+
+# Drive the prod target into making an outbound dependency call.
+#
+# The call is issued by the app itself (egress-test-app's /egress/* routes),
+# not injected from outside, so what kaisel captures is a genuine egress
+# request/response pair with the inbound trace context propagated onto it --
+# exactly what a real instrumented service produces.
+# Usage: kaisel_prod_egress_call <dependency_path> [trace_id_hex32]
+# Echoes the trace id on the last line.
+kaisel_prod_egress_call() {
+  local dep_path="$1"
+  local trace_id="${2:-$(openssl rand -hex 16)}"
+  local span_hex
+  span_hex="$(openssl rand -hex 8)"
+  local trace_tp="00-${trace_id}-${span_hex}-01"
+  local prod_ip
+  prod_ip=$(kubectl get pod -l "app=${KAISEL_PROD_DEPLOY}" -n default \
+    -o jsonpath='{.items[0].status.podIP}')
+  if [[ -z "$prod_ip" ]]; then
+    echo "kaisel_prod_egress_call: prod pod has no IP" >&2
+    return 1
+  fi
+
+  echo "==> [kaisel] prod egress -> ${dep_path} trace_id=${trace_id}" >&2
+  kubectl run "kaisel-egress-${RANDOM}" --restart=Never --rm -i \
+    --image=curlimages/curl:latest -n default -- \
+    curl -sS --max-time 20 \
+    -H "traceparent: ${trace_tp}" \
+    "http://${prod_ip}:${KAISEL_PROD_PORT}/egress/get?path=${dep_path}" >&2 || true
+  printf '%s\n' "$trace_id"
+}
+
+# Wait for kaisel to log an egress record that Shop accepted.
+#
+# The asserted hash is Shop's OWN computed mock key (returned by
+# POST /v1/record_egress), so matching it proves the record arrived, passed
+# validation, and was keyed exactly as the Envoy ext_proc replay path will look
+# it up -- which a 200 alone would not show.
+# Match the mock key itself, not a "hash=<key>" prefix: slog quotes any value
+# containing '=', so a key carrying a query string ("...?active=true") is logged
+# as hash="..." while one without is logged bare. Matching the key alone is
+# stable across both, and the surrounding "egress recorded" filter plus the
+# random trace id already make it precise.
+# Usage: kaisel_assert_egress_recorded <grep_pattern> [timeout_seconds]
+kaisel_assert_egress_recorded() {
+  local pattern="$1" timeout="${2:-60}"
+  local elapsed=0 logs
+  while (( elapsed < timeout )); do
+    logs=$(kubectl logs -l app=kaisel -n "$KAISEL_NS" --tail=800 2>/dev/null || true)
+    if echo "$logs" | grep '"egress recorded"' | grep -q "$pattern"; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  echo "FAIL: no kaisel 'egress recorded' line matching: ${pattern}" >&2
+  echo "--- kaisel egress lines ---" >&2
+  echo "$logs" | grep -E '"egress recorded"|record egress to shop failed|egress response' >&2 || true
+  return 1
+}
+
+# Prove Recorder seeded nothing, so a mock in Shop can only have come from
+# Kaisel.
+#
+# Kaisel and Recorder both POST to Shop's /v1/record_egress, and MockStore.Put
+# keeps the first 2xx -- so observing a mock says nothing about which path
+# produced it. This suite installs no Pixie, so Recorder gets no OTLP and seeds
+# nothing; asserting that here turns an implicit property of the setup into a
+# checked one, which is what keeps the egress tests meaningful if Pixie is ever
+# added to this suite.
+# Usage: kaisel_assert_recorder_did_not_seed
+kaisel_assert_recorder_did_not_seed() {
+  local shadow_ns="${SHADOW_NS:?SHADOW_NS unset}"
+  local logs
+  logs=$(kubectl logs -l app.kubernetes.io/name=recorder -n "$shadow_ns" \
+    --tail=500 2>/dev/null || true)
+  if [[ -z "$logs" ]]; then
+    echo "    recorder produced no logs at all (no Pixie in this suite)" >&2
+    return 0
+  fi
+  if echo "$logs" | grep -q "shop client: recorded"; then
+    echo "FAIL: Recorder seeded Shop, so an egress mock cannot be attributed to Kaisel" >&2
+    echo "$logs" | grep "shop client: recorded" >&2
+    return 1
+  fi
+  return 0
 }

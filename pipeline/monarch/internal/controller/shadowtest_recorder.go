@@ -76,7 +76,7 @@ func (r *ShadowTestReconciler) reconcileRecorderDeployment(
 				{Name: envShopHTTPURL, Value: fmt.Sprintf("http://%s", shopHTTPHostFor(shadowNS))},
 				{Name: envRecorderListenAddr, Value: ":8080"},
 				{Name: envRecorderOTLPGRPCAddr, Value: ":4317"},
-				{Name: envRecorderSamplePct, Value: strconv.Itoa(httpSamplePercentage(st))},
+				{Name: envRecorderSamplePct, Value: strconv.Itoa(samplePercentage(st))},
 			},
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{

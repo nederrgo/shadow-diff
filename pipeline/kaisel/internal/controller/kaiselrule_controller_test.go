@@ -13,9 +13,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 	"github.com/shadow-diff/kaisel/internal/capture"
 	"github.com/shadow-diff/kaisel/internal/export"
+	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
 func testScheme(t *testing.T) *runtime.Scheme {

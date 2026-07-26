@@ -8,15 +8,16 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 	"github.com/shadow-diff/kaisel/internal/capture"
 	"github.com/shadow-diff/kaisel/internal/export"
+	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
 type ruleState struct {
 	ips              map[string]bool
 	ports            map[uint16]bool
 	igrisBaseURL     string
+	egressBaseURL    string
 	samplePercentage int
 }
 
@@ -90,6 +91,7 @@ func (r *Reconciler) rebuildRouter() {
 			Key:              key,
 			IPs:              ips,
 			IgrisBaseURL:     st.igrisBaseURL,
+			EgressBaseURL:    st.egressBaseURL,
 			SamplePercentage: st.samplePercentage,
 		})
 	}
@@ -107,6 +109,7 @@ func stateFrom(spec enginev1alpha1.KaiselRuleSpec) ruleState {
 		ips:              make(map[string]bool, len(spec.TargetIPs)),
 		ports:            make(map[uint16]bool, len(spec.TargetPorts)),
 		igrisBaseURL:     spec.IgrisBaseURL,
+		egressBaseURL:    spec.EgressBaseURL,
 		samplePercentage: spec.SamplePercentage,
 	}
 	for _, ip := range spec.TargetIPs {

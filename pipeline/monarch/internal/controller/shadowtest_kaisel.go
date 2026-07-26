@@ -21,7 +21,7 @@ import (
 
 const (
 	defaultPixieMaxPayloadSize = 65536
-	defaultHTTPSamplePercentage = 100
+	defaultSamplePercentage    = 100
 )
 
 func targetPrimaryContainerPorts(target *appsv1.Deployment) map[int32]bool {
@@ -54,11 +54,11 @@ func httpIngressCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Dep
 	return false
 }
 
-func httpSamplePercentage(st *enginev1alpha1.ShadowTest) int {
+func samplePercentage(st *enginev1alpha1.ShadowTest) int {
 	if st.Spec.SamplePercentage > 0 {
 		return st.Spec.SamplePercentage
 	}
-	return defaultHTTPSamplePercentage
+	return defaultSamplePercentage
 }
 
 func formatCaptureTargets(labels map[string]string) []string {
@@ -153,7 +153,7 @@ func buildPixieStreamRuleSpec(
 		TargetNamespace:      targetNamespaceFor(st),
 		TargetLabels:         copyStringMap(target.Spec.Template.Labels),
 		MaxPayloadSize:       defaultPixieMaxPayloadSize,
-		SamplePercentage:     httpSamplePercentage(st),
+		SamplePercentage:     samplePercentage(st),
 		RecorderOTelEndpoint: shadowRecorderOTelEndpoint(st, shadowNS),
 	}
 	if hasMongoDependency(st) {
@@ -253,12 +253,20 @@ func kaiselIgrisBaseURL(st *enginev1alpha1.ShadowTest) string {
 	return shadowServiceURL(shadowNamespaceForCR(st), igrisServiceName(st), servicePortFor(st))
 }
 
+// kaiselEgressBaseURL is the shadow-namespace Shop Service URL Kaisel POSTs
+// captured egress request/response pairs to. Shop derives the mock key that
+// its Envoy ext_proc later looks up, so Kaisel only sends flat fields.
+func kaiselEgressBaseURL(shadowNS string) string {
+	return "http://" + shopHTTPHostFor(shadowNS)
+}
+
 // reconcileKaiselRule creates or updates a KaiselRule whose targetIPs are the
 // live, Running pod IPs for the target Deployment. Only pods that are Running,
 // have a non-empty PodIP, and have no DeletionTimestamp are included.
 func (r *ShadowTestReconciler) reconcileKaiselRule(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
+	shadowNS string,
 	target *appsv1.Deployment,
 ) error {
 	var podList corev1.PodList
@@ -286,7 +294,8 @@ func (r *ShadowTestReconciler) reconcileKaiselRule(
 
 	ports := int32ToUint16Ports(kaiselIngressPorts(st))
 	igrisURL := kaiselIgrisBaseURL(st)
-	samplePct := httpSamplePercentage(st)
+	egressURL := kaiselEgressBaseURL(shadowNS)
+	samplePct := samplePercentage(st)
 
 	// Read the existing rule to skip the patch when nothing changed.
 	var existing enginev1alpha1.KaiselRule
@@ -295,6 +304,7 @@ func (r *ShadowTestReconciler) reconcileKaiselRule(
 		ipSetsEqual(existing.Spec.TargetIPs, ips) &&
 		portSetsEqual(existing.Spec.TargetPorts, ports) &&
 		existing.Spec.IgrisBaseURL == igrisURL &&
+		existing.Spec.EgressBaseURL == egressURL &&
 		existing.Spec.SamplePercentage == samplePct {
 		// No change; avoid a spurious write.
 		return nil
@@ -315,6 +325,7 @@ func (r *ShadowTestReconciler) reconcileKaiselRule(
 			TargetIPs:        ips,
 			TargetPorts:      ports,
 			IgrisBaseURL:     igrisURL,
+			EgressBaseURL:    egressURL,
 			SamplePercentage: samplePct,
 		}
 		return controllerutil.SetControllerReference(st, rule, r.Scheme)
@@ -392,7 +403,7 @@ func (r *ShadowTestReconciler) reconcileKaiselCapture(
 	if err := r.reconcilePixieStreamRule(ctx, st, shadowNS, target); err != nil {
 		return formatCaptureTargets(labels), "Degraded", err
 	}
-	if err := r.reconcileKaiselRule(ctx, st, target); err != nil {
+	if err := r.reconcileKaiselRule(ctx, st, shadowNS, target); err != nil {
 		return formatCaptureTargets(labels), "Degraded", err
 	}
 	return formatCaptureTargets(labels), "Ready", nil

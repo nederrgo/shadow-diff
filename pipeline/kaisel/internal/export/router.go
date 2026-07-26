@@ -6,9 +6,13 @@ import (
 	"sync"
 )
 
-// Route is the per-ShadowTest forward target for a captured destination IP.
+// Route is the per-ShadowTest forward target for a captured target pod IP.
+// The same entry serves both directions: matched as a packet's destination it
+// is an ingress capture bound for igris, matched as its source it is an egress
+// capture bound for that ShadowTest's Shop.
 type Route struct {
 	IgrisBaseURL     string
+	EgressBaseURL    string
 	SamplePercentage int
 	RuleKey          string // namespace/name — conflict tie-break
 }
@@ -18,10 +22,11 @@ type RuleExport struct {
 	Key              string // namespace/name
 	IPs              []string
 	IgrisBaseURL     string
+	EgressBaseURL    string
 	SamplePercentage int
 }
 
-// Router maps destination pod IPv4 → igris route.
+// Router maps target pod IPv4 → route, for both capture directions.
 type Router struct {
 	mu   sync.RWMutex
 	byIP map[string]Route
@@ -35,11 +40,12 @@ func NewRouter(log *slog.Logger) *Router {
 	return &Router{byIP: make(map[string]Route), log: log}
 }
 
-// Lookup returns the route for a destination IP, if any.
-func (r *Router) Lookup(dstIP string) (Route, bool) {
+// Lookup returns the route for a target pod IP, if any. Callers pass the
+// destination for ingress and the source for egress; one table serves both.
+func (r *Router) Lookup(ip string) (Route, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	route, ok := r.byIP[dstIP]
+	route, ok := r.byIP[ip]
 	return route, ok
 }
 
@@ -52,7 +58,9 @@ func (r *Router) Rebuild(rules []RuleExport) {
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
 
 	for _, rule := range sorted {
-		if rule.IgrisBaseURL == "" {
+		// A rule with only one URL set is still useful: it captures that one
+		// direction. Only a rule with neither has nowhere to send anything.
+		if rule.IgrisBaseURL == "" && rule.EgressBaseURL == "" {
 			continue
 		}
 		sample := rule.SamplePercentage
@@ -70,6 +78,7 @@ func (r *Router) Rebuild(rules []RuleExport) {
 			}
 			next[ip] = Route{
 				IgrisBaseURL:     rule.IgrisBaseURL,
+				EgressBaseURL:    rule.EgressBaseURL,
 				SamplePercentage: sample,
 				RuleKey:          rule.Key,
 			}

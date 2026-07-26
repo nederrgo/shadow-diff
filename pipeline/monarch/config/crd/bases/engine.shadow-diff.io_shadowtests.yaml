@@ -320,14 +320,6 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
-                  samplePercentage:
-                    description: |-
-                      SamplePercentage is the percentage of AMQP messages to forward to shadow brokers (1-100, default 100).
-                      Uses the same (V*100)<(N*256) rule as HTTP prod sampling. Messages without a valid
-                      inbound traceparent are dropped (tracing is required).
-                    maximum: 100
-                    minimum: 1
-                    type: integer
                 type: object
               inputs:
                 description: |-
@@ -411,10 +403,12 @@ spec:
                 type: object
               samplePercentage:
                 description: |-
-                  SamplePercentage is the percentage of prod HTTP traces admitted for capture
-                  (1-100, default 100). Applied in Kaisel userspace and Pixie egress PxL /
-                  Recorder with the shared (V*100)<(N*256) rule. Empty/missing traceparent
-                  is always dropped. Does not apply to shadow-pod Mongo capture.
+                  SamplePercentage is the shared prod sampling gate (1-100, default 100) for
+                  all input types. Uses (V*100)<(N*256) on the W3C trace id; empty/missing
+                  traceparent is always dropped. Monarch seeds it by inputs[].driver: HTTP →
+                  KaiselRule (ingress) + Pixie egress / Recorder; rabbitmq_message →
+                  igris-rabbitmq (IGRIS_RMQ_SAMPLE_PERCENTAGE). RabbitMQ does not use Kaisel.
+                  Does not apply to shadow-pod Mongo capture.
                 maximum: 100
                 minimum: 1
                 type: integer

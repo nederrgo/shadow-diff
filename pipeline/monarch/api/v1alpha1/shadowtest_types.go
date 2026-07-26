@@ -137,14 +137,6 @@ type IgrisRabbitMQSpec struct {
 	// Resources for the igris-rabbitmq container.
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
-
-	// SamplePercentage is the percentage of AMQP messages to forward to shadow brokers (1-100, default 100).
-	// Uses the same (V*100)<(N*256) rule as HTTP prod sampling. Messages without a valid
-	// inbound traceparent are dropped (tracing is required).
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=100
-	// +optional
-	SamplePercentage int `json:"samplePercentage,omitempty"`
 }
 
 // IgrisSpec overrides the always-deployed Igris workload.
@@ -226,10 +218,12 @@ type ShadowTestSpec struct {
 	// +optional
 	EgressRelayRabbitMQ *EgressRelayRabbitMQSpec `json:"egressRelayRabbitmq,omitempty"`
 
-	// SamplePercentage is the percentage of prod HTTP traces admitted for capture
-	// (1-100, default 100). Applied in Kaisel userspace and Pixie egress PxL /
-	// Recorder with the shared (V*100)<(N*256) rule. Empty/missing traceparent
-	// is always dropped. Does not apply to shadow-pod Mongo capture.
+	// SamplePercentage is the shared prod sampling gate (1-100, default 100) for
+	// all input types. Uses (V*100)<(N*256) on the W3C trace id; empty/missing
+	// traceparent is always dropped. Monarch seeds it by inputs[].driver: HTTP →
+	// KaiselRule (ingress) + Pixie egress / Recorder; rabbitmq_message →
+	// igris-rabbitmq (IGRIS_RMQ_SAMPLE_PERCENTAGE). RabbitMQ does not use Kaisel.
+	// Does not apply to shadow-pod Mongo capture.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=100
 	// +optional

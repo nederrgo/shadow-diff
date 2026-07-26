@@ -16,6 +16,7 @@ bats_init_env() {
 
   export MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
   export KAISEL_IMG="${KAISEL_IMG:-kaisel:dev}"
+  export EGRESS_TEST_IMG="${EGRESS_TEST_IMG:-egress-test-app:dev}"
   export BERU_IMG="${BERU_IMG:-beru:dev}"
   export SHOP_IMG="${SHOP_IMG:-shop:dev}"
   export IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"

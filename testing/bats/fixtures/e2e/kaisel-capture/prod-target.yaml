@@ -1,6 +1,10 @@
 # Prod target for the kaisel eBPF capture E2E test.
-# nginx:alpine is used as a simple HTTP server; the test sends real requests
-# to the pod IP and asserts kaisel captured them off the wire.
+#
+# egress-test-app (testing/example-apps/egress-test-app) plays the prod
+# workload: it serves HTTP (so ingress capture has something to capture) and
+# calls out to a dependency propagating the inbound trace context (so egress
+# capture has a request/response pair to record). One target exercises both
+# capture directions, which is the shape a real instrumented service has.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,9 +22,22 @@ spec:
     spec:
       containers:
         - name: app
-          image: nginx:alpine
+          image: egress-test-app:dev
+          imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 80
+            - containerPort: 8080
+          env:
+            # The dependency this pod calls; its host:port becomes the Host on
+            # the recorded egress mock. Shop strips the port when it derives the
+            # key, on both the seed and the ext_proc lookup side.
+            - name: DEPENDENCY_BASE_URL
+              value: http://kaisel-egress-dep:8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 2
 ---
 apiVersion: v1
 kind: Service
@@ -32,4 +49,48 @@ spec:
     app: kaisel-capture-prod
   ports:
     - port: 8080
-      targetPort: 80
+      targetPort: 8080
+---
+# The dependency the prod target calls out to. Same image, dependency role
+# (/dep/*). Deliberately NOT the ShadowTest target: only the target's pod IPs
+# go into the KaiselRule, so keeping this separate is what makes the captured
+# direction unambiguously egress.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kaisel-egress-dep
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kaisel-egress-dep
+  template:
+    metadata:
+      labels:
+        app: kaisel-egress-dep
+    spec:
+      containers:
+        - name: app
+          image: egress-test-app:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kaisel-egress-dep
+  namespace: default
+spec:
+  selector:
+    app: kaisel-egress-dep
+  ports:
+    - port: 8080
+      targetPort: 8080

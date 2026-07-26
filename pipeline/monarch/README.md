@@ -52,7 +52,7 @@ One namespaced **`ShadowTest`** (`engine.shadow-diff.io/v1alpha1`) drives the fu
 | `beruIngestAddress` | Beru HTTP wire-ingest target (defaults with Beru resolution) |
 | `inputs[]` | Ingress drivers: `http_request`, `tcp_stream`, `rabbitmq_message` |
 | `dependencies[]` | Ephemeral Redis, RabbitMQ, MongoDB, etc. per role + env injection |
-| `samplePercentage` | Prod HTTP sampling gate for Kaisel + Recorder (1–100, default 100) |
+| `samplePercentage` | Shared prod sampling gate (1–100, default 100): HTTP → Kaisel + Recorder; rabbitmq → igris-rabbitmq |
 | `shop` / `recorder` / `igris` / `igrisRabbitmq` / `egressRelayRabbitmq` | Optional component image/resource overrides (defaults via `MONARCH_MODE`) |
 | `beru` | Optional beru-local image override |
 

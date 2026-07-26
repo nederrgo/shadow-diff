@@ -17,18 +17,17 @@ import (
 )
 
 const (
-	containerIgrisRabbitMQ          = "igris-rabbitmq"
-	envProdURL                      = "PROD_URL"
-	envShadowQueueName              = "SHADOW_QUEUE_NAME"
-	envShadowPublishExchange        = "SHADOW_PUBLISH_EXCHANGE"
-	envShadowPublishExchangeType    = "SHADOW_PUBLISH_EXCHANGE_TYPE"
-	envControlAAMQPURL              = "CONTROL_A_AMQP_URL"
-	envControlBAMQPURL              = "CONTROL_B_AMQP_URL"
-	envCandidateAMQPURL             = "CANDIDATE_AMQP_URL"
-	envSamplePercentage             = "IGRIS_RMQ_SAMPLE_PERCENTAGE"
-	defaultAMQPUser                 = "guest"
-	defaultAMQPPass                 = "guest"
-	defaultIgrisRMQSamplePercentage = 100
+	containerIgrisRabbitMQ       = "igris-rabbitmq"
+	envProdURL                   = "PROD_URL"
+	envShadowQueueName           = "SHADOW_QUEUE_NAME"
+	envShadowPublishExchange     = "SHADOW_PUBLISH_EXCHANGE"
+	envShadowPublishExchangeType = "SHADOW_PUBLISH_EXCHANGE_TYPE"
+	envControlAAMQPURL           = "CONTROL_A_AMQP_URL"
+	envControlBAMQPURL           = "CONTROL_B_AMQP_URL"
+	envCandidateAMQPURL          = "CANDIDATE_AMQP_URL"
+	envSamplePercentage          = "IGRIS_RMQ_SAMPLE_PERCENTAGE"
+	defaultAMQPUser              = "guest"
+	defaultAMQPPass              = "guest"
 )
 
 func igrisRabbitMQDeploymentName(st *enginev1alpha1.ShadowTest) string {
@@ -44,13 +43,6 @@ func igrisRabbitMQReplicasFor(st *enginev1alpha1.ShadowTest) int32 {
 		return *st.Spec.IgrisRabbitMQ.Replicas
 	}
 	return 1
-}
-
-func igrisRabbitMQSamplePercentage(st *enginev1alpha1.ShadowTest) int {
-	if st.Spec.IgrisRabbitMQ != nil && st.Spec.IgrisRabbitMQ.SamplePercentage > 0 {
-		return st.Spec.IgrisRabbitMQ.SamplePercentage
-	}
-	return defaultIgrisRMQSamplePercentage
 }
 
 func shadowAMQPURL(shadowNS, depName, role string, port int32) string {
@@ -80,7 +72,7 @@ func (r *ShadowTestReconciler) igrisRabbitMQEnv(st *enginev1alpha1.ShadowTest, s
 		{Name: envControlAAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlA, port)},
 		{Name: envControlBAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlB, port)},
 		{Name: envCandidateAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleCandidate, port)},
-		{Name: envSamplePercentage, Value: strconv.Itoa(igrisRabbitMQSamplePercentage(st))},
+		{Name: envSamplePercentage, Value: strconv.Itoa(samplePercentage(st))},
 	}, nil
 }
 

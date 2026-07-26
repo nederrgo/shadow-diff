@@ -455,7 +455,7 @@ make uninstall
 | `grpcurl` connection refused | Beru not ready or no port-forward | Check `beru-system` pods; re-run port-forward |
 | Wrong cluster | Multiple kube contexts | `kubectl config current-context` |
 | Kaisel `Degraded`, empty capture | TC not on CNI iface / no prod traffic | Check `/v1/status`; hit prod Service URL |
-| No Igris logs after prod curl | `samplePercentage` sampling the trace out, missing `traceparent`, or wrong pod IPs | `kubectl get shadowtest -o yaml` → `spec.samplePercentage` / `igrisRabbitmq.samplePercentage`; ensure W3C `traceparent` on the request |
+| No Igris logs after prod curl | `samplePercentage` sampling the trace out, missing `traceparent`, or wrong pod IPs | `kubectl get shadowtest -o yaml` → `spec.samplePercentage`; ensure W3C `traceparent` on the request |
 
 ---
 
