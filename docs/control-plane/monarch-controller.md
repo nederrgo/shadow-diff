@@ -51,7 +51,7 @@ Per-role ConfigMap `{shadowtest}-{role}-envoy` renders:
 
 - `spec.beruGRPCAddress` — ext_proc gRPC target (default: local `beru-local` or `beru.beru-system`)
 - `spec.beruIngestAddress` — wire-payload ingest target (default: same host resolution as HTTP above)
-- `spec.samplePercentage` — shared prod sampling gate (1-100, default 100) for all input types. Same rule `V=int(trace_id[0:2],16); keep iff (V*100)<(N*256)`; empty/missing `traceparent` always dropped. Monarch seeds by `inputs[].driver`: HTTP → KaiselRule (ingress) + Pixie egress / Recorder; `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). RabbitMQ does not use Kaisel. Shadow-pod Mongo is not sampled.
+- `spec.samplePercentage` — shared prod sampling gate (1-100, default 100) for all input types. Same rule `V=int(trace_id[0:2],16); keep iff (V*100)<(N*256)`; empty/missing `traceparent` always dropped. Monarch seeds by `inputs[].driver`: HTTP → KaiselRule (ingress and egress); `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). RabbitMQ does not use Kaisel.
 
 ## Beru wire ingest (Plan 2)
 

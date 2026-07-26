@@ -20,8 +20,7 @@ import (
 )
 
 const (
-	defaultPixieMaxPayloadSize = 65536
-	defaultSamplePercentage    = 100
+	defaultSamplePercentage = 100
 )
 
 func targetPrimaryContainerPorts(target *appsv1.Deployment) map[int32]bool {
@@ -77,21 +76,6 @@ func formatCaptureTargets(labels map[string]string) []string {
 	return out
 }
 
-func shadowRecorderOTelEndpoint(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	return fmt.Sprintf("%s.%s.svc.cluster.local:%d", recorderServiceName(st), shadowNS, recorderOTLPPort)
-}
-
-// pixieStreamRuleName / pixieStreamRuleKey remain: PixieStreamRule is still
-// reconciled for egress (recorderOtelEndpoint, mongoOtelEndpoint). Ingress
-// (otelEndpoint) is left empty — kaisel takes over ingress capture.
-func pixieStreamRuleName(st *enginev1alpha1.ShadowTest) string {
-	return "pixie-" + st.Name
-}
-
-func pixieStreamRuleKey(st *enginev1alpha1.ShadowTest) types.NamespacedName {
-	return types.NamespacedName{Namespace: st.Namespace, Name: pixieStreamRuleName(st)}
-}
-
 func kaiselIngressPorts(st *enginev1alpha1.ShadowTest) []int32 {
 	if isAMQPOnlyShadowTest(st) {
 		return nil
@@ -136,105 +120,6 @@ func int32ToUint16Ports(ports []int32) []uint16 {
 		}
 	}
 	return out
-}
-
-// ── PixieStreamRule (egress only) ──────────────────────────────────────────
-
-func buildPixieStreamRuleSpec(
-	st *enginev1alpha1.ShadowTest,
-	shadowNS string,
-	target *appsv1.Deployment,
-) enginev1alpha1.PixieStreamRuleSpec {
-	// OTelEndpoint is intentionally left empty: ingress capture is now handled
-	// by KaiselRule + the kaisel eBPF daemon, not pixie-gate.
-	spec := enginev1alpha1.PixieStreamRuleSpec{
-		ShadowTestRef:        st.Namespace + "/" + st.Name,
-		Active:               true,
-		TargetNamespace:      targetNamespaceFor(st),
-		TargetLabels:         copyStringMap(target.Spec.Template.Labels),
-		MaxPayloadSize:       defaultPixieMaxPayloadSize,
-		SamplePercentage:     samplePercentage(st),
-		RecorderOTelEndpoint: shadowRecorderOTelEndpoint(st, shadowNS),
-	}
-	if hasMongoDependency(st) {
-		spec.ShadowNamespace = shadowNS
-		spec.MongoOTelEndpoint = fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruOTLPPort)
-	}
-	return spec
-}
-
-func (r *ShadowTestReconciler) reconcilePixieStreamRule(
-	ctx context.Context,
-	st *enginev1alpha1.ShadowTest,
-	shadowNS string,
-	target *appsv1.Deployment,
-) error {
-	rule := &enginev1alpha1.PixieStreamRule{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: st.Namespace,
-			Name:      pixieStreamRuleName(st),
-			Labels: map[string]string{
-				labelManagedBy:      valueManagedBy,
-				labelShadowTestName: st.Name,
-			},
-		},
-	}
-	spec := buildPixieStreamRuleSpec(st, shadowNS, target)
-	_, err := ctrl.CreateOrPatch(ctx, r.Client, rule, func() error {
-		rule.Labels = map[string]string{
-			labelManagedBy:      valueManagedBy,
-			labelShadowTestName: st.Name,
-		}
-		rule.Spec = spec
-		if err := controllerutil.SetControllerReference(st, rule, r.Scheme); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	if err := r.Get(ctx, pixieStreamRuleKey(st), rule); err != nil {
-		return err
-	}
-	if rule.Status.Phase == "Active" {
-		return nil
-	}
-	base := rule.DeepCopy()
-	rule.Status.Phase = "Active"
-	return r.Status().Patch(ctx, rule, client.MergeFrom(base))
-}
-
-func (r *ShadowTestReconciler) deactivatePixieStreamRule(ctx context.Context, st *enginev1alpha1.ShadowTest) error {
-	key := pixieStreamRuleKey(st)
-	var rule enginev1alpha1.PixieStreamRule
-	if err := r.Get(ctx, key, &rule); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-	base := rule.DeepCopy()
-	rule.Spec.Active = false
-	if err := r.Patch(ctx, &rule, client.MergeFrom(base)); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-	if err := r.Get(ctx, key, &rule); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-	rule.Status.Phase = "Inactive"
-	return r.Status().Update(ctx, &rule)
-}
-
-func (r *ShadowTestReconciler) deletePixieStreamRule(ctx context.Context, st *enginev1alpha1.ShadowTest) error {
-	rule := &enginev1alpha1.PixieStreamRule{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: st.Namespace,
-			Name:      pixieStreamRuleName(st),
-		},
-	}
-	if err := r.Delete(ctx, rule); err != nil && !apierrors.IsNotFound(err) {
-		return err
-	}
-	return nil
 }
 
 // ── KaiselRule (ingress capture) ───────────────────────────────────────────
@@ -388,7 +273,7 @@ func portSetsEqual(a, b []uint16) bool {
 	return true
 }
 
-// ── reconcileKaiselCapture (Pixie egress rule + KaiselRule ingress) ─────────
+// ── reconcileKaiselCapture (KaiselRule: ingress + egress) ──────────────────
 
 func (r *ShadowTestReconciler) reconcileKaiselCapture(
 	ctx context.Context,
@@ -398,11 +283,6 @@ func (r *ShadowTestReconciler) reconcileKaiselCapture(
 ) (captureTargets []string, phase string, err error) {
 	labels := copyStringMap(target.Spec.Template.Labels)
 
-	// Egress recording still uses PixieStreamRule for recorderOtelEndpoint
-	// and mongoOtelEndpoint. The ingress OTelEndpoint is left empty.
-	if err := r.reconcilePixieStreamRule(ctx, st, shadowNS, target); err != nil {
-		return formatCaptureTargets(labels), "Degraded", err
-	}
 	if err := r.reconcileKaiselRule(ctx, st, shadowNS, target); err != nil {
 		return formatCaptureTargets(labels), "Degraded", err
 	}

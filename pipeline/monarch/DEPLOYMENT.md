@@ -1,6 +1,6 @@
 # Monarch — Deployment manual
 
-This guide explains how to install Monarch and use a **`ShadowTest`** custom resource to provision the shadow stack: three shadow Deployments (with Envoy sidecars), optional **Igris** / **igris-rabbitmq**, **Kaisel** capture, **Recorder** + egress proxy, and ephemeral **dependencies**.
+This guide explains how to install Monarch and use a **`ShadowTest`** custom resource to provision the shadow stack: three shadow Deployments (with Envoy sidecars), optional **Igris** / **igris-rabbitmq**, **Kaisel** capture, **Shop** + egress proxy, and ephemeral **dependencies**.
 
 Monarch does **not** replace your production Deployment. You keep an existing **target** Deployment; Monarch reads it and creates isolated shadow workloads in a dedicated namespace.
 
@@ -16,7 +16,6 @@ For each `ShadowTest`, Monarch reconciles resources in two places:
 |----------|-----------|
 | **Shadow namespace** `shadow-<cr-namespace>-<cr-name>` | `<name>-control-a`, `-control-b`, `-candidate` Deployments + Services (Envoy sidecar + app) |
 | Same shadow namespace | **Igris** Deployment + Service (HTTP/TCP ingress) *or* **igris-rabbitmq** (AMQP ingress) |
-| Same shadow namespace | **Recorder** Deployment + ConfigMap (always (Shop+Recorder always-on)) |
 | Same shadow namespace | **egress-relay-rabbitmq** Deployment (ShadowTests with a RabbitMQ `dependencies[]` entry, or AMQP ingress) |
 | Same shadow namespace | Per-role **dependency** Deployments + Services (Redis, RabbitMQ, etc.) |
 | **`kaisel-system`** (cluster-wide) | **Kaisel** DaemonSet (eBPF ingress capture) |
@@ -32,7 +31,7 @@ Each shadow app pod (when egress is enabled) gets `HTTP_PROXY` / `HTTPS_PROXY` �
 2. **Target Deployment** in the cluster (`spec.targetDeployment` / `spec.targetNamespace`).
 3. **Container images** pullable by the cluster:
    - Shadow apps: `oldImage`, `newImage`
-   - Helper images (Igris, Recorder, AMQP relays): resolved by Monarch — see **Helper image resolution** below. Optional CR overrides (`spec.igris`, etc.) or operator env vars still work.
+   - Helper images (Igris, Shop, AMQP relays): resolved by Monarch — see **Helper image resolution** below. Optional CR overrides (`spec.igris`, etc.) or operator env vars still work.
 4. **Beru** deployed (e.g. `kubectl apply -f pipeline/beru/deploy/`) in `beru-system`.
 5. **Kaisel DaemonSet** (once per cluster):
    ```bash
@@ -54,14 +53,14 @@ Monarch resolves helper container images at reconcile time:
 
 | Precedence | Source |
 |------------|--------|
-| 1 | ShadowTest CR override (`spec.igris.image`, `spec.recorder.image`, …) |
-| 2 | Operator env var (`IGRIS_HTTP_IMAGE`, `RECORDER_IMAGE`, …) |
+| 1 | ShadowTest CR override (`spec.igris.image`, `spec.shop.image`, …) |
+| 2 | Operator env var (`IGRIS_HTTP_IMAGE`, `SHOP_IMAGE`, …) |
 | 3 | Default base + tag from **`MONARCH_MODE`** on the operator Deployment |
 
 | `MONARCH_MODE` | Tag suffix | Example defaults |
 |----------------|------------|------------------|
-| `dev` or `development` | `:dev` | `igris-http:dev`, `recorder:dev` |
-| unset / `prod` / `production` | `:latest` | `igris-http:latest`, `recorder:latest`, … |
+| `dev` or `development` | `:dev` | `igris-http:dev`, `shop:dev` |
+| unset / `prod` / `production` | `:latest` | `igris-http:latest`, `shop:latest`, … |
 
 **Minikube E2E:** `./testing/tools/e2e-reset-minikube.sh` sets `MONARCH_MODE=dev` and rollout-restarts the operator after loading images. Use `MONARCH_NO_CACHE=1` when rebuilding Monarch to avoid stale Docker cache under the same tag.
 
@@ -159,7 +158,7 @@ spec:
 
 ### Full HTTP + Kaisel + egress example
 
-See `testing/bats/manifests/e2e-shadowtest.yaml` — `inputs`, optional ports only (no `igris` / `recorder` image blocks when `MONARCH_MODE=dev` is set on the operator).
+See `testing/bats/manifests/e2e-shadowtest.yaml` — `inputs`, optional ports only (no `igris` / `shop` image blocks when `MONARCH_MODE=dev` is set on the operator).
 
 ```bash
 kubectl apply -f testing/bats/manifests/e2e-shadowtest.yaml
@@ -220,20 +219,19 @@ Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`** and se
 | Field | Description |
 |-------|-------------|
 | _(implicit)_ | HTTP/TCP inputs that match target ports enable KaiselRule capture |
-| `samplePercentage` | Shared prod gate for all input types (`(V*100)<(N*256)`, 1–100; default `100`). HTTP → Kaisel + Pixie egress / Recorder; `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). Empty `traceparent` dropped. RabbitMQ does not use Kaisel. |
+| `samplePercentage` | Shared prod gate for all input types (`(V*100)<(N*256)`, 1–100; default `100`). HTTP → Kaisel (ingress and egress); `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). Empty `traceparent` dropped. RabbitMQ does not use Kaisel. |
 
-Monarch reconciles `KaiselRule` for HTTP ingress and `PixieStreamRule` for egress/recorder. **`status.kaiselPhase`**: `Ready` or `Degraded`.
+Monarch reconciles `KaiselRule` for both HTTP ingress and HTTP egress. **`status.kaiselPhase`**: `Ready` or `Degraded`.
 
-### Egress — Shop + Recorder (always-on)
+### Egress — Shop (always-on)
 
 | Field | Description |
 |-------|-------------|
-| `shop` / `recorder` | Optional image overrides for always-on Shop + Recorder |
+| `shop` | Optional image override for the always-on Shop |
 
-**Removed:** `spec.recordAndReplay` — Recorder forwards all OTLP HTTP spans to Shop; Envoy `shop_ext_proc` always does egress mock lookup.
-| `recorder.image` | Default `recorder:latest` / `recorder:dev` |
+Envoy `shop_ext_proc` always performs the egress mock lookup.
 
-Monarch always deploys Shop then Recorder in the shadow namespace. Pixie egress OTLP seeds Shop via Recorder.
+Monarch always deploys Shop in the shadow namespace. Kaisel seeds it with captured prod egress pairs.
 
 ### Ephemeral dependencies — `dependencies`
 
@@ -279,7 +277,7 @@ While progressing, common `status.message` values include:
 
 - `waiting for shadow dependencies`
 - `waiting for igris-rabbitmq` / `waiting for egress-relay-rabbitmq`
-- `waiting for shadow Deployments` / `waiting for Igris` / `waiting for Recorder`
+- `waiting for shadow Deployments` / `waiting for Igris` / `waiting for Shop`
 
 ---
 
@@ -300,7 +298,6 @@ Expected Deployments in the shadow namespace (varies by spec):
 | `<name>-control-a`, `-control-b`, `-candidate` | Always |
 | `<name>-igris` | HTTP/TCP `inputs` (not AMQP-only) |
 | `<name>-igris-rabbitmq` | `rabbitmq_message` input |
-| `<name>-recorder` | Always |
 | `shop` | Always |
 | `<name>-egress-relay-rabbitmq` | RabbitMQ `dependencies[]` (HTTP or AMQP ingress) |
 | `<dep>-control-a`, etc. | Each `spec.dependencies` entry |
@@ -354,7 +351,7 @@ See `testing/tools/e2e-reset-minikube.sh` and `testing/bats/manifests/e2e-shadow
 - [ ] Monarch installed (`make -C pipeline/monarch deploy IMG=...`)
 - [ ] ShadowTest applied with correct images, ports, and `beruGRPCAddress`
 - [ ] `kubectl get st` shows `phase: Ready` and `shadowNamespace`
-- [ ] Three shadow Deployments (+ Igris/Recorder as configured) are Ready
+- [ ] Three shadow Deployments (+ Igris/Shop as configured) are Ready
 - [ ] `status.kaiselPhase: Ready` for HTTP ingress ShadowTests
 
 ---
@@ -376,7 +373,7 @@ See `testing/tools/e2e-reset-minikube.sh` and `testing/bats/manifests/e2e-shadow
 | `phase: Failed`, target not found | Wrong `targetDeployment` / `targetNamespace` | Fix spec; ensure Deployment exists |
 | `waiting for egress-relay-rabbitmq` | Image not loaded (Kind) | Build/load `egress-relay-rabbitmq:dev`; ensure `MONARCH_MODE=dev` on operator |
 | Stale `monarch:dev` (Docker cache) after controller changes | Pod still on old image digest | `docker build --no-cache` + `kubectl rollout restart` manager |
-| `kaiselPhase: Degraded` | KaiselRule / PixieStreamRule reconcile failed | Check Monarch logs; `kubectl get kaiselrule` |
+| `kaiselPhase: Degraded` | KaiselRule reconcile failed | Check Monarch logs; `kubectl get kaiselrule` |
 | Pods `ImagePullBackOff` | Missing image in cluster/registry | Fix image tags; `kind load docker-image ...` for local dev |
 | Shadow apps without OTel sidecar | Webhook fail-open or `otelInjection.enabled: false` | Install OTel operator or disable injection explicitly |
 | CR stuck deleting | Finalizer cleaning namespace / AMQP queue | Wait; `kubectl describe shadowtest` |

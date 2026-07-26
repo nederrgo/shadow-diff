@@ -44,7 +44,7 @@ setup_file() {
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
 
-  # Full shadow stack Ready (igris, beru-local, shop, recorder, three roles) + KaiselRule.
+  # Full shadow stack Ready (igris, beru-local, shop, three roles) + KaiselRule.
   wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-kaisel
   SHADOW_NS="$(shadow_namespace)"
   export SHADOW_NS
@@ -197,12 +197,6 @@ teardown_file() {
   bats_load_suite_state
   [[ -n "${SHADOW_NS:-}" ]] || fail "SHADOW_NS unset — setup did not reach Ready"
 
-  # Attribution first: Kaisel and Recorder both seed Shop and Put keeps the
-  # first 2xx, so a mock alone proves nothing about which path produced it.
-  # This suite installs no Pixie, so Recorder must be silent.
-  run kaisel_assert_recorder_did_not_seed
-  assert_success
-
   local trace_id
   run kaisel_prod_egress_call "/dep/echo"
   assert_success
@@ -212,11 +206,6 @@ teardown_file() {
   # arrived, validated, and was keyed exactly as the ext_proc replay path will
   # look it up — which a 200 from Shop alone would not show.
   run kaisel_assert_egress_recorded "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_HOST}:/dep/echo" 90
-  assert_success
-
-  # And still silent afterwards: the mock is Kaisel's, not a race it happened
-  # to win.
-  run kaisel_assert_recorder_did_not_seed
   assert_success
 }
 

@@ -18,7 +18,7 @@ This document serves as the core compass for the project. Every architectural de
 ## The Strategic Vision: Startups & Scaleups
 This tool is built for engineering teams where **time and focus are the scarcest resources**. Startups do not have massive Platform Engineering or DevOps teams to manage complex infrastructure, rebuild custom telemetry containers daily, or rewrite testing scripts whenever an application updates. 
 
-Therefore, our engineering decisions must always lean toward **centralized automation over manual coordination**. If a feature requires the user to remember a step, maintain an asset, or run an external script, that complexity must be refactored directly into our core Kubernetes control plane (`Monarch`). exepet for pixies for now.
+Therefore, our engineering decisions must always lean toward **centralized automation over manual coordination**. If a feature requires the user to remember a step, maintain an asset, or run an external script, that complexity must be refactored directly into our core Kubernetes control plane (`Monarch`).
 
 ---
 
@@ -44,7 +44,7 @@ Modern architectures are polyglot. The framework must treat runtime language dis
 The first rule of shadow testing is simple: **Do no harm**. If your testing framework slows down real user requests or risks crashing production, it is an immediate non-starter.
 * **The Rule**: Production capture must be entirely out-of-band and non-blocking. 
 * **Why this matters**: Heavy service meshes or inline application proxies add latency, eat up precious CPU/Memory resources, and introduce a terrifying blast radius—if the proxy hangs, production hangs. 
-* **Stack Isolation**: We strictly isolate proxy overhead to the shadow namespace where we can afford fine-grained proxy control. Production traffic capture is strictly restricted to kernel-level eBPF sniffing (via Pixie) for HTTP, or passive, native message duplication via broker-native routing keys for AMQP. If the capture pipeline experiences an issue, production remains completely untouched and stable.
+* **Stack Isolation**: We strictly isolate proxy overhead to the shadow namespace where we can afford fine-grained proxy control. Production traffic capture is strictly restricted to kernel-level eBPF sniffing (via Kaisel) for HTTP, or passive, native message duplication via broker-native routing keys for AMQP. If the capture pipeline experiences an issue, production remains completely untouched and stable.
 
 ### 5. Pragmatic Security & Data Isolation ("Guard the Data")
 Because Shadow-Diff replays real production traffic, it inherently processes live data belonging to real people. Protecting this data is a strict constraint, but security must never come at the expense of developer usability.

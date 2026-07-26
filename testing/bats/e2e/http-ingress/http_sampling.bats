@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# E2E proof: HTTP prod sampling at 10% (Kaisel + Pixie egress/Recorder defense, shared rule).
+# E2E proof: HTTP prod sampling at 10% (Kaisel ingress + egress, shared rule).
 # Golden keep: V=0x00; golden drop: V=0x1a.
 
 load '../../test_helper'
@@ -15,7 +15,6 @@ setup_file() {
   bats_begin_suite "bats-http-sampling" "default"
 
   ensure_platform_ready
-  bats_pixie_mongo_enabled || { echo "E2E requires Pixie (no pl namespace) — failing"; exit 1; }
   build_test_images_if_needed
   load_test_images_if_needed
 
@@ -39,8 +38,6 @@ setup_file() {
   bats_source_e2e_helpers
   wait_local_beru_rollout "$SHADOW_NS"
   bats_http_otel_firehose_ready
-  bats_wait_pixie_after_shadowtest "$SHADOWTEST" "$SHADOWTEST_NS" 1
-  bats_http_otel_restart_workers_for_pixie
   bats_http_otel_rollout_stack
 
   bats_suite_mark SETUP_COMPLETE 1
@@ -48,7 +45,6 @@ setup_file() {
 }
 
 @test "HTTP sampling: in-sample trace reaches Beru via Kaisel/igris" {
-  bats_http_otel_reverify_pixie
   run publish_prod_http "$SAMPLE_KEEP_TID"
   assert_success
   run beru_wait_log --grep="$(beru_log_no_regression "$SAMPLE_KEEP_TID")" --timeout=120
@@ -56,7 +52,6 @@ setup_file() {
 }
 
 @test "HTTP sampling: out-of-sample trace does not reach shadow workers" {
-  bats_http_otel_reverify_pixie
   run publish_prod_http "$SAMPLE_DROP_TID"
   assert_success
   sleep 25

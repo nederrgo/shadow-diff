@@ -1,4 +1,4 @@
-# HTTP sampling proof — samplePercentage: 10 (Kaisel + Pixie egress / Recorder)
+# HTTP sampling proof — samplePercentage: 10 (Kaisel ingress + egress)
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest
 metadata:

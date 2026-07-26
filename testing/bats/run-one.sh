@@ -36,7 +36,7 @@ Usage: $(basename "$0") <path-under-testing/bats/> [bats options...]
 Examples:
   $(basename "$0") e2e/rabbitmq-ingress/python_hybrid.bats
   $(basename "$0") e2e/rabbitmq-ingress/python_hybrid.bats -f 'RabbitMQ egress'
-  $(basename "$0") integration/mongo_egress.bats -f 'PixieStreamRule'
+  $(basename "$0") integration/monarch/http_input.bats -f 'KaiselRule'
 
 Jest-like output when BATS_PARALLEL_JOBS=1 (default) on a TTY, or BATS_REPORTER=spec.
 EOF

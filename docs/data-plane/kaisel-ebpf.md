@@ -395,13 +395,10 @@ seed and lookup agree. They match the key itself rather than a `hash=` prefix,
 because `slog` quotes any value containing `=`: a key carrying a query string is
 logged as `hash="…?active=true"` while one without is logged bare.
 
-**Attribution.** Kaisel and the Pixie→Recorder path both POST to the same
-`/v1/record_egress`, and `MockStore.Put` keeps the first 2xx, so observing a mock
-says nothing about which path produced it. Two things resolve that: the suite
-installs no Pixie, so Recorder receives no OTLP and is asserted silent
-(`kaisel_assert_recorder_did_not_seed`); and the logged `hash` proves Kaisel
-itself captured, paired and keyed the record correctly regardless of which copy
-`Put` ultimately stored.
+**Attribution.** Kaisel is the only writer to `/v1/record_egress`, so a mock in
+Shop can only have come from it. The logged `hash` is Shop's own computed key,
+which additionally proves the record was keyed exactly as the ext_proc replay
+path will look it up.
 
 The prod workload is `testing/example-apps/egress-test-app`: one binary serving
 both roles, `/egress/*` as the caller (propagating the inbound trace context onto

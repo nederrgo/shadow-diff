@@ -2,7 +2,7 @@
 
 **egress-relay-rabbitmq** is the **L4a — analysis ingest** service for **AMQP egress diffing** in Shadow-Diff. It subscribes to **RabbitMQ Firehose** on each **shadow broker** (control-a, control-b, candidate), extracts trace ids from published message headers, and posts egress reports to Beru so Beru can run **diff-of-diffs** on outbound AMQP payloads across the three roles.
 
-This observes **shadow** broker publishes only — not production traffic. It is separate from **Recorder (L4b)**, which records prod HTTP egress via Pixie → Recorder, and from **Envoy ingress `ext_proc`**, which handles HTTP response diffing.
+This observes **shadow** broker publishes only — not production traffic. It is separate from **Kaisel (L4b)**, which records prod HTTP egress off the wire, and from **Envoy ingress `ext_proc`**, which handles HTTP response diffing.
 
 See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) for the full pipeline.
 
@@ -199,6 +199,6 @@ See [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md)
 
 - [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — L4a AMQP egress vs L4b HTTP record/replay
 - [pipeline/igrises/README.md](../igrises/README.md) — igris-rabbitmq (L2 AMQP ingress)
-- [pipeline/recorder/README.md](../recorder/README.md) — L4b prod HTTP egress record (different path)
+- [pipeline/kaisel/README.md](../kaisel/README.md) — L4b prod HTTP egress record (different path)
 - [pipeline/beru/README.md](../beru/README.md) — egress diff API and diff-of-diffs
 - [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — `spec.egressRelayRabbitmq`

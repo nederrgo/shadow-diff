@@ -11,6 +11,8 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-26]
 ### Added
+* 'testing/bats/lib/platform.bash': Dropped the cluster-wide Beru health gate and bootstrap deploy — no suite points a ShadowTest at beru-system; beru-local (same image) is provisioned per ShadowTest
+* 'pipeline/pixie-gate,pipeline/recorder': Removed Pixie and Recorder — Kaisel is now the sole HTTP capture path; MongoDB egress diffing withdrawn while Beru's OTLP receiver, wire parser and diff stay dormant
 * 'docs/data-plane/kaisel-ebpf.md': Documented the egress pairing gate — evaluated on the request direction for both half-streams, and why reversing beats widening the predicate
 * 'testing/bats/lib/kaisel.bash': Match the egress mock key itself rather than a hash= prefix — slog quotes values containing '=', so a key with a query string logged as hash=... never matched the bare-prefix pattern
 * 'pipeline/kaisel/internal/decode': Fixed egress pairing gate — WantTransaction is evaluated on the request direction for both half-streams; asking with the response half's own flow tested the dependency address and discarded every response before it could pair

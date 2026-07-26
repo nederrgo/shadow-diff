@@ -15,9 +15,9 @@ KAISEL_PROD_PORT="8080"
 KAISEL_EGRESS_DEP_HOST="kaisel-egress-dep"
 
 # Self-contained platform setup for Kaisel E2E: builds + loads Monarch, Kaisel,
-# and the HTTP shadow-stack images (igris-http, beru, shop, recorder), installs
+# and the HTTP shadow-stack images (igris-http, beru, shop), installs
 # CRDs, and deploys the Monarch operator. Callers still deploy the Kaisel
-# DaemonSet via kaisel_daemonset_deploy. Does not install Pixie.
+# DaemonSet via kaisel_daemonset_deploy.
 #
 # Environment:
 #   SKIP_BUILD=1   skip docker build (images must already exist in cluster)
@@ -28,14 +28,13 @@ kaisel_setup_platform() {
   bats_init_env
 
   if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
-    echo "==> [kaisel] build images (monarch/kaisel/igris/beru/shop/recorder)"
+    echo "==> [kaisel] build images (monarch/kaisel/igris/beru/shop)"
     e2e_prepare_docker_build
     make -C "${REPO}/pipeline/monarch" docker-build IMG="${MONARCH_IMG}"
     make -C "${REPO}/pipeline/kaisel" docker-build KAISEL_IMG="${KAISEL_IMG}"
     make -C "${REPO}/pipeline/beru" docker-build BERU_IMG="${BERU_IMG}"
     make -C "${REPO}/pipeline/shop" docker-build SHOP_IMG="${SHOP_IMG}"
     make -C "${REPO}/pipeline/igrises/igris-http" docker-build IGRIS_IMG="${IGRIS_IMG}"
-    make -C "${REPO}/pipeline/recorder" docker-build RECORDER_IMG="${RECORDER_IMG}"
     make -C "${REPO}/testing/example-apps/egress-test-app" docker-build EGRESS_TEST_IMG="${EGRESS_TEST_IMG}"
   fi
 
@@ -51,7 +50,7 @@ kaisel_setup_platform() {
       docker pull nginx:alpine
     fi
     for img in "${MONARCH_IMG}" "${KAISEL_IMG}" "${BERU_IMG}" "${SHOP_IMG}" \
-      "${IGRIS_IMG}" "${RECORDER_IMG}" "${EGRESS_TEST_IMG}" nginx:alpine; do
+      "${IGRIS_IMG}" "${EGRESS_TEST_IMG}" nginx:alpine; do
       e2e_load_image "${img}"
     done
   fi
@@ -359,29 +358,32 @@ kaisel_assert_egress_recorded() {
   return 1
 }
 
-# Prove Recorder seeded nothing, so a mock in Shop can only have come from
-# Kaisel.
+
+# Wait until Kaisel has recorded an egress transaction into Shop.
 #
-# Kaisel and Recorder both POST to Shop's /v1/record_egress, and MockStore.Put
-# keeps the first 2xx -- so observing a mock says nothing about which path
-# produced it. This suite installs no Pixie, so Recorder gets no OTLP and seeds
-# nothing; asserting that here turns an implicit property of the setup into a
-# checked one, which is what keeps the egress tests meaningful if Pixie is ever
-# added to this suite.
-# Usage: kaisel_assert_recorder_did_not_seed
-kaisel_assert_recorder_did_not_seed() {
-  local shadow_ns="${SHADOW_NS:?SHADOW_NS unset}"
-  local logs
-  logs=$(kubectl logs -l app.kubernetes.io/name=recorder -n "$shadow_ns" \
-    --tail=500 2>/dev/null || true)
-  if [[ -z "$logs" ]]; then
-    echo "    recorder produced no logs at all (no Pixie in this suite)" >&2
-    return 0
-  fi
-  if echo "$logs" | grep -q "shop client: recorded"; then
-    echo "FAIL: Recorder seeded Shop, so an egress mock cannot be attributed to Kaisel" >&2
-    echo "$logs" | grep "shop client: recorded" >&2
-    return 1
-  fi
-  return 0
+# Egress mocks are seeded by Kaisel off the wire. The guard exists
+# because seeding is asynchronous — a test that asserts on a replayed mock
+# before it lands fails for a reason that has nothing to do with the behaviour
+# under test.
+#
+# Matches the mock key, not a "hash=" prefix: slog quotes values containing '=',
+# so a key with a query string is logged as hash="..." and one without is logged
+# bare.
+# Usage: wait_kaisel_egress_seed [grep_pattern] [timeout_seconds]
+wait_kaisel_egress_seed() {
+  local pattern="${1:-${HTTP_RECORD_HOST}:${HTTP_RECORD_PATH}}"
+  local timeout="${2:-120}"
+  local elapsed=0 logs
+
+  echo "==> [kaisel] wait egress seed: ${pattern} (timeout=${timeout}s)" >&2
+  while (( elapsed < timeout )); do
+    logs=$(kubectl logs -l app=kaisel -n "$KAISEL_NS" --tail=800 2>/dev/null || true)
+    if echo "$logs" | grep '"egress recorded"' | grep -q "$pattern"; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  echo "    kaisel egress seed not observed for: ${pattern}" >&2
+  return 1
 }

@@ -3,13 +3,9 @@ MONARCH_DIR := pipeline/monarch
 BERU_DIR := pipeline/beru
 SHOP_DIR := pipeline/shop
 IGRIS_DIR := pipeline/igrises/igris-http
-RECORDER_DIR := pipeline/recorder
-PIXIE_GATE_DIR := pipeline/pixie-gate
 KAISEL_DIR := pipeline/kaisel
 IGRIS_RABBITMQ_DIR := pipeline/igrises/igris-rabbitmq
 EGRESS_RELAY_RABBITMQ_DIR := pipeline/egress-relay-rabbitmq
-RECORDER_IMG ?= recorder:latest
-PIXIE_GATE_IMG ?= pixie-gate:latest
 KAISEL_IMG ?= kaisel:latest
 IGRIS_RABBITMQ_IMG ?= igris-rabbitmq:latest
 EGRESS_RELAY_RABBITMQ_IMG ?= egress-relay-rabbitmq:latest
@@ -28,8 +24,6 @@ $(MONARCH_TARGETS):
 	@$(MAKE) -C $(MONARCH_DIR) $(MAKECMDGOALS) IMG=$(IMG) BERU_IMG=$(BERU_IMG)
 
 .PHONY: beru-test beru-build igris-test igris-build igris-docker-build \
-	recorder-test recorder-build recorder-docker-build \
-	pixie-gate-test pixie-gate-build pixie-gate-docker-build \
 	kaisel-test kaisel-build kaisel-docker-build kaisel-generate kaisel-verify-generate \
 	igris-rabbitmq-test igris-rabbitmq-build igris-rabbitmq-docker-build \
 	nodejs-test-worker-docker-build python-test-worker-docker-build \
@@ -57,24 +51,6 @@ igris-build: ## Build Igris binary.
 
 igris-docker-build: ## Build Igris container image.
 	@$(MAKE) -C $(IGRIS_DIR) docker-build IGRIS_IMG=$(IGRIS_IMG)
-
-recorder-test: ## Run Recorder unit tests.
-	@$(MAKE) -C $(RECORDER_DIR) test
-
-recorder-build: ## Build Recorder binary.
-	@$(MAKE) -C $(RECORDER_DIR) build
-
-recorder-docker-build: ## Build Recorder container image.
-	@$(MAKE) -C $(RECORDER_DIR) docker-build RECORDER_IMG=$(RECORDER_IMG)
-
-pixie-gate-test: ## Run pixie-gate unit tests.
-	@$(MAKE) -C $(PIXIE_GATE_DIR) test
-
-pixie-gate-build: ## Build pixie-gate binary.
-	@$(MAKE) -C $(PIXIE_GATE_DIR) build
-
-pixie-gate-docker-build: ## Build pixie-gate container image.
-	@$(MAKE) -C $(PIXIE_GATE_DIR) docker-build PIXIE_GATE_IMG=$(PIXIE_GATE_IMG)
 
 kaisel-test: ## Run kaisel unit tests.
 	@$(MAKE) -C $(KAISEL_DIR) test
@@ -120,13 +96,11 @@ egress-relay-rabbitmq-build: ## Build egress-relay-rabbitmq binary.
 egress-relay-rabbitmq-docker-build: ## Build egress-relay-rabbitmq container image.
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) docker-build EGRESS_RELAY_RABBITMQ_IMG=$(EGRESS_RELAY_RABBITMQ_IMG)
 
-test-all: ## Run Monarch, Beru, Shop, Igris, Recorder, pixie-gate, kaisel, igris-rabbitmq, and egress-relay-rabbitmq tests.
+test-all: ## Run Monarch, Beru, Shop, Igris, kaisel, igris-rabbitmq, and egress-relay-rabbitmq tests.
 	@$(MAKE) -C $(MONARCH_DIR) test
 	@$(MAKE) -C $(BERU_DIR) test
 	@$(MAKE) -C $(SHOP_DIR) test
 	@$(MAKE) -C $(IGRIS_DIR) test
-	@$(MAKE) -C $(RECORDER_DIR) test
-	@$(MAKE) -C $(PIXIE_GATE_DIR) test
 	@$(MAKE) -C $(KAISEL_DIR) test
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test

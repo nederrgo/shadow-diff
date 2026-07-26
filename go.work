@@ -7,8 +7,6 @@ use (
 	./pipeline/igrises/igris-rabbitmq
 	./pipeline/kaisel
 	./pipeline/monarch
-	./pipeline/pixie-gate
-	./pipeline/recorder
 	./pipeline/shop
 	./testing/example-apps/db-test-app
 )

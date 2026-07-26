@@ -393,22 +393,13 @@ spec:
                   OldImage is the container image for Control-A and Control-B pods.
                   When unset, Monarch derives it from the target Deployment's current running image.
                 type: string
-              recorder:
-                description: Recorder overrides the Recorder image (always provisioned
-                  per shadow namespace).
-                properties:
-                  image:
-                    description: Image overrides the default Recorder container image.
-                    type: string
-                type: object
               samplePercentage:
                 description: |-
                   SamplePercentage is the shared prod sampling gate (1-100, default 100) for
                   all input types. Uses (V*100)<(N*256) on the W3C trace id; empty/missing
                   traceparent is always dropped. Monarch seeds it by inputs[].driver: HTTP →
-                  KaiselRule (ingress) + Pixie egress / Recorder; rabbitmq_message →
-                  igris-rabbitmq (IGRIS_RMQ_SAMPLE_PERCENTAGE). RabbitMQ does not use Kaisel.
-                  Does not apply to shadow-pod Mongo capture.
+                  KaiselRule (ingress and egress); rabbitmq_message → igris-rabbitmq
+                  (IGRIS_RMQ_SAMPLE_PERCENTAGE). RabbitMQ does not use Kaisel.
                 maximum: 100
                 minimum: 1
                 type: integer

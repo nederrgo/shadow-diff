@@ -1,6 +1,6 @@
 # ShadowTest tuned for Minikube E2E: prod (port 80) -> Kaisel -> Igris:80 -> Envoy:8888 -> echo:80 -> Beru
 #
-# Shop + Recorder are always-on (no spec.recordAndReplay).
+# Shop is always-on (no spec.recordAndReplay).
 #
 # Apply:
 #   kubectl apply -f testing/bats/manifests/e2e-shadowtest.yaml

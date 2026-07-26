@@ -12,7 +12,7 @@ Monarch provisions Beru automatically. When `spec.beruGRPCAddress` is unset, Mon
 | Path                     | How Beru receives data                          | What Beru does                                                       |
 | ------------------------ | ----------------------------------------------- | -------------------------------------------------------------------- |
 | **Ingress (HTTP)**       | Envoy sidecar **ingress `ext_proc`** (gRPC)     | Collects one response per role per trace → **diff-of-diffs**         |
-| **Egress diff (MongoDB)** | Pixie eBPF on MongoDB server pods → pixie-gate → **beru-local OTLP `:4317`** | Appends spans per trace → **sequence diff** with N+1 detection (re-diff on each arrival) |
+| **Egress diff (MongoDB)** | **Dormant** — OTLP `:4317` receiver retained, no capture path produces spans | Sequence diff with N+1 detection remains implemented and unit-tested |
 | **Egress diff (AMQP)**   | **egress-relay-rabbitmq** HTTP API              | Compares outbound broker publishes across the three roles (same sequence engine) |
 
 
@@ -192,24 +192,19 @@ Protobuf: `[api/proto/beru/v1/traffic.proto](api/proto/beru/v1/traffic.proto)` (
 
 **Egress (egress-relay-rabbitmq):** trace id from AMQP message headers (`traceparent` or `traceparent`). Payload includes `exchange`, `routing_key`, and `body` (message JSON) for signatures like `rabbitmq:publish:egress-events:order.shipped`.
 
-### MongoDB egress (Pixie eBPF)
+### MongoDB egress (dormant)
 
-Monarch sets `PixieStreamRule.mongoOtelEndpoint` to `beru-local.<shadow-ns>.svc.cluster.local:4317` when a MongoDB dependency is declared. The capture path is entirely server-side — no application instrumentation required:
+The OTLP receiver on `:4317`, the MongoDB wire-payload parser and the sequence
+diff are all present and unit-tested, but **no capture path currently produces
+MongoDB spans** — that half was removed with Pixie. See
+[/data-plane/pixie-removal.md](../../docs/data-plane/pixie-removal.md).
 
-1. **Pixie PEM** captures `mongodb_events` on the MongoDB server pods (`trace_role == 2`, wire-protocol bytes).
-2. **pixie-gate** runs `mongodb-export.pxl.tmpl` — filters by shadow namespace and presence of `"comment"` in `req_body`, then exports OTLP to beru-local.
-3. **Beru OTLP receiver** reads `db.raw_payload` (two-object MongoDB wire format: command doc + document body), extracts the `traceparent` injected by the worker into the `$comment` field, and derives the shadow role from the MongoDB pod name pattern.
-4. Beru strips `_id`, `lsid`, `comment`, and `$db` from the document body before diffing.
-
-The signature `mongodb:{operation}:{collection}` is derived from the wire command doc (e.g. `{"insert":"orders",…}` → `mongodb:insert:orders`). Beru deduplicates Pixie re-exports by span start time (pixie-gate runs every 3 s over a rolling window).
-
-Example: control-a and control-b each perform one `insert` into `orders`; the candidate performs that insert plus an extra `insert` → Beru logs `Egress count regression … expected 1 query but got 2`.
-
-**Known limitations:** `getMore` continuations share the parent `find` signature; operations without a `$comment` field are skipped (no trace correlation).
-
-See `make test-bats-e2e` and `make test-bats-integration`.
-
----
+The parser reads raw MongoDB wire bytes from a `db.raw_payload` OTLP attribute
+and derives the signature `mongodb:{operation}:{collection}` from the wire
+command doc (e.g. `{"insert":"orders",…}` → `mongodb:insert:orders`). The trace
+id comes from a `traceparent` the application injects into the MongoDB
+`$comment` field. Any future capture path that emits that shape can point at the
+same unchanged port.
 
 ## Project layout
 
@@ -222,7 +217,7 @@ internal/
     diff/              Signature-based timeline evaluation
     report/            RawReport builders (ingress, egress, signatures)
   envoyextproc/        Envoy ext_proc (ingress observe → TraceRouter)
-  otlp/                OTLP trace receiver + MongoDB wire payload parser (Pixie eBPF path)
+  otlp/                OTLP trace receiver + MongoDB wire payload parser (dormant)
   diff/                JSON diff-of-diffs (ingress noise paths; noise filter tests)
   api/                 HTTP handlers (OTLP, egress diff)
   dashboard/           Embedded web UI + REST API (reads v2 tables)
@@ -253,7 +248,6 @@ Root Makefile aliases: `make beru-build`, `make beru-test`, and Monarch's `make 
 | Path | How trace reaches Beru |
 | ---- | ---------------------- |
 | **HTTP ingress (Igris → Envoy)** | Igris injects W3C `traceparent` on multicast; Envoy ingress `ext_proc` reports responses. Apps usually need no trace code. |
-| **Mongo egress (Pixie → Beru)** | Pixie eBPF captures MongoDB wire bytes on server pods; pixie-gate exports OTLP to beru-local `:4317`. Workers inject `traceparent` into the MongoDB `$comment` field — no other app instrumentation required. |
 | **RabbitMQ egress (relay)** | Workers publish with W3C context (OTel `amqplib` / `pika` injection); egress-relay-rabbitmq reads Firehose and posts to Beru HTTP API (dedupes duplicate Firehose events by trace+span+payload). |
 
 RabbitMQ egress-relay deduplicates duplicate Firehose publishes (by trace+span+payload). Manual `traceparent` propagation is supported for libraries that cannot auto-inject — see `testing/example-apps/rmq-test-worker` with `RMQ_WORKER_MANUAL_TRACE=1`.
@@ -263,6 +257,6 @@ RabbitMQ egress-relay deduplicates duplicate Firehose publishes (by trace+span+p
 ## Related reading
 
 - [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — layers, data flow, Envoy sidecar roles
-- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — ShadowTest `beruGRPCAddress`; always-on Shop+Recorder egress replay
+- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — ShadowTest `beruGRPCAddress`; always-on Shop egress replay
 - [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) — end-to-end verification steps
 

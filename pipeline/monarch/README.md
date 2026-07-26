@@ -1,8 +1,8 @@
 # Monarch
 
-**Monarch** is the **control plane** for Shadow-Diff — it orchestrates **L0 through L5** from a single **`ShadowTest`** custom resource. The Kubebuilder operator reads your production target Deployment, provisions an isolated shadow namespace with three roles (control-a, control-b, candidate), and wires Pixie capture, Igris, Kaisel, Shop, Recorder, AMQP relays, Envoy sidecars, and dependencies.
+**Monarch** is the **control plane** for Shadow-Diff — it orchestrates **L0 through L5** from a single **`ShadowTest`** custom resource. The Kubebuilder operator reads your production target Deployment, provisions an isolated shadow namespace with three roles (control-a, control-b, candidate), and wires Kaisel capture, Igris, Shop, AMQP relays, Envoy sidecars, and dependencies.
 
-Monarch does **not** run diffing or store traces (**Beru** does that). Shadow pods are **Envoy-only** (app + sidecar); apps must already propagate W3C `traceparent`. You install Pixie Vizier, pixie-gate, and (optionally) shared Beru separately; Monarch reconciles `PixieStreamRule` and cluster DNS wiring.
+Monarch does **not** run diffing or store traces (**Beru** does that). Shadow pods are **Envoy-only** (app + sidecar); apps must already propagate W3C `traceparent`. You install the Kaisel DaemonSet and (optionally) shared Beru separately; Monarch reconciles `KaiselRule` and cluster DNS wiring.
 
 See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) for layer definitions and data flow.
 
@@ -19,8 +19,8 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
                     │  Monarch reconciler          │
                     │  monarch-system              │
                     └──┬───┬───┬───┬───┬───┬───┬──┘
-         L1 PixieStreamRule ◄──┘   │   │   │   │   │   └──► L2 igris-rabbitmq
-         L4b Shop + Recorder ◄─┘   │   │   │   └──────► L4a egress-relay-rabbitmq
+         L1 KaiselRule ◄───────┘   │   │   │   │   │   └──► L2 igris-rabbitmq
+         L4b Shop ◄─────────────┘   │   │   │   └──────► L4a egress-relay-rabbitmq
                                │   │   └──────────► L2 igris-http
                                │   └──────────────► L3 shadow Deployments + Envoy
                                └──────────────────► prod AMQP queue bind (L1)
@@ -28,11 +28,11 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 
 | Layer | What Monarch provisions or configures |
 | ----- | ------------------------------------- |
-| **L1 Capture** | `KaiselRule` (HTTP ingress → igris-http) + `PixieStreamRule` (egress `recorderOtelEndpoint`; mongo when deps; ingress `otelEndpoint` empty); prod RabbitMQ shadow queue + bind (AMQP) |
+| **L1 Capture** | `KaiselRule` (HTTP ingress → igris-http, HTTP egress → Shop); prod RabbitMQ shadow queue + bind (AMQP) |
 | **L2 Ingress** | Igris Deployment (HTTP/TCP) **or** igris-rabbitmq (AMQP) |
 | **L3 Shadow stack** | Three app Deployments + Envoy sidecars + Services; iptables init → Envoy `:10001`; ephemeral **dependencies** per role |
 | **L4a Analysis ingest** | Envoy ConfigMaps → Beru gRPC / wire ingest; egress-relay-rabbitmq for AMQP tests |
-| **L4b Egress record/replay** | Always-on Shop + Recorder (`:4317` Pixie OTLP → Shop); Envoy `shop_ext_proc` |
+| **L4b Egress record/replay** | Always-on Shop (seeded by Kaisel); Envoy `shop_ext_proc` |
 | **L5 Beru** | Shared Beru via `spec.beruGRPCAddress`, or per-shadow **beru-local** when that field is unset |
 
 Shadow namespace name is deterministic: **`shadow-<crNamespace>-<crName>`** (see `shadowtest_helpers.go`).
@@ -52,20 +52,11 @@ One namespaced **`ShadowTest`** (`engine.shadow-diff.io/v1alpha1`) drives the fu
 | `beruIngestAddress` | Beru HTTP wire-ingest target (defaults with Beru resolution) |
 | `inputs[]` | Ingress drivers: `http_request`, `tcp_stream`, `rabbitmq_message` |
 | `dependencies[]` | Ephemeral Redis, RabbitMQ, MongoDB, etc. per role + env injection |
-| `samplePercentage` | Shared prod sampling gate (1–100, default 100): HTTP → Kaisel + Recorder; rabbitmq → igris-rabbitmq |
-| `shop` / `recorder` / `igris` / `igrisRabbitmq` / `egressRelayRabbitmq` | Optional component image/resource overrides (defaults via `MONARCH_MODE`) |
+| `samplePercentage` | Shared prod sampling gate (1–100, default 100): HTTP → Kaisel; rabbitmq → igris-rabbitmq |
+| `shop` / `igris` / `igrisRabbitmq` / `egressRelayRabbitmq` | Optional component image/resource overrides (defaults via `MONARCH_MODE`) |
 | `beru` | Optional beru-local image override |
 
 **`KaiselRule`** (HTTP ingress; namespaced with the ShadowTest): target pod IPs, ports, `igrisBaseURL`, `samplePercentage`.
-
-**`PixieStreamRule`** (created by Monarch, namespaced with the ShadowTest):
-
-| Field | When set |
-| ----- | -------- |
-| `otelEndpoint` | Always empty for HTTP ingress (Kaisel owns that path) |
-| `recorderOtelEndpoint` | Always → `<shadowtest>-recorder.<shadow-ns>:4317` |
-| `mongoOtelEndpoint` | Mongo dependency → `beru-local.<shadow-ns>:4317` |
-| `targetLabels` / `targetPorts` | Prod target labels; egress Pixie ports as needed |
 
 **Status:** `phase` (Ready / Progressing / Failed), `shadowNamespace`, `captureTargets`, `amqpQueueName`, `kaiselPhase`, `igrisEndpoint`, `igrisRabbitMQPhase`, `message`.
 
@@ -81,13 +72,13 @@ Field-level reference and examples: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 4. **AMQP path:** declare prod shadow queue → igris-rabbitmq → egress-relay-rabbitmq.
 5. **HTTP/TCP path:** Igris ConfigMap + Deployment + Service.
 6. For each role: Envoy ConfigMap + shadow Deployment (app + sidecar + iptables init) + Service.
-7. **Shop** then **Recorder** (always-on; Recorder `:4317` OTLP).
-8. **HTTP ingress capture:** `KaiselRule` when HTTP/TCP inputs match target ports; **Pixie egress:** `PixieStreamRule` for Recorder (+ mongo when deps).
+7. **Shop** (always-on).
+8. **HTTP capture:** `KaiselRule` — ingress when HTTP/TCP inputs match target ports, egress always (`egressBaseURL` → Shop).
 9. Patch status **Ready** when all gates pass.
 
-Deletion removes shadow namespace resources, prod AMQP queue (if applicable), `KaiselRule`, and `PixieStreamRule`.
+Deletion removes shadow namespace resources, prod AMQP queue (if applicable), and `KaiselRule`.
 
-**Capture runtime (outside Monarch):** install the **Kaisel** DaemonSet (`pipeline/kaisel/deploy/`) for HTTP ingress. Install Pixie Vizier and **pixie-gate** for HTTP egress / Mongo OTLP (`testing/bats/setup/setup-local-pixie.sh`).
+**Capture runtime (outside Monarch):** install the **Kaisel** DaemonSet (`pipeline/kaisel/deploy/`); it handles both HTTP ingress and HTTP egress.
 
 ### RabbitMQ shadow dependencies
 
@@ -99,14 +90,14 @@ When `dependencies[]` includes RabbitMQ (`AMQP_URL` injection), Monarch deploys 
 
 ```
 monarch/
-  api/v1alpha1/              ShadowTest + PixieStreamRule CRD types
+  api/v1alpha1/              ShadowTest + KaiselRule CRD types
   cmd/main.go                Operator entrypoint
   config/
-    crd/                     ShadowTest + PixieStreamRule CRD manifests
+    crd/                     ShadowTest + KaiselRule CRD manifests
     manager/                 Deployment kustomize
     rbac/                    ClusterRole for reconciler
     samples/                 Example ShadowTest YAML
-  internal/controller/       Reconciler (Envoy, Igris, Kaisel, Shop, Recorder, RabbitMQ, …)
+  internal/controller/       Reconciler (Envoy, Igris, Kaisel, Shop, RabbitMQ, …)
   DEPLOYMENT.md              Install guide + CRD field reference
 ```
 
@@ -117,7 +108,7 @@ monarch/
 From the repo root:
 
 ```sh
-make -C pipeline/monarch install          # CRDs (ShadowTest + PixieStreamRule)
+make -C pipeline/monarch install          # CRDs (ShadowTest + KaiselRule)
 make -C pipeline/monarch docker-build IMG=monarch:dev
 make -C pipeline/monarch deploy IMG=monarch:dev
 kubectl set env deployment/monarch-controller-manager -n monarch-system MONARCH_MODE=dev  # Kind/Minikube E2E: resolve :dev helper images
@@ -135,22 +126,20 @@ Verify:
 
 ```sh
 kubectl get pods -n monarch-system
-kubectl get crd shadowtests.engine.shadow-diff.io pixiestreamrules.engine.shadow-diff.io
+kubectl get crd shadowtests.engine.shadow-diff.io kaiselrules.engine.shadow-diff.io
 kubectl api-resources | grep shadowtest   # short name: st
-kubectl api-resources | grep pixiestreamrule   # short name: psr
+kubectl api-resources | grep kaiselrule   # short name: kr
 ```
 
-**Minikube E2E** (Pixie eBPF + OTLP):
+**Minikube E2E** (Kaisel eBPF):
 
 ```sh
-MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh
 ./testing/tools/e2e-reset-minikube.sh
-./testing/bats/setup/start-pixie-stream-bridge.sh
 make test-bats-integration      # HTTP ingress
-make test-bats-e2e              # full hybrid + HTTP egress → Recorder
+make test-bats-e2e              # full hybrid + HTTP egress → Shop
 ```
 
-Recommend **8GB+ Minikube memory** for the hybrid test (six dependency pods + three workers + igris + recorder + egress-relay).
+Recommend **8GB+ Minikube memory** for the hybrid test (six dependency pods + three workers + igris + egress-relay).
 
 ---
 
@@ -159,10 +148,9 @@ Recommend **8GB+ Minikube memory** for the hybrid test (six dependency pods + th
 | Component | Who installs | Monarch's role |
 | --------- | ------------ | -------------- |
 | **Beru** | You (`pipeline/beru/deploy/`), or omit `beruGRPCAddress` | Wire Envoy `ext_proc` / ingest; or provision **beru-local** |
-| **Pixie Vizier** | You (`testing/bats/setup/setup-local-pixie.sh`) | Reconciles `PixieStreamRule` targeting prod labels |
-| **pixie-gate** | You (`pipeline/pixie-gate/deploy/`) | Not deployed by Monarch — runs ingress + egress `px.export` |
+| **Kaisel DaemonSet** | You (`kubectl apply -k pipeline/kaisel/deploy/`) | Reconciles `KaiselRule` targeting prod pod IPs |
 | **Kaisel DaemonSet** | You (`pipeline/kaisel/deploy/`) | Monarch writes `KaiselRule` (target IPs, `igrisBaseURL`, `samplePercentage`) |
-| **Shop + Recorder** | Monarch (always) | Mock store + Pixie egress OTLP → `POST /v1/record_egress` |
+| **Shop** | Monarch (always) | Mock store seeded by Kaisel via `POST /v1/record_egress` |
 | **Production target** | You | Read-only mirror source; apps must propagate `traceparent` |
 
 ---
@@ -173,4 +161,4 @@ Recommend **8GB+ Minikube memory** for the hybrid test (six dependency pods + th
 - [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — layer stack and diagrams
 - [docs/control-plane/monarch-controller.md](../../docs/control-plane/monarch-controller.md) — Envoy-only shadow injection
 - [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) — E2E verification
-- Per-service READMEs: [Beru](../beru/README.md), [Igris](../igrises/README.md), [Kaisel](../kaisel/README.md), [Recorder](../recorder/README.md), [Shop](../shop/README.md), [egress-relay-rabbitmq](../egress-relay-rabbitmq/README.md)
+- Per-service READMEs: [Beru](../beru/README.md), [Igris](../igrises/README.md), [Kaisel](../kaisel/README.md), [Shop](../shop/README.md), [egress-relay-rabbitmq](../egress-relay-rabbitmq/README.md)

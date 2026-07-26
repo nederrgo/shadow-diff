@@ -15,7 +15,7 @@ Shadow-Diff E2E validation uses **bats-core** under [`testing/bats/`](https://gi
 
 | Bats hook | Phase | Responsibility |
 |-----------|-------|----------------|
-| `setup_file` | Platform + ShadowTest | `ensure_platform_ready`, prod deploy, ShadowTest CR, Pixie rule waits |
+| `setup_file` | Platform + ShadowTest | `ensure_platform_ready`, prod deploy, ShadowTest CR, KaiselRule waits |
 | `setup` | Isolation | `isolate_test_state` — fresh `BATS_TRACE_ID` per `@test` |
 | `@test` | Validation | Live traffic: `beru_wait_verdict_settled`; seed-only UI: `beru_assert_verdict_status` |
 | `teardown_file` | Teardown | `delete_shadowtest_and_verify` **then** prod undeploy (prod must stay up until ShadowTest finalizer completes RMQ queue cleanup) |
@@ -39,7 +39,6 @@ testing/bats/
   package.json            # tap-mocha-reporter pin (Jest-like output)
   debug-mongo-egress.sh   # interactive 5-layer egress diagnostic
 
-pipeline/pixie-gate/      # in-cluster PixieStreamRule → PxL gateway (platform infra)
 
 testing/tools/            # standalone developer utilities (not called by bats)
   e2e-reset-minikube.sh   # bootstrap a local minikube cluster from scratch
@@ -53,7 +52,7 @@ testing/tools/            # standalone developer utilities (not called by bats)
 - Minikube (kvm2/virtualbox)
 - Monarch CRDs + operator (`MONARCH_MODE=dev`)
 - Beru (`beru-system`)
-- Pixie Vizier + **continuous** pixie-gate (no per-test restart)
+- Kaisel DaemonSet (no per-test restart)
 - Kaisel DaemonSet (`pipeline/kaisel/deploy/`, also via `e2e-reset-minikube.sh`)
 
 Escape hatches: `SKIP_PLATFORM_BOOTSTRAP`, `SKIP_BUILD`, `SKIP_LOAD`, `BATS_FORCE_PLATFORM_BOOTSTRAP`.
@@ -134,6 +133,5 @@ See [`testing/bats/README.md`](https://github.com/shadow-diff/monarch/tree/main/
 - [/verification/http-ingress-e2e-flow.md](/verification/http-ingress-e2e-flow.md)
 - [`testing/bats/lib/platform.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/platform.bash)
 - [`testing/bats/lib/reporter.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/reporter.bash)
-- [`testing/bats/helpers/pixie-bridge.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/helpers/pixie-bridge.sh)
 - [`testing/bats/manifests/`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/manifests)
 - [`pipeline/beru/internal/v2/engine/router.go`](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2/engine/router.go)

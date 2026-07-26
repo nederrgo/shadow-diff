@@ -223,7 +223,7 @@ delete_shadowtest_and_verify() {
   SHADOWTEST="$name" SHADOWTEST_NS="$ns" \
     "${REPO}/testing/bats/setup/delete-shadowtest.sh" "$name" "$ns" || return 1
   assert_kubectl_not_found shadowtest "$name" -n "$ns" || return 1
-  assert_kubectl_not_found pixiestreamrule "pixie-${name}" -n "$ns" || return 1
+  assert_kubectl_not_found kaiselrule "kaisel-${name}" -n "$ns" || return 1
   local shadow_ns="shadow-${ns}-${name}"
   assert_kubectl_not_found namespace "$shadow_ns" || return 1
 }

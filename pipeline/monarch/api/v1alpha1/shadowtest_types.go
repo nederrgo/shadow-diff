@@ -88,13 +88,6 @@ type DependencySpec struct {
 	EnvVarInjection string `json:"envVarInjection"`
 }
 
-// RecorderSpec overrides the Recorder egress parser workload.
-type RecorderSpec struct {
-	// Image overrides the default Recorder container image.
-	// +optional
-	Image string `json:"image,omitempty"`
-}
-
 // BeruSpec overrides the beru-local analytics backend workload.
 type BeruSpec struct {
 	// Image overrides the default Beru container image.
@@ -221,17 +214,12 @@ type ShadowTestSpec struct {
 	// SamplePercentage is the shared prod sampling gate (1-100, default 100) for
 	// all input types. Uses (V*100)<(N*256) on the W3C trace id; empty/missing
 	// traceparent is always dropped. Monarch seeds it by inputs[].driver: HTTP →
-	// KaiselRule (ingress) + Pixie egress / Recorder; rabbitmq_message →
-	// igris-rabbitmq (IGRIS_RMQ_SAMPLE_PERCENTAGE). RabbitMQ does not use Kaisel.
-	// Does not apply to shadow-pod Mongo capture.
+	// KaiselRule (ingress and egress); rabbitmq_message → igris-rabbitmq
+	// (IGRIS_RMQ_SAMPLE_PERCENTAGE). RabbitMQ does not use Kaisel.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=100
 	// +optional
 	SamplePercentage int `json:"samplePercentage,omitempty"`
-
-	// Recorder overrides the Recorder image (always provisioned per shadow namespace).
-	// +optional
-	Recorder *RecorderSpec `json:"recorder,omitempty"`
 
 	// Beru overrides the beru-local image when spec.beruGRPCAddress is unset.
 	// +optional

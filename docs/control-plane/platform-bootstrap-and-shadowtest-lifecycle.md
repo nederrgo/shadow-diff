@@ -1,15 +1,15 @@
 ---
 type: Operations Guide
 title: Platform Bootstrap and ShadowTest Lifecycle
-description: How to install Monarch, Kaisel, Pixie Vizier, and pixie-gate once; create and delete ShadowTests without resetting the platform.
+description: How to install Monarch, Beru and Kaisel once; create and delete ShadowTests without resetting the platform.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
-tags: [operations, control-plane, monarch, kaisel, pixie, pixiestreamrule, shadowtest, deployment, pixie-gate]
+tags: [operations, control-plane, monarch, kaisel, kaiselrule, shadowtest, deployment]
 timestamp: 2026-07-25T19:40:00Z
 ---
 
 # Platform Bootstrap and ShadowTest Lifecycle
 
-Shadow-Diff splits **platform install** (once per cluster) from **ShadowTest lifecycle** (on demand). Kaisel, Pixie Vizier, and **pixie-gate** are cluster infrastructure — they are **not** torn down when a ShadowTest is deleted, and they do **not** need to be reinstalled or reset between tests.
+Shadow-Diff splits **platform install** (once per cluster) from **ShadowTest lifecycle** (on demand). Monarch, Beru and **Kaisel** are cluster infrastructure — they are **not** torn down when a ShadowTest is deleted, and they do **not** need to be reinstalled or reset between tests.
 
 ## Mental model
 
@@ -17,34 +17,29 @@ Shadow-Diff splits **platform install** (once per cluster) from **ShadowTest lif
 |-------|-----------|-----------|
 | **Monarch** operator | Once (`monarch-system`) | Survives all ShadowTests |
 | **Kaisel** DaemonSet | Once (`kaisel-system`) | Survives all ShadowTests; watches `KaiselRule` CRs |
-| **Pixie Vizier** (`pl` namespace) | Once | Survives all ShadowTests (egress / Mongo OTLP) |
-| **pixie-gate** | Once (`monarch-system` Deployment) | Survives all ShadowTests; polls `PixieStreamRule` CRs |
 | **Beru** (`beru-system` or per-shadow `beru-local`) | Once shared, or per test via Monarch | `beru-local` removed with shadow namespace |
 | **ShadowTest** CR | Per test | Create → Ready → Delete |
 
-Monarch writes a **`PixieStreamRule`** custom resource per ShadowTest. It does **not** push PxL scripts into Pixie. **pixie-gate** reads those CRs and runs `px run` / `px.export` on a polling loop.
+Monarch writes a **`KaiselRule`** custom resource per ShadowTest carrying live target pod IPs and the URLs to forward to. It does **not** touch the kernel. The **Kaisel** DaemonSet watches those CRs and updates its eBPF maps in place — no daemon restart when pod IPs change.
 
 ```mermaid
 sequenceDiagram
   participant Ops as Platform_Operator
   participant Monarch
-  participant Gate as pixie_gate
-  participant Pixie as Pixie_Vizier
+  participant Kaisel as Kaisel_DaemonSet
   participant User
 
   Ops->>Monarch: Install once
   Ops->>Monarch: Deploy Kaisel DaemonSet once
-  Ops->>Pixie: Install Vizier once
   Ops->>Gate: Deploy once (no reset per test)
 
   User->>Monarch: kubectl apply ShadowTest
-  Monarch->>Monarch: shadow namespace + workloads + KaiselRule + PixieStreamRule
-  Gate->>Monarch: poll PixieStreamRule (every ~3s)
-  Gate->>Pixie: px run egress/mongo PxL
-  Pixie->>Monarch: OTLP to recorder / beru-local
+  Monarch->>Monarch: shadow namespace + workloads + KaiselRule
+  Kaisel->>Monarch: watch KaiselRule
+  Kaisel->>Monarch: POST to igris (ingress) / Shop (egress)
 
   User->>Monarch: kubectl delete ShadowTest
-  Monarch->>Monarch: deactivate + delete KaiselRule + PixieStreamRule
+  Monarch->>Monarch: delete KaiselRule
   Monarch->>Monarch: delete shadow namespace
   Gate->>Gate: stop exports for removed rule (next poll)
 ```
@@ -53,12 +48,12 @@ sequenceDiagram
 
 ## Phase 1 — Platform bootstrap (one time)
 
-Install these components **before** any ShadowTest. Do **not** restart or reinstall Pixie when adding a new test.
+Install these components **before** any ShadowTest.
 
 ### 1. Monarch operator
 
 ```bash
-make -C pipeline/monarch install    # ShadowTest + PixieStreamRule CRDs
+make -C pipeline/monarch install    # ShadowTest + KaiselRule CRDs
 make -C pipeline/monarch deploy IMG=<registry>/monarch:<tag>
 ```
 
@@ -72,46 +67,7 @@ kubectl apply -f pipeline/beru/deploy/
 
 When `spec.beruGRPCAddress` is unset on a ShadowTest, Monarch provisions **beru-local** inside each shadow namespace automatically.
 
-### 3. Pixie Vizier (eBPF PEM)
-
-Pixie requires a VM-capable cluster node (Minikube `kvm2` / `virtualbox`; not Kind/docker driver).
-
-```bash
-# Pixie Cloud account: px auth login or export PIXIE_API_KEY
-MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh --no-bridge
-```
-
-This installs Vizier into namespace `pl`. Use `--no-bridge` when deploying pixie-gate separately (next step). Full setup without `--no-bridge` also deploys pixie-gate.
-
-**Helm / production:** install the Pixie operator chart with your deploy key; ensure PEM pods are `Running` and `px get viziers` reports `CS_HEALTHY`.
-
-### 4. pixie-gate (long-lived Deployment)
-
-pixie-gate is **not** deployed by Monarch. It must run continuously in `monarch-system`:
-
-```bash
-export PIXIE_API_KEY=...
-make pixie-gate-docker-build PIXIE_GATE_IMG=pixie-gate:dev
-./testing/bats/setup/start-pixie-stream-bridge.sh   # applies deploy/ + waits Ready
-```
-
-Or apply directly:
-
-```bash
-kubectl apply -k pipeline/pixie-gate/deploy/
-kubectl set image deployment/pixie-gate -n monarch-system pixie-gate=pixie-gate:dev
-```
-
-Hardening (see [pixie-gate.md](/control-plane/pixie-gate.md)):
-
-- ServiceAccount bound to [`pixie-gate` RBAC](../../pipeline/pixie-gate/deploy/rbac.yaml) (`get/list/watch` on `pixiestreamrules`; status patch)
-- `PIXIE_API_KEY` as Secret `monarch-system/pixie-gate`
-- Image contains Go binary + `px` CLI (no kubectl)
-- Rolling updates with `terminationGracePeriodSeconds: 35` so in-flight `px run` can finish
-
-pixie-gate polls all `PixieStreamRule` objects cluster-wide every `PIXIE_EXPORT_INTERVAL_SEC` (default 3s).
-
-### 5. Kaisel DaemonSet (HTTP ingress)
+### 3. Kaisel DaemonSet (HTTP ingress and egress)
 
 Install Kaisel once per cluster (`kubectl apply -k pipeline/kaisel/deploy/`). When HTTP ingress capture is enabled, Monarch creates a `KaiselRule` with target pod IPs, ports, `igrisBaseURL`, and `samplePercentage`. Kaisel POSTs admitted requests to the shadow Igris Service.
 
@@ -123,15 +79,15 @@ MongoDB egress and AMQP paths do not use Kaisel.
 kubectl get pods -n monarch-system
 kubectl get pods -n kaisel-system -l app=kaisel
 kubectl get pods -n pl -l name=vizier-pem
-kubectl get pods -n monarch-system -l app.kubernetes.io/name=pixie-gate
+kubectl get pods -n kaisel-system -l app=kaisel
 px get viziers    # expect CS_HEALTHY
 ```
 
 ---
 
-## Phase 2 — Creating a ShadowTest (no Pixie reset)
+## Phase 2 — Creating a ShadowTest (no platform reset)
 
-Once the platform is up, users only apply a ShadowTest CR. **Do not** rerun `setup-local-pixie.sh`, restart Vizier, or restart pixie-gate unless troubleshooting.
+Once the platform is up, users only apply a ShadowTest CR. **Do not** restart the Kaisel DaemonSet unless troubleshooting.
 
 ### Apply the CR
 
@@ -151,31 +107,10 @@ Example fields: `targetDeployment`, `oldImage` / `newImage`, `inputs`, `dependen
 | Ingress hub | Igris or igris-rabbitmq |
 | Dependencies | Per-role MongoDB, RabbitMQ, Redis, … |
 | beru-local | Shadow namespace (when no shared Beru gRPC address) |
-| **PixieStreamRule** | `pixie-<shadowtest-name>` in the **same namespace as the ShadowTest CR** |
-
-### PixieStreamRule endpoints (set by Monarch)
-
-| Field | When set | OTLP destination |
-|-------|----------|------------------|
-| `spec.otelEndpoint` | Always empty (HTTP ingress is Kaisel, not Pixie OTLP) | — |
-| `spec.targetPorts` | When egress/mongo Pixie capture needs them | Prod app ports for Pixie filters |
-| `spec.recorderOtelEndpoint` | Always (Shop+Recorder always-on) | `<shadowtest>-recorder.<shadow-ns>:4317` |
-| `spec.mongoOtelEndpoint` | MongoDB `dependencies[]` | `beru-local.<shadow-ns>.svc.cluster.local:4317` |
-| `spec.shadowNamespace` | MongoDB dependency | Filters mongo PxL to shadow pods only |
-
-### What pixie-gate does automatically
-
-Within one poll cycle after the CR exists and `spec.active=true`:
-
-1. Renders PxL under `/tmp/pixie-gate/<crNs>-pixie-<name>-{ingress,egress,mongo}.pxl`
-2. Runs `px run -f <pxl>` for each non-empty endpoint
-3. Patches `PixieStreamRule.status.phase` to `Active`, `Error`, or `Inactive`
-
-**No manual script step is required.**
 
 ### Concurrent ShadowTests
 
-Supported. Each test gets its own shadow namespace, `PixieStreamRule`, and `beru-local`. pixie-gate loops all active rules. Avoid pointing multiple ShadowTests at the same prod Deployment unless intentional duplicate capture is desired.
+Supported. Each test gets its own shadow namespace, `KaiselRule`, and `beru-local`. Kaisel merges all active rules into one set of eBPF maps. Avoid pointing multiple ShadowTests at the same prod Deployment unless intentional duplicate capture is desired.
 
 ---
 
@@ -188,14 +123,12 @@ kubectl delete shadowtest my-app-shadow -n default
 Monarch:
 
 1. Tears down the shadow namespace and owned workloads
-2. Deactivates `PixieStreamRule` (`spec.active=false`)
-3. Deletes `PixieStreamRule` CR
 
-**Leave Pixie Vizier and pixie-gate running.** The next poll stops exports for the removed rule.
+**Leave the Kaisel DaemonSet running.** Deleting the `KaiselRule` removes its addresses from the eBPF maps.
 
 ### Delete race note
 
-`Reconcile` checks `deletionTimestamp` only at the **start** of each pass. An in-flight create reconcile that already passed that check can still create later resources (Deployments, `PixieStreamRule`, …) after `kubectl delete` has been issued. Prefer waiting for the ShadowTest to reach Ready before deleting in automation, or re-delete if orphans appear.
+`Reconcile` checks `deletionTimestamp` only at the **start** of each pass. An in-flight create reconcile that already passed that check can still create later resources (Deployments, `KaiselRule`, …) after `kubectl delete` has been issued. Prefer waiting for the ShadowTest to reach Ready before deleting in automation, or re-delete if orphans appear.
 
 ---
 
@@ -204,13 +137,13 @@ Monarch:
 | Avoid | Prefer |
 |-------|--------|
 | Restart Vizier between ShadowTests | Leave Vizier up for the cluster lifetime |
-| Rollout-restart pixie-gate before each test | Leave Deployment running; wait on `PixieStreamRule.status.phase` |
-| Folding eBPF / `px run` into Monarch | Keep Monarch unprivileged; pixie-gate + Vizier own capture |
+| Rollout-restart the Kaisel DaemonSet before each test | Leave it running; wait on `KaiselRule.status.phase` |
+| Folding eBPF capture into Monarch | Keep Monarch unprivileged; the Kaisel DaemonSet owns capture |
 
 ---
 
 ## Related
 
-- [pixie-gate.md](/control-plane/pixie-gate.md) — service security and control loop
+- [/data-plane/kaisel-ebpf.md](/data-plane/kaisel-ebpf.md) — capture daemon, privilege model, control loop
 - [ARCHITECTURE.md](/architecture/ARCHITECTURE.md) — layer stack
-- [pipeline/pixie-gate/deploy/](https://github.com/shadow-diff/monarch/tree/main/pipeline/pixie-gate/deploy) — RBAC, ConfigMap, Deployment
+- [pipeline/kaisel/deploy/](https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel/deploy) — RBAC, ConfigMap, DaemonSet

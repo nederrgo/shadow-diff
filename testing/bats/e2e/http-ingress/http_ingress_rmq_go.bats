@@ -12,7 +12,6 @@ setup_file() {
   bats_begin_suite "bats-http-ingress-rmq-go" "default"
 
   ensure_platform_ready
-  bats_pixie_mongo_enabled || { echo "E2E requires Pixie (no pl namespace) — failing"; exit 1; }
   build_test_images_if_needed
   load_test_images_if_needed
 
@@ -36,8 +35,6 @@ setup_file() {
   bats_source_e2e_helpers
   wait_local_beru_rollout "$SHADOW_NS"
   bats_http_otel_firehose_ready
-  bats_wait_pixie_after_shadowtest "$SHADOWTEST" "$SHADOWTEST_NS" 1
-  bats_http_otel_restart_workers_for_pixie
   bats_http_otel_rollout_stack
 
   bats_suite_mark SETUP_COMPLETE 1
@@ -45,7 +42,6 @@ setup_file() {
 }
 
 @test "verify HTTP ingress via igris is clean in Beru (Go)" {
-  bats_http_otel_reverify_pixie
   run publish_prod_http "$BATS_TRACE_ID"
   assert_success
   run beru_wait_log --grep="$(beru_log_no_regression "$BATS_TRACE_ID")" --timeout=120
@@ -53,7 +49,6 @@ setup_file() {
 }
 
 @test "verify shadow workers publish RMQ egress without logging trace id (Go)" {
-  bats_http_otel_reverify_pixie
   run publish_prod_http "$BATS_TRACE_ID"
   assert_success
   for role in control-a control-b candidate; do
@@ -64,20 +59,7 @@ setup_file() {
   done
 }
 
-@test "verify Mongo egress is clean for isolated trace (Go)" {
-  bats_http_otel_reverify_pixie
-  run publish_prod_http "$BATS_TRACE_ID"
-  assert_success
-  for role in control-a control-b candidate; do
-    run assert_worker_log_grep "$role" "mongo insert ok"
-    assert_success
-  done
-  run beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" mongodb)" --timeout=120
-  assert_success
-}
-
 @test "verify RabbitMQ egress is clean for isolated trace (Go)" {
-  bats_http_otel_reverify_pixie
   run publish_prod_http "$BATS_TRACE_ID"
   assert_success
   run beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" rabbitmq)" --timeout=120

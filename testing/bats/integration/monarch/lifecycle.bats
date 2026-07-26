@@ -31,7 +31,7 @@ setup() {
   bats_prepare_shadowtest_slot "$SHADOWTEST" "$SHADOWTEST_NS"
 }
 
-@test "delete mid-bring-up: CR, shadow namespace, and PixieStreamRule are cleaned" {
+@test "delete mid-bring-up: CR, shadow namespace, and KaiselRule are cleaned" {
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
   bats_write_suite_state

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// SampledIn is the shared prod-gate rule (Pixie PxL + Kaisel/Recorder/igris):
+// SampledIn is the shared prod-gate rule (Kaisel + igris):
 // V = int(traceID[:2], 16); keep iff (V*100) < (N*256).
 // Callers must drop empty/invalid tracing before invoking this.
 // N<=0 or N>=100 keeps all traced traffic.

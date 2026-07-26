@@ -1,13 +1,12 @@
 # Shop — HTTP Egress Mock Store
 
-Shop is a lightweight in-memory service that records production HTTP egress responses and replays them back to shadow workloads during Envoy egress interception. It lives in the shadow namespace, **always** deployed by Monarch alongside Recorder (there is no `spec.recordAndReplay` field).
+Shop is a lightweight in-memory service that records production HTTP egress responses and replays them back to shadow workloads during Envoy egress interception. It lives in the shadow namespace, **always** deployed by Monarch (there is no `spec.recordAndReplay` field).
 
 ## Role in the pipeline
 
 ```
 Prod outbound HTTP
-  → Pixie eBPF egress export
-  → Recorder OTLP :4317
+  → Kaisel eBPF egress capture (request + response paired)
   → Shop POST /v1/record_egress   ← seed path
                 ↑
 Shadow app HTTP_PROXY
@@ -22,7 +21,7 @@ Shop bridges the gap between prod observation and shadow replay. Beru handles di
 
 | Port | Protocol | Endpoint | Purpose |
 |------|----------|----------|---------|
-| `:8080` | HTTP | `POST /v1/record_egress` | Recorder seeds a captured prod response |
+| `:8080` | HTTP | `POST /v1/record_egress` | Kaisel seeds a captured prod response |
 | `:8080` | HTTP | `GET /healthz` | Liveness check |
 | `:50051` | gRPC | `ExternalProcessor_Process` | Envoy `shop_ext_proc` cluster — replay mock or return 599 |
 
@@ -46,7 +45,6 @@ This key means the same request from different roles will hit the same stored mo
 Monarch deploys Shop automatically for every ShadowTest. The deployment order is:
 
 1. **Shop** — deployed first; Monarch waits for `AvailableReplicas > 0`
-2. **Recorder** — deployed after Shop is ready; `SHOP_HTTP_URL` is set to `http://shop.<shadow-ns>.svc.cluster.local:8080`
 
 Envoy on each shadow pod gets a `shop_ext_proc` cluster pointing at `shop.<shadow-ns>.svc.cluster.local:50051`. The egress listener uses this cluster for ext_proc calls (not the `beru_ext_proc` cluster, which handles ingress diff-of-diffs only).
 
@@ -58,7 +56,7 @@ Image resolution follows the standard Monarch helper-image pattern:
 
 ## State
 
-All mock state is **in-memory** only. State is lost if the Shop pod restarts. For the E2E flow this is fine: Recorder re-seeds mocks from each new Pixie egress export cycle. A persistent store (e.g. Redis) could be substituted here if longer-lived replay is needed.
+All mock state is **in-memory** only. State is lost if the Shop pod restarts. For the E2E flow this is fine: Kaisel re-seeds mocks from live prod traffic. A persistent store (e.g. Redis) could be substituted here if longer-lived replay is needed.
 
 ## Building
 

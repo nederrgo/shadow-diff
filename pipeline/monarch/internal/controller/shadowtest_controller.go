@@ -3,9 +3,6 @@
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests/finalizers,verbs=update
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=pixiestreamrules,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=pixiestreamrules/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=pixiestreamrules/finalizers,verbs=update
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=kaiselrules,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=kaiselrules/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
@@ -181,19 +178,6 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Shop", shadowNS)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
-	if err := r.reconcileRecorderStack(ctx, &shadowTest, shadowNS); err != nil {
-		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-		return ctrl.Result{}, err
-	}
-	recorderReady, err := r.recorderDeploymentReady(ctx, &shadowTest, shadowNS)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if !recorderReady {
-		_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Recorder", shadowNS)
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-	}
-
 	var igrisEndpoint string
 	igrisRMQPhase := ""
 	if needsAMQPIngress(&shadowTest) {

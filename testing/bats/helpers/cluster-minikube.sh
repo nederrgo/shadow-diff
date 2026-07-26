@@ -546,7 +546,7 @@ resolve_minikube_driver() {
     echo virtualbox
     return 0
   fi
-  # ponytail: prefer kvm2 for Pixie eBPF on WSL when nested virt is available
+  # ponytail: prefer kvm2 for eBPF capture on WSL when nested virt is available
   if _is_wsl && _kvm2_available; then
     echo kvm2
     return 0
@@ -582,7 +582,7 @@ _minikube_driver_unavailable() {
   if _is_wsl; then
     echo "       WSL Ubuntu (no docker VM driver — that would match Kind networking):" >&2
     echo "         1. Install VirtualBox on Windows, then re-run (script shims VBoxManage.exe)" >&2
-    echo "         2. Or kvm2 for Pixie eBPF (recommended): nested virt + libvirt packages" >&2
+    echo "         2. Or kvm2 for eBPF capture (recommended): nested virt + libvirt packages" >&2
     echo "         3. Or none driver (host kubelet fallback): sudo MINIKUBE_DRIVER=none ..." >&2
     echo "            .wslconfig: [wsl2] nestedVirtualization=true  (restart WSL)" >&2
     echo "            sudo apt install qemu-kvm libvirt-daemon-system libvirt-clients" >&2
@@ -608,7 +608,7 @@ _minikube_start_failed() {
     if echo "$err" | grep -qi 'GUEST_DRIVER_MISMATCH'; then
       echo "         - existing profile uses a different driver (often none on WSL)" >&2
       echo "         - minikube delete -p ${MINIKUBE_PROFILE}" >&2
-      echo "         - MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh" >&2
+      echo "         - MINIKUBE_DRIVER=kvm2 ./testing/tools/e2e-reset-minikube.sh" >&2
     fi
     [[ -r /dev/kvm ]] || {
       echo "         - /dev/kvm missing — try: sudo modprobe kvm kvm_intel  (or kvm_amd)" >&2
@@ -651,7 +651,7 @@ resolve_minikube_cni() {
     echo "$MINIKUBE_CNI"
     return 0
   fi
-  # ponytail: Pixie eBPF path uses flannel; none driver keeps calico for legacy host kubelet
+  # ponytail: eBPF capture path uses flannel; none driver keeps calico for legacy host kubelet
   case "$driver" in
     none) echo calico ;;
     *)    echo flannel ;;

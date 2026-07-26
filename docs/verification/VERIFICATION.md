@@ -366,66 +366,56 @@ Expected: process stops accepting new connections, waits for in-flight multicast
 
 ---
 
-## Phase 3b — Pixie eBPF → Kaisel OTLP (ingress capture)
+## Phase 3b — Kaisel eBPF capture (ingress and egress)
 
-Kaisel receives **OTLP gRPC** on `:4317` (logs and traces) from Pixie `px.export`, parses HTTP fields, and POSTs to **igris-http** in the shadow namespace. Monarch writes a `PixieStreamRule` per ShadowTest; **pixie-gate** renders PxL and runs `px.export` to `spec.otelEndpoint`.
+Kaisel is a DaemonSet in `kaisel-system` that attaches an AF_PACKET socket
+filter and reads matched traffic off the wire. Monarch writes one `KaiselRule`
+per ShadowTest carrying live target pod IPs, `igrisBaseURL` (ingress) and
+`egressBaseURL` (egress). No third-party control plane is involved.
 
-### Pixie local sandbox (Minikube kvm2)
-
-Pixie requires a **VM Minikube driver** (`kvm2` or `virtualbox`). Kind, `driver=none`, and `driver=docker` are not supported by Pixie PEM.
+### Install
 
 ```bash
-# 1. Pixie Cloud account (free): px auth login or export PIXIE_API_KEY
-MINIKUBE_DRIVER=kvm2 ./testing/bats/setup/setup-local-pixie.sh
-
-# 2. Monarch E2E stack (deploy ShadowTest + prod echo)
-./testing/tools/e2e-reset-minikube.sh --no-reset
-
-# 3. Confirm Vizier + PixieStreamRule
-kubectl get pods -n pl -l name=vizier-pem
-kubectl get pixiestreamrule -A
+make -C pipeline/kaisel docker-build KAISEL_IMG=kaisel:dev
+kubectl apply -k pipeline/kaisel/deploy/
+kubectl rollout status daemonset/kaisel -n kaisel-system --timeout=120s
 ```
 
-### Curl production Service (out-of-band tap)
-
-Traffic hits **prod** `my-prod-app` Service; Pixie eBPF exports to shadow **Kaisel** separately:
+### Verify the rule and the capture
 
 ```bash
-TRACE_ID="pixie-$(date +%s)"
-SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
+kubectl get kaiselrule -A
+kubectl get kaiselrule "kaisel-<shadowtest>" -n <ns> \
+  -o jsonpath='{.spec.targetIPs}{"
+"}{.spec.igrisBaseURL}{"
+"}{.spec.egressBaseURL}{"
+"}'
 
-kubectl run curl-prod --rm -i --restart=Never --image=curlimages/curl -- \
-  curl -sf -H "traceparent: ${TRACE_ID}" \
-  "http://my-prod-app.default.svc.cluster.local:80/?probe=${TRACE_ID}"
+# Ingress: curl a target pod IP with a traceparent, then
+kubectl logs -l app=kaisel -n kaisel-system --tail=100 | grep "http request"
 
-kubectl logs -n "$SHADOW_NS" deploy/my-app-shadow-igris --tail=50 | grep "$TRACE_ID"
+# Egress: make the target call a dependency, then
+kubectl logs -l app=kaisel -n kaisel-system --tail=100 | grep "egress recorded"
 ```
 
-Full automated path (Pixie + stack, then bats):
+The `hash` on an `egress recorded` line is the mock key **Shop** computed, so a
+match proves the record was accepted and keyed exactly as Envoy's ext_proc will
+look it up.
+
+### Build Kaisel locally
 
 ```bash
-MINIKUBE_DRIVER=kvm2 ./testing/tools/e2e-reset-minikube.sh --setup-pixie
-make test-bats-e2e
+cd pipeline/kaisel
+make build            # binary
+make test             # unit tests, no root
+sudo make test-integration   # real BPF + netns lab, needs root
 ```
 
 ### One-shot Minikube reset
 
 ```bash
-# Pixie OTLP ingress (kvm2 VM — required for Pixie PEM)
-MINIKUBE_DRIVER=kvm2 ./testing/tools/e2e-reset-minikube.sh --setup-pixie
-make test-bats-e2e
+./testing/tools/e2e-reset-minikube.sh
 ```
-
-### Build Kaisel locally
-
-```bash
-cd "$REPO/pipeline/kaisel"
-make build
-make docker-build KAISEL_IMG=kaisel:dev
-minikube image load kaisel:dev   # if using Minikube
-```
-
----
 
 ## 9. Cleanup (optional)
 
@@ -520,11 +510,11 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | grep -E '
 
 ## Phase 4a.1 — Egress interception & strict replay
 
-Monarch deploys Shop + Recorder (always-on) into each shadow namespace and configures an egress Envoy listener with **ext_proc** to Shop. Shop returns a recorded mock keyed by `trace:<traceID>:<METHOD>:<host>:<path>` or **HTTP 599** on miss.
+Monarch deploys Shop (always-on) into each shadow namespace and configures an egress Envoy listener with **ext_proc** to Shop. Shop returns a recorded mock keyed by `trace:<traceID>:<METHOD>:<host>:<path>` or **HTTP 599** on miss.
 
 ### Prerequisites
 
-- Shop + Recorder deployed by Monarch (always-on; no `spec.recordAndReplay` field required)
+- Shop deployed by Monarch (always-on; no `spec.recordAndReplay` field required)
 - `ShadowTest` applied (see [`testing/bats/manifests/e2e-shadowtest.yaml`](testing/bats/manifests/e2e-shadowtest.yaml))
 
 ### Automated Kind E2E
@@ -535,7 +525,7 @@ After [`testing/tools/e2e-reset-minikube.sh`](testing/tools/e2e-reset-minikube.s
 make test-bats-e2e
 ```
 
-The http-ingress bats suites verify Shop/Recorder replay (Envoy egress proxy, seed, mock hit).
+The http-ingress bats suites verify Shop replay (Envoy egress proxy, seed, mock hit).
 
 ### Seed a mock response (manual)
 
@@ -590,7 +580,7 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | \
 
 ---
 
-## Phase 4a.2 — Egress recorder (auto-seed from prod)
+## Phase 4a.2 — Egress capture (auto-seed from prod)
 
 Kaisel captures prod outbound HTTP (cleartext), pairs request/response on each TCP connection, and POSTs to Beru `POST /v1/record_egress`. Beru hashes the request and stores the response in `MockStore` — no manual `seed_mock` required.
 
@@ -637,10 +627,10 @@ Covers: BPF ingress+egress clauses, `FlushOlderThan` goroutine lifecycle, keep-a
 ### Verification checklist (4a.2)
 
 1. Rebuild/load `kaisel`, `beru`, `monarch` into Kind (use fresh image tags after code changes).
-2. Apply a ShadowTest fixture (Shop+Recorder are always-on; no `spec.recordAndReplay` field). Hybrid examples: `testing/bats/fixtures/e2e/rabbit-ingress-nodejs/shadowtest.yaml`.
+2. Apply a ShadowTest fixture (Shop is always-on; no `spec.recordAndReplay` field). Hybrid examples: `testing/bats/fixtures/e2e/rabbit-ingress-nodejs/shadowtest.yaml`.
 3. Prod curl to `httpbin.org/post` → Kaisel logs `egress forwarder: recorded …`.
 4. `make test-bats-e2e` → shadow egress **200** without `seed_mock`.
-5. Kaisel status: `record_and_replay_count>0`, `recorder_host_configured=true` (Monarch POST via hostIP).
+5. Kaisel logs an `egress recorded` line carrying the mock key Shop computed.
 6. `go test ./internal/egress/...` — keep-alive parser test passes.
 
 ---

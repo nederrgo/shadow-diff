@@ -2,8 +2,8 @@ package multicast
 
 import "strconv"
 
-// sampledIn applies the shared prod-gate sampling rule (same math as Pixie PxL
-// and Kaisel/Recorder): V = int(traceID[:2], 16); keep iff (V*100) < (N*256).
+// sampledIn applies the shared prod-gate sampling rule (same math as Kaisel):
+// V = int(traceID[:2], 16); keep iff (V*100) < (N*256).
 // Empty/invalid inbound tracing is rejected by the caller before this runs.
 // N<=0 or N>=100 keeps all traced traffic.
 func sampledIn(traceID string, samplePercentage int) bool {

@@ -51,7 +51,6 @@ rules:
   - engine.shadow-diff.io
   resources:
   - kaiselrules
-  - pixiestreamrules
   - shadowtests
   verbs:
   - create
@@ -65,7 +64,6 @@ rules:
   - engine.shadow-diff.io
   resources:
   - kaiselrules/status
-  - pixiestreamrules/status
   - shadowtests/status
   verbs:
   - get
@@ -74,7 +72,6 @@ rules:
 - apiGroups:
   - engine.shadow-diff.io
   resources:
-  - pixiestreamrules/finalizers
   - shadowtests/finalizers
   verbs:
   - update

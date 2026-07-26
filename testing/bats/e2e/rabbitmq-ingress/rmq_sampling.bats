@@ -42,7 +42,6 @@ setup_file() {
 
   bats_source_e2e_helpers
   wait_local_beru_rollout "$SHADOW_NS"
-  bats_wait_pixie_after_shadowtest "$SHADOWTEST" "$SHADOWTEST_NS" 1
 
   bats_suite_mark SETUP_COMPLETE 1
   bats_write_suite_state

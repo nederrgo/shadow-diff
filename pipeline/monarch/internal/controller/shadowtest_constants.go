@@ -67,14 +67,8 @@ $IPT -t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-port 10001`
 	defaultIgrisListenersPath    = "/etc/igris/listeners.json"
 	igrisTerminationGraceSeconds = int64(35)
 
-	containerRecorder       = "recorder"
-	envRecorderListenAddr   = "RECORDER_LISTEN_ADDR"
-	envRecorderOTLPGRPCAddr = "RECORDER_OTLP_GRPC_ADDR"
-	envShopHTTPURL          = "SHOP_HTTP_URL"
-	envRecorderSamplePct    = "RECORDER_SAMPLE_PERCENTAGE"
-	envBeruHTTPURL          = "BERU_HTTP_URL"
-	recorderServicePort     = int32(8080)
-	recorderOTLPPort        = int32(4317)
+	envShopHTTPURL = "SHOP_HTTP_URL"
+	envBeruHTTPURL = "BERU_HTTP_URL"
 
 	shopName        = "shop"
 	shopGRPCPort    = int32(50051)

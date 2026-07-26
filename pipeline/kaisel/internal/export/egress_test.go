@@ -173,7 +173,7 @@ func TestHandleTransactionDropsUntraced(t *testing.T) {
 	}
 }
 
-// The sampling gate is the same one the replaced Recorder applied.
+// The sampling gate is shared with igris, so egress and ingress admit alike.
 func TestHandleTransactionHonoursSampleGate(t *testing.T) {
 	seen := make(chan EgressRecord, 4)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

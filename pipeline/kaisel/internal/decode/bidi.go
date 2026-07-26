@@ -16,7 +16,7 @@ var errBufferOverflow = errors.New("response stream exceeds buffer limit")
 
 const (
 	// pairTimeout bounds how long the response half-stream waits for the
-	// request that frames it. Matches Recorder's defaultPairTimeout.
+	// request that frames it.
 	//
 	// Waiting this long is only safe because runResponses drains its stream
 	// through a streamBuffer: blocking here would otherwise deadlock. See

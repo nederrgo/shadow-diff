@@ -11,14 +11,12 @@ const (
 	imageBaseIgrisHTTP           = "igris-http"
 	imageBaseIgrisRabbitMQ       = "igris-rabbitmq"
 	imageBaseEgressRelayRabbitMQ = "egress-relay-rabbitmq"
-	imageBaseRecorder            = "recorder"
 	imageBaseBeru                = "beru"
 	imageBaseShop                = "shop"
 
 	envIgrisHTTPImage           = "IGRIS_HTTP_IMAGE"
 	envIgrisRabbitMQImage       = "IGRIS_RABBITMQ_IMAGE"
 	envEgressRelayRabbitMQImage = "EGRESS_RELAY_RABBITMQ_IMAGE"
-	envRecorderImage            = "RECORDER_IMAGE"
 	envBeruImage                = "BERU_IMAGE"
 	envShopImage                = "SHOP_IMAGE"
 )
@@ -64,14 +62,6 @@ func egressRelayRabbitMQImageFor(st *enginev1alpha1.ShadowTest) string {
 		cr = st.Spec.EgressRelayRabbitMQ.Image
 	}
 	return resolveHelperImage(imageBaseEgressRelayRabbitMQ, cr, envEgressRelayRabbitMQImage)
-}
-
-func recorderImageFor(st *enginev1alpha1.ShadowTest) string {
-	cr := ""
-	if st.Spec.Recorder != nil {
-		cr = st.Spec.Recorder.Image
-	}
-	return resolveHelperImage(imageBaseRecorder, cr, envRecorderImage)
 }
 
 func beruImageFor(st *enginev1alpha1.ShadowTest) string {

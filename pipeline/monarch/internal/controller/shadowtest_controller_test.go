@@ -153,7 +153,6 @@ var _ = Describe("ShadowTest Controller", func() {
 					markDeploymentAvailable(shadowDeploymentName(st, role))
 				}
 				markDeploymentAvailable(shopServiceName())
-				markDeploymentAvailable(recorderDeploymentName(st))
 				// Kaisel owns ingress capture (KaiselRule only).
 			}
 
@@ -163,7 +162,7 @@ var _ = Describe("ShadowTest Controller", func() {
 
 			var deps appsv1.DeploymentList
 			Expect(k8sClient.List(ctx, &deps, client.InNamespace(shadowNS))).To(Succeed())
-			Expect(deps.Items).To(HaveLen(7)) // beru-local, igris, control-a/b/candidate, shop, recorder
+			Expect(deps.Items).To(HaveLen(6)) // beru-local, igris, control-a/b/candidate, shop
 
 			roles := map[string]struct{}{}
 			var shadowDeps []appsv1.Deployment
@@ -208,7 +207,8 @@ var _ = Describe("ShadowTest Controller", func() {
 
 			var svcs corev1.ServiceList
 			Expect(k8sClient.List(ctx, &svcs, client.InNamespace(shadowNS))).To(Succeed())
-			Expect(svcs.Items).To(HaveLen(7))
+			// beru-local, igris, control-a/b/candidate, shop
+			Expect(svcs.Items).To(HaveLen(6))
 
 			for _, d := range shadowDeps {
 				role := d.Labels[labelRole]

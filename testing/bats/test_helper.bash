@@ -20,7 +20,7 @@ load "${REPO}/testing/bats/vendor/bats-assert/load.bash"
 source "${BATS_LIB_DIR}/env.bash"
 bats_init_env
 
-for _lib in env cluster kubectl_exec platform pixie shadowtest test_isolation traffic beru_assert beru_seed http_otel_rmq monarch_assert kaisel; do
+for _lib in env cluster kubectl_exec platform shadowtest test_isolation traffic beru_assert beru_seed http_otel_rmq monarch_assert kaisel; do
   # shellcheck source=/dev/null
   source "${BATS_LIB_DIR}/${_lib}.bash"
 done

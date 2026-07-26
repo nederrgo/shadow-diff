@@ -1,6 +1,6 @@
 # Monarch integration assertions: pod readiness, CrashLoop detection, diagnostics.
 # Part of the integration tier (testing pyramid layer between unit and E2E).
-# No Beru, Pixie, or traffic dependencies — only kubectl + k8s API.
+# No Beru or traffic dependencies — only kubectl + k8s API.
 # shellcheck shell=bash
 
 # Bad container waiting reasons that indicate a failed pod (not just slow start).
@@ -203,11 +203,11 @@ monarch_wait_shadowtest_bringup_started() {
   done
 }
 
-# After delete: ShadowTest CR, shadow namespace, and PixieStreamRule are all gone.
+# After delete: ShadowTest CR, shadow namespace, and KaiselRule are all gone.
 monarch_wait_shadowtest_cleaned() {
   local name="$1" ns="${2:-default}" timeout="${3:-180}"
   local shadow_ns="shadow-${ns}-${name}"
-  local rule="pixie-${name}"
+  local rule="kaisel-${name}"
 
   bats_source_e2e_helpers
   echo "==> [monarch] wait ShadowTest cleaned: ${ns}/${name} (timeout=${timeout}s)"
@@ -216,7 +216,7 @@ monarch_wait_shadowtest_cleaned() {
   assert_kubectl_not_found shadowtest "$name" -n "$ns" || return 1
   wait_shadow_namespace_gone "$shadow_ns" "$timeout" || return 1
   assert_kubectl_not_found namespace "$shadow_ns" || return 1
-  assert_kubectl_not_found pixiestreamrule "$rule" -n "$ns" || return 1
+  assert_kubectl_not_found kaiselrule "$rule" -n "$ns" || return 1
   echo "    cleaned: CR + ${shadow_ns} + ${rule}"
 }
 

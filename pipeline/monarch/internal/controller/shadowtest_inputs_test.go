@@ -3,8 +3,6 @@ package controller
 import (
 	"testing"
 
-	appsv1 "k8s.io/api/apps/v1"
-
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
@@ -129,7 +127,9 @@ func TestValidateInputsMixedDriversRejected(t *testing.T) {
 	}
 }
 
-func TestBuildPixieStreamRuleSpecAMQPOnlyNoIngressPorts(t *testing.T) {
+// An AMQP-only ShadowTest has no HTTP ingress to capture, so Kaisel gets no
+// target ports.
+func TestKaiselIngressPortsAMQPOnlyIsEmpty(t *testing.T) {
 	t.Parallel()
 	st := &enginev1alpha1.ShadowTest{
 		Spec: enginev1alpha1.ShadowTestSpec{
@@ -145,9 +145,7 @@ func TestBuildPixieStreamRuleSpecAMQPOnlyNoIngressPorts(t *testing.T) {
 			}},
 		},
 	}
-	dep := &appsv1.Deployment{}
-	spec := buildPixieStreamRuleSpec(st, "shadow-ns", dep)
-	if len(spec.TargetPorts) != 0 {
-		t.Fatalf("expected no ingress ports, got %v", spec.TargetPorts)
+	if ports := kaiselIngressPorts(st); len(ports) != 0 {
+		t.Fatalf("expected no ingress ports, got %v", ports)
 	}
 }
