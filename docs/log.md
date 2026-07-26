@@ -11,6 +11,8 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-26]
 ### Added
+* 'pipeline/pkg/sample': shared FNV full-trace-ID SampledIn for Kaisel + igris-rabbitmq
+* 'testing/bats/e2e/rabbitmq-ingress/rmq_sampling_hybrid.bats': RMQ ingress + Shop egress sampling E2E at 10%
 * 'testing/example-apps/http-rmq-go-worker': Stop logging trace IDs in app logs to match Node/Python fixtures for assert_worker_trace_absent
 * 'testing/bats/e2e/rabbitmq-ingress/': Fixed Mongo egress test added to the hybrid suites — asserted 'clean' when candidate unconditionally double-inserts every order (matching its existing RMQ n+1 behavior), which Beru's re-diff-on-arrival logging made intermittently false-pass on a stale pre-mismatch log line; replaced with a count-regression assertion
 * 'testing/bats/e2e/rabbitmq-ingress/': Added MongoDB egress diff coverage (captured for all three roles + clean for isolated trace) to the Node.js and Python hybrid suites, which already deployed Mongo but never asserted on it; fixed docs/verification/hybrid-rmq-e2e-flow.md's stale OTLP reference and its false 'covered elsewhere' claim about a nonexistent mongo_egress.bats

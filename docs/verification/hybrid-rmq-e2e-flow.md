@@ -1,28 +1,29 @@
 ---
 type: Architecture Specification
 title: Hybrid RMQ E2E Test Flow
-description: End-to-end data and assertion flow for Node.js and Python hybrid bats suites — RMQ ingress, Kaisel HTTP record/replay, RabbitMQ and MongoDB egress regressions.
+description: End-to-end data and assertion flow for Node.js and Python hybrid bats suites — RMQ ingress, Kaisel HTTP record/replay, RabbitMQ and MongoDB egress regressions, plus RMQ+Shop sampling.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/rabbitmq-ingress
-tags: [verification, e2e, bats, hybrid, rabbitmq, kaisel, shop, shadow-soldier, mongodb]
-timestamp: 2026-07-26T18:00:00Z
+tags: [verification, e2e, bats, hybrid, rabbitmq, kaisel, shop, shadow-soldier, mongodb, sampling]
+timestamp: 2026-07-26T21:15:00Z
 ---
 
 # Hybrid RMQ E2E Test Flow
 
-The hybrid suites exercise a **RabbitMQ-ingress** ShadowTest with Mongo + HTTP egress record/replay. Node and Python share the same shape; only prod manifests and worker images differ.
+The hybrid suites exercise a **RabbitMQ-ingress** ShadowTest with Mongo + HTTP egress record/replay. Node and Python share the same shape; only prod manifests and worker images differ. A separate sampling suite proves the same path under `samplePercentage: 10`.
 
 | Suite | Bats file | ShadowTest | Prod worker | Downstream HTTP |
 |-------|-----------|------------|-------------|-----------------|
 | Node | [`nodejs_hybrid.bats`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/rabbitmq-ingress/nodejs_hybrid.bats) | `bats-nodejs-hybrid` | `nodejs-prod-worker` | `user-service-nodejs` / Host `user-service-nodejs.default.internal` |
 | Python | [`python_hybrid.bats`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/rabbitmq-ingress/python_hybrid.bats) | `bats-python-hybrid` | `python-prod-worker` | `user-service-python` / Host `user-service-python.default.internal` |
+| Sampling hybrid | [`rmq_sampling_hybrid.bats`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/rabbitmq-ingress/rmq_sampling_hybrid.bats) | `bats-rmq-sampling-hybrid` | `nodejs-prod-worker` | `user-service-nodejs` / Host `user-service-nodejs.default.internal` |
 
 Run one suite:
 
 ```bash
 SKIP_BUILD=1 SKIP_LOAD=1 make test-bats-one FILE=e2e/rabbitmq-ingress/nodejs_hybrid.bats
 SKIP_BUILD=1 SKIP_LOAD=1 make test-bats-one FILE=e2e/rabbitmq-ingress/python_hybrid.bats
+SKIP_BUILD=1 SKIP_LOAD=1 make test-bats-one FILE=e2e/rabbitmq-ingress/rmq_sampling_hybrid.bats
 ```
-
 ---
 
 ## What “hybrid” means
@@ -129,6 +130,24 @@ specific one, so this suite asserts the regression rather than a clean trace.
 
 ---
 
+## Sampling hybrid (`rmq_sampling_hybrid.bats`)
+
+Same Node prod stack and HTTP record/replay path, with `spec.samplePercentage: 10`. Two gates share `github.com/shadow-diff/sample`: decode the 32-hex W3C trace id to 16 bytes, `V = FNV-1a-64(bytes) & 0xFF`, keep iff `(V*100)<(N*256)`:
+
+1. **igris-rabbitmq** — drops out-of-sample AMQP fan-out to shadow brokers  
+2. **Kaisel egress** — drops out-of-sample Shop seeds (`POST /v1/record_egress`)
+
+Prod still consumes and egresses every published order; absence asserts cover shadow pods and Shop only.
+
+| Golden trace ID | V | At 10% | Expect |
+|-----------------|---|--------|--------|
+| `00000000000000000000000000000087` | `0` | keep | Kaisel `egress recorded` with `trace:<id>:…`; all three roles `assert_worker_http_replay` |
+| `000000000000000000000000000000f9` | `26` | drop | No shadow `order_id` / trace hex; no Kaisel `egress recorded` for `trace:<id>:` |
+
+Beru regression asserts are omitted here — covered by the non-sampling hybrid suites.
+
+---
+
 ## Assertion cheat sheet
 
 | Signal | Where |
@@ -144,7 +163,8 @@ specific one, so this suite asserts the regression rather than a clean trace.
 
 - Node suite: [`testing/bats/e2e/rabbitmq-ingress/nodejs_hybrid.bats`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/rabbitmq-ingress/nodejs_hybrid.bats)
 - Python suite: [`testing/bats/e2e/rabbitmq-ingress/python_hybrid.bats`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/rabbitmq-ingress/python_hybrid.bats)
-- Traffic helpers: [`testing/bats/lib/traffic.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/traffic.bash) — `publish_rmq_order`; and [`testing/bats/lib/kaisel.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/kaisel.bash) — `wait_kaisel_egress_seed`
+- Sampling hybrid suite: [`testing/bats/e2e/rabbitmq-ingress/rmq_sampling_hybrid.bats`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/rabbitmq-ingress/rmq_sampling_hybrid.bats)
+- Traffic helpers: [`testing/bats/lib/traffic.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/traffic.bash) — `publish_rmq_order`; and [`testing/bats/lib/kaisel.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/kaisel.bash) — `wait_kaisel_egress_seed` / `kaisel_assert_egress_recorded`
 - Node worker N+1 behavior: [`testing/example-apps/nodejs-hybrid-worker/index.js`](https://github.com/shadow-diff/monarch/tree/main/testing/example-apps/nodejs-hybrid-worker/index.js)
 - Egress record/replay: [/data-plane/egress-record-replay.md](/data-plane/egress-record-replay.md)
 - MongoDB egress capture: [/data-plane/shadow-soldier.md](/data-plane/shadow-soldier.md)

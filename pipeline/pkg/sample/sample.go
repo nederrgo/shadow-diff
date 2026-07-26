@@ -1,26 +1,38 @@
 package sample
 
 import (
-	"strconv"
+	"encoding/hex"
+	"hash/fnv"
 	"strings"
 )
 
-// SampledIn is the shared prod-gate rule (Kaisel + igris):
-// V = int(traceID[:2], 16); keep iff (V*100) < (N*256).
+// SampledIn is the shared prod-gate rule (Kaisel + igris-rabbitmq):
+// decode the 32-hex W3C trace id to 16 bytes, V = FNV-1a-64(bytes) & 0xFF,
+// keep iff (V*100) < (N*256).
 // Callers must drop empty/invalid tracing before invoking this.
 // N<=0 or N>=100 keeps all traced traffic.
 func SampledIn(traceID string, samplePercentage int) bool {
 	if samplePercentage <= 0 || samplePercentage >= 100 {
 		return true
 	}
-	if len(traceID) < 2 {
+	v, ok := bucket(traceID)
+	if !ok {
 		return false
 	}
-	v, err := strconv.ParseUint(traceID[:2], 16, 8)
-	if err != nil {
-		return false
+	return uint64(v)*100 < uint64(samplePercentage)*256
+}
+
+func bucket(traceID string) (uint8, bool) {
+	if len(traceID) != 32 {
+		return 0, false
 	}
-	return v*100 < uint64(samplePercentage)*256
+	raw, err := hex.DecodeString(strings.ToLower(traceID))
+	if err != nil || len(raw) != 16 {
+		return 0, false
+	}
+	h := fnv.New64a()
+	_, _ = h.Write(raw)
+	return uint8(h.Sum64() & 0xff), true
 }
 
 // TraceIDFromTraceparent extracts the 32-char trace id from a W3C traceparent.

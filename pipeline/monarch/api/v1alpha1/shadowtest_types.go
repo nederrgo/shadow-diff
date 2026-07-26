@@ -221,7 +221,8 @@ type ShadowTestSpec struct {
 	EgressRelayRabbitMQ *EgressRelayRabbitMQSpec `json:"egressRelayRabbitmq,omitempty"`
 
 	// SamplePercentage is the shared prod sampling gate (1-100, default 100) for
-	// all input types. Uses (V*100)<(N*256) on the W3C trace id; empty/missing
+	// all input types. Uses github.com/shadow-diff/sample: V = FNV-1a-64(decoded
+	// 16-byte W3C trace id) & 0xFF; keep iff (V*100)<(N*256). Empty/missing
 	// traceparent is always dropped. Monarch seeds it by inputs[].driver: HTTP →
 	// KaiselRule (ingress and egress); rabbitmq_message → igris-rabbitmq
 	// (IGRIS_RMQ_SAMPLE_PERCENTAGE). RabbitMQ does not use Kaisel.

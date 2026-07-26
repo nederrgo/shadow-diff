@@ -1,0 +1,28 @@
+# RMQ + Shop egress sampling proof — samplePercentage: 10
+# Dual gate: igris-rabbitmq (ingress) + Kaisel (HTTP egress → Shop)
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-rmq-sampling-hybrid
+  namespace: default
+spec:
+  targetDeployment: nodejs-prod-worker
+  newImage: nodejs-hybrid-worker:dev
+  samplePercentage: 10
+
+  inputs:
+    - driver: rabbitmq_message
+      amqp:
+        prodUrl: amqp://guest:guest@rmq-prod-broker.default.svc.cluster.local:5672/
+        exchange: orders
+        routingKey: order.created
+        targetDependency: rabbitmq
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

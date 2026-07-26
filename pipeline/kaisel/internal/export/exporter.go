@@ -13,7 +13,7 @@ import (
 	"github.com/gopacket/gopacket"
 
 	"github.com/shadow-diff/kaisel/internal/forwarder"
-	"github.com/shadow-diff/kaisel/internal/sample"
+	"github.com/shadow-diff/sample"
 )
 
 const (
