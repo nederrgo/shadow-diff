@@ -176,11 +176,50 @@ func TestIgrisRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	byName := map[string]string{}
 	for _, e := range env {
+		byName[e.Name] = e.Value
 		if e.Name == envControlAAMQPURL && !strings.Contains(e.Value, ":5672/") {
 			t.Fatalf("CONTROL_A_AMQP_URL = %q, want port 5672", e.Value)
 		}
 	}
+	if byName[envSamplePercentage] != "100" {
+		t.Fatalf("IGRIS_RMQ_SAMPLE_PERCENTAGE = %q, want default 100", byName[envSamplePercentage])
+	}
+}
+
+func TestIgrisRabbitMQSamplePercentageFromTopLevel(t *testing.T) {
+	r := &ShadowTestReconciler{}
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			SamplePercentage: 15,
+			Inputs: []enginev1alpha1.InputSpec{{
+				Driver: "rabbitmq_message",
+				AMQP: &enginev1alpha1.AMQPInputSpec{
+					ProdURL: "amqp://guest:guest@rmq-prod:5672/", Exchange: "orders", RoutingKey: "order.created",
+					TargetDependency: "rabbitmq",
+				},
+			}},
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL",
+			}},
+		},
+		Status: enginev1alpha1.ShadowTestStatus{AmqpQueueName: "shadow-diff.rmq-test"},
+	}
+	env, err := r.igrisRabbitMQEnv(st, "shadow-default-rmq-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range env {
+		if e.Name == envSamplePercentage {
+			if e.Value != "15" {
+				t.Fatalf("IGRIS_RMQ_SAMPLE_PERCENTAGE = %q, want 15", e.Value)
+			}
+			return
+		}
+	}
+	t.Fatal("IGRIS_RMQ_SAMPLE_PERCENTAGE missing from env")
 }
 
 func TestNeedsEgressRelayRabbitMQ(t *testing.T) {

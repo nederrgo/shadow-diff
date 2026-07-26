@@ -64,25 +64,6 @@ type InputSpec struct {
 	Addon string `json:"addon,omitempty"`
 }
 
-// SiphonSpec configures Pixie eBPF streaming capture for L1 ingress.
-type SiphonSpec struct {
-	// Enabled disables Pixie stream rules when explicitly false.
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Image overrides the default Siphon OTLP receiver container image.
-	// +optional
-	Image string `json:"image,omitempty"`
-
-	// MaxPayloadSize is the max bytes to parse per HTTP/2 frame (default 65536).
-	// +optional
-	MaxPayloadSize int64 `json:"maxPayloadSize,omitempty"`
-
-	// ExcludePaths are regex strings to drop healthchecks/traffic at the kernel layer.
-	// +optional
-	ExcludePaths []string `json:"excludePaths,omitempty"`
-}
-
 // DependencySpec declares an ephemeral backing service provisioned per shadow role.
 type DependencySpec struct {
 	// Name is the logical dependency id; used in resource names and DNS labels.
@@ -107,13 +88,6 @@ type DependencySpec struct {
 	EnvVarInjection string `json:"envVarInjection"`
 }
 
-// RecorderSpec overrides the Recorder egress parser workload.
-type RecorderSpec struct {
-	// Image overrides the default Recorder container image.
-	// +optional
-	Image string `json:"image,omitempty"`
-}
-
 // BeruSpec overrides the beru-local analytics backend workload.
 type BeruSpec struct {
 	// Image overrides the default Beru container image.
@@ -124,6 +98,15 @@ type BeruSpec struct {
 // ShopSpec overrides the Shop mock-store workload.
 type ShopSpec struct {
 	// Image overrides the default Shop container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+}
+
+// ShadowSoldierSpec overrides the shadow-soldier database egress capture sidecar.
+// The sidecar is injected automatically into each shadow role that declares a
+// proxied dependency (MongoDB, Redis, PostgreSQL, MSSQL).
+type ShadowSoldierSpec struct {
+	// Image overrides the default shadow-soldier container image.
 	// +optional
 	Image string `json:"image,omitempty"`
 }
@@ -237,13 +220,15 @@ type ShadowTestSpec struct {
 	// +optional
 	EgressRelayRabbitMQ *EgressRelayRabbitMQSpec `json:"egressRelayRabbitmq,omitempty"`
 
-	// Siphon configures kernel-level traffic capture to Igris.
+	// SamplePercentage is the shared prod sampling gate (1-100, default 100) for
+	// all input types. Uses (V*100)<(N*256) on the W3C trace id; empty/missing
+	// traceparent is always dropped. Monarch seeds it by inputs[].driver: HTTP →
+	// KaiselRule (ingress and egress); rabbitmq_message → igris-rabbitmq
+	// (IGRIS_RMQ_SAMPLE_PERCENTAGE). RabbitMQ does not use Kaisel.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
 	// +optional
-	Siphon *SiphonSpec `json:"siphon,omitempty"`
-
-	// Recorder overrides the Recorder image (always provisioned per shadow namespace).
-	// +optional
-	Recorder *RecorderSpec `json:"recorder,omitempty"`
+	SamplePercentage int `json:"samplePercentage,omitempty"`
 
 	// Beru overrides the beru-local image when spec.beruGRPCAddress is unset.
 	// +optional
@@ -252,6 +237,10 @@ type ShadowTestSpec struct {
 	// Shop overrides the Shop mock-store image (always provisioned per shadow namespace).
 	// +optional
 	Shop *ShopSpec `json:"shop,omitempty"`
+
+	// ShadowSoldier overrides the database egress capture sidecar image.
+	// +optional
+	ShadowSoldier *ShadowSoldierSpec `json:"shadowSoldier,omitempty"`
 
 	// Dependencies lists ephemeral backing services (e.g. Redis) provisioned once per shadow role.
 	// +optional
@@ -276,9 +265,9 @@ type ShadowTestStatus struct {
 	// +optional
 	CaptureTargets []string `json:"captureTargets,omitempty"`
 
-	// SiphonPhase summarizes Pixie stream rule reconciliation (Ready, Degraded, Disabled).
+	// KaiselPhase summarizes Kaisel ingress capture reconciliation (Ready, Degraded).
 	// +optional
-	SiphonPhase string `json:"siphonPhase,omitempty"`
+	KaiselPhase string `json:"kaiselPhase,omitempty"`
 
 	// IgrisEndpoint is the DNS host:port Monarch configured for capture forwarding.
 	// +optional

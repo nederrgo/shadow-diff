@@ -34,10 +34,7 @@ func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.Nam
 		}
 	}
 
-	if err := r.deactivatePixieStreamRule(ctx, &shadowTest); err != nil {
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, err
-	}
-	if err := r.deletePixieStreamRule(ctx, &shadowTest); err != nil {
+	if err := r.deleteKaiselRule(ctx, &shadowTest); err != nil {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, err
 	}
 
@@ -171,6 +168,17 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 				},
 			},
 		}
+		// Database egress capture. Only present when the ShadowTest declares a
+		// dependency shadow-soldier can parse, so a ShadowTest with none (or with
+		// RabbitMQ only, whose egress the Firehose relay already covers) keeps the
+		// two-container pod it has today.
+		soldier, err := shadowSoldierContainer(st, shadowNS, role)
+		if err != nil {
+			return err
+		}
+		if soldier != nil {
+			deploy.Spec.Template.Spec.Containers = append(deploy.Spec.Template.Spec.Containers, *soldier)
+		}
 		return nil
 	})
 	return err
@@ -193,7 +201,7 @@ func (r *ShadowTestReconciler) patchStatusFull(
 	st *enginev1alpha1.ShadowTest,
 	phase, message, shadowNS string,
 	captureTargets []string,
-	siphonPhase, igrisEndpoint, igrisRabbitMQPhase string,
+	kaiselPhase, igrisEndpoint, igrisRabbitMQPhase string,
 ) error {
 	base := st.DeepCopy()
 	st.Status.Phase = phase
@@ -202,8 +210,8 @@ func (r *ShadowTestReconciler) patchStatusFull(
 	if captureTargets != nil {
 		st.Status.CaptureTargets = captureTargets
 	}
-	if siphonPhase != "" {
-		st.Status.SiphonPhase = siphonPhase
+	if kaiselPhase != "" {
+		st.Status.KaiselPhase = kaiselPhase
 	}
 	if igrisEndpoint != "" {
 		st.Status.IgrisEndpoint = igrisEndpoint

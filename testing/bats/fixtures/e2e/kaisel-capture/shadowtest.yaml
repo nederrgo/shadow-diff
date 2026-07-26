@@ -1,0 +1,14 @@
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-kaisel-capture
+  namespace: default
+spec:
+  targetDeployment: kaisel-capture-prod
+  targetNamespace: default
+  # control-a/b use target Deployment image; candidate uses newImage.
+  oldImage: egress-test-app:dev
+  newImage: egress-test-app:dev
+  servicePort: 8080
+  applicationPort: 8080
+  samplePercentage: 100

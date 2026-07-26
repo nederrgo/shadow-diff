@@ -19,10 +19,16 @@ import (
 )
 
 const (
-	localBeruName         = "beru-local"
-	localBeruGRPCPort     = int32(50051)
-	localBeruOTLPPort     = int32(4317)
-	localBeruHTTPPort     = int32(8080)
+	localBeruName     = "beru-local"
+	localBeruGRPCPort = int32(50051)
+	localBeruHTTPPort = int32(8080)
+	// localBeruIngestPort fronts the same HTTP server as localBeruHTTPPort.
+	// It exists because the shadow pod's iptables init container REDIRECTs every
+	// outbound connection to port 8080 into Envoy's egress listener, which would
+	// answer a sidecar's report with "502 egress: no mock found". Reporting on a
+	// port the redirect does not match is a three-line fix where an iptables
+	// exemption would be a per-process one.
+	localBeruIngestPort   = int32(8081)
 	localBeruSQLiteSizeMi = int64(64)
 	localBeruBootTimeout  = 10 * time.Minute
 )
@@ -89,7 +95,7 @@ func (r *ShadowTestReconciler) reconcileLocalBeru(
 		svc.Spec.Selector = map[string]string{"app": localBeruName}
 		svc.Spec.Ports = []corev1.ServicePort{
 			{Name: "grpc", Port: localBeruGRPCPort, TargetPort: intstr.FromInt32(localBeruGRPCPort), Protocol: corev1.ProtocolTCP},
-			{Name: "otlp-grpc", Port: localBeruOTLPPort, TargetPort: intstr.FromInt32(localBeruOTLPPort), Protocol: corev1.ProtocolTCP},
+			{Name: "ingest", Port: localBeruIngestPort, TargetPort: intstr.FromInt32(localBeruHTTPPort), Protocol: corev1.ProtocolTCP},
 			{Name: "http", Port: localBeruHTTPPort, TargetPort: intstr.FromInt32(localBeruHTTPPort), Protocol: corev1.ProtocolTCP},
 		}
 		return nil
@@ -119,12 +125,10 @@ func (r *ShadowTestReconciler) reconcileLocalBeru(
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			Ports: []corev1.ContainerPort{
 				{Name: "grpc", ContainerPort: localBeruGRPCPort, Protocol: corev1.ProtocolTCP},
-				{Name: "otlp-grpc", ContainerPort: localBeruOTLPPort, Protocol: corev1.ProtocolTCP},
 				{Name: "http", ContainerPort: localBeruHTTPPort, Protocol: corev1.ProtocolTCP},
 			},
 			Env: []corev1.EnvVar{
 				{Name: "BERU_GRPC_ADDR", Value: ":50051"},
-				{Name: "BERU_OTLP_GRPC_ADDR", Value: ":4317"},
 				{Name: "BERU_HTTP_ADDR", Value: ":8080"},
 				{Name: "BERU_DB_PATH", Value: "/data/beru.db"},
 				{Name: "BERU_SHADOW_TEST_NAME", Value: st.Name},

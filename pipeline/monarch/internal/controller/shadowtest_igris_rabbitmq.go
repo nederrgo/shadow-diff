@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -24,6 +25,7 @@ const (
 	envControlAAMQPURL           = "CONTROL_A_AMQP_URL"
 	envControlBAMQPURL           = "CONTROL_B_AMQP_URL"
 	envCandidateAMQPURL          = "CANDIDATE_AMQP_URL"
+	envSamplePercentage          = "IGRIS_RMQ_SAMPLE_PERCENTAGE"
 	defaultAMQPUser              = "guest"
 	defaultAMQPPass              = "guest"
 )
@@ -70,6 +72,7 @@ func (r *ShadowTestReconciler) igrisRabbitMQEnv(st *enginev1alpha1.ShadowTest, s
 		{Name: envControlAAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlA, port)},
 		{Name: envControlBAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlB, port)},
 		{Name: envCandidateAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleCandidate, port)},
+		{Name: envSamplePercentage, Value: strconv.Itoa(samplePercentage(st))},
 	}, nil
 }
 

@@ -12,14 +12,14 @@ bats_init_env() {
   export REPO
 
   export BATS_STATE_DIR="${BATS_STATE_DIR:-${REPO}/.cache/shadow-diff-bats}"
-  export PIXIE_BRIDGE_STATE_DIR="${PIXIE_BRIDGE_STATE_DIR:-${REPO}/.cache/pixie-bridge}"
 
   export MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
+  export KAISEL_IMG="${KAISEL_IMG:-kaisel:dev}"
+  export EGRESS_TEST_IMG="${EGRESS_TEST_IMG:-egress-test-app:dev}"
   export BERU_IMG="${BERU_IMG:-beru:dev}"
   export SHOP_IMG="${SHOP_IMG:-shop:dev}"
+  export SHADOW_SOLDIER_IMG="${SHADOW_SOLDIER_IMG:-shadow-soldier:dev}"
   export IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
-  export SIPHON_IMG="${SIPHON_IMG:-siphon:dev}"
-  export RECORDER_IMG="${RECORDER_IMG:-recorder:dev}"
   export PYTHON_TEST_WORKER_IMG="${PYTHON_TEST_WORKER_IMG:-python-test-worker:dev}"
   export NODEJS_HYBRID_WORKER_IMG="${NODEJS_HYBRID_WORKER_IMG:-nodejs-hybrid-worker:dev}"
   export HTTP_RMQ_PYTHON_WORKER_IMG="${HTTP_RMQ_PYTHON_WORKER_IMG:-http-rmq-python-worker:dev}"

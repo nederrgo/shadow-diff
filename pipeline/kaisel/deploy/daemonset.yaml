@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kaisel
+  namespace: kaisel-system
+  labels:
+    app.kubernetes.io/name: kaisel
+spec:
+  selector:
+    matchLabels:
+      app: kaisel
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: kaisel
+        app.kubernetes.io/name: kaisel
+    spec:
+      serviceAccountName: kaisel
+      # hostNetwork gives the container the node's network namespace so that
+      # the AF_PACKET socket on eth0 sees all traffic entering the node.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      terminationGracePeriodSeconds: 10
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+      containers:
+      - name: kaisel
+        image: kaisel:latest
+        imagePullPolicy: IfNotPresent
+        args:
+        - -iface=$(KAISEL_IFACE)
+        - -log-bodies=$(KAISEL_LOG_BODIES)
+        env:
+        - name: KAISEL_IFACE
+          valueFrom:
+            configMapKeyRef:
+              name: kaisel-config
+              key: iface
+        - name: KAISEL_LOG_BODIES
+          valueFrom:
+            configMapKeyRef:
+              name: kaisel-config
+              key: logBodies
+        securityContext:
+          # Not privileged:true — only the three capabilities actually needed.
+          # CAP_BPF:     load eBPF programs and maps (kernel 5.8+)
+          # CAP_NET_RAW: AF_PACKET socket for wire capture
+          # CAP_PERFMON: perf event array read (kernel 5.8+; replaces CAP_SYS_ADMIN)
+          # On kernel < 5.11, cilium/ebpf may attempt setrlimit(RLIMIT_MEMLOCK).
+          # Kernel 5.11+ (memcg BPF accounting) makes that call a no-op.
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          # ponytail: seccompProfile Unconfined because the bpf() syscall is
+          # blocked by the RuntimeDefault profile on most runtimes. A scoped
+          # custom SeccompProfile (allowing only bpf/perf_event_open/socket)
+          # is the upgrade path.
+          seccompProfile:
+            type: Unconfined
+          capabilities:
+            add:
+            - BPF
+            - NET_RAW
+            - PERFMON
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi

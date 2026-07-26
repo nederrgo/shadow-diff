@@ -54,15 +54,6 @@ func TestMongoSignature_pythonPymongo(t *testing.T) {
 	}
 }
 
-func TestMongoOperationFromStatement(t *testing.T) {
-	if got := MongoOperationFromStatement("insert"); got != "insert" {
-		t.Fatalf("got %q", got)
-	}
-	if got := MongoOperationFromStatement(`insert {'order_id': '1'}`); got != "insert" {
-		t.Fatalf("got %q", got)
-	}
-}
-
 func TestMongoSignature_fallbackHash(t *testing.T) {
 	sig := MongoSignature([]byte(`{"documents":[]}`), MongoHints{})
 	if sig == "" || sig[:15] != "mongodb:unknown" {
@@ -73,6 +64,17 @@ func TestMongoSignature_fallbackHash(t *testing.T) {
 func TestEgressSignature_mongodbDelegates(t *testing.T) {
 	sig := EgressSignature("mongodb", []byte(`{"find":"users","filter":{}}`))
 	if sig != "mongodb:find:users" {
+		t.Fatalf("got %q", sig)
+	}
+}
+
+func TestEgressSignature_http(t *testing.T) {
+	sig := EgressSignature("http", []byte(`{"method":"GET","host":"api.example.com","path":"/x","status":200,"body":""}`))
+	if sig != "http:GET:/x" {
+		t.Fatalf("got %q", sig)
+	}
+	sig = EgressSignature("http", []byte(`{"method":"POST","path":"/v1/charges","body":{"a":1}}`))
+	if sig != "http:POST:/v1/charges" {
 		t.Fatalf("got %q", sig)
 	}
 }

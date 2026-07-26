@@ -31,7 +31,7 @@ monarch/                          # repo root (Shadow-Diff monorepo)
 ├── pipeline/                     # Runtime services — one Go module per component
 │   ├── monarch/                  # Control plane — ShadowTest operator (all layers)
 │   ├── igrises/                  # L2 ingress hub (igris-http, igris-rabbitmq)
-│   ├── siphon/                   # L1 capture agent (DaemonSet, BPF)
+│   ├── kaisel/                   # L1 eBPF HTTP ingress capture
 │   ├── recorder/                 # L4b prod egress HTTP → Beru mock store
 │   ├── egress-relay-rabbitmq/    # L4a shadow AMQP publish → Beru egress diff
 │   └── beru/                     # L5 analysis sink — diff, mocks, dashboard
@@ -61,7 +61,7 @@ Each service has its own README with layer role, build commands, and Monarch wir
 | Layer | Service | README |
 | ----- | ------- | ------ |
 | Control plane | **Monarch** | [pipeline/monarch/README.md](pipeline/monarch/README.md) |
-| L1 Capture | **Siphon** | [pipeline/siphon/README.md](pipeline/siphon/README.md) |
+| L1 Capture | **Kaisel** | [docs/data-plane/kaisel-ebpf.md](docs/data-plane/kaisel-ebpf.md) |
 | L2 Ingress | **Igris** (HTTP/TCP + AMQP) | [pipeline/igrises/README.md](pipeline/igrises/README.md) |
 | L4b Egress record | **Recorder** | [pipeline/recorder/README.md](pipeline/recorder/README.md) |
 | L4a AMQP egress diff | **egress-relay-rabbitmq** | [pipeline/egress-relay-rabbitmq/README.md](pipeline/egress-relay-rabbitmq/README.md) |
@@ -90,7 +90,7 @@ Build or test a single service from the repo root:
 ```sh
 make -C pipeline/monarch test
 make beru-test
-make siphon-docker-build
+make kaisel-docker-build
 ```
 
 Run `make help` or `make -C pipeline/monarch help` for the full target list.

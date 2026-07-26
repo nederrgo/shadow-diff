@@ -32,28 +32,28 @@ A primary security constraint of Shadow-Diff is that the central operator must n
 
 ┌────────────────────────────────┐
 │      monarch-system NS         │
-│  [ Monarch Operator ]          │
+│  [ Monarch Operator ]          │ ──► restricted PSA, no Linux capabilities
 └──────────────┬─────────────────┘
 │
 │ Writes Low-Privilege CRD Manifest
 ▼
 ┌────────────────────────────────┐
 │       Production / Shadow NS   │
-│  [ PixieStreamRule CR ]        │
+│  [ KaiselRule CR ]             │
 └──────────────┬─────────────────┘
 │
-│ Read out-of-band by host process
+│ Read out-of-band by the Kaisel DaemonSet
 ▼
 ┌────────────────────────────────┐
 │         K8s Host Node          │
-│  [ Pixie Vizier / Bridge ]     │ ──► Requires Host Kernel Access (SYS_ADMIN)
+│  [ kaisel-system DaemonSet ]   │ ──► CAP_BPF + CAP_NET_RAW + CAP_PERFMON
 └────────────────────────────────┘     (Completely isolated from Monarch)
 
 
 ### Decoupled eBPF Architecture
-* **Strict Operator Segregation**: Monarch **does not deploy or manage Pixie Vizier or eBPF kernel tracing sensors**. Because eBPF operators require advanced cluster privileges (such as running in the host pid namespace with `CAP_SYS_ADMIN`), installation and management are completely externalized to the platform team.
-* **The Declarative Interface (`PixieStreamRule`)**: Instead of handling eBPF logic inline, Monarch outputs a completely unprivileged custom manifest called a `PixieStreamRule`. This contains metadata instructions (production target pod labels, shadow ports, and OTLP endpoints).
-* **The Bridge Gateway**: An external, out-of-band component (`pixie-stream-bridge`) running as an independent host daemon consumes this manifest. It executes the high-privilege PxL scripts required to mirror the traffic. If the bridge or kernel instrumentation malfunctions, Monarch's control plane loop remains completely insulated and untouched.
+* **Strict Operator Segregation**: Monarch **does not deploy or manage the eBPF capture DaemonSet**. Because kernel capture needs `CAP_BPF`, `CAP_NET_RAW` and `CAP_PERFMON` under a `privileged` Pod Security Standard, installation and management are externalized to the platform team. Monarch itself runs under the `restricted` standard with no Linux capabilities.
+* **The Declarative Interface (`KaiselRule`)**: Instead of handling eBPF logic inline, Monarch outputs a completely unprivileged custom manifest called a `KaiselRule`. This carries metadata only — live target pod IPs, TCP ports, and the igris/Shop URLs to forward to.
+* **The Capture DaemonSet (`kaisel`)**: An out-of-band DaemonSet in `kaisel-system` consumes this manifest with `get/list/watch` on `kaiselrules` and nothing else. If kernel instrumentation malfunctions, Monarch's control-plane loop remains insulated — and because capture attaches a socket filter that receives a *clone* of each frame, it cannot drop or delay production traffic either. See [/data-plane/kaisel-ebpf.md](/data-plane/kaisel-ebpf.md).
 
 ---
 
@@ -62,7 +62,7 @@ Whenever a `ShadowTest` resource is initialized, Monarch programmatically instan
 
 ### Container Security Principles
 * **No Privilege Escalation**: Injected Envoy proxy sidecars and dependency stacks (e.g., automated Redis or Mongo test stores) run strictly within unprivileged contexts (`allowPrivilegeEscalation: false`, `runAsNonRoot: true`).
-* **Automated Sandbox Network Policies**: Monarch instantiates strict `NetworkPolicies` dropping all incoming ingress traffic except for out-of-band telemetry pipelines authorized through the `Siphon` gateway service (`:4317`).
+* **Automated Sandbox Network Policies**: Monarch instantiates strict `NetworkPolicies` dropping all incoming ingress traffic except for out-of-band telemetry pipelines (Kaisel → igris-http and Kaisel → Shop).
 * **Egress Traffic Interception**: Monarch injects an Envoy proxy configured with forceful egress filtering rules. Any attempt by a shadow component (`candidate` or `control`) to call external production APIs (e.g., Stripe, SendGrid) is trapped, cut off, and directed to mock stubs.
 
 ---
@@ -73,7 +73,7 @@ Whenever a `ShadowTest` resource is initialized, Monarch programmatically instan
 | :--- | :--- | :--- |
 | **Candidate Escape** | Production DB / APIs | Egress network policies explicitly drop all traffic trying to cross the boundary into production namespaces or outbound public IP addresses. |
 | **Webhook Vulnerability** | K8s API Server | The Mutating Admission Webhook restricts mutations strictly to resources carrying the explicit `shadow-diff.io/inject: enabled` label specification. |
-| **Kernel Crash / Vulnerability** | Node Kernel / eBPF | High-privilege instrumentation is decoupled. Monarch only outputs metadata (`PixieStreamRule`); it has zero direct connectivity to kernel trace hooks. |
+| **Kernel Crash / Vulnerability** | Node Kernel / eBPF | High-privilege instrumentation is decoupled. Monarch only outputs metadata (`KaiselRule`); it has zero direct connectivity to kernel trace hooks. |
 | **Credential Exposure** | Production Secrets | Monarch isolates shadow pods by stripping the default `ServiceAccount` tokens from the target containers inside the shadow namespace, preventing pods from querying the cluster API server. |
 
 ---
@@ -81,4 +81,3 @@ Whenever a `ShadowTest` resource is initialized, Monarch programmatically instan
 ## # Citations
 * [Kubernetes Least Privilege RBAC Guide](https://kubernetes.io/docs/concepts/security/rbac-good-practices/)
 * [Envoy Proxy Egress Filter Chain Configuration](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/matching/matching_api)
-* [Pixie eBPF Security Architecture & Memory Isolation Model](https://docs.px.dev/about/architecture/)

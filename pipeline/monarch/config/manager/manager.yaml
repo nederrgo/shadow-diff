@@ -5,6 +5,8 @@ metadata:
     control-plane: controller-manager
     app.kubernetes.io/name: monarch
     app.kubernetes.io/managed-by: kustomize
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
   name: system
 ---
 apiVersion: apps/v1

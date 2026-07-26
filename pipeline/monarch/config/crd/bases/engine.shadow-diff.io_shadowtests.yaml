@@ -393,14 +393,16 @@ spec:
                   OldImage is the container image for Control-A and Control-B pods.
                   When unset, Monarch derives it from the target Deployment's current running image.
                 type: string
-              recorder:
-                description: Recorder overrides the Recorder image (always provisioned
-                  per shadow namespace).
-                properties:
-                  image:
-                    description: Image overrides the default Recorder container image.
-                    type: string
-                type: object
+              samplePercentage:
+                description: |-
+                  SamplePercentage is the shared prod sampling gate (1-100, default 100) for
+                  all input types. Uses (V*100)<(N*256) on the W3C trace id; empty/missing
+                  traceparent is always dropped. Monarch seeds it by inputs[].driver: HTTP →
+                  KaiselRule (ingress and egress); rabbitmq_message → igris-rabbitmq
+                  (IGRIS_RMQ_SAMPLE_PERCENTAGE). RabbitMQ does not use Kaisel.
+                maximum: 100
+                minimum: 1
+                type: integer
               servicePort:
                 description: |-
                   ServicePort is the TCP port the Envoy ingress listener binds on in shadow pods.
@@ -410,6 +412,15 @@ spec:
                 maximum: 65535
                 minimum: 1
                 type: integer
+              shadowSoldier:
+                description: ShadowSoldier overrides the database egress capture sidecar
+                  image.
+                properties:
+                  image:
+                    description: Image overrides the default shadow-soldier container
+                      image.
+                    type: string
+                type: object
               shop:
                 description: Shop overrides the Shop mock-store image (always provisioned
                   per shadow namespace).
@@ -417,29 +428,6 @@ spec:
                   image:
                     description: Image overrides the default Shop container image.
                     type: string
-                type: object
-              siphon:
-                description: Siphon configures kernel-level traffic capture to Igris.
-                properties:
-                  enabled:
-                    description: Enabled disables Pixie stream rules when explicitly
-                      false.
-                    type: boolean
-                  excludePaths:
-                    description: ExcludePaths are regex strings to drop healthchecks/traffic
-                      at the kernel layer.
-                    items:
-                      type: string
-                    type: array
-                  image:
-                    description: Image overrides the default Siphon OTLP receiver
-                      container image.
-                    type: string
-                  maxPayloadSize:
-                    description: MaxPayloadSize is the max bytes to parse per HTTP/2
-                      frame (default 65536).
-                    format: int64
-                    type: integer
                 type: object
               targetDeployment:
                 description: |-
@@ -476,6 +464,10 @@ spec:
                 description: IgrisRabbitMQPhase summarizes igris-rabbitmq deployment
                   readiness.
                 type: string
+              kaiselPhase:
+                description: KaiselPhase summarizes Kaisel ingress capture reconciliation
+                  (Ready, Degraded).
+                type: string
               message:
                 description: Message carries human-readable detail, including MVP
                   limitations (skipped envFrom, etc.).
@@ -487,10 +479,6 @@ spec:
               shadowNamespace:
                 description: ShadowNamespace is the dedicated namespace where control/candidate
                   Deployments run.
-                type: string
-              siphonPhase:
-                description: SiphonPhase summarizes Pixie stream rule reconciliation
-                  (Ready, Degraded, Disabled).
                 type: string
             type: object
         required:

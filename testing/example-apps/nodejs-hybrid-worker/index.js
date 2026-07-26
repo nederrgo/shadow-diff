@@ -66,7 +66,7 @@ function sleep(ms) {
 
 function httpRequestNative(url, payload, headers) {
   // undici/fetch forbids setting Host (Fetch spec); use http.request() so the
-  // custom Host header actually reaches the wire (needed for Pixie egress filter).
+  // custom Host header actually reaches the wire (it becomes the egress mock key).
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const lib = parsed.protocol === 'https:' ? https : http;

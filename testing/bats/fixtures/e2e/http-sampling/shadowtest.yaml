@@ -1,0 +1,24 @@
+# HTTP sampling proof — samplePercentage: 10 (Kaisel ingress + egress)
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-http-sampling
+  namespace: default
+spec:
+  targetDeployment: http-rmq-go-prod
+  newImage: http-rmq-go-worker:dev
+
+  samplePercentage: 10
+
+  inputs:
+    - port: 8888
+      driver: http_request
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

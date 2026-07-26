@@ -22,23 +22,24 @@ const (
 	roleControlB         = "control-b"
 	roleCandidate        = "candidate"
 
-	containerEnvoySidecar = "envoy-sidecar"
-	containerApp          = "app"
-	envShadowRole         = "SHADOW_ROLE"
-	envShadowTestName     = "SHADOW_TEST_NAME"
-	envoyImage            = "envoyproxy/envoy:v1.30-latest"
-	configMapKeyEnvoyYAML = "envoy.yaml"
-	volumeNameEnvoyConfig = "envoy-config"
+	containerEnvoySidecar  = "envoy-sidecar"
+	containerApp           = "app"
+	containerShadowSoldier = "shadow-soldier"
+	envShadowRole          = "SHADOW_ROLE"
+	envShadowTestName      = "SHADOW_TEST_NAME"
+	envSoldierRoutes       = "SOLDIER_ROUTES"
+	envPodName             = "POD_NAME"
+	envoyImage             = "envoyproxy/envoy:v1.30-latest"
+	configMapKeyEnvoyYAML  = "envoy.yaml"
+	volumeNameEnvoyConfig  = "envoy-config"
 
-	defaultBeruGRPCAddress      = "beru.beru-system.svc.cluster.local:50051"
-	defaultBeruHTTPAddress      = "beru.beru-system.svc.cluster.local:8080"
-	defaultBeruOTLPEndpoint     = "http://beru.beru-system.svc.cluster.local:4317"
-	defaultBeruOTLPHTTPEndpoint = "http://beru.beru-system.svc.cluster.local:8080"
-	defaultBeruIngestAddress    = "beru-ingest.shadow-system.svc.cluster.local:8080"
-	defaultBeruGRPCTimeout      = "10s"
-	beruSystemNamespace         = "beru-system"
-	beruServiceName             = "beru"
-	envBeruGRPCAddress          = "BERU_GRPC_ADDRESS"
+	defaultBeruGRPCAddress   = "beru.beru-system.svc.cluster.local:50051"
+	defaultBeruHTTPAddress   = "beru.beru-system.svc.cluster.local:8080"
+	defaultBeruIngestAddress = "beru-ingest.shadow-system.svc.cluster.local:8080"
+	defaultBeruGRPCTimeout   = "10s"
+	beruSystemNamespace      = "beru-system"
+	beruServiceName          = "beru"
+	envBeruGRPCAddress       = "BERU_GRPC_ADDRESS"
 
 	egressProxyPort int32 = 10001
 
@@ -67,13 +68,8 @@ $IPT -t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-port 10001`
 	defaultIgrisListenersPath    = "/etc/igris/listeners.json"
 	igrisTerminationGraceSeconds = int64(35)
 
-	containerRecorder       = "recorder"
-	envRecorderListenAddr   = "RECORDER_LISTEN_ADDR"
-	envRecorderOTLPGRPCAddr = "RECORDER_OTLP_GRPC_ADDR"
-	envShopHTTPURL          = "SHOP_HTTP_URL"
-	envBeruHTTPURL          = "BERU_HTTP_URL"
-	recorderServicePort     = int32(8080)
-	recorderOTLPPort        = int32(4317)
+	envShopHTTPURL = "SHOP_HTTP_URL"
+	envBeruHTTPURL = "BERU_HTTP_URL"
 
 	shopName        = "shop"
 	shopGRPCPort    = int32(50051)

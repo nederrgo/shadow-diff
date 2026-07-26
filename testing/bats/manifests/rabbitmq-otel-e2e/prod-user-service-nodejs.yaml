@@ -50,7 +50,7 @@ metadata:
   name: user-service-nodejs
   namespace: default
 spec:
-  # ponytail: headless so Siphon pairs L4 egress R+S legs (no kube-proxy DNAT)
+  # ponytail: headless so Kaisel sees the real pod IP on egress (no kube-proxy DNAT)
   clusterIP: None
   selector:
     app: user-service-nodejs

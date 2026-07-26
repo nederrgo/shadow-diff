@@ -11,18 +11,16 @@ const (
 	imageBaseIgrisHTTP           = "igris-http"
 	imageBaseIgrisRabbitMQ       = "igris-rabbitmq"
 	imageBaseEgressRelayRabbitMQ = "egress-relay-rabbitmq"
-	imageBaseRecorder            = "recorder"
 	imageBaseBeru                = "beru"
 	imageBaseShop                = "shop"
-	imageBaseSiphon              = "siphon"
+	imageBaseShadowSoldier       = "shadow-soldier"
 
 	envIgrisHTTPImage           = "IGRIS_HTTP_IMAGE"
 	envIgrisRabbitMQImage       = "IGRIS_RABBITMQ_IMAGE"
 	envEgressRelayRabbitMQImage = "EGRESS_RELAY_RABBITMQ_IMAGE"
-	envRecorderImage            = "RECORDER_IMAGE"
 	envBeruImage                = "BERU_IMAGE"
 	envShopImage                = "SHOP_IMAGE"
-	envSiphonImage              = "SIPHON_IMAGE"
+	envShadowSoldierImage       = "SHADOW_SOLDIER_IMAGE"
 )
 
 func monarchImageTagSuffix() string {
@@ -68,14 +66,6 @@ func egressRelayRabbitMQImageFor(st *enginev1alpha1.ShadowTest) string {
 	return resolveHelperImage(imageBaseEgressRelayRabbitMQ, cr, envEgressRelayRabbitMQImage)
 }
 
-func recorderImageFor(st *enginev1alpha1.ShadowTest) string {
-	cr := ""
-	if st.Spec.Recorder != nil {
-		cr = st.Spec.Recorder.Image
-	}
-	return resolveHelperImage(imageBaseRecorder, cr, envRecorderImage)
-}
-
 func beruImageFor(st *enginev1alpha1.ShadowTest) string {
 	cr := ""
 	if st.Spec.Beru != nil {
@@ -92,10 +82,10 @@ func shopImageFor(st *enginev1alpha1.ShadowTest) string {
 	return resolveHelperImage(imageBaseShop, cr, envShopImage)
 }
 
-func siphonImageFor(st *enginev1alpha1.ShadowTest) string {
+func shadowSoldierImageFor(st *enginev1alpha1.ShadowTest) string {
 	cr := ""
-	if st.Spec.Siphon != nil {
-		cr = st.Spec.Siphon.Image
+	if st.Spec.ShadowSoldier != nil {
+		cr = st.Spec.ShadowSoldier.Image
 	}
-	return resolveHelperImage(imageBaseSiphon, cr, envSiphonImage)
+	return resolveHelperImage(imageBaseShadowSoldier, cr, envShadowSoldierImage)
 }

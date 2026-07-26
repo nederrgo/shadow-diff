@@ -33,14 +33,13 @@ setup_file() {
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
   wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" \
-    --require-mongo --require-rmq --require-siphon
+    --require-mongo --require-rmq --require-kaisel
 
   SHADOW_NS="$(shadow_namespace)"
   export SHADOW_NS
 
   bats_source_e2e_helpers
   wait_local_beru_rollout "$SHADOW_NS"
-  bats_wait_pixie_after_shadowtest "$SHADOWTEST" "$SHADOWTEST_NS" 1
 
   bats_suite_mark SETUP_COMPLETE 1
   bats_write_suite_state
@@ -48,8 +47,8 @@ setup_file() {
 
 @test "verify HTTP ingress reaches all shadow roles (nodejs)" {
   publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
-  if ! wait_recorder_seed; then
-    skip "Pixie HTTP egress / Recorder seed not available"
+  if ! wait_kaisel_egress_seed; then
+    skip "Kaisel egress seed not available"
   fi
   for role in control-a control-b candidate; do
     run assert_worker_http_replay "$role" "$BATS_ORDER_ID"
@@ -57,38 +56,10 @@ setup_file() {
   done
 }
 
-@test "verify Mongo egress diff is clean for isolated trace (nodejs)" {
-  if ! kubectl get svc "${SHADOWTEST}-igris" -n "${SHADOW_NS}" >/dev/null 2>&1; then
-    skip "RMQ-only hybrid has no igris-http; use integration/mongo_egress.bats"
-  fi
-  run multicast_igris_write "$BATS_TRACE_ID" '{"data":"mongo-clean"}'
-  assert_success
-  run beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" mongodb)" --timeout=90
-  assert_success
-}
-
-@test "verify candidate Mongo count regression in Beru verdict (nodejs)" {
-  publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
-  if ! wait_recorder_seed; then
-    skip "Pixie HTTP egress / Recorder seed not available"
-  fi
-  for role in control-a control-b candidate; do
-    run assert_worker_processed_order "$role" "$BATS_ORDER_ID"
-    assert_success
-  done
-
-  run beru_wait_log --grep="$(beru_log_egress_count_regression "$BATS_TRACE_ID" mongodb)" --timeout=120
-  assert_success
-
-  run beru_verdict_line_api "$BATS_TRACE_ID" mongodb
-  assert_success
-  assert_output --regexp '^MISMATCH\|1$'
-}
-
 @test "verify RabbitMQ egress count regression (nodejs)" {
   publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
-  if ! wait_recorder_seed; then
-    skip "Pixie HTTP egress / Recorder seed not available"
+  if ! wait_kaisel_egress_seed; then
+    skip "Kaisel egress seed not available"
   fi
   for role in control-a control-b candidate; do
     run assert_worker_processed_order "$role" "$BATS_ORDER_ID"
@@ -96,6 +67,33 @@ setup_file() {
   done
 
   run beru_wait_log --grep="$(beru_log_egress_count_regression "$BATS_TRACE_ID" rabbitmq)" --timeout=120
+  assert_success
+}
+
+@test "verify MongoDB egress is captured for all three roles (nodejs)" {
+  publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
+  if ! wait_kaisel_egress_seed; then
+    skip "Kaisel egress seed not available"
+  fi
+  # shadow-soldier proxies each role's Mongo connection and reports the command
+  # document; the worker embeds the traceparent in the BSON comment field.
+  run wait_mongodb_egress_reports "$BATS_TRACE_ID" 120
+  assert_success
+}
+
+@test "verify MongoDB egress count regression (nodejs)" {
+  publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
+  if ! wait_kaisel_egress_seed; then
+    skip "Kaisel egress seed not available"
+  fi
+  for role in control-a control-b candidate; do
+    run assert_worker_processed_order "$role" "$BATS_ORDER_ID"
+    assert_success
+  done
+  # candidate unconditionally inserts a second "candidate_n1_loop" document per
+  # order — this worker's Mongo egress never diffs clean, unlike the isolated-
+  # trace assertion used for the http-otel-rmq suites.
+  run beru_wait_log --grep="$(beru_log_egress_count_regression "$BATS_TRACE_ID" mongodb)" --timeout=120
   assert_success
 }
 

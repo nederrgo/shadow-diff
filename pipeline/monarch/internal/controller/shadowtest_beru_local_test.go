@@ -57,16 +57,12 @@ func TestLocalBeruAddressHelpers(t *testing.T) {
 		t.Fatalf("beruIngestAddressFor = %q, want %q", ingest, wantIngest)
 	}
 
-	otlp := beruOTLPEndpointFor(st, shadowNS)
-	wantOTLP := "http://beru-local.shadow-default-http-otel-rmq-nodejs-shadow.svc.cluster.local:4317"
-	if otlp != wantOTLP {
-		t.Fatalf("beruOTLPEndpointFor = %q, want %q", otlp, wantOTLP)
-	}
-
-	otlpHTTP := beruOTLPHTTPEndpointFor(st, shadowNS)
-	wantOTLPHTTP := "http://beru-local.shadow-default-http-otel-rmq-nodejs-shadow.svc.cluster.local:8080"
-	if otlpHTTP != wantOTLPHTTP {
-		t.Fatalf("beruOTLPHTTPEndpointFor = %q, want %q", otlpHTTP, wantOTLPHTTP)
+	// Sidecars report on the ingest port, not 8080: the shadow pod's iptables
+	// rules REDIRECT outbound 8080 into Envoy's egress listener.
+	ingestURL := beruIngestURLFor(st, shadowNS)
+	wantIngestURL := "http://beru-local.shadow-default-http-otel-rmq-nodejs-shadow.svc.cluster.local:8081"
+	if ingestURL != wantIngestURL {
+		t.Fatalf("beruIngestURLFor = %q, want %q", ingestURL, wantIngestURL)
 	}
 
 	recorderURL := "http://" + httpHost
@@ -88,8 +84,8 @@ func TestLocalBeruAddressHelpers_externalOverride(t *testing.T) {
 	if got := beruHTTPHostFor(st, "shadow-default-x"); got != "beru.beru-system.svc.cluster.local:8080" {
 		t.Fatalf("override http host = %q", got)
 	}
-	if got := beruOTLPEndpointFor(st, "shadow-default-x"); got != defaultBeruOTLPEndpoint {
-		t.Fatalf("override otlp = %q", got)
+	if got := beruIngestURLFor(st, "shadow-default-x"); got != "http://beru.beru-system.svc.cluster.local:8080" {
+		t.Fatalf("override ingest url = %q", got)
 	}
 }
 

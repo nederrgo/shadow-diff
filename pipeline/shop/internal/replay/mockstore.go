@@ -22,7 +22,7 @@ func is2xx(code int) bool {
 func (s *MockStore) Put(hash string, resp EarlyResponse) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Keep the first 2xx. Dual-side Pixie export can seed the same key twice;
+	// Keep the first 2xx. A capture path may seed the same key twice;
 	// transparent-proxy races may also try to overwrite a real 2xx with a 599.
 	if existing, ok := s.data[hash]; ok && is2xx(existing.StatusCode) {
 		if is2xx(resp.StatusCode) {

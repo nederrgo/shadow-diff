@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kaisel-config
+  namespace: kaisel-system
+  labels:
+    app.kubernetes.io/name: kaisel
+data:
+  # Network interface to attach the AF_PACKET capture socket to.
+  # "any" binds to every interface in the node's network namespace (ifindex 0,
+  # the same mechanism as `tcpdump -i any`) -- this is what lets kaisel see
+  # same-node pod-to-pod traffic, which never crosses a single named device
+  # like eth0 (a Linux bridge does not clone traffic it merely forwards
+  # between two other ports to any listener, including one on the bridge
+  # device itself). Loopback is excluded in-kernel by ifindex regardless of
+  # this setting, since its header layout differs from every other device.
+  #
+  # Accepted trade-off (see docs/data-plane/kaisel-ebpf.md "any interface
+  # capture" section): every pod on the node can now present packets to
+  # kaisel's kernel filter, not just external/cross-node peers. Set this to a
+  # single named interface (e.g. eth0) to shrink that surface back down if
+  # same-node pod-to-pod capture is not required.
+  iface: any
+  # Include captured request body content (truncated to 4KB) in kaisel's logs.
+  # Off by default: bodies are real production data, and pod logs are commonly
+  # shipped off-node by cluster-wide log aggregation. Flip to "true" only for
+  # short-lived debugging, then set it back.
+  logBodies: "false"

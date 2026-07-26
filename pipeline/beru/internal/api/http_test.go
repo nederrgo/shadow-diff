@@ -17,9 +17,11 @@ import (
 
 type egressRouteRecorder struct {
 	routed atomic.Bool
+	last   atomic.Pointer[v2storage.RawReport]
 }
 
 func (r *egressRouteRecorder) AppendReport(ctx context.Context, report *v2storage.RawReport) ([]v2storage.RawReport, error) {
+	r.last.Store(report)
 	r.routed.Store(true)
 	return []v2storage.RawReport{*report}, nil
 }
@@ -97,6 +99,59 @@ func TestEgressDiff_acceptsReport(t *testing.T) {
 	}
 }
 
+// postEgressDiff sends one report and waits for the router to consume it.
+func postEgressDiff(t *testing.T, body map[string]any) *v2storage.RawReport {
+	t.Helper()
+	routeRec := &egressRouteRecorder{}
+	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(1, routeRec, nil)}
+
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/egress/diff", bytes.NewReader(raw))
+	rr := httptest.NewRecorder()
+	s.handleEgressDiff(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !routeRec.routed.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("expected router to receive report")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return routeRec.last.Load()
+}
+
+// A producer that decoded the wire protocol itself is authoritative for the
+// signature; Beru must store it verbatim rather than re-deriving one from the
+// payload's key order.
+func TestEgressDiff_usesSuppliedSignature(t *testing.T) {
+	got := postEgressDiff(t, map[string]any{
+		"trace_id":  "4bf92f3577b34da6a3ce929d0e0e4736",
+		"workload":  "candidate",
+		"protocol":  "postgresql",
+		"signature": "postgresql:select:users",
+		// raw_query sorts before "target", so derivation would key the signature
+		// on the SQL text and change whenever a literal in it changes.
+		"payload": map[string]any{"raw_query": "SELECT * FROM users", "target": "users"},
+	})
+	if got.Signature != "postgresql:select:users" {
+		t.Fatalf("Signature = %q want postgresql:select:users", got.Signature)
+	}
+}
+
+func TestEgressDiff_derivesSignatureWhenAbsent(t *testing.T) {
+	got := postEgressDiff(t, map[string]any{
+		"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+		"workload": "control-a",
+		"protocol": "mongodb",
+		"payload":  map[string]any{"insert": "orders"},
+	})
+	if got.Signature != "mongodb:insert:orders" {
+		t.Fatalf("Signature = %q want mongodb:insert:orders", got.Signature)
+	}
+}
+
 func TestSeedReports_acceptsBatch(t *testing.T) {
 	routeRec := &egressRouteRecorder{}
 	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(1, routeRec, nil)}
@@ -144,4 +199,3 @@ func TestSeedReports_acceptsBatch(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
-

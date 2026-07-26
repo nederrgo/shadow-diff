@@ -9,8 +9,58 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-26]
+### Added
+* 'testing/example-apps/http-rmq-go-worker': Stop logging trace IDs in app logs to match Node/Python fixtures for assert_worker_trace_absent
+* 'testing/bats/e2e/rabbitmq-ingress/': Fixed Mongo egress test added to the hybrid suites — asserted 'clean' when candidate unconditionally double-inserts every order (matching its existing RMQ n+1 behavior), which Beru's re-diff-on-arrival logging made intermittently false-pass on a stale pre-mismatch log line; replaced with a count-regression assertion
+* 'testing/bats/e2e/rabbitmq-ingress/': Added MongoDB egress diff coverage (captured for all three roles + clean for isolated trace) to the Node.js and Python hybrid suites, which already deployed Mongo but never asserted on it; fixed docs/verification/hybrid-rmq-e2e-flow.md's stale OTLP reference and its false 'covered elsewhere' claim about a nonexistent mongo_egress.bats
+* 'pipeline/beru/internal/otlp/': Removed dormant OTLP MongoDB egress route (:4317 receiver, POST /v1/traces, FromMongoEgress, beru-local otlp-grpc port, go.opentelemetry.io/proto/otlp dependency) in favor of shadow-soldier wire capture; beru-local gains ingest port 8081 to bypass the shadow pod's 8080 iptables redirect
+* 'pipeline/shadow-soldier/': Added L4b database egress capture sidecar — plain-text TCP proxy decoding MongoDB/PostgreSQL/Redis/MSSQL wire protocols, Postgres SSLRequest 'N' downgrade, bounded fail-open parser tap, trace-sharded reporter posting to Beru /api/v1/egress/diff
+* 'testing/bats, pipeline/beru': Kaisel→Shop→Envoy→Beru HTTP egress E2E; mirrorLegacyLogs handles http egress direction; beru_wait_http_egress_match helper
+* 'pipeline/shop, pipeline/beru, pipeline/monarch, docs': Shop buffers egress request body and async-reports HTTP egress to Beru /api/v1/egress/diff; EgressSignature http case; Shop BERU_HTTP_URL env
+* 'testing/bats/e2e/kaisel-capture': Replay E2E from copied prod traffic (no igris redrive)
+* 'pipeline/kaisel': Forward captured request headers to igris (drop hop-by-hop)
+* 'testing/bats/e2e/kaisel-capture': Kaisel→Shop→Envoy egress replay E2E
+* 'testing/example-apps/egress-test-app': Header-driven egress scenarios for Kaisel E2E
+* 'testing/bats/lib/platform.bash': Dropped the cluster-wide Beru health gate and bootstrap deploy — no suite points a ShadowTest at beru-system; beru-local (same image) is provisioned per ShadowTest
+* 'pipeline/pixie-gate,pipeline/recorder': Removed Pixie and Recorder — Kaisel is now the sole HTTP capture path; MongoDB egress diffing withdrawn while Beru's OTLP receiver, wire parser and diff stay dormant
+* 'docs/data-plane/kaisel-ebpf.md': Documented the egress pairing gate — evaluated on the request direction for both half-streams, and why reversing beats widening the predicate
+* 'testing/bats/lib/kaisel.bash': Match the egress mock key itself rather than a hash= prefix — slog quotes values containing '=', so a key with a query string logged as hash=... never matched the bare-prefix pattern
+* 'pipeline/kaisel/internal/decode': Fixed egress pairing gate — WantTransaction is evaluated on the request direction for both half-streams; asking with the response half's own flow tested the dependency address and discarded every response before it could pair
+* 'testing/bats': Assert Recorder seeded nothing during kaisel egress tests, so a Shop mock is attributable to Kaisel rather than the concurrent Pixie/Recorder path
+* 'pipeline/kaisel,pipeline/monarch,testing': Egress capture — HTTP response parsing, per-connection FIFO request/response pairing, and direct Shop mock seeding via KaiselRule.egressBaseURL; adds egress-test-app E2E workload
+
+## [2026-07-25]
+### Added
+* 'pipeline/monarch samplePercentage': unified top-level field for HTTP and AMQP sampling
+* 'testing/tools/e2e-reset-minikube.sh,testing/bats/lib/platform.bash': deploy Kaisel DaemonSet in minikube reset and bats platform bootstrap
+* 'testing/bats/lib/kaisel.bash,pipeline/*/go.sum': fix kaisel E2E stuck setup — fail hard on missing images; teardown --wait=false; tidy go.sum for docker builds
+* 'testing/bats/e2e/kaisel-capture': full-route E2E Monarch→prod→Kaisel→igris→shadow pods (traceparent + multicast + nginx access logs)
+* 'pipeline/siphon removed': deleted Siphon module; ShadowTest.spec.samplePercentage + status.kaiselPhase; HTTP ingress is Kaisel-only
+* 'pipeline/igrises/igris-http': ResolveContext rejects missing/invalid traceparent (no mint); tracing is a prerequisite for HTTP multicast
+* 'pipeline/kaisel + KaiselRule': Step 3b Kaisel→igris export — admit/SampledIn/Forward routed by dst IP via KaiselRule.igrisBaseURL; igris-http unchanged
+* 'docs/data-plane/siphon-audit.md': Siphon audit ADR — admit/sampling/forward move into Kaisel userspace, not igris-http; index + kaisel-ebpf cross-links
+* 'pipeline/kaisel': added -log-bodies flag (default false) to print captured request body content in kaisel logs, gated behind explicit opt-in since bodies are real production data and pod logs are commonly shipped off-node by cluster log aggregation. Wired through capture.Config -> decode.StreamFactory, capped at 4KB per log line, exposed as logBodies in the kaisel-config ConfigMap and threaded into the DaemonSet's env/args. Verified live: full JSON body appears in the log line when enabled, absent (only body_bytes count) by default.
+* 'testing/bats/e2e/kaisel-capture,testing/bats/lib/kaisel.bash': added E2E test verifying Monarch + kaisel self-heal after a prod pod crash — force-deletes the target pod, confirms Monarch's Pod watch rewrites the KaiselRule to the replacement pod's new IP with no restart, and confirms kaisel's controller-runtime reconciler pushes that IP into the live BPF map so traffic to the new pod is captured. All 4 kaisel-capture E2E tests pass.
+* 'pipeline/kaisel,pipeline/monarch': fixed kaisel E2E — moved KaiselRule creation ahead of shadow-stack readiness gates in Monarch's reconcile loop, fixed a startup deadlock where a pending MapUpdate could never be drained if no packet had yet matched the empty target_ips map, added missing kaiselrules CRD to config/crd/kustomization.yaml, fixed the kaisel/monarch go.sum + Dockerfile (golang:1.26, repo-root build context for the monarch replace directive) so docker-build actually works, fixed a duplicate -kubeconfig flag registration panic. Switched kaisel's default capture interface from eth0 to any (ifindex 0, same mechanism as tcpdump -i any) since a Linux bridge never clones same-node pod-to-pod traffic to a listener on any single device including eth0 itself (verified via live tcpdump); added an explicit lo_ifindex kernel-side exclusion (resolved via net.InterfaceByName at load time) since loopback's non-Ethernet framing cannot share the fixed l2_off constant with every other device now multiplexed onto the socket. Documented the accepted security trade-off (wider kernel-filter attack surface, stale-IP blast radius) and the eth0 fallback in docs/data-plane/kaisel-ebpf.md. All 3 kaisel-capture E2E tests and both modules' unit test suites pass.
+* 'testing/bats/e2e/kaisel-capture,testing/bats/lib/kaisel.bash,testing/bats/lib/env.bash': self-contained kaisel E2E setup — kaisel_setup_platform builds+loads Monarch+kaisel images, installs CRDs, deploys operator; test no longer requires pre-deployed platform
+* 'pipeline/kaisel/Dockerfile,pipeline/kaisel/Makefile': add Dockerfile and docker-build target to complete kaisel as a deployable DaemonSet image
+* 'pipeline/kaisel/deploy,pipeline/monarch/config/rbac': least-privilege DaemonSet deploy manifests for kaisel (CAP_BPF/NET_RAW/PERFMON, no privileged:true, hostNetwork, cloud-agnostic ConfigMap iface) + Monarch RBAC cleanup (drop pixiestreamrules rules, delete stale shadow_deployment_role.yaml, add restricted PSA label to monarch-system namespace)
+* 'testing/bats/e2e/kaisel-capture': full-stack E2E bats test — ShadowTest → KaiselRule → kaisel eBPF capture → HTTP request asserted in kaisel log
+* 'pipeline/monarch,pipeline/kaisel': KaiselRule CRD + Monarch reconciliation (live pod IP resolution, pod watch predicate, no-op patch optimization) + kaisel map-sync controller replacing Pixie ingress capture
+* 'pipeline/kaisel': Drop and count fragmented IPv4 datagrams in the kernel filter — gopacket already declines to decode fragments, so this adds a stated cause for an otherwise silent flow; covered by a loopback integration test asserting the counter
+* 'docs/data-plane/kaisel-ebpf.md': Added Kaisel eBPF capture spec — filter chain, chunked perf transport for GSO super-packets, design rationale (socket-filter fail-open, perf array vs ringbuf, why sampling cannot protect the ring) and limitations; mapped in data-plane index
+* 'pipeline/kaisel/internal/capture': Unified target_ips on host-order keys — capture.c composes both IPv4 addresses byte-wise from one 8-byte header read, so map keys no longer depend on node endianness and Go seeds with BigEndian instead of NativeEndian
+* 'pipeline/kaisel': Chunked eBPF capture for GSO super-packets — 128KB reach, TCP+port kernel filters, 1MB/CPU ring, netns integration suite
+* 'pipeline/kaisel': Add lean eBPF collector core — SOCKET_FILTER capture, perf-array PacketSource seam, CNI-agnostic decode, HTTP stream reassembly
+
 ## [2026-07-24]
 ### Added
+* 'pipeline/pixie-gate': Add least-privilege in-cluster Go service replacing host pixie-stream-bridge; wire setup/bats/docs
+* 'testing/bats/helpers/pixie-bridge.sh,docs/control-plane/monarch-controller.md': Fix PxL sampling hex decode — px.atoi has no radix; use nibble select so load shed stays in Pixie
+* 'pipeline/siphon,pipeline/recorder,pipeline/igrises/igris-rabbitmq,testing/bats': Prod-gate shared sampling (V*100)<(N*256) in Pixie+Go; empty trace drop; RMQ/HTTP bats proofs
+* 'testing/bats/manifests/pixie-bridge,testing/bats/helpers/pixie-bridge.sh': Removed samplePercentage from shadow-pod Mongo PxL (ingress already samples)
+* 'pipeline/monarch,pipeline/igrises/igris-rabbitmq,testing/bats/helpers/pixie-bridge.sh': Added samplePercentage trace-based sampling across Pixie HTTP/Mongo capture and RabbitMQ ingress
 * 'testing/bats/verdict_ui': wait beru-local only; skip full ShadowTest Ready
 * 'testing/bats': verdict_ui seed suite uses direct assert (no quiescence settle)
 * 'testing/bats': UI seed MATCH when timestamp field differs across A/B/C (natural noise)

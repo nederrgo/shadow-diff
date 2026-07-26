@@ -76,9 +76,9 @@ func (p *ShadowPublisher) Close() {
 
 func (p *ShadowPublisher) PublishAll(msg amqp.Delivery, headers amqp.Table) error {
 	pub := amqp.Publishing{
-		Headers:     headers,
-		ContentType: msg.ContentType,
-		Body:        msg.Body,
+		Headers:      headers,
+		ContentType:  msg.ContentType,
+		Body:         msg.Body,
 		DeliveryMode: msg.DeliveryMode,
 	}
 	for i, ch := range p.channels {
@@ -152,12 +152,22 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 func (r *Runner) handleDelivery(msg amqp.Delivery) {
-	headers, err := trace.EnsureTraceHeaders(msg.Headers)
-	if err != nil {
-		log.Printf("trace headers failed: %v", err)
-		_ = msg.Nack(false, true)
+	// Tracing is a prerequisite: no valid inbound traceparent → drop (do not mint).
+	resolved, ok := trace.TryInbound(msg.Headers)
+	if !ok {
+		if err := msg.Ack(false); err != nil {
+			log.Printf("ack (no traceparent) failed: %v", err)
+		}
 		return
 	}
+	if !sampledIn(resolved.TraceID, r.cfg.SamplePercentage) {
+		// Sampled out at prod gate — do not forward to shadow brokers.
+		if err := msg.Ack(false); err != nil {
+			log.Printf("ack (sampled out) failed: %v", err)
+		}
+		return
+	}
+	headers := trace.StampHeaders(msg.Headers, resolved)
 	if err := r.publisher.PublishAll(msg, headers); err != nil {
 		log.Printf("multicast failed: %v", err)
 		_ = msg.Nack(false, true)

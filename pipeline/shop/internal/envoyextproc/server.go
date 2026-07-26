@@ -6,20 +6,32 @@ import (
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/shadow-diff/shop/internal/beru"
 	"github.com/shadow-diff/shop/internal/replay"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+const headerShadowRole = "x-shadow-role"
 
 // Server implements Envoy external processing for egress mock lookup only.
 type Server struct {
 	extprocv3.UnimplementedExternalProcessorServer
-	Mocks *replay.MockStore
+	Mocks          *replay.MockStore
+	Beru           *beru.Client
+	ShadowTestName string
 }
 
 // Process handles the ext_proc bidirectional stream (always egress mode).
 func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
-	egress := &egressState{}
+	role := ""
+	if md, ok := metadata.FromIncomingContext(stream.Context()); ok {
+		if v := md.Get(headerShadowRole); len(v) > 0 && v[0] != "" {
+			role = v[0]
+		}
+	}
+	egress := &egressState{role: role}
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -72,4 +84,3 @@ func requestBodyContinueResponse() *extprocv3.ProcessingResponse {
 		},
 	}
 }
-

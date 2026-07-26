@@ -1,10 +1,14 @@
 package trace
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 	"strings"
 )
+
+// ErrMissingTraceparent is returned when inbound tracing is absent or invalid.
+// Tracing is a prerequisite for HTTP multicast — igris does not mint IDs.
+var ErrMissingTraceparent = errors.New("missing or invalid traceparent")
 
 // ResolvedContext is computed once before any multicast fan-out.
 type ResolvedContext struct {
@@ -13,29 +17,15 @@ type ResolvedContext struct {
 }
 
 // ResolveContext reads inbound HTTP headers and returns the trace context to stamp on all clones.
-// Inbound traceparent is preserved literally; otherwise a new W3C pair is generated.
+// Inbound traceparent is preserved literally. Missing or invalid values are rejected.
 func ResolveContext(headers http.Header) (ResolvedContext, error) {
 	inboundTP := strings.TrimSpace(headers.Get(HeaderTraceparent))
-	if inboundTP != "" {
-		if tid, ok := ParseTraceparent(inboundTP); ok {
-			return ResolvedContext{TraceID: tid, Traceparent: inboundTP}, nil
-		}
+	if inboundTP == "" {
+		return ResolvedContext{}, ErrMissingTraceparent
 	}
-
-	traceID, err := GenerateTraceID()
-	if err != nil {
-		return ResolvedContext{}, fmt.Errorf("generate trace id: %w", err)
+	tid, ok := ParseTraceparent(inboundTP)
+	if !ok {
+		return ResolvedContext{}, ErrMissingTraceparent
 	}
-	spanID, err := GenerateSpanID()
-	if err != nil {
-		return ResolvedContext{}, fmt.Errorf("generate span id: %w", err)
-	}
-	return ResolvedContext{
-		TraceID:     traceID,
-		Traceparent: FormatTraceparent(traceID, spanID),
-	}, nil
-}
-
-func isValidTraceID(s string) bool {
-	return len(s) == traceIDLen && isHex(s)
+	return ResolvedContext{TraceID: tid, Traceparent: inboundTP}, nil
 }

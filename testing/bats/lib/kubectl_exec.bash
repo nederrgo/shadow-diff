@@ -38,6 +38,5 @@ capture_failure_artifacts() {
   local prefix="${out_dir}/${ts}-${BATS_TEST_NAME:-test}"
   [[ -n "${SHADOWTEST:-}" ]] && kubectl describe shadowtest "$SHADOWTEST" -n "${SHADOWTEST_NS:-default}" >"${prefix}-shadowtest.txt" 2>&1 || true
   [[ -n "${SHADOW_NS:-}" ]] && kubectl get pods -n "$SHADOW_NS" >"${prefix}-pods.txt" 2>&1 || true
-  [[ -f "${PIXIE_BRIDGE_STATE_DIR}/bridge.log" ]] && tail -80 "${PIXIE_BRIDGE_STATE_DIR}/bridge.log" >"${prefix}-bridge.log" 2>&1 || true
   echo "failure artifacts: ${prefix}-*"
 }

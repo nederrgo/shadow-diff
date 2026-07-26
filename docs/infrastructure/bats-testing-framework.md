@@ -4,7 +4,7 @@ title: Bats-Core Modular Testing Framework
 description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, settlement-based Beru assertions, Jest-like reporter for BATS_PARALLEL_JOBS=1, and idempotent platform bootstrap.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats
 tags: [infrastructure, testing, bats, e2e, integration, monarch, beru]
-timestamp: 2026-07-24T08:00:00Z
+timestamp: 2026-07-26T13:30:00Z
 ---
 
 # Bats-Core Modular Testing Framework
@@ -15,7 +15,7 @@ Shadow-Diff E2E validation uses **bats-core** under [`testing/bats/`](https://gi
 
 | Bats hook | Phase | Responsibility |
 |-----------|-------|----------------|
-| `setup_file` | Platform + ShadowTest | `ensure_platform_ready`, prod deploy, ShadowTest CR, Pixie rule waits |
+| `setup_file` | Platform + ShadowTest | `ensure_platform_ready`, prod deploy, ShadowTest CR, KaiselRule waits |
 | `setup` | Isolation | `isolate_test_state` — fresh `BATS_TRACE_ID` per `@test` |
 | `@test` | Validation | Live traffic: `beru_wait_verdict_settled`; seed-only UI: `beru_assert_verdict_status` |
 | `teardown_file` | Teardown | `delete_shadowtest_and_verify` **then** prod undeploy (prod must stay up until ShadowTest finalizer completes RMQ queue cleanup) |
@@ -37,8 +37,8 @@ testing/bats/
   fixtures/               # per-suite CR YAML
   vendor/                 # bats-core, bats-support, bats-assert (vendored)
   package.json            # tap-mocha-reporter pin (Jest-like output)
-  pixie-stream-bridge.sh  # long-running Pixie export loop
   debug-mongo-egress.sh   # interactive 5-layer egress diagnostic
+
 
 testing/tools/            # standalone developer utilities (not called by bats)
   e2e-reset-minikube.sh   # bootstrap a local minikube cluster from scratch
@@ -52,8 +52,8 @@ testing/tools/            # standalone developer utilities (not called by bats)
 - Minikube (kvm2/virtualbox)
 - Monarch CRDs + operator (`MONARCH_MODE=dev`)
 - Beru (`beru-system`)
-- Pixie Vizier + **continuous** pixie-stream-bridge (no per-test restart)
-- Siphon RBAC
+- Kaisel DaemonSet (no per-test restart)
+- Kaisel DaemonSet (`pipeline/kaisel/deploy/`, also via `e2e-reset-minikube.sh`)
 
 Escape hatches: `SKIP_PLATFORM_BOOTSTRAP`, `SKIP_BUILD`, `SKIP_LOAD`, `BATS_FORCE_PLATFORM_BOOTSTRAP`.
 
@@ -101,7 +101,7 @@ make test-bats
 
 | File | Scenario |
 |------|----------|
-| `monarch/http_input.bats` | HTTP input stack Ready (igris-http, siphon, roles, deps) |
+| `monarch/http_input.bats` | HTTP input stack Ready (igris-http, KaiselRule, roles, deps) |
 | `monarch/ambiguous_ports.bats` | Multi-port target → `Failed` with `applicationPort` message |
 | `monarch/lifecycle.bats` | Delete mid-bring-up, re-apply while deleting, recreate → Ready, delete after Ready |
 | `monarch/deps_update.bats` | Live `spec.dependencies` add → dep Deployments + shadow app pod rollout with injected env |
@@ -118,6 +118,7 @@ Helpers: `monarch_wait_shadowtest_bringup_started`, `monarch_wait_shadowtest_cle
 | `http_otel_rmq_python.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Python) |
 | `http_otel_rmq_nodejs.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Node.js) |
 | `http_ingress_rmq_go.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Go) |
+| `kaisel-capture/kaisel_capture.bats` | Full HTTP route + Kaisel→Shop→Envoy replay→Beru HTTP egress match (`make test-bats-kaisel`) |
 
 Hybrid suite flow map: [/verification/hybrid-rmq-e2e-flow.md](/verification/hybrid-rmq-e2e-flow.md).  
 HTTP ingress suite flow map: [/verification/http-ingress-e2e-flow.md](/verification/http-ingress-e2e-flow.md).
@@ -132,6 +133,5 @@ See [`testing/bats/README.md`](https://github.com/shadow-diff/monarch/tree/main/
 - [/verification/http-ingress-e2e-flow.md](/verification/http-ingress-e2e-flow.md)
 - [`testing/bats/lib/platform.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/platform.bash)
 - [`testing/bats/lib/reporter.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/reporter.bash)
-- [`testing/bats/helpers/pixie-bridge.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/helpers/pixie-bridge.sh)
 - [`testing/bats/manifests/`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/manifests)
 - [`pipeline/beru/internal/v2/engine/router.go`](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2/engine/router.go)

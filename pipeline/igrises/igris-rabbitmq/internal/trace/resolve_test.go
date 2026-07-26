@@ -34,3 +34,21 @@ func TestResolveContext_generatesWhenNoTraceparent(t *testing.T) {
 		t.Fatalf("invalid traceparent %q", got.Traceparent)
 	}
 }
+
+func TestTryInbound_requiresValidTraceparent(t *testing.T) {
+	t.Parallel()
+	if _, ok := TryInbound(amqp.Table{}); ok {
+		t.Fatal("empty headers should not admit")
+	}
+	if _, ok := TryInbound(amqp.Table{HeaderTraceparent: "not-a-traceparent"}); ok {
+		t.Fatal("invalid traceparent should not admit")
+	}
+	inbound := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	got, ok := TryInbound(amqp.Table{HeaderTraceparent: inbound})
+	if !ok {
+		t.Fatal("valid inbound should admit")
+	}
+	if got.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("trace id = %q", got.TraceID)
+	}
+}

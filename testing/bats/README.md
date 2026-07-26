@@ -4,9 +4,8 @@ Modular integration and E2E tests using [bats-core](https://github.com/bats-core
 
 ## Prerequisites
 
-- Linux host with Minikube **kvm2** or **virtualbox** driver (Pixie eBPF)
+- Linux host with Minikube **kvm2** or **virtualbox** driver (eBPF capture)
 - `kubectl`, `jq`, `openssl` (host `sqlite3` optional — only for `beru_sqlite_query`)
-- Pixie Cloud account (`px auth login` or `PIXIE_API_KEY`)
 - Container images built into Minikube docker (`make` targets below)
 - For Jest-like output: Node/npm once — `npm ci --prefix testing/bats`
 
@@ -41,7 +40,7 @@ done
 | `@test` | Traffic + `beru_wait_log` / `beru_wait_verdict_settled` |
 | `teardown_file` | Delete ShadowTest + prod stack (once); skipped when `BATS_KEEP=1` |
 
-The pixie-stream-bridge runs continuously — tests never `pkill` or restart it.
+The Kaisel DaemonSet runs continuously — tests never `pkill` or restart it.
 
 ### Keep stack for dashboard UI
 
@@ -57,7 +56,7 @@ kubectl -n shadow-default-bats-beru-verdict-ui port-forward svc/beru-local 8080:
 kubectl delete shadowtest bats-beru-verdict-ui -n default
 ```
 
-`integration/beru/verdict_ui.bats` seeds the same histories as `pipeline/beru/internal/v2/diff/diff_test.go` via `POST /api/v1/debug/seed-reports` (no live traffic / Pixie).
+`integration/beru/verdict_ui.bats` seeds the same histories as `pipeline/beru/internal/v2/diff/diff_test.go` via `POST /api/v1/debug/seed-reports` (no live traffic).
 
 ## Running
 
@@ -121,10 +120,14 @@ Beru only emits final `mirrorLegacyLogs` lines after all three roles report. Pre
 beru_wait_log --grep="$(beru_log_egress_count_regression "$BATS_TRACE_ID" rabbitmq)"
 beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" mongodb)"
 
+# Shop → Beru HTTP egress (kaisel-capture E2E)
+beru_wait_http_egress_match "$trace_id" --signature="http:GET:/dep/echo?beru=…"
+
 # Any custom substring
 beru_wait_log --grep="Egress regression for Trace ${BATS_TRACE_ID} (http): Field"
 ```
 
 For SQLite/API verdict rows use `beru_wait_verdict_settled` (completeness + quiescence).
+HTTP egress API queries need `?protocol=http&direction=egress` (`beru_http_get_trace`).
 
 See [docs/infrastructure/bats-testing-framework.md](/infrastructure/bats-testing-framework.md).

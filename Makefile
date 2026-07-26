@@ -3,17 +3,17 @@ MONARCH_DIR := pipeline/monarch
 BERU_DIR := pipeline/beru
 SHOP_DIR := pipeline/shop
 IGRIS_DIR := pipeline/igrises/igris-http
-SIPHON_DIR := pipeline/siphon
-RECORDER_DIR := pipeline/recorder
+KAISEL_DIR := pipeline/kaisel
 IGRIS_RABBITMQ_DIR := pipeline/igrises/igris-rabbitmq
 EGRESS_RELAY_RABBITMQ_DIR := pipeline/egress-relay-rabbitmq
-RECORDER_IMG ?= recorder:latest
+SHADOW_SOLDIER_DIR := pipeline/shadow-soldier
+KAISEL_IMG ?= kaisel:latest
 IGRIS_RABBITMQ_IMG ?= igris-rabbitmq:latest
 EGRESS_RELAY_RABBITMQ_IMG ?= egress-relay-rabbitmq:latest
-SIPHON_IMG ?= siphon:latest
 IGRIS_IMG ?= igris-http:latest
 BERU_IMG ?= beru:latest
 SHOP_IMG ?= shop:latest
+SHADOW_SOLDIER_IMG ?= shadow-soldier:latest
 IMG ?= controller:latest
 
 MONARCH_TARGETS := all help manifests generate fmt vet test setup-test-e2e test-e2e cleanup-test-e2e \
@@ -26,11 +26,11 @@ $(MONARCH_TARGETS):
 	@$(MAKE) -C $(MONARCH_DIR) $(MAKECMDGOALS) IMG=$(IMG) BERU_IMG=$(BERU_IMG)
 
 .PHONY: beru-test beru-build igris-test igris-build igris-docker-build \
-	siphon-test siphon-build siphon-docker-build \
-	recorder-test recorder-build recorder-docker-build \
+	kaisel-test kaisel-build kaisel-docker-build kaisel-generate kaisel-verify-generate \
 	igris-rabbitmq-test igris-rabbitmq-build igris-rabbitmq-docker-build \
 	nodejs-test-worker-docker-build python-test-worker-docker-build \
-	egress-relay-rabbitmq-test egress-relay-rabbitmq-build egress-relay-rabbitmq-docker-build
+	egress-relay-rabbitmq-test egress-relay-rabbitmq-build egress-relay-rabbitmq-docker-build \
+	shadow-soldier-test shadow-soldier-build shadow-soldier-docker-build
 beru-test: ## Run Beru unit tests.
 	@$(MAKE) -C $(BERU_DIR) test
 
@@ -55,23 +55,20 @@ igris-build: ## Build Igris binary.
 igris-docker-build: ## Build Igris container image.
 	@$(MAKE) -C $(IGRIS_DIR) docker-build IGRIS_IMG=$(IGRIS_IMG)
 
-siphon-test: ## Run Siphon unit tests.
-	@$(MAKE) -C $(SIPHON_DIR) test
+kaisel-test: ## Run kaisel unit tests.
+	@$(MAKE) -C $(KAISEL_DIR) test
 
-siphon-build: ## Build Siphon agent binary.
-	@$(MAKE) -C $(SIPHON_DIR) build
+kaisel-build: ## Build kaisel binary.
+	@$(MAKE) -C $(KAISEL_DIR) build
 
-siphon-docker-build: ## Build Siphon container image.
-	@$(MAKE) -C $(SIPHON_DIR) docker-build SIPHON_IMG=$(SIPHON_IMG)
+kaisel-generate: ## Regenerate kaisel eBPF bindings (needs clang >= 12).
+	@$(MAKE) -C $(KAISEL_DIR) generate
 
-recorder-test: ## Run Recorder unit tests.
-	@$(MAKE) -C $(RECORDER_DIR) test
+kaisel-docker-build: ## Build kaisel container image.
+	@$(MAKE) -C $(KAISEL_DIR) docker-build KAISEL_IMG=$(KAISEL_IMG)
 
-recorder-build: ## Build Recorder binary.
-	@$(MAKE) -C $(RECORDER_DIR) build
-
-recorder-docker-build: ## Build Recorder container image.
-	@$(MAKE) -C $(RECORDER_DIR) docker-build RECORDER_IMG=$(RECORDER_IMG)
+kaisel-verify-generate: ## Check the committed kaisel eBPF binding matches capture.c.
+	@$(MAKE) -C $(KAISEL_DIR) verify-generate
 
 igris-rabbitmq-test: ## Run igris-rabbitmq unit tests.
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
@@ -95,6 +92,7 @@ python-test-worker-docker-build: ## Build python-test-worker container image.
 
 egress-relay-rabbitmq-test: ## Run egress-relay-rabbitmq unit tests.
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
+	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) test
 
 egress-relay-rabbitmq-build: ## Build egress-relay-rabbitmq binary.
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) build
@@ -102,16 +100,24 @@ egress-relay-rabbitmq-build: ## Build egress-relay-rabbitmq binary.
 egress-relay-rabbitmq-docker-build: ## Build egress-relay-rabbitmq container image.
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) docker-build EGRESS_RELAY_RABBITMQ_IMG=$(EGRESS_RELAY_RABBITMQ_IMG)
 
-test-all: ## Run Monarch, Beru, Shop, Igris, Siphon, Recorder, igris-rabbitmq, and egress-relay-rabbitmq tests.
+shadow-soldier-test: ## Run shadow-soldier unit tests.
+	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) test
+
+shadow-soldier-build: ## Build shadow-soldier binary.
+	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) build
+
+shadow-soldier-docker-build: ## Build shadow-soldier container image.
+	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) docker-build SHADOW_SOLDIER_IMG=$(SHADOW_SOLDIER_IMG)
+
+test-all: ## Run Monarch, Beru, Shop, Igris, kaisel, igris-rabbitmq, egress-relay-rabbitmq, and shadow-soldier tests.
 	@$(MAKE) -C $(MONARCH_DIR) test
 	@$(MAKE) -C $(BERU_DIR) test
 	@$(MAKE) -C $(SHOP_DIR) test
 	@$(MAKE) -C $(IGRIS_DIR) test
-	@$(MAKE) -C $(SIPHON_DIR) test
-	@$(MAKE) -C $(RECORDER_DIR) test
+	@$(MAKE) -C $(KAISEL_DIR) test
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
-.PHONY: test-bats test-bats-integration test-bats-e2e
+.PHONY: test-bats test-bats-integration test-bats-e2e test-bats-kaisel
 test-bats-integration: ## Bats integration suite (one ShadowTest per .bats file).
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh integration
@@ -119,6 +125,10 @@ test-bats-integration: ## Bats integration suite (one ShadowTest per .bats file)
 test-bats-e2e: ## Bats E2E suite (shared env per file, multi-@test).
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh e2e
+
+test-bats-kaisel: ## Kaisel eBPF capture E2E test (requires root + cluster + pipeline/kaisel/bin/kaisel).
+	@chmod +x testing/bats/run-one.sh
+	@./testing/bats/run-one.sh e2e/kaisel-capture/kaisel_capture.bats
 
 test-bats: ## Run all Bats integration + E2E suites.
 	@chmod +x testing/bats/run.sh

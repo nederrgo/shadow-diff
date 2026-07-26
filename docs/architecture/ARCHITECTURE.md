@@ -1,10 +1,10 @@
 ---
 type: Architecture Specification
 title: Shadow-Diff Architecture
-description: Layer stack and data flows for Shadow-Diff; always-on Shop+Recorder HTTP egress record/replay; Pixie ingress/egress/mongo capture.
+description: Layer stack and data flows for Shadow-Diff; Kaisel eBPF capture; Shop HTTP egress record/replay plus async Beru egress reports.
 resource: https://github.com/shadow-diff/monarch
-tags: [architecture, monarch, beru, shop, recorder, pixie, siphon]
-timestamp: 2026-07-16T12:30:00Z
+tags: [architecture, monarch, beru, shop, kaisel, ebpf]
+timestamp: 2026-07-26T13:20:00Z
 ---
 
 # Shadow-Diff — Architecture
@@ -23,9 +23,8 @@ This document describes **how the components fit together and how data flows**. 
 | [`pipeline/igrises/igris-http/`](../../pipeline/igrises/igris-http/) | HTTP/TCP ingress hub — fan-out to three shadow pods |
 | [`pipeline/igrises/igris-rabbitmq/`](../../pipeline/igrises/igris-rabbitmq/) | AMQP ingress multicaster — prod queue → three shadow brokers |
 | [`pipeline/beru/`](../../pipeline/beru/) | Diff engine — ingress diff-of-diffs, MongoDB OTLP ingest, AMQP egress diff, dashboard |
-| [`pipeline/shop/`](../../pipeline/shop/) | Mock store — records prod HTTP egress responses; serves them back to shadow apps via Envoy egress ext_proc |
-| [`pipeline/siphon/`](../../pipeline/siphon/) | OTLP ingress receiver — Pixie ingress export → HTTP POST to Igris |
-| [`pipeline/recorder/`](../../pipeline/recorder/) | Prod egress HTTP — Pixie OTLP → Shop mock store (record/replay) |
+| [`pipeline/shop/`](../../pipeline/shop/) | Mock store — records prod HTTP egress; replays via Envoy egress ext_proc; async-reports to Beru for HTTP egress diff |
+| [`pipeline/kaisel/`](../../pipeline/kaisel/) | eBPF HTTP ingress capture — admit/sample → POST to Igris |
 | [`pipeline/egress-relay-rabbitmq/`](../../pipeline/egress-relay-rabbitmq/) | Shadow broker Firehose → Beru egress diff (AMQP ShadowTests) |
 
 Each service is a separate Go module. The repo root [`Makefile`](../../Makefile) delegates builds and tests.
@@ -34,7 +33,7 @@ Each service is a separate Go module. The repo root [`Makefile`](../../Makefile)
 
 ## Architecture layers
 
-Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that wires them from a single `ShadowTest` CR. **Beru** is always the analysis sink. **Shop** + **Recorder** are always deployed per ShadowTest for HTTP egress record/replay.
+Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that wires them from a single `ShadowTest` CR. **Beru** is always the analysis sink. **Shop** is always deployed per ShadowTest for HTTP egress record/replay and reports outbound HTTP to Beru.
 
 ### Layer stack
 
@@ -45,10 +44,10 @@ Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that w
                                     │
 ┌───────────────────────────────────▼─────────────────────────────────────────┐
 │  L1  Capture        Driver-specific prod ingress tap:                          │
-│                     • HTTP ingress → Pixie eBPF → OTLP → Siphon → Igris     │
+│                     • HTTP ingress → Kaisel eBPF → Igris                    │
 │                     • AMQP → RabbitMQ native routing (shadow queue bind)      │
-│                     • HTTP egress record → Pixie eBPF → OTLP → Recorder     │
-│                       (always-on Shop + Recorder per shadow namespace)         │
+│                     • HTTP egress record → Kaisel eBPF → Shop               │
+│                       (always-on Shop per shadow namespace)                    │
 └───────────────────────────────────┬─────────────────────────────────────────┘
                                     │
 ┌───────────────────────────────────▼─────────────────────────────────────────┐
@@ -67,11 +66,9 @@ Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that w
 │  L4a  Analysis ingest          │   │  L4b  Egress record/replay             │
 │  HTTP ingress: Envoy ext_proc  │   │  Shadow HTTP replay: HTTP_PROXY →      │
 │  → Beru diff-of-diffs          │   │  Envoy :10001 → Shop gRPC lookup       │
-│  MongoDB egress: Pixie eBPF on │   │  Prod HTTP record: Pixie OTLP →        │
-│  MongoDB pods → beru-local     │   │  Recorder :4317 → Shop mock store      │
-│  OTLP :4317 → egress diff      │   │                                        │
-│  AMQP egress: egress-relay-    │   │                                        │
-│  rabbitmq → Beru egress diff   │   │                                        │
+│  AMQP egress: egress-relay-    │   │  Prod HTTP record: Kaisel pairs        │
+│  rabbitmq → Beru egress diff   │   │  request+response → Shop mock store    │
+│                                │   │                                        │
 └───────────────────┬──────────────┘   └────────────┬──────────────────────────┘
                     │                               │
                     └───────────────┬───────────────┘
@@ -83,37 +80,37 @@ Shadow-Diff is a **pipeline of layers**. **Monarch** is the control plane that w
         ┌──────────────────────────────────────────────────────────┐
         │  Monarch (control plane, all layers)                      │
         │  Reconciles ShadowTest → namespaces, Deployments,         │
-        │  Envoy + OTel config, Igris/Recorder/Siphon/AMQP wiring   │
+        │  Envoy + OTel config, Igris/Kaisel/AMQP wiring            │
         └──────────────────────────────────────────────────────────┘
 ```
 
-**L1 — capture is input-driven.** HTTP **ingress** uses **Pixie** eBPF on prod pods: Monarch writes a `PixieStreamRule` with `otelEndpoint` when HTTP/TCP inputs enable Siphon, **pixie-stream-bridge** runs ingress `px.export` OTLP to per-shadow **Siphon** (`:4317`), and Siphon POSTs parsed requests to Igris. HTTP **egress record** is always-on: the same Pixie PEM runs a dual-branch egress PxL export to shadow **Recorder** (`:4317`), which seeds **Shop** via `POST /v1/record_egress` (Shop Put keeps first 2xx). RabbitMQ ingress uses **broker-native routing** (Monarch binds a shadow queue on the prod broker).
+**L1 — capture is input-driven.** HTTP **ingress** uses **Kaisel** eBPF: Monarch writes a `KaiselRule` with target pod IPs and `igrisBaseURL`; Kaisel admits/samples and POSTs to igris-http. HTTP **egress record** is always-on via **Kaisel**, which pairs each outbound request with its response and POSTs the pair to **Shop**. RabbitMQ ingress uses **broker-native routing** (Monarch binds a shadow queue on the prod broker).
 
-**L4a — analysis ingest is workload-driven.** HTTP ingress responses reach Beru through **Envoy ingress `ext_proc`**. MongoDB egress is captured by **Pixie eBPF on the MongoDB server pods** (server-side events, `trace_role == 2`) and exported via `pixie-stream-bridge` as OTLP to the per-ShadowTest **beru-local** OTLP port `:4317` — the traceparent injected into the MongoDB `$comment` field correlates each write to its shadow trace. When shadow workers **publish AMQP messages**, **egress-relay-rabbitmq** reads RabbitMQ Firehose on each **shadow broker** and posts egress diff reports to Beru.
+**L4a — analysis ingest is workload-driven.** HTTP ingress responses reach Beru through **Envoy ingress `ext_proc`**. When shadow workers **publish AMQP messages**, **egress-relay-rabbitmq** reads RabbitMQ Firehose on each **shadow broker** and posts egress diff reports to Beru. Beru's OTLP receiver on `:4317` is retained but has no producer — see [/data-plane/pixie-removal.md](/data-plane/pixie-removal.md).
 
 ### HTTP ingress path
 
 | Step | Layer | Component | What happens |
 |------|-------|-----------|--------------|
 | 1 | Production | Target pods | Real clients hit prod (e.g. `my-prod-app` Service) |
-| 2 | Capture | **Pixie PEM** + **pixie-stream-bridge** | eBPF `http_events`; `px.export` OTLP traces with `traceparent` |
-| 3 | Capture | **Siphon** | OTLP gRPC `:4317` → parse span attrs → HTTP POST to Igris |
+| 2 | Capture | **Kaisel** | AF_PACKET socket filter; TCP reassembly; admit/sample on `traceparent` |
+| 3 | Capture | **Kaisel** | eBPF capture → admit/sample → HTTP POST to Igris |
 | 4 | Ingress hub | **Igris** | Accepts replayed traffic; **202** + `traceparent`; clones to three shadow Services |
 | 5 | Shadow stack | App + **Envoy** | App handles request; `traceparent` propagated in headers; Envoy observes ingress response |
 | 6 | Analysis | **Beru** | Ingress `ext_proc` collects control-a, control-b, candidate → **diff-of-diffs** |
 
-Synthetic tests can skip Pixie/Siphon and send traffic directly to Igris.
+Synthetic tests can send traffic directly to Igris.
 
 ### HTTP egress record path (prod auto-record)
 
 | Step | Layer | Component | What happens |
 |------|-------|-----------|--------------|
 | 1 | Production | Target / downstream pods | Outbound HTTP (logical `Host` header for Shop keying) |
-| 2 | Capture | **Pixie PEM** + **pixie-stream-bridge** | Dual-branch egress PxL: `trace_role==1` on worker (external) + `trace_role==2` scoped by remote client pod (in-cluster) |
-| 3 | Capture | **Recorder** (always-on) | OTLP gRPC `:4317` → parse span attrs → `POST /v1/record_egress` to **Shop** (all hosts) |
+| 2 | Capture | **Kaisel** | Source-address match = egress; per-connection FIFO pairing of request with response |
+| 3 | Capture | **Kaisel** | `POST /v1/record_egress` to **Shop** (all hosts); Shop derives the mock key |
 | 4 | Replay prep | **Shop** (always-on) | Mock store keyed by `trace:<traceID>:<METHOD>:<host>:<path>` — Envoy `:10001` → Shop gRPC ext_proc |
 
-Monarch always sets `PixieStreamRule.recorderOtelEndpoint` to `<shadowtest>-recorder.<shadow-ns>.svc.cluster.local:4317`. Recorder forwards every OTLP HTTP span to Shop. **pixie-stream-bridge** runs ingress and egress exports independently when the corresponding endpoints are set. See [/data-plane/egress-record-replay.md](/data-plane/egress-record-replay.md).
+Monarch sets `KaiselRule.spec.egressBaseURL` to `http://shop.<shadow-ns>.svc.cluster.local:8080`. Kaisel POSTs every paired transaction to Shop. See [/data-plane/egress-record-replay.md](/data-plane/egress-record-replay.md).
 
 ### RabbitMQ ingress path
 
@@ -123,7 +120,7 @@ Monarch always sets `PixieStreamRule.recorderOtelEndpoint` to `<shadowtest>-reco
 | 2 | Capture | **RabbitMQ routing** | Monarch declares a prod shadow queue bound to the same exchange/routing key |
 | 3 | Ingress hub | **igris-rabbitmq** | Consumes prod queue; injects W3C `traceparent`; publishes to three shadow brokers |
 | 4 | Shadow stack | Worker + **Envoy** | App runs side effects; `traceparent` propagated in outbound headers and MongoDB `$comment` |
-| 5 | Analysis | **Beru** | HTTP ingress → Envoy `ext_proc`; MongoDB egress → **Pixie eBPF → beru-local OTLP**; AMQP publishes → **egress-relay-rabbitmq** |
+| 5 | Analysis | **Beru** | HTTP ingress → Envoy `ext_proc`; AMQP publishes → **egress-relay-rabbitmq** |
 
 ```mermaid
 flowchart LR
@@ -134,29 +131,18 @@ flowchart LR
   IgrisRMQ --> RMQ_C[Shadow broker C]
 ```
 
-### MongoDB egress diff path
-
-| Step | Layer | Component | What happens |
-|------|-------|-----------|--------------|
-| 1 | Shadow stack | Worker | Inserts document into role-specific MongoDB with `traceparent` in `$comment` field |
-| 2 | Capture | **Pixie PEM** | eBPF captures `mongodb_events` on MongoDB server pods (`trace_role == 2`) including `req_body` |
-| 3 | Capture | **pixie-stream-bridge** | Runs `mongodb-export.pxl.tmpl` → filters by `namespace` + `"comment"` presence; `px.export` OTLP to beru-local |
-| 4 | Analysis | **beru-local OTLP `:4317`** | Extracts traceparent from `req_body`, document body from second JSON object, role from MongoDB pod name; routes to TraceRouter |
-| 5 | Analysis | **Beru** | Diff-of-diffs on document body (after stripping `_id`, `lsid`, `comment`, `$db`) |
-
-Monarch sets `PixieStreamRule.mongoOtelEndpoint` to `beru-local.<shadow-ns>.svc.cluster.local:4317` when a MongoDB dependency is declared. The Pixie query uses a `−30s` rolling window; the E2E test waits for Pixie `CS_HEALTHY` before publishing traffic to avoid window misses.
-
 ### Egress layer
 
 HTTP record/replay and AMQP egress diff run as parallel mechanisms:
 
 | Path | Flow | Purpose |
 |------|------|---------|
-| **Shadow HTTP replay** | Shadow app → `HTTP_PROXY` → Envoy **:10001** → **Shop** gRPC ext_proc | Strict replay: look up mock by trace ID + request, return recorded response or **599** on miss |
-| **Prod HTTP auto-record** | Prod path → **Pixie** egress export → **Recorder** OTLP `:4317` → **Shop** `POST /v1/record_egress` | Always-on seed of Shop from prod outbound HTTP |
+| **Shadow HTTP replay** | Shadow app → Envoy **:10001** → **Shop** gRPC ext_proc (`request_body_mode: BUFFERED`) | Strict replay: look up mock by trace ID + request, return recorded response or **599** on miss |
+| **Shadow HTTP egress diff** | Shop (after ImmediateResponse) → async `POST /api/v1/egress/diff` → **Beru** | Diff outbound HTTP method/path/body/status across the three roles |
+| **Prod HTTP auto-record** | Prod path → **Kaisel** pairs request+response → **Shop** `POST /v1/record_egress` | Always-on seed of Shop from prod outbound HTTP |
 | **Shadow AMQP egress diff** | Shadow publish → broker Firehose → **egress-relay-rabbitmq** → Beru | Compare outbound AMQP publishes across the three roles |
 
-**egress-relay-rabbitmq** observes **shadow** broker publishes for AMQP egress diff. Prod HTTP auto-record is **Pixie → Recorder → Shop**. Monarch deploys Shop alongside Recorder into each shadow namespace.
+**egress-relay-rabbitmq** observes **shadow** broker publishes for AMQP egress diff. Prod HTTP auto-record is **Kaisel → Shop**. Monarch deploys Shop into each shadow namespace.
 
 ### Full stack (wiring view)
 
@@ -174,9 +160,7 @@ flowchart TB
   end
 
   subgraph capture [L1 Capture]
-    Pixie[Pixie PEM eBPF]
-    Bridge[pixie-stream-bridge]
-    Siphon[Siphon OTLP :4317]
+    Kaisel[Kaisel eBPF]
     RMQBind[Shadow queue bind]
   end
 
@@ -196,12 +180,10 @@ flowchart TB
 
   subgraph analysis [L4a Analysis ingest]
     ExtProc[Envoy ingress beru_ext_proc]
-    PixieMongo[Pixie MongoDB OTLP]
     EgrRelay[egress-relay-rabbitmq]
   end
 
   subgraph egressopt [L4b Egress record/replay]
-    Rec[Recorder OTLP :4317]
     EgrEnv[Envoy egress :10001]
   end
 
@@ -216,8 +198,7 @@ flowchart TB
     ShopHTTP[HTTP :8080 record_egress seed]
   end
 
-  M -.->|PixieStreamRule| Pixie
-  M -.->|Service siphon| Siphon
+  M -.->|KaiselRule| Kaisel
   M -.->|declare queue| RMQBind
   M -.->|deploy| IgrisHTTP
   M -.->|deploy| IgrisRMQ
@@ -228,10 +209,8 @@ flowchart TB
   M -.->|deploy| ShopGRPC
   M -.->|deploy| EgrRelay
 
-  ProdPod -->|HTTP ingress| Pixie
-  Pixie --> Bridge
-  Bridge -->|ingress OTLP| Siphon
-  Siphon -->|HTTP POST| IgrisHTTP
+  ProdPod -->|HTTP ingress| Kaisel
+  Kaisel -->|HTTP POST| IgrisHTTP
   Bridge -->|egress OTLP| Rec
   ProdBroker -->|exchange bind| RMQBind
   RMQBind --> IgrisRMQ
@@ -246,9 +225,6 @@ flowchart TB
   A --> MongoA
   B --> MongoB
   C --> MongoC
-  Pixie -->|mongodb_events| Bridge
-  Bridge -->|MongoDB OTLP| PixieMongo
-  PixieMongo --> BeruOTLP
 
   A --> ExtProc
   B --> ExtProc
@@ -265,7 +241,7 @@ flowchart TB
   C -->|HTTP_PROXY| EgrEnv
   EgrEnv -->|mock lookup| ShopGRPC
 
-  ProdPod -.->|outbound HTTP| Pixie
+  ProdPod -.->|outbound HTTP| Kaisel
   Rec -->|POST /v1/record_egress| ShopHTTP
 ```
 
@@ -275,7 +251,7 @@ flowchart TB
 |---------|------|
 | **Envoy** | Ingress listener → app → `beru_ext_proc` for HTTP diff-of-diffs; egress `:10001` → `shop_ext_proc` for HTTP replay |
 
-MongoDB capture uses Pixie eBPF on the MongoDB server pods (wire-protocol events; no application-side instrumentation).
+MongoDB egress diffing is currently unavailable — its capture path was removed with Pixie. See [/data-plane/pixie-removal.md](/data-plane/pixie-removal.md).
 
 | Listener | Port | Role |
 |----------|------|------|
@@ -303,9 +279,7 @@ Monarch materializes these as Deployments in a dedicated shadow namespace. Beru 
 ```mermaid
 sequenceDiagram
   participant P as Prod or client
-  participant Pix as Pixie PEM
-  participant Br as pixie-stream-bridge
-  participant S as Siphon OTLP
+  participant S as Kaisel
   participant I as Igris
   participant Sh as Shadow pod
   participant E as Envoy sidecar
@@ -328,10 +302,6 @@ sequenceDiagram
   end
   Sh->>E: app response
   E->>B: ingress ext_proc by trace_id
-  opt MongoDB egress (Pixie eBPF on MongoDB server pods)
-    Pix->>Br: mongodb_events query
-    Br->>B: px.export OTLP to beru-local :4317
-  end
   B->>B: diff-of-diffs when A, B, C complete
 ```
 
@@ -343,12 +313,9 @@ Shadow replay and prod auto-record run **in parallel**:
 flowchart LR
   subgraph record [Prod auto-record]
     ProdOut[Prod outbound HTTP]
-    PixieEgr[Pixie egress export]
-    RecorderSvc[Recorder OTLP :4317]
     ShopStore[Shop mock store :8080]
-    ProdOut --> PixieEgr
-    PixieEgr --> RecorderSvc
-    RecorderSvc -->|POST /v1/record_egress| ShopStore
+    ProdOut --> KaiselEgr
+    KaiselEgr -->|POST /v1/record_egress| ShopStore
   end
   subgraph replay [Shadow strict replay]
     ShadowApp[Shadow app]
@@ -361,9 +328,6 @@ flowchart LR
 ```mermaid
 sequenceDiagram
   participant P as Prod pod
-  participant Pix as Pixie PEM
-  participant Br as pixie-stream-bridge
-  participant R as Recorder
   participant S as Shop
   participant Sh as Shadow app
   participant E as Envoy egress
@@ -384,11 +348,11 @@ Beru and Shop receive shadow traffic through **complementary ingest paths**:
 | Path | Source | Sink | Correlation |
 |------|--------|------|-------------|
 | **Ingress diff-of-diffs** | Envoy ingress `beru_ext_proc` | **Beru** | Trace id: `traceparent` → W3C `traceparent` → Envoy `x-request-id`; role from `x-shadow-role` |
-| **Egress diff (MongoDB)** | Pixie eBPF `mongodb_events` → beru-local OTLP | **Beru** | Trace id from `$comment` field in MongoDB wire payload; role from MongoDB pod name pattern |
 | **Egress diff (AMQP)** | egress-relay-rabbitmq | **Beru** | Trace id from message headers (`traceparent` or `traceparent`) |
 | **Egress replay (HTTP)** | Envoy egress `shop_ext_proc` gRPC | **Shop** | Trace id from W3C `traceparent` in Envoy request headers; mock key includes `traceID:METHOD:host:path` |
+| **Egress diff (HTTP)** | Shop async report after mock reply | **Beru** | Same trace id + `x-shadow-role`; signature `http:METHOD:path`; payload includes request body + status |
 
-**Ingress multicast.** **Igris** and **igris-rabbitmq** are the unified trace context source at ingress: `ResolveContext` runs once per event, then the **same** W3C `traceparent` and `traceparent` are stamped on all three shadow clones. Applications propagate `traceparent` on outbound MongoDB writes via the `$comment` field; Pixie captures the wire bytes and beru-local extracts the trace id server-side.
+**Ingress multicast.** **Igris** and **igris-rabbitmq** resolve trace context once per event (`ResolveContext`), then stamp the **same** W3C `traceparent` on all three shadow clones. **igris-http** requires a valid inbound `traceparent` (no mint).
 
 ---
 
@@ -396,7 +360,7 @@ Beru and Shop receive shadow traffic through **complementary ingest paths**:
 
 ### Monarch
 
-Kubebuilder operator in `monarch-system`. Reads `ShadowTest` and materializes the full pipeline: shadow namespace, three app Deployments with Envoy sidecars, ingress hub (Igris or igris-rabbitmq), **`PixieStreamRule`** (ingress `otelEndpoint` when HTTP capture is enabled; always `recorderOtelEndpoint`; `mongoOtelEndpoint` when Mongo deps exist) + shadow **`Service/siphon` + `Deployment/siphon`** when HTTP ingress Siphon is on, **always-on Shop + Recorder**, egress-relay-rabbitmq for AMQP ShadowTests, and ephemeral dependencies per role. Envoy always includes `shop_ext_proc` for egress replay. Pixie Vizier, pixie-stream-bridge, and the cluster-wide Beru are installed separately.
+Kubebuilder operator in `monarch-system`. Reads `ShadowTest` and materializes the full pipeline: shadow namespace, three app Deployments with Envoy sidecars, ingress hub (Igris or igris-rabbitmq), **`KaiselRule`** (HTTP ingress `igrisBaseURL` + egress `egressBaseURL`), **always-on Shop**, egress-relay-rabbitmq for AMQP ShadowTests, and ephemeral dependencies per role. Envoy always includes `shop_ext_proc` for egress replay. The Kaisel DaemonSet and cluster-wide Beru are installed separately.
 
 ### Igris (HTTP/TCP)
 
@@ -406,21 +370,18 @@ Pluggable ingress hub. **HTTP driver** accepts atomic requests, resolves W3C tra
 
 AMQP ingress hub. Consumes the prod shadow queue, injects W3C `traceparent` on multicast, and publishes the same logical message to three shadow RabbitMQ brokers (one per role).
 
-### Siphon
+### Kaisel
 
-Per-shadow-namespace **OTLP gRPC receiver** on `:4317`. Accepts gzip-compressed OTLP traces from Pixie `px.export` (via **pixie-stream-bridge**), parses HTTP fields from span attributes (`url.path`, `traceparent`, `http.request.method`, `http.request.body`), and **HTTP POST**s to **igris-http**. When HTTP ingress capture is enabled, Monarch provisions `Service/siphon` + `Deployment/siphon` (with `SIPHON_IGRIS_BASE_URL` pointing at the shadow Igris Service) and sets `PixieStreamRule.otelEndpoint`.
+Cluster-wide eBPF DaemonSet. Captures HTTP to target pod IPs from `KaiselRule`, admits traced/sampled requests, and POSTs to the per-ShadowTest igris-http Service.
 
-### Recorder
-
-Shadow-namespace service **always** deployed by Monarch. Accepts **OTLP gRPC** on `:4317` from Pixie egress `px.export`, parses HTTP span attributes, and posts **all** spans to **Shop** `POST /v1/record_egress` (`SHOP_HTTP_URL`). Also accepts TCP framing on `:8080`.
 
 ### Shop
 
-Per-ShadowTest **in-memory mock store** **always** deployed by Monarch alongside Recorder. Two ports:
+Per-ShadowTest **in-memory mock store**, **always** deployed by Monarch. Two ports:
 
 | Port | Protocol | Role |
 |------|----------|------|
-| `:8080` | HTTP | `POST /v1/record_egress` seeded by Recorder; `GET /healthz` |
+| `:8080` | HTTP | `POST /v1/record_egress` seeded by Kaisel; `GET /healthz` |
 | `:50051` | gRPC | `shop_ext_proc` — Envoy egress ext_proc stream; returns recorded response or `PERMISSION_DENIED` / **599** on miss |
 
 Mock key: `trace:<traceID>:<METHOD>:<host>:<path>`. The trace ID comes from the `traceparent` / `traceparent` header injected by Igris before multicasting to shadow pods. All state lives in memory (`sync.RWMutex` map) — state is lost on pod restart.
@@ -431,25 +392,11 @@ Shadow-namespace service for AMQP ShadowTests. Subscribes to RabbitMQ Firehose o
 
 ### Beru
 
-Analysis sink. **Ingress:** Envoy `beru_ext_proc` reports per role → diff-of-diffs. **Egress (MongoDB):** OTLP receiver on `:4317` accepts Pixie eBPF captures from pixie-stream-bridge; `db.raw_payload` contains the two-object MongoDB wire format — command doc (for `insert:orders` signature) and document body (for content diff). `_id`, `lsid`, `comment`, and `$db` are stripped before comparison. **Egress (AMQP):** egress-relay-rabbitmq HTTP ingest on `:8080`. Dashboard for inspecting traces and diffs. The HTTP mock store is Shop's role.
+Analysis sink. **Ingress:** Envoy `beru_ext_proc` reports per role → diff-of-diffs. **Egress (MongoDB):** the OTLP receiver on `:4317` and its MongoDB wire parser are retained but dormant — no capture path currently produces MongoDB spans. **Egress (AMQP):** egress-relay-rabbitmq HTTP ingest on `:8080`. Dashboard for inspecting traces and diffs. The HTTP mock store is Shop's role.
 
 ### Envoy (sidecar)
 
-Injected into every shadow pod. **Ingress listener:** observes app responses, forwards to Beru via `beru_ext_proc`. **Egress listener:** intercepts `HTTP_PROXY` traffic on `:10001`, calls `shop_ext_proc` to look up the recorded response from Shop. MongoDB capture is handled by Pixie eBPF on the server side.
-
-### pixie-stream-bridge
-
-Host process (not a k8s pod) that polls `PixieStreamRule` CRs every 3 seconds and runs `px run -f <pxl>` for each active rule. Handles three independent export streams when a rule exposes the corresponding endpoints:
-
-| Stream | PxL template | Destination |
-|--------|-------------|-------------|
-| HTTP ingress | `http-ingress-export.pxl.tmpl` | Siphon OTLP `:4317` |
-| HTTP egress record | `http-egress-export.pxl.tmpl` | Recorder OTLP `:4317` |
-| MongoDB egress diff | `mongodb-export.pxl.tmpl` | beru-local OTLP `:4317` |
-
-The MongoDB template filters `mongodb_events` by shadow namespace, `trace_role == 2` (server-side events on MongoDB pods — client-side events from worker pods are not reliably available), and presence of `"comment"` in `req_body`. The traceparent value in `$comment` correlates each database write to its shadow trace.
-
----
+Injected into every shadow pod. **Ingress listener:** observes app responses, forwards to Beru via `beru_ext_proc`. **Egress listener:** intercepts `HTTP_PROXY` traffic on `:10001`, calls `shop_ext_proc` to look up the recorded response from Shop.
 
 ## Technology stack
 
@@ -458,10 +405,10 @@ The MongoDB template filters `mongodb_events` by shadow namespace, `trace_role =
 | Control plane | Go, Kubebuilder, controller-runtime |
 | Ingress multicast | Go (`igris-http`, `igris-rabbitmq`) |
 | Shadow proxy | Envoy, `ext_proc`, ConfigMaps from Monarch |
-| Capture | Pixie eBPF + `PixieStreamRule`; pixie-stream-bridge (HTTP ingress, HTTP egress, MongoDB egress OTLP); Siphon → Igris; Recorder OTLP → Shop mocks |
+| Capture | Kaisel eBPF + `KaiselRule`; HTTP ingress → Igris; HTTP egress request/response pairs → Shop mocks |
 | Analysis | Go, gRPC, Beru OTLP + diff engine, SQLite |
-| Mock store | Shop — in-memory `sync.RWMutex` map; seeded by Recorder; served via gRPC ext_proc on `:50051` |
-| Egress parse | Recorder — OTLP span attrs → Shop `POST /v1/record_egress`; pixie-stream-bridge MongoDB OTLP → beru-local diff |
+| Mock store | Shop — in-memory `sync.RWMutex` map; seeded by Kaisel; served via gRPC ext_proc on `:50051` |
+| Egress parse | Kaisel — per-connection request/response pairing → Shop `POST /v1/record_egress` |
 
 ---
 

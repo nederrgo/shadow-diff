@@ -11,6 +11,14 @@ beru_http_get() {
   e2e_strip_kubectl_run_output "$out"
 }
 
+# GET /api/v1/traces/{id}?protocol=…[&direction=…]
+beru_http_get_trace() {
+  local shadow_ns="$1" trace_id="$2" protocol="$3" direction="${4:-}"
+  local path="/api/v1/traces/${trace_id}?protocol=${protocol}"
+  [[ -n "$direction" ]] && path="${path}&direction=${direction}"
+  beru_http_get "$shadow_ns" "$path"
+}
+
 beru_sqlite_query() {
   local pod="$1" ns="$2" db_path="$3" sql="$4"
   command -v sqlite3 >/dev/null 2>&1 || return 2
@@ -24,24 +32,68 @@ beru_sqlite_query() {
 }
 
 beru_reports_role_count() {
-  local trace_id="$1" protocol="$2" via="${3:-api}"
+  local trace_id="$1" protocol="$2" via="${3:-api}" direction="${4:-}"
   if [[ "$via" == "sqlite" ]]; then
     local pod; pod="$(beru_local_pod)"
-    beru_sqlite_query "$pod" "${SHADOW_NS}" "/data/beru.db" \
-      "SELECT COUNT(DISTINCT shadow_role) FROM raw_reports WHERE trace_id='${trace_id}' AND protocol='${protocol}';"
+    local sql="SELECT COUNT(DISTINCT shadow_role) FROM raw_reports WHERE trace_id='${trace_id}' AND protocol='${protocol}'"
+    [[ -n "$direction" ]] && sql="${sql} AND direction='${direction}'"
+    sql="${sql};"
+    beru_sqlite_query "$pod" "${SHADOW_NS}" "/data/beru.db" "$sql"
     return $?
   fi
   local json roles
-  json=$(beru_http_get "${SHADOW_NS}" "/api/v1/traces/${trace_id}?protocol=${protocol}") || return 1
+  json=$(beru_http_get_trace "${SHADOW_NS}" "$trace_id" "$protocol" "$direction") || return 1
   roles=$(echo "$json" | jq -r '[.reports[].shadow_role] | unique | length' 2>/dev/null || echo "0")
   echo "$roles"
 }
 
 beru_reports_complete() {
-  local trace_id="$1" protocol="$2" via="${3:-api}"
+  local trace_id="$1" protocol="$2" via="${3:-api}" direction="${4:-}"
   local count
-  count=$(beru_reports_role_count "$trace_id" "$protocol" "$via" 2>/dev/null || echo "0")
+  count=$(beru_reports_role_count "$trace_id" "$protocol" "$via" "$direction" 2>/dev/null || echo "0")
   [[ "${count:-0}" -ge 3 ]]
+}
+
+# Wait until Shop→Beru HTTP egress reports exist for all three roles and
+# mirrorLegacyLogs emits a clean egress match for protocol http.
+# Usage: beru_wait_http_egress_match <trace_id> [--timeout=120] [--signature=http:GET:/path]
+beru_wait_http_egress_match() {
+  local trace_id="$1"
+  shift
+  local timeout=120 want_sig=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --timeout=*) timeout="${1#*=}"; shift ;;
+      --signature=*) want_sig="${1#*=}"; shift ;;
+      *) echo "beru_wait_http_egress_match: unknown arg $1" >&2; return 2 ;;
+    esac
+  done
+
+  local i=0 json
+  while [[ "$i" -lt "$timeout" ]]; do
+    if beru_reports_complete "$trace_id" http api egress; then
+      break
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  if ! beru_reports_complete "$trace_id" http api egress; then
+    echo "timeout waiting for 3 HTTP egress roles trace=${trace_id}" >&2
+    beru_dump_trace_diagnostics "$trace_id" http >&2
+    return 1
+  fi
+
+  if [[ -n "$want_sig" ]]; then
+    json=$(beru_http_get_trace "${SHADOW_NS}" "$trace_id" http egress) || return 1
+    if ! echo "$json" | jq -e --arg s "$want_sig" '[.reports[].signature] | unique | . == [$s]' >/dev/null 2>&1; then
+      echo "HTTP egress signature mismatch want=${want_sig} got=$(echo "$json" | jq -c '[.reports[].signature] | unique' 2>/dev/null)" >&2
+      return 1
+    fi
+  fi
+
+  local remain=$((timeout - i))
+  [[ "$remain" -lt 30 ]] && remain=30
+  beru_wait_log --grep="$(beru_log_no_egress_regression "$trace_id" http)" --timeout="$remain"
 }
 
 _beru_verdict_snapshot_api() {
@@ -211,5 +263,21 @@ beru_wait_log() {
 
   echo "timeout waiting for beru log (${timeout}s): ${grep_pattern}" >&2
   kubectl logs -n "${SHADOW_NS}" "$pod" --tail=30 2>/dev/null >&2 || true
+  return 1
+}
+
+# Wait until shadow-soldier has reported MongoDB egress for all three roles.
+# Usage: wait_mongodb_egress_reports <trace_id> [timeout_seconds]
+wait_mongodb_egress_reports() {
+  local trace_id="$1" timeout="${2:-120}" i=0
+  while [[ "$i" -lt "$timeout" ]]; do
+    if beru_reports_complete "$trace_id" mongodb api egress; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "timed out after ${timeout}s waiting for 3 mongodb egress roles on trace ${trace_id}" >&2
+  beru_reports_role_count "$trace_id" mongodb api egress >&2 || true
   return 1
 }

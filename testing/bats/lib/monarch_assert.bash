@@ -1,6 +1,6 @@
 # Monarch integration assertions: pod readiness, CrashLoop detection, diagnostics.
 # Part of the integration tier (testing pyramid layer between unit and E2E).
-# No Beru, Pixie, or traffic dependencies — only kubectl + k8s API.
+# No Beru or traffic dependencies — only kubectl + k8s API.
 # shellcheck shell=bash
 
 # Bad container waiting reasons that indicate a failed pod (not just slow start).
@@ -106,12 +106,25 @@ monarch_wait_igris_running() {
     -n "$shadow_ns" --timeout="${timeout}s"
 }
 
-# Wait for the siphon Deployment (always named 'siphon') to be Available.
-monarch_wait_siphon_running() {
-  local shadow_ns="$1" timeout="${2:-120}"
-  echo "==> [monarch] wait siphon Available in ${shadow_ns}"
-  kubectl wait --for=condition=Available deployment/siphon \
-    -n "$shadow_ns" --timeout="${timeout}s"
+# Wait for KaiselRule to have at least one target IP (ingress capture wired).
+monarch_wait_kaisel_rule_ready() {
+  local name="$1" ns="${2:-default}" timeout="${3:-120}"
+  local elapsed=0 ip
+  echo "==> [monarch] wait KaiselRule ${ns}/${name} has targetIPs"
+  while true; do
+    ip=$(kubectl get kaiselrule "$name" -n "$ns" \
+      -o jsonpath='{.spec.targetIPs[0]}' 2>/dev/null || true)
+    if [[ -n "$ip" ]]; then
+      echo "    KaiselRule ${name} targetIPs[0]=${ip}"
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "FAIL: timed out waiting for KaiselRule ${ns}/${name}" >&2
+      return 1
+    fi
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
 }
 
 # Poll until ShadowTest Failed phase. Returns 0 when Failed is confirmed;
@@ -190,11 +203,11 @@ monarch_wait_shadowtest_bringup_started() {
   done
 }
 
-# After delete: ShadowTest CR, shadow namespace, and PixieStreamRule are all gone.
+# After delete: ShadowTest CR, shadow namespace, and KaiselRule are all gone.
 monarch_wait_shadowtest_cleaned() {
   local name="$1" ns="${2:-default}" timeout="${3:-180}"
   local shadow_ns="shadow-${ns}-${name}"
-  local rule="pixie-${name}"
+  local rule="kaisel-${name}"
 
   bats_source_e2e_helpers
   echo "==> [monarch] wait ShadowTest cleaned: ${ns}/${name} (timeout=${timeout}s)"
@@ -203,7 +216,7 @@ monarch_wait_shadowtest_cleaned() {
   assert_kubectl_not_found shadowtest "$name" -n "$ns" || return 1
   wait_shadow_namespace_gone "$shadow_ns" "$timeout" || return 1
   assert_kubectl_not_found namespace "$shadow_ns" || return 1
-  assert_kubectl_not_found pixiestreamrule "$rule" -n "$ns" || return 1
+  assert_kubectl_not_found kaiselrule "$rule" -n "$ns" || return 1
   echo "    cleaned: CR + ${shadow_ns} + ${rule}"
 }
 

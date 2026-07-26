@@ -12,13 +12,22 @@ func EnsureTraceHeaders(headers amqp.Table) (amqp.Table, error) {
 	if err != nil {
 		return nil, err
 	}
+	return StampHeaders(headers, resolved), nil
+}
+
+// StampHeaders applies an already-resolved trace context to a copy of headers.
+// Callers that need the resolved TraceID (e.g. for a sampling decision) before
+// publishing should resolve once via ResolveContext and stamp with this function,
+// rather than calling EnsureTraceHeaders separately — that would re-resolve and
+// generate a different random trace id whenever no inbound traceparent exists.
+func StampHeaders(headers amqp.Table, resolved ResolvedContext) amqp.Table {
 	out := amqp.Table{}
 	for k, v := range headers {
 		out[k] = v
 	}
 	deleteTraceKeys(out)
 	out[HeaderTraceparent] = resolved.Traceparent
-	return out, nil
+	return out
 }
 
 // EnsureTraceID is a compatibility alias for EnsureTraceHeaders.

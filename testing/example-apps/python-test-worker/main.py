@@ -13,7 +13,7 @@ import requests
 
 EGRESS_EXCHANGE = os.environ.get("RMQ_EGRESS_EXCHANGE", "egress-events")
 EGRESS_ROUTING_KEY = os.environ.get("RMQ_EGRESS_ROUTING_KEY", "order.shipped")
-# Pixie/Shop egress hash key (:authority / Host header).
+# Shop egress mock key (:authority / Host header).
 HTTP_EGRESS_REPLAY_HOST = os.environ.get(
     "HTTP_EGRESS_REPLAY_HOST", "user-service.prod.internal"
 )
@@ -63,7 +63,7 @@ def is_shadow_worker() -> bool:
 
 
 def http_egress_target() -> tuple[str, dict[str, str]]:
-    """Dial cluster URL; Host header is HTTP_EGRESS_REPLAY_HOST for Pixie/Shop hash."""
+    """Dial cluster URL; Host header is HTTP_EGRESS_REPLAY_HOST for the Shop mock key."""
     return HTTP_EGRESS_CONNECT_URL, {"Host": HTTP_EGRESS_REPLAY_HOST}
 
 
@@ -88,7 +88,7 @@ def handle_message(ch, method, properties, body, mongo_coll):
     # store lookup (keyed by trace ID) works in the shadow stack.
     traceparent = (properties.headers or {}).get("traceparent") if properties else None
 
-    # Pass traceparent as MongoDB comment so Pixie eBPF captures the trace ID
+    # Pass traceparent as MongoDB comment so a capture path can extract the trace ID
     # in the raw wire bytes for Beru's MongoDB egress correlation.
     mongo_kwargs = {"comment": traceparent} if traceparent else {}
     mongo_coll.insert_one({"order_id": order_id, "status": "processed"}, **mongo_kwargs)

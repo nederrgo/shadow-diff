@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 # Monarch integration: HTTP input — verifies that Monarch correctly reconciles a
-# ShadowTest with driver: http_request, bringing up both the igris-http multicast
-# hub and the siphon OTLP receiver alongside the three shadow app roles.
+# ShadowTest with driver: http_request, bringing up the igris-http multicast
+# hub and KaiselRule (ingress capture) alongside the three shadow app roles.
 #
-# Testing pyramid layer: integration (no traffic, no Beru, no Pixie data flow).
+# Testing pyramid layer: integration (no traffic, no Beru data flow).
 # shellcheck shell=bash
 
 load '../../test_helper'
@@ -15,7 +15,7 @@ setup_file() {
   ensure_platform_ready
 
   # Prod target must exist before ShadowTest CR so Monarch can read its container
-  # ports during the siphon auto-enable port-match check.
+  # ports during the HTTP ingress capture port-match check.
   echo "==> apply prod target"
   kubectl apply -f "${FIXTURE_DIR}/prod-target.yaml"
   kubectl wait --for=condition=Available deployment/monarch-integ-target \
@@ -26,9 +26,8 @@ setup_file() {
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
 
-  # --require-siphon: wait until both siphon Deployment has AvailableReplicas > 0
-  # AND PixieStreamRule is created. No live Pixie needed for this status.
-  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-siphon
+  # --require-kaisel: wait until status.kaiselPhase=Ready (KaiselRule reconciled).
+  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-kaisel
 
   SHADOW_NS="$(shadow_namespace)"
   export SHADOW_NS
@@ -49,19 +48,18 @@ setup() {
   monarch_wait_all_roles_running "$SHADOW_NS" "$SHADOWTEST"
 }
 
-@test "siphon: deployment is Available and PixieStreamRule is created" {
-  monarch_wait_siphon_running "$SHADOW_NS"
-  kubectl get pixiestreamrule "pixie-${SHADOWTEST}" -n "$SHADOWTEST_NS"
+@test "kaisel: KaiselRule has targetIPs" {
+  monarch_wait_kaisel_rule_ready "kaisel-${SHADOWTEST}" "$SHADOWTEST_NS"
 }
 
 @test "ShadowTest CR: status fields reflect a fully reconciled HTTP input stack" {
-  local phase shadow_ns siphon_phase igris_ep igris_rmq_phase
+  local phase shadow_ns kaisel_phase igris_ep igris_rmq_phase
   phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
     -o jsonpath='{.status.phase}' 2>/dev/null || true)
   shadow_ns=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
     -o jsonpath='{.status.shadowNamespace}' 2>/dev/null || true)
-  siphon_phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
-    -o jsonpath='{.status.siphonPhase}' 2>/dev/null || true)
+  kaisel_phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
+    -o jsonpath='{.status.kaiselPhase}' 2>/dev/null || true)
   igris_ep=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
     -o jsonpath='{.status.igrisEndpoint}' 2>/dev/null || true)
   igris_rmq_phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
@@ -69,32 +67,21 @@ setup() {
 
   [[ "$phase" == "Ready" ]] || { echo "phase=${phase}, want Ready" >&2; return 1; }
   [[ "$shadow_ns" == "$SHADOW_NS" ]] || { echo "shadowNamespace=${shadow_ns}, want ${SHADOW_NS}" >&2; return 1; }
-  [[ "$siphon_phase" == "Ready" ]] || { echo "siphonPhase=${siphon_phase}, want Ready" >&2; return 1; }
+  [[ "$kaisel_phase" == "Ready" ]] || { echo "kaiselPhase=${kaisel_phase}, want Ready" >&2; return 1; }
   [[ -n "$igris_ep" ]] || { echo "igrisEndpoint is empty" >&2; return 1; }
   [[ -z "$igris_rmq_phase" ]] || { echo "igrisRabbitMQPhase=${igris_rmq_phase}, want empty for HTTP input" >&2; return 1; }
 }
 
-@test "PixieStreamRule: spec content points at the correct shadow stack" {
-  local ref active target_ns shadow_ns otel_ep ports
-  ref=$(kubectl get pixiestreamrule "pixie-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
-    -o jsonpath='{.spec.shadowTestRef}' 2>/dev/null || true)
-  active=$(kubectl get pixiestreamrule "pixie-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
-    -o jsonpath='{.spec.active}' 2>/dev/null || true)
-  target_ns=$(kubectl get pixiestreamrule "pixie-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
-    -o jsonpath='{.spec.targetNamespace}' 2>/dev/null || true)
-  shadow_ns=$(kubectl get pixiestreamrule "pixie-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
-    -o jsonpath='{.spec.shadowNamespace}' 2>/dev/null || true)
-  otel_ep=$(kubectl get pixiestreamrule "pixie-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
-    -o jsonpath='{.spec.otelEndpoint}' 2>/dev/null || true)
-  ports=$(kubectl get pixiestreamrule "pixie-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
-    -o jsonpath='{.spec.targetPorts}' 2>/dev/null || true)
+@test "KaiselRule: igris and egress URLs are wired for the shadow namespace" {
+  local igris_url egress_url
+  igris_url=$(kubectl get kaiselrule "kaisel-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
+    -o jsonpath='{.spec.igrisBaseURL}' 2>/dev/null || true)
+  egress_url=$(kubectl get kaiselrule "kaisel-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
+    -o jsonpath='{.spec.egressBaseURL}' 2>/dev/null || true)
 
-  [[ "$ref" == "${SHADOWTEST_NS}/${SHADOWTEST}" ]] || { echo "shadowTestRef=${ref}, want ${SHADOWTEST_NS}/${SHADOWTEST}" >&2; return 1; }
-  [[ "$active" == "true" ]] || { echo "active=${active}, want true" >&2; return 1; }
-  [[ "$target_ns" == "$SHADOWTEST_NS" ]] || { echo "targetNamespace=${target_ns}, want ${SHADOWTEST_NS}" >&2; return 1; }
-  [[ "$shadow_ns" == "$SHADOW_NS" ]] || { echo "shadowNamespace=${shadow_ns}, want ${SHADOW_NS}" >&2; return 1; }
-  [[ -n "$otel_ep" ]] || { echo "otelEndpoint is empty" >&2; return 1; }
-  [[ "$ports" == *"80"* ]] || { echo "targetPorts=${ports}, expected to contain 80" >&2; return 1; }
+  [[ "$igris_url" == *igris* ]] || { echo "igrisBaseURL=${igris_url}, want an igris URL" >&2; return 1; }
+  [[ "$egress_url" == http://shop.* ]] || { echo "egressBaseURL=${egress_url}, want the shadow Shop" >&2; return 1; }
+  [[ "$egress_url" == *"${SHADOW_NS}"* ]] || { echo "egressBaseURL not in ${SHADOW_NS}: ${egress_url}" >&2; return 1; }
 }
 
 @test "igris-rabbitmq: not deployed for HTTP input" {
@@ -112,13 +99,6 @@ setup() {
 @test "shop: deployment is Available" {
   local avail
   avail=$(kubectl get deployment shop -n "$SHADOW_NS" \
-    -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)
-  [[ "${avail:-0}" -ge 1 ]]
-}
-
-@test "recorder: deployment is Available" {
-  local avail
-  avail=$(kubectl get deployment "${SHADOWTEST}-recorder" -n "$SHADOW_NS" \
     -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)
   [[ "${avail:-0}" -ge 1 ]]
 }

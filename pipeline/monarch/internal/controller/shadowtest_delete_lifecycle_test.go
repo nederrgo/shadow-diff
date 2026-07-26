@@ -59,9 +59,9 @@ func deletingShadowTest(name, ns string) *enginev1alpha1.ShadowTest {
 }
 
 // TestReconcileDelete_LateCreatesAfterDeletionTimestampStillCleaned models the
-// mid-bring-up race: an in-flight create lands Deployments / PixieStreamRule
-// after deletionTimestamp is set. The next delete reconciles must still remove
-// them and release the finalizer (no resume to Ready).
+// mid-bring-up race: an in-flight create lands Deployments / KaiselRule after
+// deletionTimestamp is set. The next delete reconciles must still remove them
+// and release the finalizer (no resume to Ready).
 func TestReconcileDelete_LateCreatesAfterDeletionTimestampStillCleaned(t *testing.T) {
 	scheme := deleteLifecycleScheme(t)
 	st := deletingShadowTest("mid-delete", "default")
@@ -87,38 +87,36 @@ func TestReconcileDelete_LateCreatesAfterDeletionTimestampStillCleaned(t *testin
 			},
 		},
 	}
-	lateRule := &enginev1alpha1.PixieStreamRule{
+	lateRule := &enginev1alpha1.KaiselRule{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      pixieStreamRuleName(st),
+			Name:      kaiselRuleName(st),
 			Namespace: st.Namespace,
 			Labels: map[string]string{
 				labelManagedBy:      valueManagedBy,
 				labelShadowTestName: st.Name,
 			},
 		},
-		Spec: enginev1alpha1.PixieStreamRuleSpec{
-			ShadowTestRef:   st.Namespace + "/" + st.Name,
-			Active:          true,
-			TargetNamespace: st.Namespace,
-			ShadowNamespace: shadowNS,
+		Spec: enginev1alpha1.KaiselRuleSpec{
+			TargetIPs:    []string{"10.0.0.1"},
+			IgrisBaseURL: "http://igris." + shadowNS + ".svc.cluster.local:8888",
 		},
 	}
 
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(st.DeepCopy(), ns, lateDeploy, lateRule).
-		WithStatusSubresource(&enginev1alpha1.ShadowTest{}, &enginev1alpha1.PixieStreamRule{}).
+		WithStatusSubresource(&enginev1alpha1.ShadowTest{}, &enginev1alpha1.KaiselRule{}).
 		Build()
 	rec := &ShadowTestReconciler{Client: c, Scheme: scheme}
 	nn := types.NamespacedName{Name: st.Name, Namespace: st.Namespace}
 
-	// Pass 1: deactivate+delete PixieStreamRule, delete shadow namespace.
+	// Pass 1: delete KaiselRule, delete shadow namespace.
 	if _, err := rec.Reconcile(context.Background(), reconcile.Request{NamespacedName: nn}); err != nil {
 		t.Fatalf("reconcile delete (pass 1): %v", err)
 	}
 
-	if err := c.Get(context.Background(), pixieStreamRuleKey(st), &enginev1alpha1.PixieStreamRule{}); !apierrors.IsNotFound(err) {
-		t.Fatalf("PixieStreamRule still present after delete reconcile: %v", err)
+	if err := c.Get(context.Background(), kaiselRuleKey(st), &enginev1alpha1.KaiselRule{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("KaiselRule still present after delete reconcile: %v", err)
 	}
 	if err := c.Get(context.Background(), types.NamespacedName{Name: shadowNS}, &corev1.Namespace{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("shadow namespace still present after delete reconcile: %v", err)

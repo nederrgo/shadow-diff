@@ -8,7 +8,8 @@ import (
 	"strings"
 )
 
-// MongoHints carries OTLP span attributes when db.query.text is absent or ambiguous.
+// MongoHints carries the command and collection a producer decoded itself, for
+// use when the payload alone does not identify them.
 type MongoHints struct {
 	Operation  string // db.operation / db.operation.name
 	Collection string // db.mongodb.collection / db.collection.name
@@ -35,6 +36,8 @@ func EgressSignature(protocol string, payload []byte) string {
 		return databaseSignature(protocol, obj)
 	case "rabbitmq", "kafka":
 		return queueSignature(protocol, obj)
+	case "http":
+		return HTTPSignature(stringField(obj, "method"), stringField(obj, "path"))
 	default:
 		return fallbackSignature(protocol, payload)
 	}
@@ -84,23 +87,6 @@ func mongoOperationFromPayload(obj map[string]any) string {
 		}
 	}
 	return ""
-}
-
-func mongoOperationFromStatement(stmt string) string {
-	return MongoOperationFromStatement(stmt)
-}
-
-// MongoOperationFromStatement extracts the command verb from pymongo-style db.statement text.
-func MongoOperationFromStatement(stmt string) string {
-	stmt = strings.TrimSpace(stmt)
-	if stmt == "" || strings.HasPrefix(stmt, "{") {
-		return ""
-	}
-	fields := strings.Fields(stmt)
-	if len(fields) == 0 {
-		return ""
-	}
-	return normalizeMongoOperation(fields[0])
 }
 
 func normalizeMongoOperation(op string) string {

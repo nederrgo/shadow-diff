@@ -106,54 +106,6 @@ http_otel_rmq_wait_local_beru() {
   wait_local_beru_rollout "$1" "${2:-120s}"
 }
 
-http_otel_rmq_setup_pixie() {
-  local repo="$1" shadowtest="$2" shadowtest_ns="$3"
-  if [[ -z "${USE_PIXIE:-}" ]]; then
-    if kubectl get ns pl >/dev/null 2>&1; then
-      USE_PIXIE=1
-    else
-      USE_PIXIE=0
-    fi
-  fi
-  if [[ "$USE_PIXIE" != "1" ]]; then
-    echo "==> MongoDB egress via Pixie: skipped (no pl namespace; set USE_PIXIE=1)"
-    HTTP_OTEL_RMQ_MONGO=0
-    return 0
-  fi
-  # shellcheck source=testing/bats/helpers/pixie-bridge.sh
-  source "$repo/testing/bats/helpers/pixie-bridge.sh"
-  # shellcheck source=testing/bats/helpers/siphon-config.sh
-  source "$repo/testing/bats/helpers/siphon-config.sh"
-  wait_pixie_vizier_pem 120
-  wait_pixie_vizier_healthy 120
-  wait_pixie_http_events_ready 180
-  wait_pixie_stream_rule "$shadowtest" "$shadowtest_ns" 120 1
-  echo "==> Restarting pixie-stream-bridge to pick up current PxL template"
-  stop_pixie_stream_bridge
-  start_pixie_stream_bridge_background 1
-  kubectl apply -k "$repo/testing/bats/manifests/pixie-bridge/" >/dev/null
-  wait_pixie_mongo_pxl_ready "$shadowtest" "$shadowtest_ns" 60
-
-  # Pixie's eBPF probe decodes MongoDB wire protocol only for connections it observes
-  # from the initial TCP handshake. Shadow worker pods connect to MongoDB at startup,
-  # before Pixie starts watching — restart them so the connections are re-established
-  # while the bridge is running. The rollout status waits in the caller handle readiness.
-  local shadow_ns="shadow-${shadowtest_ns}-${shadowtest}"
-  echo "==> Restarting shadow workers so MongoDB connections start under Pixie observation"
-  for role in control-a control-b candidate; do
-    kubectl rollout restart "deployment/${shadowtest}-${role}" -n "$shadow_ns" 2>/dev/null || true
-  done
-
-  echo "==> Waiting 35s for bridge first export cycle"
-  sleep 35
-}
-
-http_otel_rmq_reverify_pixie() {
-  [[ "${USE_PIXIE:-0}" == "1" ]] || return 0
-  echo "==> Re-verify Pixie healthy before publish (event must fall in -30s window)"
-  wait_pixie_vizier_healthy 120
-}
-
 http_otel_rmq_beru_pod_name() {
   local shadow_ns="$1"
   kubectl get pods -n "$shadow_ns" -l app=beru-local \
@@ -163,7 +115,6 @@ http_otel_rmq_beru_pod_name() {
 
 http_otel_rmq_wait_beru_message() {
   local shadow_ns="$1" label="$2" want_msg="$3" timeout_msg="$4" wait_secs="$5" trace_hex="$6"
-  local pixie_pxl="${7:-}"
   local beru_pod logs i
   beru_pod=$(http_otel_rmq_beru_pod_name "$shadow_ns")
   if [[ -z "$beru_pod" ]]; then
@@ -172,9 +123,6 @@ http_otel_rmq_wait_beru_message() {
   fi
   echo "==> Wait for Beru ${label} (up to ${wait_secs}s): ${want_msg}"
   for i in $(seq 1 "$wait_secs"); do
-    if [[ -n "$pixie_pxl" && "${USE_PIXIE:-0}" == "1" && -f "$pixie_pxl" ]] && pixie_vizier_healthy 2>/dev/null; then
-      run_pixie_export_once "$pixie_pxl" 2>/dev/null || true
-    fi
     beru_pod=$(http_otel_rmq_beru_pod_name "$shadow_ns")
     logs=$(kubectl logs -n "$shadow_ns" "$beru_pod" --tail=500 2>/dev/null || true)
     if grep -qF "$want_msg" <<<"$logs"; then
@@ -279,16 +227,9 @@ http_otel_rmq_run_test() {
       fi
       log_success "${role} mongo insert ok"
     done
-    local mongo_egress_msg="No egress regression for Trace ${trace_hex} (mongodb)"
-    local mongo_wait="${HTTP_OTEL_RMQ_MONGO_WAIT_SECS:-120}"
-    local mongo_pxl=""
-    if [[ "${USE_PIXIE:-0}" == "1" ]]; then
-      # shellcheck source=testing/bats/helpers/pixie-bridge.sh
-      source "${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}/testing/bats/helpers/pixie-bridge.sh"
-      mongo_pxl="${PIXIE_BRIDGE_STATE_DIR:-${REPO:-.}/.cache/pixie-bridge}/${SHADOWTEST_NS:-default}-pixie-${shadowtest}-mongo.pxl"
-    fi
-    http_otel_rmq_wait_beru_message "$shadow_ns" "MongoDB egress" "$mongo_egress_msg" "" \
-      "$mongo_wait" "$trace_hex" "$mongo_pxl" || return 1
+    # MongoDB egress verdicts are not asserted: no capture path currently
+    # produces MongoDB spans. The per-role insert checks above still prove the
+    # shadow workers reached their own MongoDB.
   fi
 
   http_otel_rmq_wait_beru_message "$shadow_ns" "RabbitMQ egress" "$egress_msg" "" "$egress_wait" "$trace_hex" || return 1

@@ -50,7 +50,7 @@ rules:
 - apiGroups:
   - engine.shadow-diff.io
   resources:
-  - pixiestreamrules
+  - kaiselrules
   - shadowtests
   verbs:
   - create
@@ -63,16 +63,15 @@ rules:
 - apiGroups:
   - engine.shadow-diff.io
   resources:
-  - pixiestreamrules/finalizers
-  - shadowtests/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - engine.shadow-diff.io
-  resources:
-  - pixiestreamrules/status
+  - kaiselrules/status
   - shadowtests/status
   verbs:
   - get
   - patch
+  - update
+- apiGroups:
+  - engine.shadow-diff.io
+  resources:
+  - shadowtests/finalizers
+  verbs:
   - update

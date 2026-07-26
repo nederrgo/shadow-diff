@@ -3,9 +3,8 @@
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests/finalizers,verbs=update
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=pixiestreamrules,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=pixiestreamrules/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=pixiestreamrules/finalizers,verbs=update
+// +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=kaiselrules,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=kaiselrules/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
@@ -23,11 +22,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
@@ -88,14 +91,23 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	if len(shadowTest.Spec.Inputs) == 0 && shadowTest.Spec.TargetDeployment != "" && !siphonEnabled(&shadowTest, &target) {
-		log.Info("live capture inactive: spec.inputs is empty and Siphon is disabled",
+	if len(shadowTest.Spec.Inputs) == 0 && shadowTest.Spec.TargetDeployment != "" && !httpIngressCaptureEnabled(&shadowTest, &target) {
+		log.Info("live capture inactive: no HTTP/TCP ingress input matched target ports",
 			"level", "warn",
 			"shadowtest", fmt.Sprintf("%s/%s", shadowTest.Namespace, shadowTest.Name))
 	}
 
 	if err := r.ensureShadowNamespace(ctx, &shadowTest, shadowNS); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// KaiselRule only needs target pod IPs — create it immediately, independent
+	// of beru-local/igris/shadow-stack readiness so eBPF capture starts as soon
+	// as the target pods exist.
+	captureTargets, kaiselPhase, err := r.reconcileKaiselCapture(ctx, &shadowTest, shadowNS, &target)
+	if err != nil {
+		log.Error(err, "Kaisel capture reconcile failed")
+		kaiselPhase = "Degraded"
 	}
 
 	if err := r.reconcileLocalBeruIfNeeded(ctx, &shadowTest, shadowNS); err != nil {
@@ -166,35 +178,6 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Shop", shadowNS)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
-	if err := r.reconcileRecorderStack(ctx, &shadowTest, shadowNS); err != nil {
-		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-		return ctrl.Result{}, err
-	}
-	recorderReady, err := r.recorderDeploymentReady(ctx, &shadowTest, shadowNS)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if !recorderReady {
-		_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Recorder", shadowNS)
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-	}
-
-	captureTargets, siphonPhase, err := r.reconcileSiphonCapture(ctx, &shadowTest, shadowNS, &target)
-	if err != nil {
-		log.Error(err, "Siphon capture reconcile failed")
-		siphonPhase = "Degraded"
-	}
-	if siphonEnabled(&shadowTest, &target) {
-		siphonReady, readyErr := r.siphonDeploymentReady(ctx, shadowNS)
-		if readyErr != nil {
-			return ctrl.Result{}, readyErr
-		}
-		if !siphonReady {
-			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Siphon", shadowNS)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-	}
-
 	var igrisEndpoint string
 	igrisRMQPhase := ""
 	if needsAMQPIngress(&shadowTest) {
@@ -213,11 +196,11 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	} else {
 		msg = fmt.Sprintf("%s; ingress [%s]", msg, listenersSummary(&shadowTest))
 	}
-	if siphonPhase != "" && siphonPhase != "Disabled" {
-		msg = fmt.Sprintf("%s; Siphon %s", msg, siphonPhase)
+	if kaiselPhase != "" && kaiselPhase != "Disabled" {
+		msg = fmt.Sprintf("%s; Kaisel %s", msg, kaiselPhase)
 	}
 
-	if err := r.patchStatusFull(ctx, &shadowTest, "Ready", msg, shadowNS, captureTargets, siphonPhase, igrisEndpoint, igrisRMQPhase); err != nil {
+	if err := r.patchStatusFull(ctx, &shadowTest, "Ready", msg, shadowNS, captureTargets, kaiselPhase, igrisEndpoint, igrisRMQPhase); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -328,10 +311,79 @@ func (r *ShadowTestReconciler) reconcileShadowWorkloads(
 	return shadowsReady, nil
 }
 
+// podIPChangedPredicate reduces reconcile spam: only enqueue for pod events
+// that affect capture targeting (IP assignment, phase transition, deletion).
+type podIPChangedPredicate struct{ predicate.Funcs }
+
+func (podIPChangedPredicate) Update(e event.UpdateEvent) bool {
+	old, ok := e.ObjectOld.(*corev1.Pod)
+	if !ok {
+		return true
+	}
+	neu, ok := e.ObjectNew.(*corev1.Pod)
+	if !ok {
+		return true
+	}
+	if old.Status.PodIP != neu.Status.PodIP {
+		return true
+	}
+	if old.Status.Phase != neu.Status.Phase {
+		return true
+	}
+	if (old.DeletionTimestamp == nil) != (neu.DeletionTimestamp == nil) {
+		return true
+	}
+	return false
+}
+
+func (r *ShadowTestReconciler) mapPodToShadowTests(ctx context.Context, obj client.Object) []reconcile.Request {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return nil
+	}
+	var list enginev1alpha1.ShadowTestList
+	if err := r.List(ctx, &list); err != nil {
+		return nil
+	}
+	var out []reconcile.Request
+	for _, st := range list.Items {
+		if targetNamespaceFor(&st) != pod.Namespace {
+			continue
+		}
+		// Fetch the target Deployment to get its pod template labels.
+		var dep appsv1.Deployment
+		if err := r.Get(ctx, types.NamespacedName{
+			Namespace: targetNamespaceFor(&st),
+			Name:      st.Spec.TargetDeployment,
+		}, &dep); err != nil {
+			continue
+		}
+		if labelsMatch(dep.Spec.Template.Labels, pod.Labels) {
+			out = append(out, reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: st.Namespace, Name: st.Name},
+			})
+		}
+	}
+	return out
+}
+
+// labelsMatch reports whether all key-value pairs in selector are present in labels.
+func labelsMatch(selector, labels map[string]string) bool {
+	for k, v := range selector {
+		if labels[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
 func (r *ShadowTestReconciler) SetupWithManager(mgr ctrl.Manager, opts controller.Options) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&enginev1alpha1.ShadowTest{}).
 		Watches(&appsv1.Deployment{}, handler.EnqueueRequestsFromMapFunc(r.mapDeploymentToShadowTests)).
+		Watches(&corev1.Pod{},
+			handler.EnqueueRequestsFromMapFunc(r.mapPodToShadowTests),
+			builder.WithPredicates(podIPChangedPredicate{})).
 		Named("shadowtest").
 		WithOptions(opts).
 		Complete(r)

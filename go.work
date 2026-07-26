@@ -5,9 +5,9 @@ use (
 	./pipeline/egress-relay-rabbitmq
 	./pipeline/igrises/igris-http
 	./pipeline/igrises/igris-rabbitmq
+	./pipeline/kaisel
 	./pipeline/monarch
-	./pipeline/recorder
+	./pipeline/shadow-soldier
 	./pipeline/shop
-	./pipeline/siphon
 	./testing/example-apps/db-test-app
 )
