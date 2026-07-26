@@ -168,6 +168,17 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 				},
 			},
 		}
+		// Database egress capture. Only present when the ShadowTest declares a
+		// dependency shadow-soldier can parse, so a ShadowTest with none (or with
+		// RabbitMQ only, whose egress the Firehose relay already covers) keeps the
+		// two-container pod it has today.
+		soldier, err := shadowSoldierContainer(st, shadowNS, role)
+		if err != nil {
+			return err
+		}
+		if soldier != nil {
+			deploy.Spec.Template.Spec.Containers = append(deploy.Spec.Template.Spec.Containers, *soldier)
+		}
 		return nil
 	})
 	return err

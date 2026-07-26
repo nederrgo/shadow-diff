@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# E2E: HTTP ingress (prod pod → Kaisel → igris) → OTel → Mongo OTLP + RabbitMQ Firehose egress — Python worker.
+# E2E: HTTP ingress (prod pod → Kaisel → igris) → OTel → RabbitMQ Firehose egress — Python worker.
 
 load '../../test_helper'
 
@@ -63,6 +63,22 @@ setup_file() {
   run publish_prod_http "$BATS_TRACE_ID"
   assert_success
   run beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" rabbitmq)" --timeout=120
+  assert_success
+}
+
+@test "verify MongoDB egress is captured for all three roles (python)" {
+  run publish_prod_http "$BATS_TRACE_ID"
+  assert_success
+  # shadow-soldier proxies each role's Mongo connection and reports the command
+  # document; the worker embeds the traceparent in the BSON comment field.
+  run wait_mongodb_egress_reports "$BATS_TRACE_ID" 120
+  assert_success
+}
+
+@test "verify MongoDB egress is clean for isolated trace (python)" {
+  run publish_prod_http "$BATS_TRACE_ID"
+  assert_success
+  run beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" mongodb)" --timeout=120
   assert_success
 }
 

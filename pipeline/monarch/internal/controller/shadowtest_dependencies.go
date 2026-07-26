@@ -35,6 +35,11 @@ func dependencyPodLabels(st *enginev1alpha1.ShadowTest, dep enginev1alpha1.Depen
 
 func validateDependencies(st *enginev1alpha1.ShadowTest) error {
 	seen := map[string]struct{}{}
+	// Proxied dependencies each get a shadow-soldier listener on their own port
+	// inside the shared pod network namespace, so two of them cannot share one.
+	// Caught here rather than at startup, where it would surface as one silently
+	// unproxied dependency reporting no egress at all.
+	proxiedPorts := map[int32]string{}
 	var mongoCount int
 	for i, dep := range st.Spec.Dependencies {
 		if dep.Name == "" {
@@ -61,6 +66,12 @@ func validateDependencies(st *enginev1alpha1.ShadowTest) error {
 			return fmt.Errorf("duplicate dependency name %q after sanitization", dep.Name)
 		}
 		seen[sanitized] = struct{}{}
+		if isProxiedDependency(dep) {
+			if prev, dup := proxiedPorts[port]; dup {
+				return fmt.Errorf("dependencies %q and %q both use port %d; proxied dependencies need distinct ports", prev, dep.Name, port)
+			}
+			proxiedPorts[port] = dep.Name
+		}
 		if port == 27017 {
 			if mongoCount++; mongoCount > 1 {
 				return fmt.Errorf("only one dependency on port %d (MongoDB) is supported", 27017)
@@ -139,6 +150,7 @@ func (r *ShadowTestReconciler) reconcileDependencyDeployment(
 				Name:            "dependency",
 				Image:           image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
+				Env:             dependencyContainerEnv(dep),
 				Ports: []corev1.ContainerPort{{
 					Name:          "tcp",
 					ContainerPort: port,
@@ -287,13 +299,41 @@ func usesAMQPURLInjection(envName string) bool {
 	}
 }
 
+// dependencyEnvVarsForRole builds the connection strings injected into the shadow
+// app container.
+//
+// A proxied dependency is pointed at loopback so shadow-soldier, which listens on
+// the dependency's own port, sees the traffic and forwards it to the real Service.
+// The rewrite is confined to this function on purpose: dependencyEndpoint and
+// shadowAMQPURL are also read by igris-rabbitmq and egress-relay-rabbitmq, which
+// run in their own pods and must keep dialling the Service DNS name.
 func dependencyEnvVarsForRole(st *enginev1alpha1.ShadowTest, shadowNS, role string) []corev1.EnvVar {
 	var out []corev1.EnvVar
 	for _, dep := range st.Spec.Dependencies {
+		value := dependencyEnvValue(shadowNS, dep, role)
+		if isProxiedDependency(dep) {
+			value = loopbackDependencyEnvValue(dep)
+		}
 		out = append(out, corev1.EnvVar{
 			Name:  dep.EnvVarInjection,
-			Value: dependencyEnvValue(shadowNS, dep, role),
+			Value: value,
 		})
 	}
 	return out
+}
+
+// loopbackDependencyEnvValue is dependencyEnvValue with the Service host replaced
+// by loopback, keeping whatever URI scheme the driver expects.
+func loopbackDependencyEnvValue(dep enginev1alpha1.DependencySpec) string {
+	_, port := resolveDependencyDefaults(dep)
+	hostPort := fmt.Sprintf("127.0.0.1:%d", port)
+	if isMongoDependency(dep) {
+		return "mongodb://" + hostPort
+	}
+	switch strings.ToLower(dep.Type) {
+	case "postgres", "postgresql":
+		return fmt.Sprintf("postgres://postgres@%s/postgres?sslmode=disable", hostPort)
+	default:
+		return hostPort
+	}
 }

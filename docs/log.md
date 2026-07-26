@@ -11,6 +11,11 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-26]
 ### Added
+* 'testing/example-apps/http-rmq-go-worker': Stop logging trace IDs in app logs to match Node/Python fixtures for assert_worker_trace_absent
+* 'testing/bats/e2e/rabbitmq-ingress/': Fixed Mongo egress test added to the hybrid suites — asserted 'clean' when candidate unconditionally double-inserts every order (matching its existing RMQ n+1 behavior), which Beru's re-diff-on-arrival logging made intermittently false-pass on a stale pre-mismatch log line; replaced with a count-regression assertion
+* 'testing/bats/e2e/rabbitmq-ingress/': Added MongoDB egress diff coverage (captured for all three roles + clean for isolated trace) to the Node.js and Python hybrid suites, which already deployed Mongo but never asserted on it; fixed docs/verification/hybrid-rmq-e2e-flow.md's stale OTLP reference and its false 'covered elsewhere' claim about a nonexistent mongo_egress.bats
+* 'pipeline/beru/internal/otlp/': Removed dormant OTLP MongoDB egress route (:4317 receiver, POST /v1/traces, FromMongoEgress, beru-local otlp-grpc port, go.opentelemetry.io/proto/otlp dependency) in favor of shadow-soldier wire capture; beru-local gains ingest port 8081 to bypass the shadow pod's 8080 iptables redirect
+* 'pipeline/shadow-soldier/': Added L4b database egress capture sidecar — plain-text TCP proxy decoding MongoDB/PostgreSQL/Redis/MSSQL wire protocols, Postgres SSLRequest 'N' downgrade, bounded fail-open parser tap, trace-sharded reporter posting to Beru /api/v1/egress/diff
 * 'testing/bats, pipeline/beru': Kaisel→Shop→Envoy→Beru HTTP egress E2E; mirrorLegacyLogs handles http egress direction; beru_wait_http_egress_match helper
 * 'pipeline/shop, pipeline/beru, pipeline/monarch, docs': Shop buffers egress request body and async-reports HTTP egress to Beru /api/v1/egress/diff; EgressSignature http case; Shop BERU_HTTP_URL env
 * 'testing/bats/e2e/kaisel-capture': Replay E2E from copied prod traffic (no igris redrive)

@@ -25,11 +25,19 @@ jobs:
 
       - name: Running Tests
         run: |
-          cd pipeline/monarch && go mod tidy && make test
-          cd ../beru && go mod tidy && make test
-          cd ../igrises/igris-http && go mod tidy && make test
-          cd ../kaisel && go mod tidy && make test
-          cd ../igrises/igris-rabbitmq && go mod tidy && make test
+          for mod in \
+            pipeline/monarch \
+            pipeline/beru \
+            pipeline/shop \
+            pipeline/igrises/igris-http \
+            pipeline/igrises/igris-rabbitmq \
+            pipeline/kaisel \
+            pipeline/egress-relay-rabbitmq \
+            pipeline/shadow-soldier; do
+            echo "::group::$mod"
+            (cd "$mod" && go mod tidy && make test)
+            echo "::endgroup::"
+          done
 
   bpf-generate:
     permissions:

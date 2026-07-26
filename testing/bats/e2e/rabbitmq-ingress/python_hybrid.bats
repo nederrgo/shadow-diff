@@ -70,6 +70,33 @@ setup_file() {
   assert_success
 }
 
+@test "verify MongoDB egress is captured for all three roles (python)" {
+  publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
+  if ! wait_kaisel_egress_seed; then
+    skip "Kaisel egress seed not available"
+  fi
+  # shadow-soldier proxies each role's Mongo connection and reports the command
+  # document; the worker embeds the traceparent in the BSON comment field.
+  run wait_mongodb_egress_reports "$BATS_TRACE_ID" 120
+  assert_success
+}
+
+@test "verify MongoDB egress count regression (python)" {
+  publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
+  if ! wait_kaisel_egress_seed; then
+    skip "Kaisel egress seed not available"
+  fi
+  for role in control-a control-b candidate; do
+    run assert_worker_http_replay "$role" "$BATS_ORDER_ID"
+    assert_success
+  done
+  # candidate unconditionally inserts a second "candidate_n1_loop" document per
+  # order — this worker's Mongo egress never diffs clean, unlike the isolated-
+  # trace assertion used for the http-otel-rmq suites.
+  run beru_wait_log --grep="$(beru_log_egress_count_regression "$BATS_TRACE_ID" mongodb)" --timeout=120
+  assert_success
+}
+
 teardown_file() {
   bats_teardown_suite \
     "${REPO}/testing/bats/manifests/rabbitmq-e2e/prod-rabbitmq.yaml" \

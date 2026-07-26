@@ -265,3 +265,19 @@ beru_wait_log() {
   kubectl logs -n "${SHADOW_NS}" "$pod" --tail=30 2>/dev/null >&2 || true
   return 1
 }
+
+# Wait until shadow-soldier has reported MongoDB egress for all three roles.
+# Usage: wait_mongodb_egress_reports <trace_id> [timeout_seconds]
+wait_mongodb_egress_reports() {
+  local trace_id="$1" timeout="${2:-120}" i=0
+  while [[ "$i" -lt "$timeout" ]]; do
+    if beru_reports_complete "$trace_id" mongodb api egress; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "timed out after ${timeout}s waiting for 3 mongodb egress roles on trace ${trace_id}" >&2
+  beru_reports_role_count "$trace_id" mongodb api egress >&2 || true
+  return 1
+}

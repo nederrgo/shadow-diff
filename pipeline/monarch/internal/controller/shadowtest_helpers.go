@@ -189,18 +189,17 @@ func beruHTTPHostFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
 	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
 }
 
-func beruOTLPEndpointFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
+// beruIngestURLFor is the base URL a shadow-pod sidecar posts egress reports to.
+// It uses the ingest port rather than 8080 — see localBeruIngestPort.
+func beruIngestURLFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
 	if st.Spec.BeruGRPCAddress != "" {
-		return defaultBeruOTLPEndpoint
+		host, _, err := parseBeruHostPort(st.Spec.BeruGRPCAddress)
+		if err != nil || host == "" {
+			return "http://" + defaultBeruHTTPAddress
+		}
+		return fmt.Sprintf("http://%s:8080", host)
 	}
-	return fmt.Sprintf("http://%s:%d", localBeruDNSHost(shadowNS), localBeruOTLPPort)
-}
-
-func beruOTLPHTTPEndpointFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	if st.Spec.BeruGRPCAddress != "" {
-		return defaultBeruOTLPHTTPEndpoint
-	}
-	return fmt.Sprintf("http://%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
+	return fmt.Sprintf("http://%s:%d", localBeruDNSHost(shadowNS), localBeruIngestPort)
 }
 
 func beruGRPCTimeoutFor(st *enginev1alpha1.ShadowTest) string {
@@ -261,8 +260,36 @@ func resolveDependencyDefaults(dep enginev1alpha1.DependencySpec) (image string,
 		if port == 0 {
 			port = 6379
 		}
+	case "postgres", "postgresql":
+		if image == "" {
+			image = "postgres:16-alpine"
+		}
+		if port == 0 {
+			port = 5432
+		}
 	}
 	return
+}
+
+// dependencyContainerEnv returns the environment a dependency image needs to
+// start. Only Postgres has such a requirement: its entrypoint refuses to
+// initialise without either a password or an explicit auth method, so a shadow
+// dependency declared with no further configuration would CrashLoopBackOff and
+// stall the readiness gate.
+//
+// Trust auth is safe here and nowhere else: the database is ephemeral, holds only
+// replayed shadow traffic, and lives inside the shadow namespace.
+func dependencyContainerEnv(dep enginev1alpha1.DependencySpec) []corev1.EnvVar {
+	switch strings.ToLower(dep.Type) {
+	case "postgres", "postgresql":
+		return []corev1.EnvVar{
+			{Name: "POSTGRES_HOST_AUTH_METHOD", Value: "trust"},
+			{Name: "POSTGRES_USER", Value: "postgres"},
+			{Name: "POSTGRES_DB", Value: "postgres"},
+		}
+	default:
+		return nil
+	}
 }
 
 func isMongoDependencyType(dep enginev1alpha1.DependencySpec) bool {

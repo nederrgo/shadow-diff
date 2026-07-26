@@ -6,12 +6,14 @@ IGRIS_DIR := pipeline/igrises/igris-http
 KAISEL_DIR := pipeline/kaisel
 IGRIS_RABBITMQ_DIR := pipeline/igrises/igris-rabbitmq
 EGRESS_RELAY_RABBITMQ_DIR := pipeline/egress-relay-rabbitmq
+SHADOW_SOLDIER_DIR := pipeline/shadow-soldier
 KAISEL_IMG ?= kaisel:latest
 IGRIS_RABBITMQ_IMG ?= igris-rabbitmq:latest
 EGRESS_RELAY_RABBITMQ_IMG ?= egress-relay-rabbitmq:latest
 IGRIS_IMG ?= igris-http:latest
 BERU_IMG ?= beru:latest
 SHOP_IMG ?= shop:latest
+SHADOW_SOLDIER_IMG ?= shadow-soldier:latest
 IMG ?= controller:latest
 
 MONARCH_TARGETS := all help manifests generate fmt vet test setup-test-e2e test-e2e cleanup-test-e2e \
@@ -27,7 +29,8 @@ $(MONARCH_TARGETS):
 	kaisel-test kaisel-build kaisel-docker-build kaisel-generate kaisel-verify-generate \
 	igris-rabbitmq-test igris-rabbitmq-build igris-rabbitmq-docker-build \
 	nodejs-test-worker-docker-build python-test-worker-docker-build \
-	egress-relay-rabbitmq-test egress-relay-rabbitmq-build egress-relay-rabbitmq-docker-build
+	egress-relay-rabbitmq-test egress-relay-rabbitmq-build egress-relay-rabbitmq-docker-build \
+	shadow-soldier-test shadow-soldier-build shadow-soldier-docker-build
 beru-test: ## Run Beru unit tests.
 	@$(MAKE) -C $(BERU_DIR) test
 
@@ -89,6 +92,7 @@ python-test-worker-docker-build: ## Build python-test-worker container image.
 
 egress-relay-rabbitmq-test: ## Run egress-relay-rabbitmq unit tests.
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
+	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) test
 
 egress-relay-rabbitmq-build: ## Build egress-relay-rabbitmq binary.
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) build
@@ -96,7 +100,16 @@ egress-relay-rabbitmq-build: ## Build egress-relay-rabbitmq binary.
 egress-relay-rabbitmq-docker-build: ## Build egress-relay-rabbitmq container image.
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) docker-build EGRESS_RELAY_RABBITMQ_IMG=$(EGRESS_RELAY_RABBITMQ_IMG)
 
-test-all: ## Run Monarch, Beru, Shop, Igris, kaisel, igris-rabbitmq, and egress-relay-rabbitmq tests.
+shadow-soldier-test: ## Run shadow-soldier unit tests.
+	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) test
+
+shadow-soldier-build: ## Build shadow-soldier binary.
+	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) build
+
+shadow-soldier-docker-build: ## Build shadow-soldier container image.
+	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) docker-build SHADOW_SOLDIER_IMG=$(SHADOW_SOLDIER_IMG)
+
+test-all: ## Run Monarch, Beru, Shop, Igris, kaisel, igris-rabbitmq, egress-relay-rabbitmq, and shadow-soldier tests.
 	@$(MAKE) -C $(MONARCH_DIR) test
 	@$(MAKE) -C $(BERU_DIR) test
 	@$(MAKE) -C $(SHOP_DIR) test

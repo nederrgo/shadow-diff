@@ -13,12 +13,14 @@ const (
 	imageBaseEgressRelayRabbitMQ = "egress-relay-rabbitmq"
 	imageBaseBeru                = "beru"
 	imageBaseShop                = "shop"
+	imageBaseShadowSoldier       = "shadow-soldier"
 
 	envIgrisHTTPImage           = "IGRIS_HTTP_IMAGE"
 	envIgrisRabbitMQImage       = "IGRIS_RABBITMQ_IMAGE"
 	envEgressRelayRabbitMQImage = "EGRESS_RELAY_RABBITMQ_IMAGE"
 	envBeruImage                = "BERU_IMAGE"
 	envShopImage                = "SHOP_IMAGE"
+	envShadowSoldierImage       = "SHADOW_SOLDIER_IMAGE"
 )
 
 func monarchImageTagSuffix() string {
@@ -78,4 +80,12 @@ func shopImageFor(st *enginev1alpha1.ShadowTest) string {
 		cr = st.Spec.Shop.Image
 	}
 	return resolveHelperImage(imageBaseShop, cr, envShopImage)
+}
+
+func shadowSoldierImageFor(st *enginev1alpha1.ShadowTest) string {
+	cr := ""
+	if st.Spec.ShadowSoldier != nil {
+		cr = st.Spec.ShadowSoldier.Image
+	}
+	return resolveHelperImage(imageBaseShadowSoldier, cr, envShadowSoldierImage)
 }

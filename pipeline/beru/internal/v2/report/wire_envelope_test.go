@@ -54,7 +54,7 @@ func TestFromWireEnvelope_mongodb(t *testing.T) {
 }
 
 func TestMongoSpanFixtures_wireSignatures(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "otlp", "testdata", "mongo_spans.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "mongo_spans.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/shadow-diff/beru/internal/dashboard"
-	"github.com/shadow-diff/beru/internal/otlp"
 	"github.com/shadow-diff/beru/internal/roles"
 	"github.com/shadow-diff/beru/internal/storage"
 	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
@@ -20,15 +19,18 @@ import (
 type Server struct {
 	Log       *slog.Logger
 	Router    *v2engine.TraceRouter
-	OTLP      *otlp.Server
 	DB        *storage.DB
 	Dashboard *dashboard.Handler
 }
 
 type egressDiffRequest struct {
-	TraceID        string          `json:"trace_id"`
-	Workload       string          `json:"workload"`
-	Protocol       string          `json:"protocol"`
+	TraceID  string `json:"trace_id"`
+	Workload string `json:"workload"`
+	Protocol string `json:"protocol"`
+	// Signature is optional. Producers that decode the wire protocol themselves
+	// (shadow-soldier) send the authoritative protocol:operation:target; the
+	// rest leave it empty and Beru derives it from the payload.
+	Signature      string          `json:"signature"`
 	Payload        json.RawMessage `json:"payload"`
 	ShadowTestName string          `json:"shadow_test_name"`
 }
@@ -39,9 +41,6 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("/api/v1/egress/diff", s.handleEgressDiff)
 	mux.HandleFunc("/api/v1/ingest/wire", s.handleWireIngest)
 	mux.HandleFunc("/api/v1/debug/seed-reports", s.handleSeedReports)
-	if s.OTLP != nil {
-		mux.HandleFunc("/v1/traces", s.OTLP.HandleHTTP)
-	}
 	if s.Dashboard != nil {
 		s.Dashboard.Register(mux)
 	}
@@ -101,7 +100,8 @@ func (s *Server) handleEgressDiff(w http.ResponseWriter, r *http.Request) {
 	if shadowTest == "" && s.DB != nil {
 		shadowTest = s.DB.DefaultShadowTestName()
 	}
-	rawReport, err := v2report.FromEgress(req.TraceID, req.Workload, req.Protocol, shadowTest, req.Payload)
+	rawReport, err := v2report.FromEgressWithSignature(
+		req.TraceID, req.Workload, req.Protocol, shadowTest, req.Signature, req.Payload)
 	if err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return

@@ -1,10 +1,10 @@
 ---
 type: Architecture Specification
 title: Hybrid RMQ E2E Test Flow
-description: End-to-end data and assertion flow for Node.js and Python hybrid bats suites — RMQ ingress, Kaisel HTTP record/replay, RabbitMQ egress regressions.
+description: End-to-end data and assertion flow for Node.js and Python hybrid bats suites — RMQ ingress, Kaisel HTTP record/replay, RabbitMQ and MongoDB egress regressions.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/rabbitmq-ingress
-tags: [verification, e2e, bats, hybrid, rabbitmq, kaisel, shop]
-timestamp: 2026-07-12T16:20:00Z
+tags: [verification, e2e, bats, hybrid, rabbitmq, kaisel, shop, shadow-soldier, mongodb]
+timestamp: 2026-07-26T18:00:00Z
 ---
 
 # Hybrid RMQ E2E Test Flow
@@ -31,9 +31,10 @@ One ShadowTest wires **four concerns** in a single prod worker path:
 
 1. **Ingress** — prod RMQ `orders` → igris-rabbitmq fan-out → three shadow workers  
 2. **HTTP egress record/replay** — prod worker HTTP → Kaisel (request+response paired) → Shop; shadows get mocks via Envoy `shop_ext_proc`  
-4. **RabbitMQ egress** — shadow Firehose → egress-relay → Beru; candidate intentionally publishes twice  
+3. **RabbitMQ egress** — shadow Firehose → egress-relay → Beru; candidate intentionally publishes twice  
+4. **MongoDB egress** — shadow-soldier proxies each role's Mongo connection and reports the decoded command to beru-local; candidate intentionally inserts a second document per order
 
-There is **no** `igris-http` on these fixtures (RMQ-only input). Test 2 that needs HTTP multicast is therefore an intentional skip.
+There is **no** `igris-http` on these fixtures (RMQ-only input); the "HTTP ingress" test name is inherited from the shared helper naming, not an actual igris-http path.
 
 ---
 
@@ -88,7 +89,7 @@ sequenceDiagram
   Igris->>Shadow: same message + traceparent
   Shadow->>Shop: HTTP via Envoy shop_ext_proc
   Shop-->>Shadow: recorded 200 mock
-  Shadow->>Beru: Mongo OTLP + RMQ Firehose relay
+  Shadow->>Beru: shadow-soldier Mongo egress + RMQ Firehose relay
 ```
 
 HTTP capture uses the dual-branch egress PxL (client `trace_role==1` + server `trace_role==2` scoped by remote client pod). See [/data-plane/egress-record-replay.md](/data-plane/egress-record-replay.md).
@@ -107,22 +108,24 @@ Misleading name historically — this is **RMQ ingress + HTTP replay**, not HTTP
    - log contains `order_id=…`  
    - log contains `http egress via=replay status=200`
 
-### 2. Mongo egress diff is clean (intentional skip)
-
-Skipped when `${SHADOWTEST}-igris` (igris-http) is absent — hybrid fixtures are RMQ-only. Covered elsewhere by `integration/mongo_egress.bats`.
-
-### 3. Candidate Mongo count regression
-
-1. Publish + wait for the Kaisel egress seed  
-2. Confirm all three roles processed the order  
-3. Wait Beru log for Mongo **egress count regression**  
-4. API verdict line: `MISMATCH|1`  
-
-Candidate worker inserts an extra Mongo document (`candidate_n+1`); controls do not — noise-filtered diff-of-diffs still flags the count gap.
-
-### 4. RabbitMQ egress count regression
+### 2. RabbitMQ egress count regression
 
 Same publish/seed/process path; wait Beru log for RabbitMQ egress count regression. Candidate double-publishes on `egress-events` / `order.shipped`.
+
+### 3. MongoDB egress is captured for all three roles
+
+shadow-soldier proxies each role's Mongo connection and reports the decoded
+command document to beru-local; the worker embeds the traceparent in the BSON
+`$comment` field. `wait_mongodb_egress_reports` polls until all three roles
+have a matching egress report for the trace.
+
+### 4. MongoDB egress count regression
+
+Same publish/seed/process path; wait Beru log for Mongo **egress count
+regression**. Candidate unconditionally inserts a second `candidate_n1_loop`
+document per order (both language workers); controls insert one — the
+noise-filtered diff-of-diffs flags the count gap on every trace, not just a
+specific one, so this suite asserts the regression rather than a clean trace.
 
 ---
 
@@ -144,4 +147,5 @@ Same publish/seed/process path; wait Beru log for RabbitMQ egress count regressi
 - Traffic helpers: [`testing/bats/lib/traffic.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/traffic.bash) — `publish_rmq_order`; and [`testing/bats/lib/kaisel.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/kaisel.bash) — `wait_kaisel_egress_seed`
 - Node worker N+1 behavior: [`testing/example-apps/nodejs-hybrid-worker/index.js`](https://github.com/shadow-diff/monarch/tree/main/testing/example-apps/nodejs-hybrid-worker/index.js)
 - Egress record/replay: [/data-plane/egress-record-replay.md](/data-plane/egress-record-replay.md)
+- MongoDB egress capture: [/data-plane/shadow-soldier.md](/data-plane/shadow-soldier.md)
 - Bats harness: [/infrastructure/bats-testing-framework.md](/infrastructure/bats-testing-framework.md)

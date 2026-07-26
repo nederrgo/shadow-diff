@@ -412,6 +412,15 @@ spec:
                 maximum: 65535
                 minimum: 1
                 type: integer
+              shadowSoldier:
+                description: ShadowSoldier overrides the database egress capture sidecar
+                  image.
+                properties:
+                  image:
+                    description: Image overrides the default shadow-soldier container
+                      image.
+                    type: string
+                type: object
               shop:
                 description: Shop overrides the Shop mock-store image (always provisioned
                   per shadow namespace).

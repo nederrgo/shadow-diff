@@ -9,7 +9,13 @@ timestamp: 2026-07-26T10:30:00Z
 
 # Pixie and Recorder Removal
 
+> **Superseded in part by**
+> [/data-plane/db-egress-capture-adr.md](/data-plane/db-egress-capture-adr.md):
+> MongoDB egress diffing is restored by the shadow-soldier capture path, and the
+> OTLP route this record retained has been retired.
+
 ## Context
+
 
 Shadow-Diff captured production traffic through two independent stacks.
 

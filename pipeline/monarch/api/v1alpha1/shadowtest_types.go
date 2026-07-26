@@ -102,6 +102,15 @@ type ShopSpec struct {
 	Image string `json:"image,omitempty"`
 }
 
+// ShadowSoldierSpec overrides the shadow-soldier database egress capture sidecar.
+// The sidecar is injected automatically into each shadow role that declares a
+// proxied dependency (MongoDB, Redis, PostgreSQL, MSSQL).
+type ShadowSoldierSpec struct {
+	// Image overrides the default shadow-soldier container image.
+	// +optional
+	Image string `json:"image,omitempty"`
+}
+
 // EgressRelayRabbitMQSpec overrides the egress-relay-rabbitmq workload for AMQP-only ShadowTests.
 type EgressRelayRabbitMQSpec struct {
 	// Image overrides the default egress-relay-rabbitmq container image.
@@ -228,6 +237,10 @@ type ShadowTestSpec struct {
 	// Shop overrides the Shop mock-store image (always provisioned per shadow namespace).
 	// +optional
 	Shop *ShopSpec `json:"shop,omitempty"`
+
+	// ShadowSoldier overrides the database egress capture sidecar image.
+	// +optional
+	ShadowSoldier *ShadowSoldierSpec `json:"shadowSoldier,omitempty"`
 
 	// Dependencies lists ephemeral backing services (e.g. Redis) provisioned once per shadow role.
 	// +optional

@@ -89,10 +89,10 @@ func (s *server) handleWork(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	orderID := parseOrderID(body)
 
-	log.Printf("http work trace=%s order_id=%s", traceID, orderID)
+	log.Printf("http work order_id=%s", orderID)
 
 	if err := s.processOrder(r.Context(), traceID, tp, orderID); err != nil {
-		log.Printf("work failed: %v trace=%s", err, traceID)
+		log.Printf("work failed: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -113,7 +113,7 @@ func (s *server) processOrder(ctx context.Context, traceID, tp, orderID string) 
 	if _, err := s.mongoColl.InsertOne(ctx, doc, insertOpts); err != nil {
 		return fmt.Errorf("mongo insert: %w", err)
 	}
-	log.Printf("mongo insert ok trace=%s", traceID)
+	log.Printf("mongo insert ok")
 
 	if s.egressExchange == "" || s.pub == nil {
 		return nil
@@ -125,8 +125,8 @@ func (s *server) processOrder(ctx context.Context, traceID, tp, orderID string) 
 	if err := s.pub.publish(s.egressExchange, s.egressRoutingKey, traceID, tpOut); err != nil {
 		return fmt.Errorf("rmq egress: %w", err)
 	}
-	log.Printf("rmq egress published exchange=%s routing_key=%s trace=%s",
-		s.egressExchange, s.egressRoutingKey, traceID)
+	log.Printf("rmq egress published exchange=%s routing_key=%s",
+		s.egressExchange, s.egressRoutingKey)
 	return nil
 }
 

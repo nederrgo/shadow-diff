@@ -54,15 +54,6 @@ func TestMongoSignature_pythonPymongo(t *testing.T) {
 	}
 }
 
-func TestMongoOperationFromStatement(t *testing.T) {
-	if got := MongoOperationFromStatement("insert"); got != "insert" {
-		t.Fatalf("got %q", got)
-	}
-	if got := MongoOperationFromStatement(`insert {'order_id': '1'}`); got != "insert" {
-		t.Fatalf("got %q", got)
-	}
-}
-
 func TestMongoSignature_fallbackHash(t *testing.T) {
 	sig := MongoSignature([]byte(`{"documents":[]}`), MongoHints{})
 	if sig == "" || sig[:15] != "mongodb:unknown" {
