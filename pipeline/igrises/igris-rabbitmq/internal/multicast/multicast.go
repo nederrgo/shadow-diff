@@ -10,6 +10,7 @@ import (
 
 	"github.com/shadow-diff/igris-rabbitmq/internal/config"
 	"github.com/shadow-diff/igris-rabbitmq/internal/trace"
+	"github.com/shadow-diff/sample"
 )
 
 type multicastPublisher interface {
@@ -160,7 +161,7 @@ func (r *Runner) handleDelivery(msg amqp.Delivery) {
 		}
 		return
 	}
-	if !sampledIn(resolved.TraceID, r.cfg.SamplePercentage) {
+	if !sample.SampledIn(resolved.TraceID, r.cfg.SamplePercentage) {
 		// Sampled out at prod gate — do not forward to shadow brokers.
 		if err := msg.Ack(false); err != nil {
 			log.Printf("ack (sampled out) failed: %v", err)

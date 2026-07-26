@@ -4,7 +4,7 @@ title: Kaisel eBPF Capture Daemon
 description: Self-hosted eBPF ingress and egress capture — AF_PACKET socket filter, kernel-side address/protocol/port filtering, chunked perf transport for GSO super-packets, user-space TCP reassembly, and request/response pairing for egress mocks.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel
 tags: [data-plane, kaisel, ebpf, capture, networking, gso, egress]
-timestamp: 2026-07-26T13:30:00Z
+timestamp: 2026-07-26T21:15:00Z
 ---
 
 # Kaisel eBPF Capture Daemon
@@ -31,7 +31,7 @@ Kaisel is a daemon driven by **`KaiselRule` CRs** emitted by Monarch's `ShadowTe
 | Export to igris | Implemented — userspace POST to per-ShadowTest `spec.igrisBaseURL`, routed by destination IP; see [/data-plane/siphon-audit.md](/data-plane/siphon-audit.md) |
 | HTTP response parsing and request/response correlation | Implemented — per-connection FIFO pairing; see [Egress capture](#egress-capture) |
 | Egress capture (request + response → Shop mock) | Implemented — `spec.egressBaseURL` on `KaiselRule`, POSTed to the shadow namespace's Shop |
-| Sampling | Implemented — admit (drop untraced) + `SampledIn` in Kaisel before POST; `spec.samplePercentage` on `KaiselRule` |
+| Sampling | Implemented — admit (drop untraced) + shared `github.com/shadow-diff/sample` `SampledIn` (FNV-1a-64 over full 16-byte trace id) in Kaisel before POST; `spec.samplePercentage` on `KaiselRule` |
 
 ## Design premise
 
@@ -54,7 +54,7 @@ AF_PACKET raw socket (bound to one interface)
 
 ### Export routing
 
-Monarch writes `spec.igrisBaseURL` and `spec.samplePercentage` on each `KaiselRule`. Kaisel rebuilds an in-memory `dstIP → route` table from all rules. Captured request direction uses the destination address as the join key to the correct shadow-namespace igris Service. IP conflicts keep the lexicographically first `namespace/name` and warn. Missing/invalid `traceparent` is dropped in Kaisel before POST; igris-http also rejects untraced requests (tracing is required; no mint).
+Monarch writes `spec.igrisBaseURL` and `spec.samplePercentage` on each `KaiselRule`. Kaisel rebuilds an in-memory `dstIP → route` table from all rules. Captured request direction uses the destination address as the join key to the correct shadow-namespace igris Service. IP conflicts keep the lexicographically first `namespace/name` and warn. Missing/invalid `traceparent` is dropped in Kaisel before POST; admitted traces use `github.com/shadow-diff/sample` (`V = FNV-1a-64(decoded trace id) & 0xFF`, keep iff `(V*100)<(N*256)`). igris-http also rejects untraced requests (tracing is required; no mint).
 
 The igris forward carries the captured request **headers** (including custom
 headers such as `X-Egress-Scenario`), minus hop-by-hop framing (`Connection`,

@@ -11,7 +11,7 @@ test:
 	go test ./...
 
 docker-build:
-	docker build -t $(IGRIS_RABBITMQ_IMG) .
+	docker build -t $(IGRIS_RABBITMQ_IMG) -f Dockerfile $(REPO_ROOT)
 
 run: build
 	./bin/igris-rabbitmq

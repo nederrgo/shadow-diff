@@ -1,6 +1,5 @@
 # Build context is the repo root (docker build -f pipeline/kaisel/Dockerfile ../..),
-# so the replace directive replace github.com/shadow-diff/monarch => ../monarch
-# resolves correctly inside the container at /workspace/kaisel/../monarch.
+# so replace directives for monarch and sample resolve under /workspace.
 FROM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
@@ -11,7 +10,10 @@ WORKDIR /workspace
 COPY pipeline/monarch/go.mod pipeline/monarch/go.sum ./monarch/
 RUN cd monarch && go mod download
 
-# Download kaisel deps (monarch source not needed yet, only go.mod/go.sum)
+# Shared sample module (replace target for kaisel)
+COPY pipeline/pkg/sample/ ./pkg/sample/
+
+# Download kaisel deps (monarch + sample source present for replace paths)
 COPY pipeline/kaisel/go.mod pipeline/kaisel/go.sum ./kaisel/
 RUN cd kaisel && go mod download
 

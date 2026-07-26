@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# E2E proof: HTTP prod sampling at 10% (Kaisel ingress + egress, shared rule).
-# Golden keep: V=0x00; golden drop: V=0x1a.
+# E2E proof: HTTP prod sampling at 10% (Kaisel ingress + egress, shared FNV rule).
+# Golden keep: V=0; golden drop: V=26 (FNV-1a-64 of full 16-byte trace id).
 
 load '../../test_helper'
 
@@ -8,8 +8,8 @@ FIXTURE_DIR="${BATS_TEST_DIRNAME}/../../fixtures/e2e/http-sampling"
 MANIFEST_DIR="${REPO}/testing/bats/manifests/http-otel-rmq-e2e"
 PROD_DEPLOY="http-rmq-go-prod"
 
-SAMPLE_KEEP_TID="00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-SAMPLE_DROP_TID="1acccccccccccccccccccccccccccccc"
+SAMPLE_KEEP_TID="00000000000000000000000000000087"
+SAMPLE_DROP_TID="000000000000000000000000000000f9"
 
 setup_file() {
   bats_begin_suite "bats-http-sampling" "default"

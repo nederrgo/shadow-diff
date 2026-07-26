@@ -71,8 +71,8 @@ func TestHandleDelivery_multicastTraceIdentity_traceparentOnly(t *testing.T) {
 
 func TestHandleDelivery_samplesOutAtTenPercent(t *testing.T) {
 	t.Parallel()
-	// V=0x1a=26 → drop at 10% under (V*100)<(10*256)
-	inbound := "00-1acccccccccccccccccccccccccccccc-bbbbbbbbbbbbbbbb-01"
+	// FNV full-id golden drop (V=26) at 10% under (V*100)<(10*256)
+	inbound := "00-000000000000000000000000000000f9-bbbbbbbbbbbbbbbb-01"
 	rec := &recordingPublisher{}
 	r := &Runner{publisher: rec, cfg: config.Config{SamplePercentage: 10}}
 	r.handleDelivery(amqp.Delivery{
@@ -86,7 +86,8 @@ func TestHandleDelivery_samplesOutAtTenPercent(t *testing.T) {
 
 func TestHandleDelivery_samplesInAtTenPercent(t *testing.T) {
 	t.Parallel()
-	inbound := "00-00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+	// FNV full-id golden keep (V=0) at 10%
+	inbound := "00-00000000000000000000000000000087-bbbbbbbbbbbbbbbb-01"
 	rec := &recordingPublisher{}
 	r := &Runner{publisher: rec, cfg: config.Config{SamplePercentage: 10}}
 	r.handleDelivery(amqp.Delivery{

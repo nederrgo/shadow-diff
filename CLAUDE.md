@@ -120,7 +120,7 @@ When `spec.beruGRPCAddress` is unset, Monarch provisions a per-ShadowTest `beru-
 
 ### Go workspace
 
-`go.work` ties together 9 modules (8 pipeline services + the db-test-app fixture). Run `go build ./...` or `go test ./...` from a module directory, not the repo root. The workspace requires Go 1.26; local toolchains running 1.23 produce `go.work requires go >= 1.26.0` warnings from LSP — these are harmless and do not affect `go build` or `go test`.
+`go.work` ties together 10 modules (8 pipeline services + shared `pipeline/pkg/sample` + the db-test-app fixture). Run `go build ./...` or `go test ./...` from a module directory, not the repo root. The workspace requires Go 1.26; local toolchains running 1.23 produce `go.work requires go >= 1.26.0` warnings from LSP — these are harmless and do not affect `go build` or `go test`.
 
 ### CRD types
 

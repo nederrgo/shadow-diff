@@ -49,7 +49,7 @@ Shop Deployment env includes `BERU_HTTP_URL` (same host resolution as egress-rel
 
 - `spec.beruGRPCAddress` — ext_proc gRPC target (default: local `beru-local` or `beru.beru-system`)
 - `spec.beruIngestAddress` — wire-payload ingest target (default: same host resolution as HTTP above)
-- `spec.samplePercentage` — shared prod sampling gate (1-100, default 100) for all input types. Same rule `V=int(trace_id[0:2],16); keep iff (V*100)<(N*256)`; empty/missing `traceparent` always dropped. Monarch seeds by `inputs[].driver`: HTTP → KaiselRule (ingress and egress); `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). RabbitMQ does not use Kaisel.
+- `spec.samplePercentage` — shared prod sampling gate (1-100, default 100) for all input types. Rule (package `github.com/shadow-diff/sample`): decode the 32-hex W3C trace id to 16 bytes, `V = FNV-1a-64(bytes) & 0xFF`, keep iff `(V*100)<(N*256)`; empty/missing `traceparent` always dropped. Monarch seeds by `inputs[].driver`: HTTP → KaiselRule (ingress and egress); `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). RabbitMQ does not use Kaisel.
 
 ## Beru wire ingest (Plan 2)
 

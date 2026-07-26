@@ -219,7 +219,7 @@ Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`** and se
 | Field | Description |
 |-------|-------------|
 | _(implicit)_ | HTTP/TCP inputs that match target ports enable KaiselRule capture |
-| `samplePercentage` | Shared prod gate for all input types (`(V*100)<(N*256)`, 1–100; default `100`). HTTP → Kaisel (ingress and egress); `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). Empty `traceparent` dropped. RabbitMQ does not use Kaisel. |
+| `samplePercentage` | Shared prod gate for all input types (`V = FNV-1a-64(full 16-byte trace id) & 0xFF`; keep iff `(V*100)<(N*256)`, 1–100; default `100`). HTTP → Kaisel (ingress and egress); `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). Empty `traceparent` dropped. RabbitMQ does not use Kaisel. |
 
 Monarch reconciles `KaiselRule` for both HTTP ingress and HTTP egress. **`status.kaiselPhase`**: `Ready` or `Degraded`.
 

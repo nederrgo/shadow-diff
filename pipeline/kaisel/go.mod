@@ -6,6 +6,7 @@ require (
 	github.com/cilium/ebpf v0.22.0
 	github.com/gopacket/gopacket v1.7.0
 	github.com/shadow-diff/monarch v0.0.0-00010101000000-000000000000
+	github.com/shadow-diff/sample v0.0.0
 	golang.org/x/sys v0.45.0
 	k8s.io/apimachinery v0.36.3
 	k8s.io/client-go v0.36.3
@@ -63,6 +64,9 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-replace github.com/shadow-diff/monarch => ../monarch
+replace (
+	github.com/shadow-diff/monarch => ../monarch
+	github.com/shadow-diff/sample => ../pkg/sample
+)
 
 tool github.com/cilium/ebpf/cmd/bpf2go
