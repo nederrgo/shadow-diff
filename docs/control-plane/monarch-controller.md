@@ -50,6 +50,19 @@ Shop Deployment env includes `BERU_HTTP_URL` (same host resolution as egress-rel
 - `spec.beruGRPCAddress` — ext_proc gRPC target (default: local `beru-local` or `beru.beru-system`)
 - `spec.beruIngestAddress` — wire-payload ingest target (default: same host resolution as HTTP above)
 - `spec.samplePercentage` — shared prod sampling gate (1-100, default 100) for all input types. Rule (package `github.com/shadow-diff/sample`): decode the 32-hex W3C trace id to 16 bytes, `V = FNV-1a-64(bytes) & 0xFF`, keep iff `(V*100)<(N*256)`; empty/missing `traceparent` always dropped. Monarch seeds by `inputs[].driver`: HTTP → KaiselRule (ingress and egress); `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). RabbitMQ does not use Kaisel.
+- `spec.maxQPSPerPod` — requests/sec Igris forwards per shadow pod replica (default 50). See Spike Guard below.
+
+## Spike Guard (ingress load shedding)
+
+Shadow pods run at fixed low replica counts with no autoscaling, so Monarch and the Igris hubs protect them from production traffic spikes:
+
+| Mechanism | Where | Behavior |
+|---|---|---|
+| Concurrency cap | igris-http | `IGRIS_MAX_CONCURRENCY = shadowRoleReplicas × spec.maxQPSPerPod` (default 50), computed by Monarch and passed as an env var. Requests over the cap get `429` before trace resolution or multicast — never forwarded to shadow pods. |
+| Per-message TTL | igris-rabbitmq | Every mirrored AMQP message published to the 3 shadow brokers carries `Expiration: "10000"` (10s) — stale backlog expires instead of being processed by a stuck shadow consumer. |
+| Prod shadow queue bound | Monarch (`shadowtest_rabbitmq.go`) | `x-max-length: 500`, `x-overflow: drop-head` on the prod-side shadow queue declare — oldest messages are dropped once the queue backs up. |
+
+`shadowRoleReplicas` (currently `1`, one shared constant for control-a/b/candidate) is the single source of truth for both the shadow Deployment replica count and this capacity calc, so they can't drift.
 
 ## Beru wire ingest (Plan 2)
 

@@ -30,17 +30,30 @@ const (
 
 // defaultPerCPUPages sizes the perf ring at 1MB per CPU.
 //
-// Sampling cannot protect this buffer: the sampling decision needs the
-// traceparent, which lives in the payload, so 100% of matched traffic must
-// cross into user space before it can be sampled. The ring therefore has to
-// absorb peak *unsampled* throughput for the targeted ports, and the only
-// levers that reduce what arrives are the kernel-side address, protocol and
-// port filters.
+// The kernel trace gate reduces what has to fit here to roughly the sampled
+// share of matched traffic, plus whatever fails open (untraced requests, and
+// heads whose traceparent falls outside the scan window). The ring still has
+// to absorb bursts of that, since the gate decides per request rather than
+// smoothing rate.
 const defaultPerCPUPages = 256
+
+// defaultAdmittedEntries bounds the kernel LRU of sampled-in connections.
+// Roughly 2-3MB of locked memory. Sized for concurrent tracked flows per node,
+// not requests: one entry covers a keep-alive connection for its lifetime.
+const defaultAdmittedEntries = 32768
+
+// TargetIP is one capture target and the sample percentage its KaiselRule
+// carries. The percentage reaches the kernel because the trace gate lives
+// there; it stays per-IP because samplePercentage is per-ShadowTest and so
+// cannot be a load-time constant. 0 means unset, which the gate reads as 100.
+type TargetIP struct {
+	IP               net.IP
+	SamplePercentage int
+}
 
 // MapUpdate carries incremental changes to the live eBPF address and port maps.
 type MapUpdate struct {
-	AddIPs      []net.IP
+	AddIPs      []TargetIP
 	RemoveIPs   []net.IP
 	AddPorts    []uint16
 	RemovePorts []uint16
@@ -53,7 +66,7 @@ type Config struct {
 	Iface string
 	// Targets are the IPv4 addresses to capture; a frame matches on either
 	// source or destination.
-	Targets []net.IP
+	Targets []TargetIP
 	// Ports restricts capture to these TCP ports, matched against source and
 	// destination so both directions land. Empty captures every TCP port.
 	Ports []uint16
@@ -62,6 +75,10 @@ type Config struct {
 	Framing decode.Framing
 	// PerCPUBuffer is the per-CPU perf ring size in bytes. Zero picks a default.
 	PerCPUBuffer int
+	// AdmittedEntries bounds the kernel LRU of sampled-in connections. Zero
+	// picks a default. Raise it on nodes dense enough that the coldest flow
+	// gets evicted while still active, which costs an ungated request.
+	AdmittedEntries int
 	Log          *slog.Logger
 	// OnRequest receives every parsed HTTP request. Nil logs instead.
 	OnRequest func(netFlow, transportFlow gopacket.Flow, req *http.Request)
@@ -95,6 +112,25 @@ func ipKey(ip net.IP) (uint32, bool) {
 		return 0, false
 	}
 	return binary.BigEndian.Uint32(v4), true
+}
+
+// putTarget writes one capture target and its sample percentage into the
+// kernel address map. The value is clamped into a uint8: the CRD already
+// validates 1-100, but a bad value must not wrap into a percentage that
+// silently drops production traffic.
+func putTarget(m *ebpf.Map, t TargetIP) error {
+	key, ok := ipKey(t.IP)
+	if !ok {
+		return fmt.Errorf("target %s is not IPv4", t.IP)
+	}
+	pct := t.SamplePercentage
+	if pct < 0 || pct > 100 {
+		pct = 100
+	}
+	if err := m.Put(key, uint8(pct)); err != nil {
+		return fmt.Errorf("seed target %s: %w", t.IP, err)
+	}
+	return nil
 }
 
 // Run loads the collector, attaches it, and streams packets until ctx is done.
@@ -151,20 +187,31 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := spec.Variables["lo_ifindex"].Set(loIfindex); err != nil {
 		return fmt.Errorf("set lo_ifindex: %w", err)
 	}
+	// max_entries is a map property, not a program constant, so it is set on
+	// the spec rather than through Variables -- but for the same reason: it
+	// has to be fixed before the map is created.
+	admitted := cfg.AdmittedEntries
+	if admitted <= 0 {
+		admitted = defaultAdmittedEntries
+	}
+	spec.Maps["admitted"].MaxEntries = uint32(admitted)
 
 	var objs bpfObjects
 	if err := spec.LoadAndAssign(&objs, nil); err != nil {
+		// The trace gate calls bpf_loop, which lands in 5.17. On anything
+		// older the verifier rejects the program and nothing attaches --
+		// correct, but the raw rejection names an instruction, not a kernel
+		// version, so say which is which.
+		if errors.Is(err, unix.EINVAL) {
+			return fmt.Errorf("load objects (the in-kernel trace gate needs bpf_loop, kernel >= 5.17): %w", err)
+		}
 		return fmt.Errorf("load objects: %w", err)
 	}
 	defer objs.Close()
 
-	for _, ip := range cfg.Targets {
-		key, ok := ipKey(ip)
-		if !ok {
-			return fmt.Errorf("target %s is not IPv4", ip)
-		}
-		if err := objs.TargetIps.Put(key, uint8(1)); err != nil {
-			return fmt.Errorf("seed target %s: %w", ip, err)
+	for _, t := range cfg.Targets {
+		if err := putTarget(objs.TargetIps, t); err != nil {
+			return err
 		}
 	}
 	for _, port := range cfg.Ports {
@@ -192,7 +239,7 @@ func Run(ctx context.Context, cfg Config) error {
 	log.Info("kaisel capturing",
 		"iface", cfg.Iface, "framing", cfg.Framing.String(),
 		"targets", len(cfg.Targets), "ports", cfg.Ports,
-		"per_cpu_buffer", perCPU)
+		"per_cpu_buffer", perCPU, "admitted_entries", admitted)
 
 	// Closing the source is what unblocks Read on shutdown.
 	go func() {
@@ -204,13 +251,16 @@ func Run(ctx context.Context, cfg Config) error {
 		cfg.Ready()
 	}
 
-	return consume(ctx, src, cfg, log, src.stats, fragDrops(objs.FragDrops), &objs, portFilterOn)
+	return consume(ctx, src, cfg, log, src.stats, counters{
+		frags:   perCPUCounter(objs.FragDrops),
+		sampled: perCPUCounter(objs.SampleDrops),
+	}, &objs, portFilterOn)
 }
 
-// fragDrops sums the per-CPU fragment drop counter. A failed lookup reports 0
-// rather than an error: this is diagnostic, and it must never take down a
-// running capture.
-func fragDrops(m *ebpf.Map) func() uint64 {
+// perCPUCounter sums a BPF_MAP_TYPE_PERCPU_ARRAY counter at index 0. A failed
+// lookup reports 0 rather than an error: these are diagnostic, and they must
+// never take down a running capture.
+func perCPUCounter(m *ebpf.Map) func() uint64 {
 	return func() uint64 {
 		var perCPU []uint64
 		if err := m.Lookup(uint32(0), &perCPU); err != nil {
@@ -251,11 +301,9 @@ func applyUpdate(objs *bpfObjects, upd MapUpdate, portFilterOn uint32, log *slog
 	if portFilterOn == 0 && len(upd.AddPorts) > 0 {
 		log.Warn("port_filter_on is 0; added ports have no effect until daemon restarts with -port flags")
 	}
-	for _, ip := range upd.AddIPs {
-		if key, ok := ipKey(ip); ok {
-			if err := objs.TargetIps.Put(key, uint8(1)); err != nil {
-				log.Warn("add IP to map", "ip", ip, "err", err)
-			}
+	for _, t := range upd.AddIPs {
+		if err := putTarget(objs.TargetIps, t); err != nil {
+			log.Warn("add IP to map", "ip", t.IP, "err", err)
 		}
 	}
 	for _, ip := range upd.RemoveIPs {
@@ -277,8 +325,14 @@ func applyUpdate(objs *bpfObjects, upd MapUpdate, portFilterOn uint32, log *slog
 	}
 }
 
+// counters are the kernel-side per-CPU diagnostics the flush ticker reports.
+type counters struct {
+	frags   func() uint64
+	sampled func() uint64
+}
+
 // consume drives the read loop: source -> decode -> reassembly.
-func consume(ctx context.Context, src PacketSource, cfg Config, log *slog.Logger, stats func() (uint64, uint64), frags func() uint64, objs *bpfObjects, portFilterOn uint32) error {
+func consume(ctx context.Context, src PacketSource, cfg Config, log *slog.Logger, stats func() (uint64, uint64), cnt counters, objs *bpfObjects, portFilterOn uint32) error {
 	factory := &decode.StreamFactory{
 		Log:             log,
 		OnRequest:       cfg.OnRequest,
@@ -293,7 +347,7 @@ func consume(ctx context.Context, src PacketSource, cfg Config, log *slog.Logger
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
-		var lastFrags uint64
+		var lastFrags, lastSampled uint64
 		for {
 			select {
 			case <-done:
@@ -305,10 +359,18 @@ func consume(ctx context.Context, src PacketSource, cfg Config, log *slog.Logger
 				factory.Sweep()
 				// A dropped fragment is a request we will never report. Rare
 				// enough to be worth a warning every time it happens.
-				if n := frags(); n > lastFrags {
+				if n := cnt.frags(); n > lastFrags {
 					log.Warn("dropped fragmented IP datagrams; those requests are not captured",
 						"total", n, "since_last", n-lastFrags)
 					lastFrags = n
+				}
+				// Sampling out is the point, so this is Info rather than Warn
+				// -- but a gate that swallows everything looks exactly like a
+				// gate that works until someone can see the rate.
+				if n := cnt.sampled(); n > lastSampled {
+					log.Info("kernel trace gate dropped packets",
+						"total", n, "since_last", n-lastSampled)
+					lastSampled = n
 				}
 			case upd, ok := <-cfg.Updates:
 				// Drained here, not in the packet-read loop below: target_ips

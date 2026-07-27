@@ -1,10 +1,10 @@
 ---
 type: Architecture Specification
 title: Kaisel eBPF Capture Daemon
-description: Self-hosted eBPF ingress and egress capture — AF_PACKET socket filter, kernel-side address/protocol/port filtering, chunked perf transport for GSO super-packets, user-space TCP reassembly, and request/response pairing for egress mocks.
+description: Self-hosted eBPF ingress and egress capture — AF_PACKET socket filter, kernel-side address/protocol/port filtering and in-kernel W3C traceparent sampling, chunked perf transport for GSO super-packets, user-space TCP reassembly, and request/response pairing for egress mocks.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel
-tags: [data-plane, kaisel, ebpf, capture, networking, gso, egress]
-timestamp: 2026-07-26T21:15:00Z
+tags: [data-plane, kaisel, ebpf, capture, networking, gso, egress, sampling]
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # Kaisel eBPF Capture Daemon
@@ -75,13 +75,62 @@ Evaluated in order; the first failure returns immediately. Every check reads hea
 | Not fragmented — MF clear and offset 0 | `l2_off + 6` | Fragments, which are counted as they are dropped |
 | Source **or** dest in `target_ports` | `l2_off + IHL` | Health checks, metrics scrapes, sidecar chatter |
 
+| Data offset `20 ≤ doff ≤ 60`, payload offset within the packet | `l2_off + IHL + 12` | Malformed segments, and `plen` underflow |
+| Payload-free and no SYN/FIN/RST | `l2_off + IHL + 13` | Pure ACKs |
+
 The fragment check sits after the address match so its counter reflects target traffic rather than every fragment on the wire, and before the port read because a later fragment carries no TCP header to read ports from.
 
 Matching on either direction is deliberate: one rule captures both the request and its response without a second filter.
 
+FIN and RST pass despite carrying no payload: `decode.runResponses` frames a `Connection: close` body by reading to EOF, and the FIN is that EOF.
+
+Traffic that clears this chain then meets the trace gate below, which is the only stage that reads payload.
+
+## Trace gate
+
+When the matched address carries a `samplePercentage` below 100, the kernel decides sampling itself rather than paying to copy traffic that user space would discard. At 100k+ RPS with a 10% sample this is the difference between reassembling every request and reassembling one in ten.
+
+| Payload | Kernel action |
+| --- | --- |
+| Starts with an HTTP method token and a space | Scan for `traceparent`, bucket the trace id, admit or drop the connection |
+| Anything else, connection in `admitted` | Pass — a continuation segment or the response half of a sampled-in request |
+| Anything else, connection not in `admitted` | Drop — it belongs to a request already gated out |
+
+### The fail-open invariant
+
+The gate is **over-permissive or exactly equal, never stricter** than user space. It drops only on a trace id it successfully parsed and bucketed out. Everything it cannot conclude — no traceparent, a header past the window, a header split across TCP segments, a malformed id, a payload too short to scan — passes up and lets `pkg/sample` decide.
+
+That is what makes a kernel-side drop safe: it can waste ring bandwidth, but it cannot lose traffic user space would have kept. `TestGateFailsOpen` pins each branch.
+
+### Bucketing must match `pkg/sample` exactly
+
+The kernel runs the same rule as `pipeline/pkg/sample`: FNV-1a-64 over the 16 decoded bytes of the trace id, keep iff `(hash & 0xff) × 100 < N × 256`, upper and lower case hex both accepted. A divergence in either direction is silent — the kernel dropping what user space keeps loses production traffic. `TestGateAgreesWithPkgSample` walks 256 trace ids and fails on the first disagreement.
+
+### Per-request, per-connection
+
+A request head re-decides its connection, so a keep-alive stream is sampled per request rather than inheriting whatever its first request got. The `admitted` LRU then carries that decision to the segments that have no request line of their own — continuation segments, and the response half.
+
+The LRU is keyed on the **canonical** 5-tuple, endpoints ordered so both directions fold onto one entry (the same reasoning as `decode.connKey`). A SYN deletes any entry under its 5-tuple: a SYN means a new connection by definition, which is what makes a recycled ephemeral port behind SNAT exact rather than merely unlikely to alias.
+
+### Reading the window
+
+`bpf_skb_load_bytes` takes its length as `ARG_CONST_SIZE`, so the read size must be a literal — hence a ladder of tiers rather than a clamp. A tier only ever sits at or below the payload length, and a traceparent is typically the *last* header, ending two bytes before the payload does. On a plain curl request (~158 bytes, tier 128) it lands squarely in the gap between them.
+
+So the gate reads twice: the largest tier at the start of the payload, and — only when the first read found nothing — the same tier aligned to the end of the window. The two overlap and together cover everything up to `HEADER_WINDOW`, which is what makes the window mean what it says.
+
+### Why `bpf_loop`
+
+The scan is a `bpf_loop` callback, not a C loop, and that is what makes a 768-byte window verifiable at all. The verifier simulates every iteration of an ordinary bounded loop and cannot prune across the back-edge because the induction variable is live. Measured on this program that capped the window at **160 bytes** — even with a fully branchless body — and unrolling instead spilled the 512-byte BPF stack. `bpf_loop` verifies the callback exactly once however many times it runs, so cost stops scaling with the window.
+
+This is what sets the daemon's kernel floor at **5.17**. An older kernel fails the load, the DaemonSet pod never attaches, and the node keeps running uncaptured.
+
+The scan is anchored on the LF ending the previous header line: a field name only ever begins at a line boundary, so the 12-byte compare runs at the ~15 line starts a request head contains rather than at every offset. The request line occupies the first line, so requiring a preceding LF misses nothing.
+
 ### Map key convention
 
 Both maps key on **host order** — the plain numeric value. `10.99.0.2` is `0x0A630002`; port 8080 is `8080`.
+
+`target_ips` stores that address's `samplePercentage` as its value, not a presence flag: `samplePercentage` is per-ShadowTest, so it cannot be a load-time constant. `0` and `≥ 100` both mean "no gate", matching `sample.SampledIn`'s short-circuit. A packet matching two rules at once — a call between two target pods is ingress for one and egress for the other — takes the **max**, the permissive choice.
 
 The kernel composes both byte-wise from the header rather than loading straight into a `__u32`:
 
@@ -99,6 +148,9 @@ Two `.rodata` values are set from user space before the program reaches the veri
 | --- | --- |
 | `l2_off` | Link-layer header size: `14` Ethernet, `0` raw L3 |
 | `port_filter_on` | `0` captures every TCP port. BPF cannot test a map for emptiness, so "filter at all" must be a constant |
+| `lo_ifindex` | Loopback's ifindex, excluded by identity because its framing differs from every other device on an `any` socket |
+
+The `admitted` LRU's `max_entries` is set on the spec before load for the same reason — it must be fixed before the map is created. `-admitted-entries` sizes it on dense nodes without recompiling the object.
 
 ## Chunked transport
 
@@ -248,13 +300,9 @@ Kaisel guessed at.
 Shop's stored `EarlyResponse.Headers` is a `map[string]string`, so a multi-value
 header collapses to its first value.
 
-### No kernel change
+### Egress needs no separate filter
 
-The filter already matches `saddr` **or** `daddr` against `target_ips`, so egress
-frames pass with `capture.c` untouched. The deployed DaemonSet also passes no
-`-port` flags, so `port_filter_on` loads as `0` and all TCP for target IPs
-crosses to user space; `spec.targetPorts` is populated by Monarch but has no
-runtime effect until the daemon is restarted with `-port`.
+The filter matches `saddr` **or** `daddr` against `target_ips`, so egress frames pass through the same chain as ingress. The deployed DaemonSet passes no `-port` flags, so `port_filter_on` loads as `0` and all TCP for target IPs crosses to user space; `spec.targetPorts` is populated by Monarch but takes effect only when the daemon runs with `-port`.
 
 ## Configuration
 
@@ -349,11 +397,15 @@ The `__u16` size field caps a perf sample at 65,535 bytes. A 64 KB clamp sits at
 
 A truncated body is worse than a dropped one. Igris replays one captured request to all three shadow roles, so a partial body means all three receive identical malformed input, all three fail identically, the diff is clean, and **the shadow test reports green having exercised only the error path**. That is silent loss of coverage — the most expensive failure mode available, because nobody investigates a pass. Truncation is therefore always counted and logged, never inferred.
 
-### Sampling cannot protect the ring
+### The gate reads payload; the flow filters do not
 
-The sampling decision depends on the traceparent, which lives in the **payload** — HTTP headers, or MongoDB's `$comment` field — not in anything the kernel can cheaply read. Extraction happens in user space, after the copy. Two-stage filtering does not rescue this: body packets follow the header packet immediately, so a map update always loses the race.
+Every stage before the trace gate reads header bytes only. The gate is the one place that touches payload, and it is entered only when a rule sets `samplePercentage` below 100 — so a deployment that does not sample pays nothing for it.
 
-**Consequence: 100% of matched traffic must cross into user space.** Sampling reduces what goes downstream; it does nothing for ring pressure. The ring is therefore sized for peak *unsampled* throughput (1 MB per CPU), and the kernel-side address, protocol and port filters are the only levers that reduce what arrives at all. This is why those filters are worth their complexity.
+Sizing the ring follows from that. What has to fit is the sampled share of matched traffic plus whatever fails open: untraced requests, and heads whose traceparent falls outside the window. The gate decides per request rather than smoothing rate, so the ring still has to absorb bursts of that; `-percpu-buffer` raises the ceiling.
+
+### The scratch buffer is never cleared
+
+`hdr_buf` holds bytes from this CPU's previous packet between invocations, and clearing it would cost more than the gate saves at 100k RPS. Stale bytes are unreachable instead: every read is bounded by the tier length actually loaded, never by the buffer size. BPF runs with preemption disabled, so two invocations cannot interleave on one CPU.
 
 ### Fragments are dropped loudly rather than quietly
 
@@ -382,7 +434,13 @@ Framing is autodetected by reading the interface's ARPHRD type from sysfs, and `
 | **1 MB egress response cap** | A larger dependency response is dropped rather than recorded | Deliberate: a truncated mock replayed to all three roles yields identical failures, a clean diff, and a green report that tested nothing |
 | **IPv4 only** | The filter reads IPv4 headers; IPv6 is rejected at the version nibble | — |
 | **No fragment reassembly** | Fragmented datagrams are dropped whole. gopacket independently declines to decode a transport layer from any fragment, so the kernel filter changes visibility rather than behaviour | Drops are counted in the kernel and logged, so an affected flow has a stated cause instead of vanishing. TCP negotiates MSS and sets DF, so fragmented TCP effectively does not occur in-cluster |
-| **Ring drops under burst** | Sampling cannot protect the ring, so a sufficiently large burst overruns it | Drops are logged with both counters; `-percpu-buffer` raises the ceiling |
+| **Ring drops under burst** | The gate decides per request rather than smoothing rate, so a sufficiently large burst still overruns the ring | Drops are logged with both counters; `-percpu-buffer` raises the ceiling |
+| **Kernel floor 5.17** | The trace gate scans with `bpf_loop`; an older kernel rejects the program | The load fails and the pod never attaches, naming the requirement. The node keeps running, uncaptured — capture never touches live traffic either way |
+| **Traceparent past 768 bytes** | A header pushed beyond `HEADER_WINDOW` by large Cookie or Authorization headers is not found | Fails open: the request crosses to user space ungated and `pkg/sample` decides. Costs ring bandwidth, never coverage |
+| **Headers split across TCP segments** | A request line in one segment and its traceparent in the next: the first segment is a head with no traceparent, so it fails open and admits the connection; the second has no request line, hits the LRU, and passes ungated | Accepted. Over-sampling stays inside the fail-open invariant — user space re-gates, so nothing extra is forwarded. Passing without admitting would instead drop the segment carrying the traceparent, turning a benign over-sample into a corrupted capture |
+| **LRU transition mid-response** | On a pipelined connection, request 2 can flip the entry to dropped while response 1 is still arriving, so late segments of response 1 are dropped | Harmless to production — the filter sees a clone — and gopacket discards the truncated stream. The real cost is a lost egress mock: response 1 belonged to a sampled-in request. Needs a second request to arrive mid-response *and* to sample out |
+| **Recycled ports behind SNAT** | Hundreds of flows share a source and destination IP, distinguished only by the client's ephemeral port | A SYN deletes any entry under its 5-tuple, and a request head re-decides its connection, so a stale entry cannot survive either event |
+| **Method-token false positives** | A binary payload whose first bytes read as a method token enters the scan | The trailing space in the token makes a chance match unlikely; the packet already matched a declared HTTP port; and gopacket discards malformed HTTP. The outcome is over-permissive, never a dropped request |
 | **`any` widens the kernel-filter attack surface** | Binding to every interface (see "Network interface: `any`" above) means every co-located pod, not just off-node traffic, can present packets to the in-kernel filter | Confidentiality gate (target IP/port match) is unchanged; set `iface: eth0` in the ConfigMap to shrink back to a single device if this is unacceptable |
 | **Lost samples cost whole packets** | After a drop, continuity is unprovable, so in-flight partials for that CPU are discarded | Deliberate: a partly-filled buffer would hand `tcpassembly` plausible-looking corrupt bytes |
 
@@ -393,7 +451,21 @@ Framing is autodetected by reading the interface's ARPHRD type from sysfs, and `
 | Unit — reassembly, framing, IP keys | `make test` | Nothing |
 | Integration — real kernel, real BPF, real traffic | `make test-integration` | root |
 | Codegen contract | `make verify-generate` | clang-18 |
+| Trace gate — `BPF_PROG_TEST_RUN` against the real program | `make test-integration` | root, kernel ≥ 5.17 |
 | Cluster E2E — Monarch → prod → Kaisel → igris → shadows | `make test-bats-kaisel` | cluster + image load |
+
+The trace-gate tests drive synthetic frames straight into the program with `BPF_PROG_TEST_RUN`, so no network lab is needed. `capture()` returns 0 on every path — the perf ring is its only consumer — so pass and drop are asserted on the perf ring itself rather than a return value, which is also the property the daemon cares about.
+
+| Test | Pins |
+| --- | --- |
+| `TestGateAgreesWithPkgSample` | 256 trace ids bucket identically in C and in `pkg/sample` |
+| `TestGateFailsOpen` | No traceparent, past the window, malformed, and too-short-to-scan all pass |
+| `TestGateCoversTheTierGap` | The tail-aligned second read finds a traceparent the head-aligned read misses |
+| `TestGateReEvaluatesEachRequestHead` | Keep-alive connections are sampled per request |
+| `TestGateSYNInvalidatesRecycledPort` | A SYN clears stale admission for its 5-tuple |
+| `TestGateResponseFollowsItsRequest` | Responses ride their request's decision; unknown 5-tuples drop |
+| `TestGateZeroPayloadSegments` | Pure ACKs drop; FIN and RST pass |
+| `TestSamplingEndToEnd` | Real curls over a veth pair: only in-bucket trace ids survive the whole pipeline |
 
 Cluster E2E (`testing/bats/e2e/kaisel-capture/kaisel_capture.bats`) waits for `ShadowTest` Ready + `kaiselPhase`, curls the prod pod with a W3C `traceparent`, then asserts Kaisel capture logs, igris `multicast complete` for that trace, and app access logs on control-a / control-b / candidate. The egress tests drive the target into calling its dependency and assert the mock
 key Shop returned in its `hash` response field — Shop's own key, so a match proves

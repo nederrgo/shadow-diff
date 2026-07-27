@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -59,6 +60,17 @@ func igrisReplicasFor(st *enginev1alpha1.ShadowTest) int32 {
 		return *st.Spec.Igris.Replicas
 	}
 	return 1
+}
+
+func maxQPSPerPodFor(st *enginev1alpha1.ShadowTest) int {
+	if st.Spec.MaxQPSPerPod > 0 {
+		return st.Spec.MaxQPSPerPod
+	}
+	return defaultMaxQPSPerPod
+}
+
+func igrisMaxConcurrencyFor(st *enginev1alpha1.ShadowTest) int {
+	return int(shadowRoleReplicas) * maxQPSPerPodFor(st)
 }
 
 func (r *ShadowTestReconciler) reconcileShadowService(
@@ -178,6 +190,7 @@ func (r *ShadowTestReconciler) reconcileIgrisDeployment(
 				{Name: envControlBAddr, Value: controlBAddr},
 				{Name: envCandidateAddr, Value: candidateAddr},
 				{Name: envIgrisListenersFile, Value: defaultIgrisListenersPath},
+				{Name: envIgrisMaxConcurrency, Value: strconv.Itoa(igrisMaxConcurrencyFor(st))},
 			},
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: volumeNameIgrisConfig, MountPath: "/etc/igris", ReadOnly: true},

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/shadow-diff/igris/internal/driver"
 	"github.com/shadow-diff/igris/internal/payload"
@@ -19,13 +20,18 @@ const driverName = "http_request"
 
 // Driver implements the HTTP request input driver.
 type Driver struct {
-	Client      *http.Client
-	Log         *slog.Logger
-	maxBodySize int64
+	Client         *http.Client
+	Log            *slog.Logger
+	maxBodySize    int64
+	maxConcurrency int
+	activeRequests int64
 }
 
-func New(maxBodySize int64) *Driver {
-	return &Driver{Client: &http.Client{}, maxBodySize: maxBodySize}
+// New builds an HTTP driver. maxConcurrency caps in-flight requests forwarded to shadow
+// targets; requests over the limit are shed with 429 before any trace/multicast work.
+// A negative maxConcurrency disables the limit.
+func New(maxBodySize int64, maxConcurrency int) *Driver {
+	return &Driver{Client: &http.Client{}, maxBodySize: maxBodySize, maxConcurrency: maxConcurrency}
 }
 
 func (d *Driver) Type() driver.Type { return driver.HTTPRequest }
@@ -119,6 +125,14 @@ func (d *Driver) Listen(ctx context.Context, port int, h driver.Handler) error {
 
 func (d *Driver) handler(h driver.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if d.maxConcurrency >= 0 {
+			if atomic.AddInt64(&d.activeRequests, 1) > int64(d.maxConcurrency) {
+				atomic.AddInt64(&d.activeRequests, -1)
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			defer atomic.AddInt64(&d.activeRequests, -1)
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, d.maxBodySize)
 		body, err := io.ReadAll(r.Body)
 		_ = r.Body.Close()

@@ -93,3 +93,27 @@ func TestIgrisControlHosts(t *testing.T) {
 func testObjectMeta(name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{Name: name, Namespace: "default"}
 }
+
+func TestMaxQPSPerPodFor(t *testing.T) {
+	t.Parallel()
+	if got := maxQPSPerPodFor(&enginev1alpha1.ShadowTest{}); got != defaultMaxQPSPerPod {
+		t.Fatalf("default maxQPSPerPodFor = %d want %d", got, defaultMaxQPSPerPod)
+	}
+	st := &enginev1alpha1.ShadowTest{Spec: enginev1alpha1.ShadowTestSpec{MaxQPSPerPod: 200}}
+	if got := maxQPSPerPodFor(st); got != 200 {
+		t.Fatalf("override maxQPSPerPodFor = %d want 200", got)
+	}
+}
+
+func TestIgrisMaxConcurrencyFor(t *testing.T) {
+	t.Parallel()
+	want := int(shadowRoleReplicas) * defaultMaxQPSPerPod
+	if got := igrisMaxConcurrencyFor(&enginev1alpha1.ShadowTest{}); got != want {
+		t.Fatalf("default igrisMaxConcurrencyFor = %d want %d", got, want)
+	}
+	st := &enginev1alpha1.ShadowTest{Spec: enginev1alpha1.ShadowTestSpec{MaxQPSPerPod: 10}}
+	want = int(shadowRoleReplicas) * 10
+	if got := igrisMaxConcurrencyFor(st); got != want {
+		t.Fatalf("override igrisMaxConcurrencyFor = %d want %d", got, want)
+	}
+}

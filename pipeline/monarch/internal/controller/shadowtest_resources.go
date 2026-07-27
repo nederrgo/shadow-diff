@@ -114,7 +114,7 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 			deploy.Labels[k] = v
 		}
 
-		replicas := int32(1)
+		replicas := shadowRoleReplicas
 		deploy.Spec.Replicas = &replicas
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: podLabels}
 		deploy.Spec.Template.ObjectMeta.Labels = podLabels

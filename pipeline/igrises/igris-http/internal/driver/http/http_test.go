@@ -5,20 +5,26 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/shadow-diff/igris/internal/config"
 	"github.com/shadow-diff/igris/internal/core"
+	"github.com/shadow-diff/igris/internal/driver"
 	"github.com/shadow-diff/igris/internal/payload"
 	"github.com/shadow-diff/igris/internal/trace"
 )
 
 const testMaxBodySize = 512 * 1024
+
+// testMaxConcurrency disables the concurrency gate for tests that don't exercise it.
+const testMaxConcurrency = -1
 
 func testConfig(targets ...*httptest.Server) config.Config {
 	return config.Config{
@@ -37,7 +43,7 @@ func testConfig(targets ...*httptest.Server) config.Config {
 
 func TestTransformPreservesInboundTraceparent(t *testing.T) {
 	t.Parallel()
-	d := New(testMaxBodySize)
+	d := New(testMaxBodySize, testMaxConcurrency)
 	inbound := "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req.Header.Set(trace.HeaderTraceparent, inbound)
@@ -61,7 +67,7 @@ func TestTransformPreservesInboundTraceparent(t *testing.T) {
 
 func TestParseMetadataFromTraceparentOnly(t *testing.T) {
 	t.Parallel()
-	d := New(testMaxBodySize)
+	d := New(testMaxBodySize, testMaxConcurrency)
 	inbound := "01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set(trace.HeaderTraceparent, inbound)
@@ -87,7 +93,7 @@ func TestParseMetadataFromTraceparentOnly(t *testing.T) {
 
 func TestParseMetadataRejectsMissingTraceparent(t *testing.T) {
 	t.Parallel()
-	d := New(testMaxBodySize)
+	d := New(testMaxBodySize, testMaxConcurrency)
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	_, err := d.ParseMetadata(&Session{Request: req, Body: nil})
 	if err == nil {
@@ -134,7 +140,7 @@ func TestMulticastCloneFidelityAndTraceOnAllTargets(t *testing.T) {
 	req.Header.Set(trace.HeaderTraceparent, inboundTP)
 	body, _ := io.ReadAll(req.Body)
 	_ = req.Body.Close()
-	if err := hub.HandleAtomic(New(testMaxBodySize), &Session{Request: req, Body: body, Writer: rec}); err != nil {
+	if err := hub.HandleAtomic(New(testMaxBodySize, testMaxConcurrency), &Session{Request: req, Body: body, Writer: rec}); err != nil {
 		t.Fatal(err)
 	}
 	hub.WaitPendingAtomic()
@@ -177,7 +183,7 @@ func TestMulticastPreservesInboundTraceparentLiteral(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/t", nil)
 	req.Header.Set(trace.HeaderTraceparent, inbound)
 	rec := httptest.NewRecorder()
-	if err := hub.HandleAtomic(New(testMaxBodySize), &Session{Request: req, Writer: rec}); err != nil {
+	if err := hub.HandleAtomic(New(testMaxBodySize, testMaxConcurrency), &Session{Request: req, Writer: rec}); err != nil {
 		t.Fatal(err)
 	}
 	hub.WaitPendingAtomic()
@@ -195,7 +201,7 @@ func TestMulticastPreservesInboundTraceparentLiteral(t *testing.T) {
 
 func TestTransformDeletesDuplicateCasedTraceHeaders(t *testing.T) {
 	t.Parallel()
-	d := New(testMaxBodySize)
+	d := New(testMaxBodySize, testMaxConcurrency)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header["Traceparent"] = []string{"01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"}
 	req.Header["traceparent"] = []string{"01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"}
@@ -215,7 +221,7 @@ func TestTransformDeletesDuplicateCasedTraceHeaders(t *testing.T) {
 
 func TestTransformRedactsHeaders(t *testing.T) {
 	t.Parallel()
-	d := New(testMaxBodySize)
+	d := New(testMaxBodySize, testMaxConcurrency)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set(trace.HeaderTraceparent, "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
 	req.Header.Set("Authorization", "Bearer secret")
@@ -274,7 +280,7 @@ func TestHandlerReturns202WithTrace(t *testing.T) {
 		TCPIdleTimeout: time.Minute,
 	}
 	hub := core.NewHub(cfg, slog.Default())
-	d := New(testMaxBodySize)
+	d := New(testMaxBodySize, testMaxConcurrency)
 	d.Client = backend.Client()
 
 	mux := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -345,7 +351,7 @@ func TestHandlerRejectsOversizedBody(t *testing.T) {
 		TCPIdleTimeout: time.Minute,
 	}
 	hub := core.NewHub(cfg, slog.Default())
-	d := New(maxBody)
+	d := New(maxBody, testMaxConcurrency)
 	d.Client = s1.Client()
 
 	srv := httptest.NewServer(d.handler(hub))
@@ -365,6 +371,75 @@ func TestHandlerRejectsOversizedBody(t *testing.T) {
 	case <-hits:
 		t.Fatal("backend received request for oversized body")
 	default:
+	}
+}
+
+// blockingHandler is a driver.Handler stub that blocks inside HandleAtomic until
+// released, so a test can hold the concurrency gate open for a controlled window.
+type blockingHandler struct {
+	calls   int32
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingHandler) HandleAtomic(d driver.AtomicDriver, sess driver.Session) error {
+	atomic.AddInt32(&b.calls, 1)
+	close(b.entered)
+	<-b.release
+	return nil
+}
+
+func (b *blockingHandler) RelayTCP(ctx context.Context, src net.Conn, listenPort int) {}
+
+func TestHandlerShedsOverCapacity(t *testing.T) {
+	t.Parallel()
+
+	h := &blockingHandler{entered: make(chan struct{}), release: make(chan struct{})}
+	d := New(testMaxBodySize, 1)
+	srv := httptest.NewServer(d.handler(h))
+	defer srv.Close()
+
+	firstDone := make(chan *http.Response, 1)
+	firstErr := make(chan error, 1)
+	go func() {
+		resp, err := http.Get(srv.URL + "/")
+		if err != nil {
+			firstErr <- err
+			return
+		}
+		firstDone <- resp
+	}()
+
+	select {
+	case <-h.entered:
+	case err := <-firstErr:
+		t.Fatalf("first request failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for first request to enter handler")
+	}
+
+	// Second request must be shed immediately — before ResolveContext or HandleAtomic.
+	resp2, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status %d, want 429", resp2.StatusCode)
+	}
+
+	close(h.release)
+	select {
+	case resp1 := <-firstDone:
+		defer resp1.Body.Close()
+	case err := <-firstErr:
+		t.Fatalf("first request failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for first request to complete")
+	}
+
+	if got := atomic.LoadInt32(&h.calls); got != 1 {
+		t.Fatalf("HandleAtomic called %d times, want 1", got)
 	}
 }
 

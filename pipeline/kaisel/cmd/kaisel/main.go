@@ -40,8 +40,10 @@ func init() {
 	utilruntime.Must(enginev1alpha1.AddToScheme(scheme))
 }
 
-// targets collects repeatable -target flags for manual/test runs.
-type targets []net.IP
+// targets collects repeatable -target flags for manual/test runs. Percentage
+// is left at 0 (unset, so no kernel gate); real sampling arrives per-rule from
+// KaiselRule.
+type targets []capture.TargetIP
 
 func (t *targets) String() string { return "" }
 func (t *targets) Set(v string) error {
@@ -50,7 +52,7 @@ func (t *targets) Set(v string) error {
 		if ip == nil || ip.To4() == nil {
 			return &net.ParseError{Type: "IPv4 address", Text: s}
 		}
-		*t = append(*t, ip)
+		*t = append(*t, capture.TargetIP{IP: ip})
 	}
 	return nil
 }
@@ -78,6 +80,7 @@ func main() {
 	flag.Var(&prts, "port", "TCP port to capture (repeatable, comma-separated; empty = all ports)")
 	l2Off := flag.Int("l2-off", -1, "link-layer header size: -1 autodetect, 0 raw L3, 14 Ethernet")
 	perCPU := flag.Int("percpu-buffer", 0, "per-CPU perf ring bytes (0 = default)")
+	admitted := flag.Int("admitted-entries", 0, "kernel LRU size for sampled-in connections (0 = default 32768)")
 	logBodies := flag.Bool("log-bodies", false, "include request body content (truncated to 4KB) in logs; captured bodies are real production data")
 	// Some k8s packages register -kubeconfig in init(); look it up rather than
 	// re-registering to avoid the "flag redefined" panic.
@@ -138,6 +141,7 @@ func main() {
 		Ports:           prts,
 		Framing:         framing,
 		PerCPUBuffer:    *perCPU,
+		AdmittedEntries: *admitted,
 		Log:             log,
 		LogBodies:       *logBodies,
 		Updates:         updates,

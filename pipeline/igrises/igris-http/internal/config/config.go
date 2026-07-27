@@ -12,12 +12,15 @@ import (
 )
 
 const (
-	defaultListenersFile   = "/etc/igris/listeners.json"
-	defaultMaxTCPConns     = 1024
+	defaultListenersFile = "/etc/igris/listeners.json"
+	defaultMaxTCPConns   = 1024
 	// 512KiB ingress cap — echo shadows buffer ~2× body in JSON responses; Envoy ext_proc default is 1MiB.
-	defaultMaxBodySize = 512 * 1024
-	defaultTCPDialTimeout  = 5 * time.Second
-	defaultTCPIdleTimeout  = 5 * time.Minute
+	defaultMaxBodySize    = 512 * 1024
+	defaultTCPDialTimeout = 5 * time.Second
+	defaultTCPIdleTimeout = 5 * time.Minute
+	// defaultMaxConcurrency caps in-flight HTTP requests forwarded per igris pod. Negative
+	// values (via IGRIS_MAX_CONCURRENCY) disable the limit.
+	defaultMaxConcurrency = 50
 )
 
 // Listener binds a port to an input driver.
@@ -35,18 +38,19 @@ type TargetHost struct {
 
 // Config holds Igris process configuration.
 type Config struct {
-	Listeners        []Listener
-	ControlAURL      string
-	ControlBURL      string
-	CandidateURL     string
-	ControlAAddr     string
-	ControlBAddr     string
-	CandidateAddr    string
-	WorkerPoolSize   int
-	MaxTCPConns      int
-	MaxBodySize      int64
-	TCPDialTimeout   time.Duration
-	TCPIdleTimeout   time.Duration
+	Listeners      []Listener
+	ControlAURL    string
+	ControlBURL    string
+	CandidateURL   string
+	ControlAAddr   string
+	ControlBAddr   string
+	CandidateAddr  string
+	WorkerPoolSize int
+	MaxTCPConns    int
+	MaxBodySize    int64
+	MaxConcurrency int
+	TCPDialTimeout time.Duration
+	TCPIdleTimeout time.Duration
 }
 
 // Load reads configuration from the environment, validates it, and exits on failure.
@@ -66,6 +70,7 @@ func Load() Config {
 	cfg.WorkerPoolSize = workerPoolSizeFromEnv()
 	cfg.MaxTCPConns = intFromEnv("IGRIS_MAX_TCP_CONNS", defaultMaxTCPConns)
 	cfg.MaxBodySize = int64FromEnv("IGRIS_MAX_BODY_SIZE", defaultMaxBodySize)
+	cfg.MaxConcurrency = intFromEnvSigned("IGRIS_MAX_CONCURRENCY", defaultMaxConcurrency)
 	if d, ok := durationFromEnv("IGRIS_TCP_DIAL_TIMEOUT"); ok {
 		cfg.TCPDialTimeout = d
 	}
@@ -116,6 +121,20 @@ func intFromEnv(key string, def int) int {
 	}
 	var n int
 	if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+		return n
+	}
+	return def
+}
+
+// intFromEnvSigned parses key as an int, unlike intFromEnv it allows negative values
+// through (callers treat negative as "unlimited"); only unset or zero fall back to def.
+func intFromEnvSigned(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	var n int
+	if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n != 0 {
 		return n
 	}
 	return def

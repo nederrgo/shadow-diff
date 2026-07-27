@@ -39,6 +39,32 @@ func assertIdenticalTraceHeaders(t *testing.T, tables []amqp.Table) {
 	}
 }
 
+func TestBuildPublishingSetsExpiration(t *testing.T) {
+	t.Parallel()
+	msg := amqp.Delivery{
+		Body:         []byte(`{"ok":true}`),
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent,
+	}
+	headers := amqp.Table{trace.HeaderTraceparent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"}
+	pub := buildPublishing(msg, headers)
+	if pub.Expiration != "10000" {
+		t.Fatalf("Expiration = %q, want %q", pub.Expiration, "10000")
+	}
+	if pub.ContentType != msg.ContentType {
+		t.Fatalf("ContentType = %q, want %q", pub.ContentType, msg.ContentType)
+	}
+	if string(pub.Body) != string(msg.Body) {
+		t.Fatalf("Body = %q, want %q", pub.Body, msg.Body)
+	}
+	if pub.DeliveryMode != msg.DeliveryMode {
+		t.Fatalf("DeliveryMode = %v, want %v", pub.DeliveryMode, msg.DeliveryMode)
+	}
+	if pub.Headers[trace.HeaderTraceparent] != headers[trace.HeaderTraceparent] {
+		t.Fatalf("Headers traceparent = %v, want %v", pub.Headers[trace.HeaderTraceparent], headers[trace.HeaderTraceparent])
+	}
+}
+
 func TestHandleDelivery_dropsWithoutTraceparent(t *testing.T) {
 	t.Parallel()
 	rec := &recordingPublisher{}

@@ -135,7 +135,7 @@ func TestFragmentsAreDroppedAndCounted(t *testing.T) {
 			t.Fatalf("send: %v", err)
 		}
 	}
-	count := fragDrops(objs.FragDrops)
+	count := perCPUCounter(objs.FragDrops)
 
 	// waitStable lets the counter settle; the filter runs synchronously on the
 	// send path, so this converges immediately in practice.

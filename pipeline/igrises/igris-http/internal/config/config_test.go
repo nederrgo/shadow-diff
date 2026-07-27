@@ -139,6 +139,33 @@ func TestTargetAddrsForPort(t *testing.T) {
 	}
 }
 
+func TestIntFromEnvSigned(t *testing.T) {
+	const key = "IGRIS_TEST_MAX_CONCURRENCY"
+	tests := []struct {
+		name string
+		val  string
+		def  int
+		want int
+	}{
+		{name: "unset", val: "", def: 50, want: 50},
+		{name: "zero falls back to default", val: "0", def: 50, want: 50},
+		{name: "negative means unlimited", val: "-1", def: 50, want: -1},
+		{name: "positive passthrough", val: "10", def: 50, want: 10},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.val == "" {
+				os.Unsetenv(key)
+			} else {
+				t.Setenv(key, tt.val)
+			}
+			if got := intFromEnvSigned(key, tt.def); got != tt.want {
+				t.Fatalf("intFromEnvSigned(%q, %d) = %d want %d", tt.val, tt.def, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeDriver(t *testing.T) {
 	t.Parallel()
 	if got := normalizeDriver("http", ""); got != "http_request" {

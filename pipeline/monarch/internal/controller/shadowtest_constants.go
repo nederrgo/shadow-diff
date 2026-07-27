@@ -68,6 +68,13 @@ $IPT -t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-port 10001`
 	defaultIgrisListenersPath    = "/etc/igris/listeners.json"
 	igrisTerminationGraceSeconds = int64(35)
 
+	// shadowRoleReplicas is the replica count for each shadow role (control-a/b/candidate).
+	// ponytail: hardcoded to 1 today; bump this (or replace with a CRD field) if per-role
+	// scaling is ever needed — every consumer of the shadow pod count reads this constant.
+	shadowRoleReplicas     int32 = 1
+	defaultMaxQPSPerPod          = 50
+	envIgrisMaxConcurrency       = "IGRIS_MAX_CONCURRENCY"
+
 	envShopHTTPURL = "SHOP_HTTP_URL"
 	envBeruHTTPURL = "BERU_HTTP_URL"
 

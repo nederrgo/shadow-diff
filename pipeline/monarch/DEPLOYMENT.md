@@ -223,6 +223,14 @@ Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`** and se
 
 Monarch reconciles `KaiselRule` for both HTTP ingress and HTTP egress. **`status.kaiselPhase`**: `Ready` or `Degraded`.
 
+### Spike Guard — ingress load shedding
+
+| Field | Description |
+|-------|-------------|
+| `maxQPSPerPod` | Requests/sec Igris forwards per shadow pod replica (default `50`). Monarch multiplies by the shadow role replica count (currently `1`) and passes the result to igris-http as `IGRIS_MAX_CONCURRENCY`. Requests over the cap get HTTP `429` immediately — never forwarded to shadow pods. |
+
+igris-rabbitmq also sets a 10s `Expiration` on every message it republishes to the shadow brokers, and Monarch declares the prod shadow queue with `x-max-length: 500` / `x-overflow: drop-head` — both bound how much stale traffic can pile up ahead of a stuck shadow consumer.
+
 ### Egress — Shop (always-on)
 
 | Field | Description |

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -191,8 +192,12 @@ var _ = Describe("ShadowTest Controller", func() {
 			Expect(envNames).To(ContainElements(
 				envControlAURL, envControlBURL, envCandidateURL,
 				envControlAAddr, envControlBAddr, envCandidateAddr,
-				envIgrisListenersFile,
+				envIgrisListenersFile, envIgrisMaxConcurrency,
 			))
+			Expect(igrisDeploy.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{
+				Name:  envIgrisMaxConcurrency,
+				Value: strconv.Itoa(igrisMaxConcurrencyFor(st)),
+			}))
 
 			var cms corev1.ConfigMapList
 			Expect(k8sClient.List(ctx, &cms, client.InNamespace(shadowNS))).To(Succeed())

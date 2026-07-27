@@ -231,6 +231,13 @@ type ShadowTestSpec struct {
 	// +optional
 	SamplePercentage int `json:"samplePercentage,omitempty"`
 
+	// MaxQPSPerPod caps requests/sec Igris will forward per shadow pod replica (default 50).
+	// Monarch multiplies this by the shadow role replica count to compute IGRIS_MAX_CONCURRENCY,
+	// the ingress load-shedding threshold that protects shadow pods from traffic spikes.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxQPSPerPod int `json:"maxQPSPerPod,omitempty"`
+
 	// Beru overrides the beru-local image when spec.beruGRPCAddress is unset.
 	// +optional
 	Beru *BeruSpec `json:"beru,omitempty"`

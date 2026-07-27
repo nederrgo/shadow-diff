@@ -27,7 +27,7 @@ func prodShadowQueueName(st *enginev1alpha1.ShadowTest) string {
 
 func prodShadowQueueArgs() amqp.Table {
 	return amqp.Table{
-		amqpArgMaxLength: int32(5000),
+		amqpArgMaxLength: int32(500),
 		amqpArgOverflow:  "drop-head",
 		amqpArgExpires:   int32(86400000),
 	}

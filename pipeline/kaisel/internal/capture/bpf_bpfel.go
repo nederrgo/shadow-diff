@@ -19,6 +19,19 @@ type bpfChunkBuf struct {
 	Data [4096]uint8
 }
 
+type bpfFlowKey struct {
+	_      structs.HostLayout
+	LoAddr uint32
+	HiAddr uint32
+	LoPort uint16
+	HiPort uint16
+}
+
+type bpfHdrScratch struct {
+	_    structs.HostLayout
+	Data [2048]uint8
+}
+
 type bpfPktMeta struct {
 	_       structs.HostLayout
 	Len     uint32
@@ -31,8 +44,11 @@ type bpfPktMeta struct {
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
+	bpfMapAdmitted      = "admitted"
 	bpfMapEvents        = "events"
 	bpfMapFragDrops     = "frag_drops"
+	bpfMapHdrBuf        = "hdr_buf"
+	bpfMapSampleDrops   = "sample_drops"
 	bpfMapScratch       = "scratch"
 	bpfMapTargetIps     = "target_ips"
 	bpfMapTargetPorts   = "target_ports"
@@ -92,8 +108,11 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
+	Admitted    *ebpf.MapSpec `ebpf:"admitted"`
 	Events      *ebpf.MapSpec `ebpf:"events"`
 	FragDrops   *ebpf.MapSpec `ebpf:"frag_drops"`
+	HdrBuf      *ebpf.MapSpec `ebpf:"hdr_buf"`
+	SampleDrops *ebpf.MapSpec `ebpf:"sample_drops"`
 	Scratch     *ebpf.MapSpec `ebpf:"scratch"`
 	TargetIps   *ebpf.MapSpec `ebpf:"target_ips"`
 	TargetPorts *ebpf.MapSpec `ebpf:"target_ports"`
@@ -129,8 +148,11 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
+	Admitted    *ebpf.Map `ebpf:"admitted"`
 	Events      *ebpf.Map `ebpf:"events"`
 	FragDrops   *ebpf.Map `ebpf:"frag_drops"`
+	HdrBuf      *ebpf.Map `ebpf:"hdr_buf"`
+	SampleDrops *ebpf.Map `ebpf:"sample_drops"`
 	Scratch     *ebpf.Map `ebpf:"scratch"`
 	TargetIps   *ebpf.Map `ebpf:"target_ips"`
 	TargetPorts *ebpf.Map `ebpf:"target_ports"`
@@ -138,8 +160,11 @@ type bpfMaps struct {
 
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
+		m.Admitted,
 		m.Events,
 		m.FragDrops,
+		m.HdrBuf,
+		m.SampleDrops,
 		m.Scratch,
 		m.TargetIps,
 		m.TargetPorts,

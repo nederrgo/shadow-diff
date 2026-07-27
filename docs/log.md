@@ -9,8 +9,14 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-27]
+### Added
+* 'pipeline/kaisel': In-kernel W3C traceparent sampling — bpf_loop 768-byte header scan, FNV-1a gate matching pkg/sample exactly, LRU 5-tuple admission for continuation and response segments, SYN invalidation, fail-open on any undecidable parse
+
 ## [2026-07-26]
 ### Added
+* 'testing/bats': Added Spike Guard integration test — igris-http 429 load shedding under concurrent traffic
+* 'pipeline/monarch,pipeline/igrises': Added Spike Guard — IGRIS_MAX_CONCURRENCY load shedding, AMQP message TTL, dynamic capacity calc
 * 'pipeline/pkg/sample': shared FNV full-trace-ID SampledIn for Kaisel + igris-rabbitmq
 * 'testing/bats/e2e/rabbitmq-ingress/rmq_sampling_hybrid.bats': RMQ ingress + Shop egress sampling E2E at 10%
 * 'testing/example-apps/http-rmq-go-worker': Stop logging trace IDs in app logs to match Node/Python fixtures for assert_worker_trace_absent

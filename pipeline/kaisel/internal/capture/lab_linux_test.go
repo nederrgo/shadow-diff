@@ -189,8 +189,24 @@ func (c *collector) waitFor(n int, timeout time.Duration) ([]*http.Request, [][]
 	return c.snapshot()
 }
 
+// targetIPs builds capture targets at a given sample percentage. 0 leaves the
+// kernel trace gate off, which is what every test that curls without a
+// traceparent depends on.
+func targetIPs(targets []string, pct int) []capture.TargetIP {
+	out := make([]capture.TargetIP, 0, len(targets))
+	for _, s := range targets {
+		out = append(out, capture.TargetIP{IP: net.ParseIP(s), SamplePercentage: pct})
+	}
+	return out
+}
+
 // startCapture attaches to iface and blocks until the filter is live.
 func startCapture(t *testing.T, iface string, targets []string, ports []uint16) *collector {
+	return startCaptureSampled(t, iface, targets, ports, 0)
+}
+
+// startCaptureSampled is startCapture with the kernel trace gate armed.
+func startCaptureSampled(t *testing.T, iface string, targets []string, ports []uint16, pct int) *collector {
 	t.Helper()
 
 	c := &collector{done: make(chan struct{})}
@@ -202,10 +218,7 @@ func startCapture(t *testing.T, iface string, targets []string, ports []uint16) 
 		t.Fatalf("detect framing on %s: %v", iface, err)
 	}
 
-	var ips []net.IP
-	for _, s := range targets {
-		ips = append(ips, net.ParseIP(s))
-	}
+	ips := targetIPs(targets, pct)
 
 	ready := make(chan struct{})
 	var once sync.Once

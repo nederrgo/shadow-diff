@@ -75,13 +75,23 @@ func (p *ShadowPublisher) Close() {
 	p.conns = nil
 }
 
-func (p *ShadowPublisher) PublishAll(msg amqp.Delivery, headers amqp.Table) error {
-	pub := amqp.Publishing{
+// shadowPublishExpirationMs bounds how long a mirrored message sits in a shadow queue
+// (per-message TTL, ms) before RabbitMQ drops it — protects stuck shadow consumers from
+// processing stale traffic under a spike.
+const shadowPublishExpirationMs = "10000"
+
+func buildPublishing(msg amqp.Delivery, headers amqp.Table) amqp.Publishing {
+	return amqp.Publishing{
 		Headers:      headers,
 		ContentType:  msg.ContentType,
 		Body:         msg.Body,
 		DeliveryMode: msg.DeliveryMode,
+		Expiration:   shadowPublishExpirationMs,
 	}
+}
+
+func (p *ShadowPublisher) PublishAll(msg amqp.Delivery, headers amqp.Table) error {
+	pub := buildPublishing(msg, headers)
 	for i, ch := range p.channels {
 		if err := ch.Publish(p.exchange, msg.RoutingKey, false, false, pub); err != nil {
 			return fmt.Errorf("publish shadow broker %d: %w", i, err)

@@ -39,6 +39,14 @@ func sortIPs(ips []net.IP) []string {
 	return strs
 }
 
+func sortTargets(targets []capture.TargetIP) []string {
+	ips := make([]net.IP, len(targets))
+	for i, t := range targets {
+		ips[i] = t.IP
+	}
+	return sortIPs(ips)
+}
+
 func sortPorts(ports []uint16) []uint16 {
 	out := append([]uint16(nil), ports...)
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
@@ -81,7 +89,7 @@ func TestReconciler_RuleCreated(t *testing.T) {
 	if !ok {
 		t.Fatal("expected MapUpdate on create, got none")
 	}
-	got := sortIPs(upd.AddIPs)
+	got := sortTargets(upd.AddIPs)
 	if len(got) != 2 || got[0] != "10.0.0.1" || got[1] != "10.0.0.2" {
 		t.Errorf("AddIPs = %v, want [10.0.0.1 10.0.0.2]", got)
 	}
@@ -124,7 +132,7 @@ func TestReconciler_RuleUpdated_IPRemoved(t *testing.T) {
 	if !ok {
 		t.Fatal("expected MapUpdate on update, got none")
 	}
-	addStrs := sortIPs(upd.AddIPs)
+	addStrs := sortTargets(upd.AddIPs)
 	removeStrs := sortIPs(upd.RemoveIPs)
 	if len(addStrs) != 1 || addStrs[0] != "10.0.0.3" {
 		t.Errorf("AddIPs = %v, want [10.0.0.3]", addStrs)
@@ -220,5 +228,43 @@ func TestReconciler_ExportRouterPopulated(t *testing.T) {
 	}
 	if got.IgrisBaseURL != rule.Spec.IgrisBaseURL || got.SamplePercentage != 25 {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+// The kernel map value is the sample percentage, so an edit that changes only
+// samplePercentage still has to reach the daemon. Diffing on the IP set alone
+// would leave every node gating at the old rate indefinitely.
+func TestReconciler_SamplePercentageChangeResyncsIPs(t *testing.T) {
+	s := testScheme(t)
+	rule := &enginev1alpha1.KaiselRule{
+		ObjectMeta: metav1.ObjectMeta{Name: "r1", Namespace: "default"},
+		Spec: enginev1alpha1.KaiselRuleSpec{
+			TargetIPs:        []string{"10.0.0.1", "10.0.0.2"},
+			SamplePercentage: 10,
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(rule).Build()
+	ch := make(chan capture.MapUpdate, 16)
+	r := New(fakeClient, ch, export.NewRouter(nil))
+
+	reconcileRule(t, r, ch, "r1", "default")
+
+	// Same IPs, new percentage.
+	rule.Spec.SamplePercentage = 50
+	if err := fakeClient.Update(context.Background(), rule); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	upd, ok := reconcileRule(t, r, ch, "r1", "default")
+	if !ok {
+		t.Fatal("a percentage-only change must still produce a MapUpdate")
+	}
+	if got := sortTargets(upd.AddIPs); len(got) != 2 {
+		t.Fatalf("AddIPs = %v, want both IPs re-emitted", got)
+	}
+	for _, target := range upd.AddIPs {
+		if target.SamplePercentage != 50 {
+			t.Errorf("%s carries percentage %d, want 50", target.IP, target.SamplePercentage)
+		}
 	}
 }
