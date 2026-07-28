@@ -1,7 +1,7 @@
 ---
 type: Architectural Decision Record
 title: In-Kernel Trace Sampling for Kaisel
-description: Kaisel decides W3C traceparent sampling inside the eBPF socket filter; user space stays authoritative, the gate fails open, and the daemon gains a 5.17 kernel floor.
+description: Kaisel decides W3C traceparent sampling inside the eBPF socket filter; user space stays authoritative, the gate fails open, and the gate gains a 5.17 kernel floor with an ungated fallback below it.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel/internal/capture/bpf
 tags: [data-plane, kaisel, ebpf, sampling, adr, performance]
 timestamp: 2026-07-27T00:00:00Z
@@ -28,7 +28,7 @@ The socket filter now decides sampling itself, for matched addresses whose rule 
 | **Authority** | User space still re-gates every report. The kernel is a pre-filter, not a replacement |
 | **Undecidable cases** | Fail open — pass to user space |
 | **Scan window** | 768 payload bytes, read as a head-aligned load plus a tail-aligned load that covers the gap between the payload length and the tier below it |
-| **Loop construct** | `bpf_loop`, which fixes the daemon's kernel floor at 5.17 |
+| **Loop construct** | `bpf_loop`, which fixes the gate's kernel floor at 5.17; below it an ungated build loads instead |
 | **Percentage transport** | The `target_ips` map value, which was a presence flag, is now the per-address `samplePercentage` |
 
 ### The invariant that makes it safe
@@ -47,14 +47,14 @@ The gate is **over-permissive or exactly equal, never stricter** than user space
 
 ### Paid
 
-* **Kernel floor 5.17.** An older kernel rejects the program, the DaemonSet pod never attaches, and the node runs uncaptured. Capture is a frame clone either way, so live traffic is unaffected.
+* **The gate needs kernel 5.17.** An older kernel rejects that build, so Kaisel loads an ungated build of the same source and `pkg/sample` does all the sampling; diff results are identical, at the cost of more traffic across the perf ring. Below 5.2 neither build loads and the daemon refuses to start. See [/data-plane/kernel-compatibility.md](/data-plane/kernel-compatibility.md).
 * **Bounded over-sampling.** Headers split across TCP segments, and traceparents past 768 bytes, fail open and cross ungated. Safe, but they spend ring bandwidth.
 * **A lost egress mock is now possible.** On a pipelined connection, a second request that samples out can flip the LRU while the first response is still arriving, dropping its tail.
 * **Two sources of truth for one rule.** The FNV-1a bucketing exists in C and in Go, and they must not drift. Mitigated by the parity test, not by construction.
 
 ### Rejected alternatives
 
-* **A narrower window.** The verifier caps a byte-wise scan at 160 bytes in this program. A plain `GET` with Host, User-Agent, Accept and Accept-Encoding already runs ~148 bytes, so traceparent sits right at the boundary and any Cookie header pushes it out. The gate would have cost CPU on every request head while saving little.
+* **An in-line loop over a narrower window.** Measured on this program at kernel 6.18, an ordinary bounded loop verifies at a 32-byte window and exceeds the 1M processed-instruction ceiling at 40 — the same ceiling for a byte-wise scan and for a 4-byte stride scan, because the binding cost is the gate downstream of the scan rather than the loop body. A 32-byte window reaches about as far as the request line; traceparent never lives there. There is no in-line loop that pays for itself here, which is what forces `bpf_loop` and its 5.17 floor.
 * **Passing on fail-open without admitting the connection.** Would make the second segment of a split header an LRU miss and drop the half carrying the traceparent — trading a benign over-sample for a corrupted capture.
 * **Clearing the scan buffer per packet.** 768 bytes of memset on every matched frame at 100k RPS costs more than the gate saves. Stale bytes are made unreachable by bounding every read to the tier actually loaded instead.
 

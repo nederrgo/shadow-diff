@@ -9,6 +9,10 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-28]
+### Added
+* 'pipeline/kaisel': Tiered eBPF trace gate — bpf_loop gate on kernel 5.17+, ungated build with user-space sampling on 5.2+, explicit refusal below; tier chosen by load attempt not version string; added kernel-compatibility guide and opt-in kaisel_ebpf_gate_tier gauge
+
 ## [2026-07-27]
 ### Added
 * 'pipeline/kaisel': In-kernel W3C traceparent sampling — bpf_loop 768-byte header scan, FNV-1a gate matching pkg/sample exactly, LRU 5-tuple admission for continuation and response segments, SYN invalidation, fail-open on any undecidable parse

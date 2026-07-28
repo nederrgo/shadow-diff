@@ -25,6 +25,17 @@ typedef int __s32;
 #define __uint(name, val) int(*name)[val]
 #define __type(name, val) typeof(val) *name
 
+/* Launder a value through an empty asm block so the compiler -- and therefore
+ * the verifier -- loses track of its provenance.
+ *
+ * The verifier explores a state per distinct value a register can hold. A
+ * value produced by a search carries one per candidate offset, and every
+ * instruction downstream is then re-verified once per value. Laundering
+ * collapses that to a single unknown scalar, which the caller re-bounds with
+ * an explicit range check. Same definition as libbpf's barrier_var().
+ */
+#define barrier_var(var) asm volatile("" : "+r"(var))
+
 /* enum bpf_map_type */
 #define BPF_MAP_TYPE_HASH 1
 #define BPF_MAP_TYPE_PERF_EVENT_ARRAY 4

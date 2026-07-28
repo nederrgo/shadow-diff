@@ -71,6 +71,16 @@
  */
 #define HEADER_WINDOW 768
 
+/* Set when any in-kernel scanner is compiled in. The no-gate build drops the
+ * scan and everything that only serves it -- the scratch window, the admission
+ * LRU and the drop counter -- so it verifies on kernels without bpf_loop. The
+ * flow-level filters, the TCP offset validation and the pure-ACK drop are not
+ * gate machinery and stay in every build.
+ */
+#ifdef KAISEL_GATE_BPF_LOOP
+#define KAISEL_GATE 1
+#endif
+
 /* Smallest ladder tier. Sized to the request line rather than to a whole
  * traceparent: a payload too short to hold one still has to be recognised as a
  * request head, because a head that cannot be gated must fail open rather than
@@ -123,6 +133,7 @@ struct {
 	__type(value, __u64);
 } frag_drops SEC(".maps");
 
+#ifdef KAISEL_GATE
 /* Packets the trace gate dropped, per CPU. Sampling out is intended, but a
  * gate that silently swallows everything looks identical to a gate that
  * works, so user space logs the rate.
@@ -165,6 +176,8 @@ struct {
 	__type(key, struct flow_key);
 	__type(value, __u8);
 } admitted SEC(".maps");
+#endif /* KAISEL_GATE: sample_drops, flow_key, admitted */
+
 
 /* Per-CPU perf ring carrying pkt_meta followed by packet bytes. */
 struct {
@@ -195,6 +208,7 @@ struct {
 	__type(value, struct chunk_buf);
 } scratch SEC(".maps");
 
+#ifdef KAISEL_GATE
 /* Header scan window. Per-CPU for the same reason as chunk_buf: the window
  * cannot live on BPF's 512-byte stack.
  *
@@ -226,6 +240,8 @@ struct {
 	__type(key, __u32);
 	__type(value, struct hdr_scratch);
 } hdr_buf SEC(".maps");
+#endif /* KAISEL_GATE: hdr_buf */
+
 
 /* Link-layer header size: 14 for Ethernet, 0 for raw L3 (ARPHRD_NONE tunnels).
  * Set from user space before load, so the verifier folds it to a constant.
@@ -261,6 +277,7 @@ static __inline int port_wanted(__u16 sport, __u16 dport)
 	       bpf_map_lookup_elem(&target_ports, &dport);
 }
 
+#ifdef KAISEL_GATE
 /* Order the endpoints so both directions of one connection hash to a single
  * entry. Same reasoning as decode.connKey: a hash that merely collides with
  * its reverse would be cheaper, but splicing two unrelated connections is
@@ -281,7 +298,10 @@ static __inline void flow_of(struct flow_key *k, __u32 saddr, __u32 daddr,
 		k->hi_port = sport;
 	}
 }
+#endif /* KAISEL_GATE: flow_of */
 
+
+#ifdef KAISEL_GATE
 /* Copy the head of the payload into scratch, returning how many bytes landed.
  *
  * bpf_skb_load_bytes declares its length ARG_CONST_SIZE, so the length must be
@@ -379,6 +399,8 @@ static __inline __u32 tp_diff(const __u8 *d)
 	return diff;
 }
 
+#ifdef KAISEL_GATE_BPF_LOOP
+
 /* Per-scan state handed to scan_cb through bpf_loop's callback context. */
 struct scan_ctx {
 	const __u8 *d;
@@ -418,13 +440,21 @@ static long scan_cb(__u32 i, void *pctx)
 
 /* Index of "traceparent:" within the loaded window, or -1.
  *
- * bpf_loop rather than a C loop, and that is what makes a window this wide
- * verifiable at all. The verifier simulates every iteration of an ordinary
- * bounded loop and cannot prune across the back-edge, because the induction
- * variable is live; measured on this program that capped the window at 160
- * bytes even with a fully branchless body, and unrolling instead spills the
- * 512-byte stack. bpf_loop verifies scan_cb exactly once no matter how many
- * times it runs, so cost stops scaling with HEADER_WINDOW.
+ * bpf_loop rather than a C loop, and that is what makes a window of any useful
+ * width verifiable at all. The verifier simulates every iteration of an
+ * ordinary bounded loop and cannot prune across the back-edge, because the
+ * induction variable is live; unrolling instead spills the 512-byte stack.
+ *
+ * Measured on this program (kernel 6.18, LogLevelStats): an in-line loop
+ * verifies at a 32-byte window and blows the 1M processed-instruction ceiling
+ * at 40, and that holds for a byte-wise scan and for a 4-byte stride scan
+ * alike -- the binding cost is the size of the gate downstream of the scan,
+ * not the scan's shape, so no loop body rewrite recovers it. 32 bytes reaches
+ * about as far as the request line, and traceparent never lives there.
+ *
+ * bpf_loop verifies scan_cb exactly once no matter how many times it runs, so
+ * cost stops scaling with HEADER_WINDOW. That is the whole reason the gate
+ * exists in a form worth having, and the reason for the 5.17 floor.
  *
  * Scanning only -- the value is parsed in trace_id_at() below.
  */
@@ -438,6 +468,8 @@ static __inline int find_tp(const __u8 *d, __u32 n)
 		return -1;
 	return ctx.found;
 }
+
+#endif /* gate scanner selection */
 
 /* Offset of the 32-hex trace id within the loaded window, or -1.
  *
@@ -523,19 +555,25 @@ static __inline void count_sample_drop(void)
 	if (n)
 		(*n)++;
 }
+#endif /* KAISEL_GATE: scan and parse helpers */
 
 SEC("socket")
 int capture(struct __sk_buff *skb)
 {
-	__u8 ver_ihl, proto, a[8], f[2], p[4], t[2], admit = 1, *pv;
+	__u8 ver_ihl, proto, a[8], f[2], p[4], t[2], *pv;
 	__u64 *frags;
-	__u32 saddr, daddr, ihl, doff, total, off, pct, poff, plen, hlen, want;
+	__u32 saddr, daddr, ihl, doff, total, off, pct, poff, plen;
 	__u32 zero = 0;
 	__u16 sport, dport;
 	struct chunk_buf *buf;
+	int i, last;
+#ifdef KAISEL_GATE
+	__u8 admit = 1;
+	__u32 hlen, want;
 	struct hdr_scratch *hdr;
 	struct flow_key key;
-	int i, last, at, keep;
+	int at, keep;
+#endif
 
 	if (skb->ifindex == lo_ifindex)
 		return 0;
@@ -583,6 +621,14 @@ int capture(struct __sk_buff *skb)
 	pv = bpf_map_lookup_elem(&target_ips, &saddr);
 	if (pv)
 		pct = *pv ? *pv : 100;
+	/* In the no-gate build nothing downstream reads pct's value -- only
+	 * whether it is non-zero -- so clang is free to fold both lookups into
+	 * one null test, which it spells `r0 |= r7`. BPF rejects
+	 * `pointer |= pointer`, so that build failed to verify while the gated
+	 * one, where pct is genuinely live, did. Laundering pct here keeps the
+	 * two tests separate in both builds.
+	 */
+	barrier_var(pct);
 	pv = bpf_map_lookup_elem(&target_ips, &daddr);
 	if (pv) {
 		__u32 v = *pv ? *pv : 100;
@@ -658,6 +704,7 @@ int capture(struct __sk_buff *skb)
 	 */
 	poff &= 0x0fff;
 
+#ifdef KAISEL_GATE
 	flow_of(&key, saddr, daddr, sport, dport);
 
 	/* A SYN is a new connection by definition, so any entry under this
@@ -667,6 +714,7 @@ int capture(struct __sk_buff *skb)
 	 */
 	if (t[1] & TCP_SYN)
 		bpf_map_delete_elem(&admitted, &key);
+#endif /* KAISEL_GATE: SYN invalidation */
 
 	/* Pure ACKs carry nothing to gate and nothing to reassemble. FIN and RST
 	 * are kept even though they are payload-free: decode.runResponses frames
@@ -675,6 +723,7 @@ int capture(struct __sk_buff *skb)
 	if (plen == 0 && !(t[1] & (TCP_SYN | TCP_FIN | TCP_RST)))
 		return 0;
 
+#ifdef KAISEL_GATE
 	/* Everything below is the trace gate. Skipped entirely when sampling is
 	 * off, which is also what keeps untraced traffic (and the integration
 	 * lab, which curls without a traceparent) flowing untouched.
@@ -737,6 +786,7 @@ int capture(struct __sk_buff *skb)
 			return 0;
 		}
 	}
+#endif /* KAISEL_GATE: trace gate */
 
 	/* Fast path: the packet fits in one event, so append it straight from
 	 * the skb with no scratch buffer. The high 32 bits of flags

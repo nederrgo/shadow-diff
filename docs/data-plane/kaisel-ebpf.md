@@ -120,9 +120,11 @@ So the gate reads twice: the largest tier at the start of the payload, and — o
 
 ### Why `bpf_loop`
 
-The scan is a `bpf_loop` callback, not a C loop, and that is what makes a 768-byte window verifiable at all. The verifier simulates every iteration of an ordinary bounded loop and cannot prune across the back-edge because the induction variable is live. Measured on this program that capped the window at **160 bytes** — even with a fully branchless body — and unrolling instead spilled the 512-byte BPF stack. `bpf_loop` verifies the callback exactly once however many times it runs, so cost stops scaling with the window.
+The scan is a `bpf_loop` callback, not a C loop, and that is what makes a window of any useful width verifiable at all. The verifier simulates every iteration of an ordinary bounded loop and cannot prune across the back-edge because the induction variable is live; unrolling instead spills the 512-byte BPF stack.
 
-This is what sets the daemon's kernel floor at **5.17**. An older kernel fails the load, the DaemonSet pod never attaches, and the node keeps running uncaptured.
+Measured on this program at kernel 6.18, an in-line loop verifies at a **32-byte** window and exceeds the 1M processed-instruction ceiling at 40 — the same ceiling for a byte-wise scan and for a 4-byte stride scan, because the binding cost is the gate *downstream* of the scan rather than the loop body. 32 bytes reaches about as far as the request line, and a traceparent never lives there. No loop-body rewrite recovers it.
+
+`bpf_loop` verifies the callback exactly once however many times it runs, so cost stops scaling with the window. It also fixes the gate's floor at **5.17**. Below that Kaisel loads an ungated build of the same source and samples in user space instead — see [/data-plane/kernel-compatibility.md](/data-plane/kernel-compatibility.md).
 
 The scan is anchored on the LF ending the previous header line: a field name only ever begins at a line boundary, so the 12-byte compare runs at the ~15 line starts a request head contains rather than at every offset. The request line occupies the first line, so requiring a preceding LF misses nothing.
 
@@ -435,7 +437,7 @@ Framing is autodetected by reading the interface's ARPHRD type from sysfs, and `
 | **IPv4 only** | The filter reads IPv4 headers; IPv6 is rejected at the version nibble | — |
 | **No fragment reassembly** | Fragmented datagrams are dropped whole. gopacket independently declines to decode a transport layer from any fragment, so the kernel filter changes visibility rather than behaviour | Drops are counted in the kernel and logged, so an affected flow has a stated cause instead of vanishing. TCP negotiates MSS and sets DF, so fragmented TCP effectively does not occur in-cluster |
 | **Ring drops under burst** | The gate decides per request rather than smoothing rate, so a sufficiently large burst still overruns the ring | Drops are logged with both counters; `-percpu-buffer` raises the ceiling |
-| **Kernel floor 5.17** | The trace gate scans with `bpf_loop`; an older kernel rejects the program | The load fails and the pod never attaches, naming the requirement. The node keeps running, uncaptured — capture never touches live traffic either way |
+| **Trace gate needs 5.17** | The gate scans with `bpf_loop`; an older kernel rejects that build | Kaisel loads an ungated build instead and `pkg/sample` does all the sampling. Diff results are identical; more matched traffic crosses the perf ring. Below 5.2 nothing loads and the daemon refuses to start, naming the requirement — see [/data-plane/kernel-compatibility.md](/data-plane/kernel-compatibility.md) |
 | **Traceparent past 768 bytes** | A header pushed beyond `HEADER_WINDOW` by large Cookie or Authorization headers is not found | Fails open: the request crosses to user space ungated and `pkg/sample` decides. Costs ring bandwidth, never coverage |
 | **Headers split across TCP segments** | A request line in one segment and its traceparent in the next: the first segment is a head with no traceparent, so it fails open and admits the connection; the second has no request line, hits the LRU, and passes ungated | Accepted. Over-sampling stays inside the fail-open invariant — user space re-gates, so nothing extra is forwarded. Passing without admitting would instead drop the segment carrying the traceparent, turning a benign over-sample into a corrupted capture |
 | **LRU transition mid-response** | On a pipelined connection, request 2 can flip the entry to dropped while response 1 is still arriving, so late segments of response 1 are dropped | Harmless to production — the filter sees a clone — and gopacket discards the truncated stream. The real cost is a lost egress mock: response 1 belonged to a sampled-in request. Needs a second request to arrive mid-response *and* to sample out |
@@ -452,6 +454,7 @@ Framing is autodetected by reading the interface's ARPHRD type from sysfs, and `
 | Integration — real kernel, real BPF, real traffic | `make test-integration` | root |
 | Codegen contract | `make verify-generate` | clang-18 |
 | Trace gate — `BPF_PROG_TEST_RUN` against the real program | `make test-integration` | root, kernel ≥ 5.17 |
+| Tier selection and the ungated build | `make test-integration` | root; the fallback is forced through a test seam, since no pre-5.17 kernel is available |
 | Cluster E2E — Monarch → prod → Kaisel → igris → shadows | `make test-bats-kaisel` | cluster + image load |
 
 The trace-gate tests drive synthetic frames straight into the program with `BPF_PROG_TEST_RUN`, so no network lab is needed. `capture()` returns 0 on every path — the perf ring is its only consumer — so pass and drop are asserted on the perf ring itself rather than a return value, which is also the property the daemon cares about.
