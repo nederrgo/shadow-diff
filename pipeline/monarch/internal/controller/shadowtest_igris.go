@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -158,9 +159,15 @@ func (r *ShadowTestReconciler) reconcileIgrisDeployment(
 			Protocol:      corev1.ProtocolTCP,
 		})
 	}
+	containerPorts = append(containerPorts, corev1.ContainerPort{
+		Name:          "admin",
+		ContainerPort: igrisAdminPort,
+		Protocol:      corev1.ProtocolTCP,
+	})
 
 	controlAURL, controlBURL, candidateURL := igrisControlURLs(st, shadowNS)
 	controlAAddr, controlBAddr, candidateAddr := igrisControlHosts(st, shadowNS)
+	sessionID := strings.TrimSpace(st.Status.CurrentSessionID)
 
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -177,21 +184,25 @@ func (r *ShadowTestReconciler) reconcileIgrisDeployment(
 		termination := igrisTerminationGraceSeconds
 		deploy.Spec.Template.Spec.TerminationGracePeriodSeconds = &termination
 
+		env := []corev1.EnvVar{
+			{Name: envControlAURL, Value: controlAURL},
+			{Name: envControlBURL, Value: controlBURL},
+			{Name: envCandidateURL, Value: candidateURL},
+			{Name: envControlAAddr, Value: controlAAddr},
+			{Name: envControlBAddr, Value: controlBAddr},
+			{Name: envCandidateAddr, Value: candidateAddr},
+			{Name: envIgrisListenersFile, Value: defaultIgrisListenersPath},
+			{Name: envIgrisMaxConcurrency, Value: strconv.Itoa(igrisMaxConcurrencyFor(st))},
+			{Name: envIgrisAdminAddr, Value: defaultIgrisAdminAddr},
+		}
+		env = append(env, storageEnvVars(st, sessionID)...)
+
 		container := corev1.Container{
 			Name:            containerIgris,
 			Image:           igrisHTTPImageFor(st),
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			Ports:           containerPorts,
-			Env: []corev1.EnvVar{
-				{Name: envControlAURL, Value: controlAURL},
-				{Name: envControlBURL, Value: controlBURL},
-				{Name: envCandidateURL, Value: candidateURL},
-				{Name: envControlAAddr, Value: controlAAddr},
-				{Name: envControlBAddr, Value: controlBAddr},
-				{Name: envCandidateAddr, Value: candidateAddr},
-				{Name: envIgrisListenersFile, Value: defaultIgrisListenersPath},
-				{Name: envIgrisMaxConcurrency, Value: strconv.Itoa(igrisMaxConcurrencyFor(st))},
-			},
+			Env:             env,
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: volumeNameIgrisConfig, MountPath: "/etc/igris", ReadOnly: true},
 			},
@@ -248,6 +259,12 @@ func (r *ShadowTestReconciler) reconcileIgrisService(
 			Protocol:   corev1.ProtocolTCP,
 		})
 	}
+	ports = append(ports, corev1.ServicePort{
+		Name:       "admin",
+		Port:       igrisAdminPort,
+		TargetPort: intstr.FromInt32(igrisAdminPort),
+		Protocol:   corev1.ProtocolTCP,
+	})
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: shadowNS,

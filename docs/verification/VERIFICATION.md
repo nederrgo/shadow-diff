@@ -509,6 +509,19 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | grep -E '
 
 ---
 
+## Phase 4 — Record mode S3 capture (bats)
+
+With MinIO from [`e2e-reset-minikube.sh`](testing/tools/e2e-reset-minikube.sh) (or the suite’s own `minio_ensure`):
+
+```bash
+make test-bats-record
+# equivalent: make test-bats-one FILE=e2e/record/record_http.bats
+```
+
+Asserts `mode=record` stack (Kaisel + Igris + Shop, no ABC) and that traced prod ingress/egress flush JSONL under `shadow-diff/<ns>/<name>/sessions/<currentSessionID>/{ingress|egress}/` in bucket `shadow-diff-local`. Fixture: [`testing/bats/fixtures/e2e/record-http/`](testing/bats/fixtures/e2e/record-http/).
+
+---
+
 ## Phase 4a.1 — Egress interception & strict replay
 
 Monarch deploys Shop (always-on) into each shadow namespace and configures an egress Envoy listener with **ext_proc** to Shop. Shop returns a recorded mock keyed by `trace:<traceID>:<METHOD>:<host>:<path>` or **HTTP 599** on miss.
@@ -516,7 +529,7 @@ Monarch deploys Shop (always-on) into each shadow namespace and configures an eg
 ### Prerequisites
 
 - Shop deployed by Monarch (always-on; no `spec.recordAndReplay` field required)
-- `ShadowTest` applied (see [`testing/bats/manifests/e2e-shadowtest.yaml`](testing/bats/manifests/e2e-shadowtest.yaml))
+- `ShadowTest` applied (see [`testing/bats/manifests/e2e-shadowtest.yaml`](testing/bats/manifests/e2e-shadowtest.yaml); requires `spec.storage`)
 
 ### Automated Kind E2E
 

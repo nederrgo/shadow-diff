@@ -9,4 +9,4 @@ test:
 	go test ./...
 
 docker-build:
-	docker build -t $(SHOP_IMG) .
+	docker build -f Dockerfile -t $(SHOP_IMG) ..

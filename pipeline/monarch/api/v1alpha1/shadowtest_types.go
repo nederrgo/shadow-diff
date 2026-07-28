@@ -156,6 +156,41 @@ type IgrisSpec struct {
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
+// StorageConfig configures Bring-Your-Own-Bucket (BYOB) S3-compatible object storage
+// for asynchronous record/replay artifacts. Objects are keyed under
+// shadow-diff/<namespace>/<test-name>/sessions/<session-id>/[ingress|egress]/.
+// Monarch does not create buckets; callers provision storage out of band (e.g. AWS
+// or the local MinIO fixture from testing/tools/e2e-reset-minikube.sh).
+type StorageConfig struct {
+	// Type selects the object-storage backend.
+	// +kubebuilder:validation:Enum=s3
+	// +kubebuilder:default=s3
+	Type string `json:"type"`
+
+	// BucketName is the S3 bucket that holds recorded traffic for this ShadowTest.
+	BucketName string `json:"bucketName"`
+
+	// Endpoint is an optional custom S3 API URL (MinIO / on-prem).
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// Region is the AWS region (also used as a MinIO region label).
+	// +optional
+	Region string `json:"region,omitempty"`
+
+	// CredentialsSecretRef names a Secret in the ShadowTest CR namespace with
+	// AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. Monarch copies it into the
+	// shadow namespace (same name) before injecting secretKeyRef into pods.
+	// +optional
+	CredentialsSecretRef *corev1.LocalObjectReference `json:"credentialsSecretRef,omitempty"`
+
+	// RetentionPolicy controls whether Monarch deletes the ShadowTest's S3 prefix on CR deletion.
+	// +kubebuilder:validation:Enum=Retain;Delete
+	// +kubebuilder:default=Retain
+	// +optional
+	RetentionPolicy string `json:"retentionPolicy,omitempty"`
+}
+
 // ShadowTestSpec defines the desired state of ShadowTest.
 type ShadowTestSpec struct {
 	// TargetDeployment is the name of the production Deployment whose pod template
@@ -253,6 +288,21 @@ type ShadowTestSpec struct {
 	// Dependencies lists ephemeral backing services (e.g. Redis) provisioned once per shadow role.
 	// +optional
 	Dependencies []DependencySpec `json:"dependencies,omitempty"`
+
+	// Mode selects record (capture to S3) or replay (ABC + S3 readers). Defaults to record.
+	// +kubebuilder:validation:Enum=record;replay
+	// +kubebuilder:default=record
+	// +optional
+	Mode string `json:"mode,omitempty"`
+
+	// SessionID pins the S3 session folder for replay (and optionally for record).
+	// When unset in record mode, Monarch mints status.currentSessionID.
+	// +optional
+	SessionID string `json:"sessionID,omitempty"`
+
+	// Storage configures required BYOB S3-compatible object storage for this ShadowTest.
+	// +required
+	Storage *StorageConfig `json:"storage"`
 }
 
 // ShadowTestStatus defines the observed state of ShadowTest.
@@ -288,6 +338,14 @@ type ShadowTestStatus struct {
 	// IgrisRabbitMQPhase summarizes igris-rabbitmq deployment readiness.
 	// +optional
 	IgrisRabbitMQPhase string `json:"igrisRabbitMQPhase,omitempty"`
+
+	// CurrentSessionID is the active S3 session folder for this ShadowTest.
+	// +optional
+	CurrentSessionID string `json:"currentSessionID,omitempty"`
+
+	// ReplayState tracks automated replay trigger progress ("" | started | completed).
+	// +optional
+	ReplayState string `json:"replayState,omitempty"`
 }
 
 // +kubebuilder:object:root=true

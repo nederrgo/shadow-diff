@@ -1,19 +1,43 @@
 ---
 type: Architecture Specification
 title: Monarch Controller — Envoy-Only Shadow Injection
-description: Reconcile contract for telemetry-dependent shadow pods after Plan 1 realignment; Shop HTTP egress report to Beru.
+description: Reconcile contract for record/replay ShadowTests; S3 env; replay trigger; S3 prefix finalizer.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
-tags: [architecture, control-plane, monarch, envoy, shop, beru]
-timestamp: 2026-07-26T13:20:00Z
+tags: [architecture, control-plane, monarch, envoy, shop, beru, record-replay]
+timestamp: 2026-07-28T14:15:00Z
 ---
 
 # Monarch Controller — Envoy-Only Shadow Injection
 
 Plan 1 of the [telemetry-dependent pivot](/refactor/ARCHITACTURE_SHIFT.md) removes all language-specific OpenTelemetry Operator injection from Monarch. Shadow pods are orchestrated purely through infrastructure: an unmodified app container plus a protocol-aware Envoy sidecar.
 
+## Operating modes
+
+Every ShadowTest is either `record` or `replay` (`spec.mode`; default `record`). `spec.storage` is required. There is no live-traffic reconcile path.
+
+| Mode | Provisions | Garbage collects |
+|------|------------|------------------|
+| `record` | KaiselRule → Igris → Shop (+ beru-local); mints `status.currentSessionID` when unset | ABC Deployments/Services; clears `status.replayState` |
+| `replay` | Shop → Igris → ABC (+ deps); requires `spec.sessionID` or existing `status.currentSessionID` | KaiselRule |
+
+Monarch copies `storage.credentialsSecretRef` from the CR namespace into the shadow namespace (same name), then injects `OPERATING_MODE`, `S3_*`, `TEST_*`, `SESSION_ID`, and optional AWS `secretKeyRef` env into Igris and Shop. Igris exposes admin `:9090` (`IGRIS_ADMIN_ADDR`, Service port `9090`).
+
+### Replay trigger
+
+After Shop, Igris, and ABC Deployments are roll-ready (`ReadyReplicas > 0` and `UpdatedReplicas == Replicas`), if `status.replayState` is empty Monarch `POST`s `http://<igris>.<shadow-ns>.svc:9090/v1/replay/start` (10s timeout). HTTP 202 or 409 sets `status.replayState=started`.
+
+### S3 retention finalizer
+
+Finalizer `shadow-diff.io/s3-cleanup` (alongside `shadowtest.finalizers.shadow-diff.io`) runs after the shadow namespace is gone:
+
+- `retentionPolicy: Delete` — delete objects under prefix `shadow-diff/<CR-namespace>/<CR-name>/` only (never the BYOB bucket)
+- `Retain` or unset — skip prefix cleanup
+
+See [async record/replay ADR](/refactor/async-record-replay.md).
+
 ## Reconcile contract
 
-For each shadow role (`control-a`, `control-b`, `candidate`), Monarch `CreateOrPatch`es:
+For each shadow role (`control-a`, `control-b`, `candidate`) in **replay** mode, Monarch `CreateOrPatch`es:
 
 | Pod component | Behavior |
 |---------------|----------|
@@ -43,7 +67,7 @@ Per-role ConfigMap `{shadowtest}-{role}-envoy` renders:
    - Apps keep prod egress URLs; iptables redirects :80/:8080 to Envoy `:10001`
 3. **Clusters** — `beru_ext_proc`, `shop_ext_proc`, `local_app`
 
-Shop Deployment env includes `BERU_HTTP_URL` (same host resolution as egress-relay / beru-local) and `SHADOW_TEST_NAME`. HTTP egress reporting is Shop fire-and-forget — not Envoy Lua / `beru_ingest`.
+Shop Deployment env includes `BERU_HTTP_URL` (same host resolution as egress-relay / beru-local), `SHADOW_TEST_NAME`, plus S3/mode env from `spec.storage`. HTTP egress reporting is Shop fire-and-forget — not Envoy Lua / `beru_ingest`.
 
 ## Optional CRD fields
 
@@ -51,6 +75,9 @@ Shop Deployment env includes `BERU_HTTP_URL` (same host resolution as egress-rel
 - `spec.beruIngestAddress` — wire-payload ingest target (default: same host resolution as HTTP above)
 - `spec.samplePercentage` — shared prod sampling gate (1-100, default 100) for all input types. Rule (package `github.com/shadow-diff/sample`): decode the 32-hex W3C trace id to 16 bytes, `V = FNV-1a-64(bytes) & 0xFF`, keep iff `(V*100)<(N*256)`; empty/missing `traceparent` always dropped. Monarch seeds by `inputs[].driver`: HTTP → KaiselRule (ingress and egress); `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). RabbitMQ does not use Kaisel.
 - `spec.maxQPSPerPod` — requests/sec Igris forwards per shadow pod replica (default 50). See Spike Guard below.
+- `spec.mode` — `record` \| `replay` (default `record`)
+- `spec.sessionID` — pin S3 session folder (required resolvable on replay)
+- `spec.storage` — **required** BYOB S3 config (`type`, `bucketName`, `endpoint`, `region`, `credentialsSecretRef`, `retentionPolicy`)
 
 ## Spike Guard (ingress load shedding)
 
@@ -72,9 +99,14 @@ Beru exposes `POST /api/v1/ingest/wire` on `:8080` (`BERU_HTTP_ADDR`). Envelopes
 
 - Envoy mongo_listener → Beru HTTP POST (Phase 2b access log)
 - Ingress migration from `ext_proc` to `beru_ingest`
+- `status.replayState=completed` (no Igris completion API yet)
 
 # Citations
 
 - [ARCHITECTURE_SHIFT.md](/refactor/ARCHITACTURE_SHIFT.md) — telemetry-dependent strategy
+- [async-record-replay.md](/refactor/async-record-replay.md) — S3-backed async Record & Replay ADR
 - [pipeline/monarch/internal/controller/shadowtest_envoy.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_envoy.go) — Envoy YAML generation
 - [pipeline/monarch/internal/controller/shadowtest_resources.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_resources.go) — Deployment patch
+- [pipeline/monarch/internal/controller/shadowtest_replay_trigger.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_replay_trigger.go) — automated replay start
+- [pipeline/monarch/internal/controller/shadowtest_s3_cleanup.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_s3_cleanup.go) — S3 prefix retention finalizer
+- [pipeline/pkg/s3utils/deleter.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/pkg/s3utils/deleter.go) — `DeletePrefix` / `TestKeyPrefix`

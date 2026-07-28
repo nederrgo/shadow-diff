@@ -8,6 +8,7 @@ import (
 
 const (
 	finalizerName = "shadowtest.finalizers.shadow-diff.io"
+	s3Finalizer   = "shadow-diff.io/s3-cleanup"
 
 	labelManagedBy       = "app.kubernetes.io/managed-by"
 	labelShadowTestName  = "shadow-diff.io/shadowtest-name"
@@ -83,6 +84,22 @@ $IPT -t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-port 10001`
 	shopHTTPPort    = int32(8080)
 	envShopGRPCAddr = "SHOP_GRPC_ADDR"
 	envShopHTTPAddr = "SHOP_HTTP_ADDR"
+
+	igrisAdminPort        = int32(9090)
+	envIgrisAdminAddr     = "IGRIS_ADMIN_ADDR"
+	defaultIgrisAdminAddr = ":9090"
+
+	envOperatingMode = "OPERATING_MODE"
+	envS3Bucket      = "S3_BUCKET"
+	envS3Endpoint    = "S3_ENDPOINT"
+	envS3Region      = "S3_REGION"
+	envTestNamespace = "TEST_NAMESPACE"
+	envTestName      = "TEST_NAME"
+	envSessionID     = "SESSION_ID"
+	envAWSAccessKey  = "AWS_ACCESS_KEY_ID"
+	envAWSSecretKey  = "AWS_SECRET_ACCESS_KEY"
+	secretKeyAccess  = "AWS_ACCESS_KEY_ID"
+	secretKeySecret  = "AWS_SECRET_ACCESS_KEY"
 
 	volumeNameLocalBeruData = "beru-sqlite-data"
 )

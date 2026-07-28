@@ -24,7 +24,8 @@ func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.Nam
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if !controllerutil.ContainsFinalizer(&shadowTest, finalizerName) {
+	if !controllerutil.ContainsFinalizer(&shadowTest, finalizerName) &&
+		!controllerutil.ContainsFinalizer(&shadowTest, s3Finalizer) {
 		return ctrl.Result{}, nil
 	}
 
@@ -41,15 +42,20 @@ func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.Nam
 	var ns corev1.Namespace
 	err := r.Get(ctx, types.NamespacedName{Name: shadowNS}, &ns)
 	if apierrors.IsNotFound(err) {
+		if err := r.cleanupS3IfNeeded(ctx, &shadowTest); err != nil {
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
+		}
 		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			var fresh enginev1alpha1.ShadowTest
 			if err := r.Get(ctx, nn, &fresh); err != nil {
 				return client.IgnoreNotFound(err)
 			}
-			if !controllerutil.ContainsFinalizer(&fresh, finalizerName) {
+			if !controllerutil.ContainsFinalizer(&fresh, finalizerName) &&
+				!controllerutil.ContainsFinalizer(&fresh, s3Finalizer) {
 				return nil
 			}
 			base := fresh.DeepCopy()
+			controllerutil.RemoveFinalizer(&fresh, s3Finalizer)
 			controllerutil.RemoveFinalizer(&fresh, finalizerName)
 			return r.Patch(ctx, &fresh, client.MergeFrom(base))
 		}); err != nil {

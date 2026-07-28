@@ -117,7 +117,7 @@ test-all: ## Run Monarch, Beru, Shop, Igris, kaisel, igris-rabbitmq, egress-rela
 	@$(MAKE) -C $(KAISEL_DIR) test
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
-.PHONY: test-bats test-bats-integration test-bats-e2e test-bats-kaisel
+.PHONY: test-bats test-bats-integration test-bats-e2e test-bats-kaisel test-bats-record
 test-bats-integration: ## Bats integration suite (one ShadowTest per .bats file).
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh integration
@@ -129,6 +129,10 @@ test-bats-e2e: ## Bats E2E suite (shared env per file, multi-@test).
 test-bats-kaisel: ## Kaisel eBPF capture E2E test (requires root + cluster + pipeline/kaisel/bin/kaisel).
 	@chmod +x testing/bats/run-one.sh
 	@./testing/bats/run-one.sh e2e/kaisel-capture/kaisel_capture.bats
+
+test-bats-record: ## Record-mode S3 capture E2E (MinIO + Kaisel; not in test-bats-e2e until fixtures gain storage).
+	@chmod +x testing/bats/run-one.sh
+	@./testing/bats/run-one.sh e2e/record/record_http.bats
 
 test-bats: ## Run all Bats integration + E2E suites.
 	@chmod +x testing/bats/run.sh

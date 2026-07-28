@@ -14,6 +14,23 @@ spec:
   servicePort: 8080
   applicationPort: 8081
   beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
+  # record (default) | replay. Record captures to S3 without ABC pods; replay
+  # runs ABC against a pinned session. Bats fixtures that omit mode/storage
+  # must be updated to match this contract.
+  mode: record
+  # sessionID: session-...   # required for replay (or set status.currentSessionID)
+  # Required BYOB S3 storage. Local MinIO is provisioned by
+  # ./testing/tools/e2e-reset-minikube.sh (not by Monarch). Credentials Secret
+  # shadow-diff-s3 is created in this namespace by that script; Monarch copies
+  # it into the shadow namespace for pod secretKeyRef.
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain
   # Optional: Igris listener ports (default: servicePort → http)
   # inputs:
   #   - port: 8080

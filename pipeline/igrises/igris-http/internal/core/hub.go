@@ -11,21 +11,24 @@ import (
 
 	"github.com/shadow-diff/igris/internal/config"
 	"github.com/shadow-diff/igris/internal/driver"
+	"github.com/shadow-diff/s3utils"
 )
 
 // Hub is the protocol-agnostic Igris core.
 type Hub struct {
-	HTTPTargets    []Target
-	TCPHosts       []config.TargetHost
-	Pool           *Pool
-	Log            *slog.Logger
-	DialTimeout    time.Duration
-	IdleTimeout    time.Duration
-	MaxTCPConns    int
+	HTTPTargets   []Target
+	TCPHosts      []config.TargetHost
+	Pool          *Pool
+	Log           *slog.Logger
+	DialTimeout   time.Duration
+	IdleTimeout   time.Duration
+	MaxTCPConns   int
+	OperatingMode string
+	Uploader      *s3utils.BatchUploader
 
-	pendingAtomic   sync.WaitGroup
-	pendingStreams  sync.WaitGroup
-	streamSem       chan struct{}
+	pendingAtomic  sync.WaitGroup
+	pendingStreams sync.WaitGroup
+	streamSem      chan struct{}
 }
 
 // NewHub builds a hub from configuration.
@@ -38,23 +41,51 @@ func NewHub(cfg config.Config, log *slog.Logger) *Hub {
 		targets[i] = Target{Name: t.Name, BaseURL: t.BaseURL}
 	}
 	h := &Hub{
-		HTTPTargets: targets,
-		TCPHosts:    cfg.TargetHosts(),
-		Pool:        NewPool(cfg.WorkerPoolSize),
-		Log:         log,
-		DialTimeout: cfg.TCPDialTimeout,
-		IdleTimeout: cfg.TCPIdleTimeout,
-		MaxTCPConns: cfg.MaxTCPConns,
+		HTTPTargets:   targets,
+		TCPHosts:      cfg.TargetHosts(),
+		Pool:          NewPool(cfg.WorkerPoolSize),
+		Log:           log,
+		DialTimeout:   cfg.TCPDialTimeout,
+		IdleTimeout:   cfg.TCPIdleTimeout,
+		MaxTCPConns:   cfg.MaxTCPConns,
+		OperatingMode: cfg.OperatingMode,
 	}
 	h.streamSem = make(chan struct{}, cfg.MaxTCPConns)
 	return h
 }
 
 // HandleAtomic runs the driver pipeline and submits multicast work to the pool.
+// In record mode it buffers the ingress capture to S3 and skips shadow multicast.
 func (h *Hub) HandleAtomic(d driver.AtomicDriver, sess driver.Session) error {
 	meta, err := d.ParseMetadata(sess)
 	if err != nil {
 		return err
+	}
+
+	if h.OperatingMode == s3utils.ModeRecord && h.Uploader != nil {
+		if early, ok := d.RespondEarly(meta); ok {
+			if err := driver.WriteEarly(sess, early); err != nil {
+				return err
+			}
+		}
+		capturer, ok := d.(driver.IngressCapturer)
+		if !ok {
+			return fmt.Errorf("record mode unsupported for driver %s", d.Type())
+		}
+		rec, err := capturer.CaptureIngress(sess, meta)
+		if err != nil {
+			return err
+		}
+		if err := h.Uploader.Add(rec); err != nil {
+			return err
+		}
+		h.Log.Info("ingress recorded",
+			"trace_id", meta.TraceID,
+			"method", meta.Fields["method"],
+			"path", meta.Fields["path"],
+			"driver", d.Type(),
+		)
+		return nil
 	}
 
 	msg, err := d.Transform(sess, meta)

@@ -1,0 +1,28 @@
+# Record-mode ShadowTest for S3 capture E2E.
+# Prod stack: reuse fixtures/e2e/kaisel-capture/prod-target.yaml (egress-test-app).
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-record-http
+  namespace: default
+spec:
+  targetDeployment: kaisel-capture-prod
+  targetNamespace: default
+
+  mode: record
+
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain
+
+  # Used when mode=replay; unused in record but required by CRD shape.
+  oldImage: egress-test-app:dev
+  newImage: egress-test-app:dev
+  servicePort: 8080
+  applicationPort: 8080
+  samplePercentage: 100

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -8,8 +9,10 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/shadow-diff/s3utils"
 	"google.golang.org/grpc"
 
 	"github.com/shadow-diff/shop/internal/api"
@@ -32,12 +35,62 @@ func main() {
 	mocks := replay.NewMockStore()
 
 	httpSrv := &api.Server{Log: log, Mocks: mocks}
+	httpSrv.Ready.Store(true)
+
+	mode := s3utils.OperatingMode()
+	var uploader *s3utils.BatchUploader
+
+	switch mode {
+	case s3utils.ModeRecord:
+		cfg, err := s3utils.ConfigFromEnv(s3utils.DataTypeEgress)
+		if err != nil {
+			slog.Error("record mode S3 config", "err", err)
+			os.Exit(1)
+		}
+		uploader, err = s3utils.NewBatchUploader(context.Background(), cfg, log)
+		if err != nil {
+			slog.Error("record mode S3 uploader", "err", err)
+			os.Exit(1)
+		}
+		httpSrv.Uploader = uploader
+		log.Info("Shop operating mode: record", "bucket", cfg.Bucket, "prefix", cfg.ObjectKeyPrefix())
+
+	case s3utils.ModeReplay:
+		httpSrv.Ready.Store(false)
+		log.Info("Shop operating mode: replay (preloading egress mocks)")
+
+	default:
+		log.Info("Shop operating mode: live")
+	}
+
 	go func() {
 		if err := httpSrv.Start(httpAddr); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server stopped", "err", err)
 			os.Exit(1)
 		}
 	}()
+
+	if mode == s3utils.ModeReplay {
+		cfg, err := s3utils.ConfigFromEnv(s3utils.DataTypeEgress)
+		if err != nil {
+			slog.Error("replay mode S3 config", "err", err)
+			os.Exit(1)
+		}
+		reader, err := s3utils.NewS3Reader(context.Background(), cfg)
+		if err != nil {
+			slog.Error("replay mode S3 reader", "err", err)
+			os.Exit(1)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		n, err := replay.PreloadFromS3(ctx, reader, mocks, log)
+		cancel()
+		if err != nil {
+			slog.Error("replay egress preload failed", "err", err)
+			os.Exit(1)
+		}
+		httpSrv.Ready.Store(true)
+		log.Info("Shop egress mocks ready", "loaded", n, "prefix", cfg.ObjectKeyPrefix())
+	}
 
 	extProc := &envoyextproc.Server{
 		Mocks:          mocks,
@@ -70,6 +123,17 @@ func main() {
 		defer wg.Done()
 		grpcSrv.GracefulStop()
 	}()
+	if uploader != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := uploader.Close(ctx); err != nil {
+				slog.Error("S3 uploader close", "err", err)
+			}
+		}()
+	}
 	wg.Wait()
 }
 

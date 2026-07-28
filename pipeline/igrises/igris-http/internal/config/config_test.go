@@ -32,6 +32,44 @@ func TestValidate(t *testing.T) {
 	}{
 		{name: "valid", cfg: validCfg()},
 		{
+			name: "record mode without targets",
+			cfg: func() Config {
+				c := validCfg()
+				c.OperatingMode = "record"
+				c.ControlAURL = ""
+				c.ControlBURL = ""
+				c.CandidateURL = ""
+				c.ControlAAddr = ""
+				c.ControlBAddr = ""
+				c.CandidateAddr = ""
+				return c
+			}(),
+		},
+		{
+			name: "replay mode without addrs",
+			cfg: func() Config {
+				c := validCfg()
+				c.OperatingMode = "replay"
+				c.ControlAAddr = ""
+				c.ControlBAddr = ""
+				c.CandidateAddr = ""
+				return c
+			}(),
+		},
+		{
+			name: "replay mode missing url",
+			cfg: func() Config {
+				c := validCfg()
+				c.OperatingMode = "replay"
+				c.ControlAURL = ""
+				c.ControlAAddr = ""
+				c.ControlBAddr = ""
+				c.CandidateAddr = ""
+				return c
+			}(),
+			wantErr: true,
+		},
+		{
 			name: "missing url",
 			cfg: func() Config {
 				c := validCfg()
@@ -176,5 +214,17 @@ func TestNormalizeDriver(t *testing.T) {
 	}
 	if got := normalizeDriver("tcp_stream", ""); got != "tcp_stream" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestFirstEnvPrefersShadowURL(t *testing.T) {
+	t.Setenv("SHADOW_CONTROL_A_URL", "http://shadow-a:8888")
+	t.Setenv("CONTROL_A_URL", "http://control-a:8888")
+	if got := firstEnv("SHADOW_CONTROL_A_URL", "CONTROL_A_URL"); got != "http://shadow-a:8888" {
+		t.Fatalf("got %q", got)
+	}
+	t.Setenv("SHADOW_CONTROL_A_URL", "")
+	if got := firstEnv("SHADOW_CONTROL_A_URL", "CONTROL_A_URL"); got != "http://control-a:8888" {
+		t.Fatalf("fallback got %q", got)
 	}
 }

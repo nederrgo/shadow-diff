@@ -4,7 +4,7 @@ title: Bats-Core Modular Testing Framework
 description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, settlement-based Beru assertions, Jest-like reporter for BATS_PARALLEL_JOBS=1, and idempotent platform bootstrap.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats
 tags: [infrastructure, testing, bats, e2e, integration, monarch, beru]
-timestamp: 2026-07-26T13:30:00Z
+timestamp: 2026-07-28T16:00:00Z
 ---
 
 # Bats-Core Modular Testing Framework
@@ -22,7 +22,7 @@ Shadow-Diff E2E validation uses **bats-core** under [`testing/bats/`](https://gi
 
 **CI optimization:** Multiple `@test` blocks share one ShadowTest CR. Phase 4 runs in `teardown_file` only — not after each test.
 
-**Exception — lifecycle suite:** `integration/monarch/lifecycle.bats` apply/deletes the ShadowTest **inside each `@test`** (delete/recreate is the behavior under test).
+**Mode stack suites:** `lifecycle_record.bats` / `lifecycle_replay.bats` apply once in `setup_file`, assert mode-specific Deployments / KaiselRule / `OPERATING_MODE`, then delete after Ready in the last `@test`.
 
 ## Directory layout
 
@@ -103,7 +103,8 @@ make test-bats
 |------|----------|
 | `monarch/http_input.bats` | HTTP input stack Ready (igris-http, KaiselRule, roles, deps) |
 | `monarch/ambiguous_ports.bats` | Multi-port target → `Failed` with `applicationPort` message |
-| `monarch/lifecycle.bats` | Delete mid-bring-up, re-apply while deleting, recreate → Ready, delete after Ready |
+| `monarch/lifecycle_record.bats` | `mode=record` stack: KaiselRule + igris + shop, no ABC; delete after Ready |
+| `monarch/lifecycle_replay.bats` | `mode=replay` stack: ABC + igris + shop, no KaiselRule, `replayState=started` |
 | `monarch/deps_update.bats` | Live `spec.dependencies` add → dep Deployments + shadow app pod rollout with injected env |
 | `mongo_egress.bats` | Mongo egress path (integration) |
 

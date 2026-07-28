@@ -36,3 +36,19 @@ type AtomicDriver interface {
 	Transform(sess Session, meta Metadata) (payload.MulticastMessage, error)
 	RespondEarly(meta Metadata) (EarlyResponse, bool)
 }
+
+// IngressCapture is the JSON-serializable shape written to S3 in record mode.
+type IngressCapture struct {
+	Traceparent string            `json:"traceparent"`
+	TraceID     string            `json:"trace_id"`
+	Method      string            `json:"method"`
+	Path        string            `json:"path"`
+	RequestURI  string            `json:"request_uri"`
+	Headers     map[string]string `json:"headers"`
+	Body        []byte            `json:"body"`
+}
+
+// IngressCapturer builds an S3 ingress record from a session (HTTP driver).
+type IngressCapturer interface {
+	CaptureIngress(sess Session, meta Metadata) (IngressCapture, error)
+}

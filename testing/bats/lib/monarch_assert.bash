@@ -293,3 +293,49 @@ monarch_dump_diagnostics() {
   done < <(kubectl get pods -n "$shadow_ns" \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
 }
+
+# Assert no control-a / control-b / candidate Deployments exist (record mode).
+# Usage: monarch_assert_no_abc_roles <shadow_ns>
+monarch_assert_no_abc_roles() {
+  local shadow_ns="$1"
+  local abc
+  abc=$(kubectl get deploy -n "$shadow_ns" -o name 2>/dev/null \
+    | grep -E 'control-a|control-b|candidate' || true)
+  if [[ -n "$abc" ]]; then
+    echo "FAIL: unexpected ABC Deployments in ${shadow_ns}:" >&2
+    echo "$abc" | sed 's/^/  /' >&2
+    return 1
+  fi
+  return 0
+}
+
+# Assert KaiselRule is absent (replay mode GC).
+# Usage: monarch_assert_no_kaisel_rule <shadowtest_name> [namespace]
+monarch_assert_no_kaisel_rule() {
+  local name="$1" ns="${2:-default}"
+  if kubectl get kaiselrule "kaisel-${name}" -n "$ns" >/dev/null 2>&1; then
+    echo "FAIL: KaiselRule kaisel-${name} still present in ${ns} (want absent)" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Assert Shop + Igris Deployments have OPERATING_MODE=<mode>.
+# Usage: monarch_assert_operating_mode <shadow_ns> <shadowtest_name> <record|replay>
+monarch_assert_operating_mode() {
+  local shadow_ns="$1" shadowtest="$2" want="$3"
+  local op_igris op_shop
+  op_igris=$(kubectl get deploy "${shadowtest}-igris" -n "$shadow_ns" \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="OPERATING_MODE")].value}')
+  op_shop=$(kubectl get deploy shop -n "$shadow_ns" \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="OPERATING_MODE")].value}')
+  [[ "$op_igris" == "$want" ]] || {
+    echo "FAIL: igris OPERATING_MODE=${op_igris}, want ${want}" >&2
+    return 1
+  }
+  [[ "$op_shop" == "$want" ]] || {
+    echo "FAIL: shop OPERATING_MODE=${op_shop}, want ${want}" >&2
+    return 1
+  }
+  return 0
+}

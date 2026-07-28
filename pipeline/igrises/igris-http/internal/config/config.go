@@ -51,14 +51,16 @@ type Config struct {
 	MaxConcurrency int
 	TCPDialTimeout time.Duration
 	TCPIdleTimeout time.Duration
+	OperatingMode  string // live | record | replay (default live)
+	AdminAddr      string // HTTP admin (replay trigger); default :9090
 }
 
 // Load reads configuration from the environment, validates it, and exits on failure.
 func Load() Config {
 	cfg := Config{
-		ControlAURL:    os.Getenv("CONTROL_A_URL"),
-		ControlBURL:    os.Getenv("CONTROL_B_URL"),
-		CandidateURL:   os.Getenv("CANDIDATE_URL"),
+		ControlAURL:    firstEnv("SHADOW_CONTROL_A_URL", "CONTROL_A_URL"),
+		ControlBURL:    firstEnv("SHADOW_CONTROL_B_URL", "CONTROL_B_URL"),
+		CandidateURL:   firstEnv("SHADOW_CANDIDATE_URL", "CANDIDATE_URL"),
 		ControlAAddr:   os.Getenv("CONTROL_A_ADDR"),
 		ControlBAddr:   os.Getenv("CONTROL_B_ADDR"),
 		CandidateAddr:  os.Getenv("CANDIDATE_ADDR"),
@@ -66,6 +68,8 @@ func Load() Config {
 		MaxBodySize:    defaultMaxBodySize,
 		TCPDialTimeout: defaultTCPDialTimeout,
 		TCPIdleTimeout: defaultTCPIdleTimeout,
+		OperatingMode:  operatingModeFromEnv(),
+		AdminAddr:      envOr("IGRIS_ADMIN_ADDR", ":9090"),
 	}
 	cfg.WorkerPoolSize = workerPoolSizeFromEnv()
 	cfg.MaxTCPConns = intFromEnv("IGRIS_MAX_TCP_CONNS", defaultMaxTCPConns)
@@ -213,30 +217,49 @@ func normalizeDriver(driver, addon string) string {
 
 // Validate checks target URLs, hosts, and listener definitions.
 func (c Config) Validate() error {
-	targets := []struct {
-		name string
-		raw  string
-	}{
-		{"CONTROL_A_URL", c.ControlAURL},
-		{"CONTROL_B_URL", c.ControlBURL},
-		{"CANDIDATE_URL", c.CandidateURL},
-	}
-	for _, t := range targets {
-		if err := validateTargetURL(t.name, t.raw); err != nil {
-			return err
+	switch c.OperatingMode {
+	case "record":
+		// Record mode does not multicast; shadow targets optional.
+	case "replay":
+		targets := []struct {
+			name string
+			raw  string
+		}{
+			{"SHADOW_CONTROL_A_URL/CONTROL_A_URL", c.ControlAURL},
+			{"SHADOW_CONTROL_B_URL/CONTROL_B_URL", c.ControlBURL},
+			{"SHADOW_CANDIDATE_URL/CANDIDATE_URL", c.CandidateURL},
 		}
-	}
-	addrs := []struct {
-		name string
-		raw  string
-	}{
-		{"CONTROL_A_ADDR", c.ControlAAddr},
-		{"CONTROL_B_ADDR", c.ControlBAddr},
-		{"CANDIDATE_ADDR", c.CandidateAddr},
-	}
-	for _, t := range addrs {
-		if err := validateTargetHost(t.name, t.raw); err != nil {
-			return err
+		for _, t := range targets {
+			if err := validateTargetURL(t.name, t.raw); err != nil {
+				return err
+			}
+		}
+	default: // live
+		targets := []struct {
+			name string
+			raw  string
+		}{
+			{"CONTROL_A_URL", c.ControlAURL},
+			{"CONTROL_B_URL", c.ControlBURL},
+			{"CANDIDATE_URL", c.CandidateURL},
+		}
+		for _, t := range targets {
+			if err := validateTargetURL(t.name, t.raw); err != nil {
+				return err
+			}
+		}
+		addrs := []struct {
+			name string
+			raw  string
+		}{
+			{"CONTROL_A_ADDR", c.ControlAAddr},
+			{"CONTROL_B_ADDR", c.ControlBAddr},
+			{"CANDIDATE_ADDR", c.CandidateAddr},
+		}
+		for _, t := range addrs {
+			if err := validateTargetHost(t.name, t.raw); err != nil {
+				return err
+			}
 		}
 	}
 	for _, l := range c.Listeners {
@@ -259,6 +282,30 @@ func (c Config) Validate() error {
 		return fmt.Errorf("TCP timeouts must be positive")
 	}
 	return nil
+}
+
+func operatingModeFromEnv() string {
+	m := strings.ToLower(strings.TrimSpace(os.Getenv("OPERATING_MODE")))
+	if m == "" {
+		return "live"
+	}
+	return m
+}
+
+func firstEnv(keys ...string) string {
+	for _, k := range keys {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func envOr(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func validateTargetURL(name, raw string) error {

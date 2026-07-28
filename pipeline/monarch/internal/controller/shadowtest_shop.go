@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -78,6 +79,15 @@ func (r *ShadowTestReconciler) reconcileShop(
 		},
 	}
 	replicas := int32(1)
+	sessionID := strings.TrimSpace(st.Status.CurrentSessionID)
+	shopEnv := []corev1.EnvVar{
+		{Name: envShopGRPCAddr, Value: fmt.Sprintf(":%d", shopGRPCPort)},
+		{Name: envShopHTTPAddr, Value: fmt.Sprintf(":%d", shopHTTPPort)},
+		{Name: envBeruHTTPURL, Value: fmt.Sprintf("http://%s", beruHTTPHostFor(st, shadowNS))},
+		{Name: envShadowTestName, Value: st.Name},
+	}
+	shopEnv = append(shopEnv, storageEnvVars(st, sessionID)...)
+
 	_, err := ctrl.CreateOrPatch(ctx, r.Client, deploy, func() error {
 		deploy.Labels = labels
 		deploy.Spec.Replicas = &replicas
@@ -91,12 +101,7 @@ func (r *ShadowTestReconciler) reconcileShop(
 				{Name: "grpc", ContainerPort: shopGRPCPort, Protocol: corev1.ProtocolTCP},
 				{Name: "http", ContainerPort: shopHTTPPort, Protocol: corev1.ProtocolTCP},
 			},
-			Env: []corev1.EnvVar{
-				{Name: envShopGRPCAddr, Value: fmt.Sprintf(":%d", shopGRPCPort)},
-				{Name: envShopHTTPAddr, Value: fmt.Sprintf(":%d", shopHTTPPort)},
-				{Name: envBeruHTTPURL, Value: fmt.Sprintf("http://%s", beruHTTPHostFor(st, shadowNS))},
-				{Name: envShadowTestName, Value: st.Name},
-			},
+			Env: shopEnv,
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("50m"),

@@ -97,7 +97,7 @@ fi
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   echo "==> Build container images (minikube docker daemon)"
   if [[ "${MONARCH_NO_CACHE:-0}" == "1" ]]; then
-    docker build --no-cache -t "$MONARCH_IMG" "$REPO/pipeline/monarch"
+    docker build --no-cache -f "$REPO/pipeline/monarch/Dockerfile" -t "$MONARCH_IMG" "$REPO/pipeline"
   else
     make -C pipeline/monarch docker-build IMG="$MONARCH_IMG"
   fi
@@ -138,6 +138,17 @@ e2e_reset_deploy_stack() {
     kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
   fi
   kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
+
+  # Local MinIO fixture for ShadowTest.spec.storage (BYOB). Not managed by Monarch.
+  echo "==> MinIO (monarch-system, BYOB local fixture)"
+  kubectl apply -f "$REPO/testing/bats/manifests/minio/deployment.yaml"
+  kubectl apply -f "$REPO/testing/bats/manifests/minio/service.yaml"
+  kubectl apply -f "$REPO/testing/bats/manifests/minio/credentials-secret.yaml"
+  kubectl rollout status deployment/minio -n monarch-system --timeout=180s
+  # Job name is fixed; delete any prior run so apply can recreate.
+  kubectl delete job minio-create-bucket -n monarch-system --ignore-not-found --wait=true
+  kubectl apply -f "$REPO/testing/bats/manifests/minio/bucket-job.yaml"
+  kubectl wait --for=condition=complete job/minio-create-bucket -n monarch-system --timeout=120s
 
   # beru-system is optional for ShadowTests (beru-local), but bats platform health
   # expects the Deployment; deploy YAML defaults to beru:latest — pin to BERU_IMG.
@@ -212,6 +223,7 @@ PHASE:.status.phase,KAISEL:.status.kaiselPhase,NS:.status.shadowNamespace,CAPTUR
   echo "  Kaisel DaemonSet: kaisel-system (image ${KAISEL_IMG})"
   echo "  Kaisel ingress:   KaiselRule kaisel-${SHADOWTEST} -> igris in ${SHADOW_NS}"
   echo "  Beru (local):     beru-local.${SHADOW_NS}.svc.cluster.local:50051"
+  echo "  MinIO (local):    minio-service.monarch-system.svc.cluster.local:9000 (bucket shadow-diff-local)"
   echo ""
   echo "Run bats tests:     make test-bats-e2e"
   echo "  Kaisel route E2E: make test-bats-kaisel"

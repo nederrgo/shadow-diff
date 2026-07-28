@@ -52,6 +52,18 @@ platform_health_matrix() {
   [[ "$ok" == "1" ]]
 }
 
+# Monarch CRD + controller only (used to decide Kaisel-only heal vs full rebuild).
+_platform_monarch_healthy() {
+  kubectl get crd shadowtests.engine.shadow-diff.io >/dev/null 2>&1 || return 1
+  kubectl get deploy monarch-controller-manager -n monarch-system >/dev/null 2>&1 || return 1
+  kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=30s >/dev/null 2>&1
+}
+
+_platform_kaisel_healthy() {
+  kubectl get daemonset kaisel -n kaisel-system >/dev/null 2>&1 || return 1
+  kubectl rollout status daemonset/kaisel -n kaisel-system --timeout=30s >/dev/null 2>&1
+}
+
 platform_bootstrap_install() {
   echo "==> [bats] platform bootstrap"
   bats_source_e2e_helpers
@@ -78,11 +90,30 @@ platform_bootstrap_install() {
   kaisel_daemonset_wait_ready 120
 }
 
+# Redeploy Kaisel only (e.g. after record/kaisel-capture teardown_file).
+_platform_heal_kaisel() {
+  # shellcheck source=testing/bats/lib/kaisel.bash
+  source "${REPO}/testing/bats/lib/kaisel.bash"
+  echo "==> [bats] heal Kaisel DaemonSet only (${KAISEL_IMG:-kaisel:dev})"
+  kaisel_daemonset_deploy
+  kaisel_daemonset_wait_ready 120
+}
+
 _ensure_platform_ready_body() {
   if bats_platform_state_valid && platform_health_matrix; then
     echo "==> [bats] platform already healthy (skip install)"
     return 0
   fi
+
+  # Suites that tear down Kaisel (record/kaisel-capture) leave Monarch healthy.
+  # Rebuilding every image is unnecessary and often times out setup_file.
+  if bats_platform_state_valid && _platform_monarch_healthy && ! _platform_kaisel_healthy; then
+    _platform_heal_kaisel || return 1
+    platform_health_matrix || return 1
+    date +%s >"${BATS_STATE_DIR}/platform.health"
+    return 0
+  fi
+
   build_test_images_if_needed || return 1
   load_test_images_if_needed || return 1
   platform_bootstrap_install || return 1

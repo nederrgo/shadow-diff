@@ -213,4 +213,37 @@ func (d *Driver) RespondEarly(meta driver.Metadata) (driver.EarlyResponse, bool)
 	}, true
 }
 
+func (d *Driver) CaptureIngress(sess driver.Session, meta driver.Metadata) (driver.IngressCapture, error) {
+	s, ok := sess.(*Session)
+	if !ok {
+		return driver.IngressCapture{}, fmt.Errorf("invalid HTTP session type")
+	}
+	headers := flattenHeaders(s.Request.Header)
+	delete(headers, "Authorization")
+	delete(headers, "Cookie")
+	delete(headers, "Proxy-Authorization")
+	headers[trace.HeaderTraceparent] = meta.Traceparent
+	return driver.IngressCapture{
+		Traceparent: meta.Traceparent,
+		TraceID:     meta.TraceID,
+		Method:      s.Request.Method,
+		Path:        s.Request.URL.Path,
+		RequestURI:  s.Request.URL.RequestURI(),
+		Headers:     headers,
+		Body:        s.Body,
+	}, nil
+}
+
+func flattenHeaders(h http.Header) map[string]string {
+	out := make(map[string]string, len(h))
+	for k, vals := range h {
+		if len(vals) == 0 {
+			continue
+		}
+		out[k] = vals[0]
+	}
+	return out
+}
+
 var _ driver.AtomicDriver = (*Driver)(nil)
+var _ driver.IngressCapturer = (*Driver)(nil)

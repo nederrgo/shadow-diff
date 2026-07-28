@@ -11,6 +11,18 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-28]
 ### Added
+* 'testing/bats/lib/platform.bash': Heal Kaisel DaemonSet without full image rebuild when Monarch is already healthy
+* 'testing/bats/integration/monarch': Split lifecycle into lifecycle_record.bats + lifecycle_replay.bats (mode stack shape)
+* 'pipeline/shop/internal/api': Return mock hash on record-mode POST /v1/record_egress so Kaisel can log Envoy keys
+* 'testing/bats/e2e/record,lib/minio.bash': Add record-mode S3 bats suite (MinIO ingress/egress object asserts) + make test-bats-record
+* 'testing/bats/manifests/e2e-shadowtest.yaml': Add required mode=record and MinIO storage so e2e-reset ShadowTest applies under S3 CRD
+* 'pipeline/monarch,pipeline/pkg/s3utils': Phase 4 complete — auto POST Igris :9090/v1/replay/start → replayState=started; shadow-diff.io/s3-cleanup deletes shadow-diff/<ns>/<name>/ prefix when retentionPolicy=Delete (BYOB bucket retained)
+* 'pipeline/monarch + docs': Phase 4 Steps 1-2 — spec.mode record|replay, required storage, S3 env/secret sync for Igris/Shop, Igris admin :9090, mode GC (record drops ABC; replay drops KaiselRule)
+* 'pipeline/igrises/igris-http,pipeline/pkg/s3utils': Phase 3 complete — igris-http ingress replay engine (S3 preload + POST /v1/replay/start multicast)
+* 'pipeline/pkg/s3utils,pipeline/shop': Phase 3 partial — S3Reader + Shop OPERATING_MODE=replay egress preload with Ready-gated /healthz
+* 'pipeline/pkg/s3utils,pipeline/shop,pipeline/igrises/igris-http': Phase 2 record-mode S3 BatchUploader; Shop egress + igris-http ingress writers
+* 'pipeline/monarch/api/v1alpha1,testing/bats/manifests/minio': Add ShadowTest spec.storage (S3 BYOB), validateStorage, and MinIO via e2e-reset-minikube.sh
+* '/docs/refactor/async-record-replay.md': Added accepted ADR for asynchronous S3-backed Record & Replay pivot; added /docs/refactor/index.md mapping
 * 'pipeline/kaisel': Tiered eBPF trace gate — bpf_loop gate on kernel 5.17+, ungated build with user-space sampling on 5.2+, explicit refusal below; tier chosen by load attempt not version string; added kernel-compatibility guide and opt-in kaisel_ebpf_gate_tier gauge
 
 ## [2026-07-27]

@@ -8,6 +8,7 @@ use (
 	./pipeline/kaisel
 	./pipeline/monarch
 	./pipeline/pkg/sample
+	./pipeline/pkg/s3utils
 	./pipeline/shadow-soldier
 	./pipeline/shop
 	./testing/example-apps/db-test-app
