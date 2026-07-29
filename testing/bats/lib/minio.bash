@@ -38,6 +38,8 @@ minio_ls_prefix() {
   # Strip leading slash; mc path is local/<bucket>/<key-prefix>
   prefix="${prefix#/}"
 
+  # kubectl run --rm prints 'pod "…" deleted' on stdout — strip that noise so
+  # empty-prefix checks are not false positives.
   kubectl run "$pod" --rm -i --restart=Never -n default \
     --image=minio/mc:latest \
     --env=HOME=/tmp \
@@ -46,8 +48,9 @@ minio_ls_prefix() {
       set -e
       mc alias set local '${MINIO_ENDPOINT}' admin password >/dev/null
       mc ls --recursive \"local/${MINIO_BUCKET}/${prefix}\" 2>/dev/null || true
-    "
+    " 2>/dev/null | grep -vE '^pod ".*" deleted' || true
 }
+
 
 # Poll until mc lists at least one object under prefix.
 # Usage: minio_wait_objects <key_prefix> [timeout_seconds]
@@ -79,6 +82,64 @@ minio_wait_objects() {
     fi
 
     echo "    waiting objects (${elapsed}s/${timeout}s)..."
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+}
+
+# ShadowTest-level prefix (all sessions): shadow-diff/<ns>/<name>/
+# Usage: minio_test_prefix <cr_ns> <test_name>
+minio_test_prefix() {
+  local ns="$1" name="$2"
+  echo "shadow-diff/${ns}/${name}/"
+}
+
+# Write a small object at key (relative to bucket).
+# Usage: minio_put_object <key> [body_string]
+minio_put_object() {
+  local key="$1" body="${2:-retention-marker}"
+  local pod="minio-put-${RANDOM}"
+  key="${key#/}"
+
+  echo "==> [minio] put s3://${MINIO_BUCKET}/${key}"
+  kubectl run "$pod" --rm -i --restart=Never -n default \
+    --image=minio/mc:latest \
+    --env=HOME=/tmp \
+    --env=MC_CONFIG_DIR=/tmp/.mc \
+    --command -- /bin/sh -c "
+      set -e
+      mc alias set local '${MINIO_ENDPOINT}' admin password >/dev/null
+      printf '%s\n' '${body}' | mc pipe \"local/${MINIO_BUCKET}/${key}\"
+    " 2>/dev/null | grep -vE '^pod ".*" deleted' || true
+}
+
+# True if prefix has no listable objects.
+# Usage: minio_prefix_empty <key_prefix>
+minio_prefix_empty() {
+  local prefix="$1" out
+  out="$(minio_ls_prefix "$prefix" 2>/dev/null || true)"
+  [[ -z "$(echo "$out" | grep -v '^$' | grep -viE 'error|unable|fail' || true)" ]]
+}
+
+# Poll until prefix is empty (S3 Delete retention).
+# Usage: minio_wait_empty <key_prefix> [timeout_seconds]
+minio_wait_empty() {
+  local prefix="$1" timeout="${2:-90}"
+  local elapsed=0 out
+
+  echo "==> [minio] wait for empty prefix ${prefix} (timeout=${timeout}s)"
+  while true; do
+    if minio_prefix_empty "$prefix"; then
+      echo "    prefix empty"
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      out="$(minio_ls_prefix "$prefix" 2>/dev/null || true)"
+      echo "FAIL: objects still under ${prefix} after ${timeout}s" >&2
+      echo "${out:-<empty>}" | sed 's/^/      /' >&2
+      return 1
+    fi
+    echo "    waiting empty (${elapsed}s/${timeout}s)..."
     sleep 3
     elapsed=$((elapsed + 3))
   done

@@ -145,5 +145,5 @@ Monarch:
 ## Related
 
 - [/data-plane/kaisel-ebpf.md](/data-plane/kaisel-ebpf.md) — capture daemon, privilege model, control loop
-- [ARCHITECTURE.md](/architecture/ARCHITECTURE.md) — layer stack
+- [ARCHITECTURE.md](/architecture/ARCHITECTURE.md) — record/replay layer stack
 - [pipeline/kaisel/deploy/](https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel/deploy) — RBAC, ConfigMap, DaemonSet

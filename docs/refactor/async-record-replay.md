@@ -109,7 +109,7 @@ This pivot transforms Shadow-Diff from a complex live-monitoring experiment into
 
 ## Citations
 
-* [/architecture/ARCHITECTURE.md](/architecture/ARCHITECTURE.md) — Current live-traffic layer stack (baseline being evolved)
-* [/data-plane/egress-record-replay.md](/data-plane/egress-record-replay.md) — Current Shop/Kaisel egress record/replay path
+* [/architecture/ARCHITECTURE.md](/architecture/ARCHITECTURE.md) — Current record/replay layer stack
+* [/data-plane/egress-record-replay.md](/data-plane/egress-record-replay.md) — Shop/Kaisel egress record/replay path
 * [/refactor/ARCHITACTURE_SHIFT.md](/refactor/ARCHITACTURE_SHIFT.md) — Prior telemetry-dependent architectural pivot
 * [/control-plane/monarch-controller.md](/control-plane/monarch-controller.md) — Monarch reconcile contract

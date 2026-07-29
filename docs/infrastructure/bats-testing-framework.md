@@ -4,7 +4,7 @@ title: Bats-Core Modular Testing Framework
 description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, settlement-based Beru assertions, Jest-like reporter for BATS_PARALLEL_JOBS=1, and idempotent platform bootstrap.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats
 tags: [infrastructure, testing, bats, e2e, integration, monarch, beru]
-timestamp: 2026-07-28T16:00:00Z
+timestamp: 2026-07-29T08:20:00Z
 ---
 
 # Bats-Core Modular Testing Framework
@@ -105,6 +105,8 @@ make test-bats
 | `monarch/ambiguous_ports.bats` | Multi-port target → `Failed` with `applicationPort` message |
 | `monarch/lifecycle_record.bats` | `mode=record` stack: KaiselRule + igris + shop, no ABC; delete after Ready |
 | `monarch/lifecycle_replay.bats` | `mode=replay` stack: ABC + igris + shop, no KaiselRule, `replayState=started` |
+| `monarch/lifecycle_mode_switch.bats` | Live `spec.mode` patch: record→replay removes KaiselRule / adds ABC; replay→record removes ABC / adds KaiselRule |
+| `monarch/lifecycle_s3_retention.bats` | `retentionPolicy=Retain` keeps S3 prefix on CR delete; `Delete` scrubs `shadow-diff/<ns>/<name>/` |
 | `monarch/deps_update.bats` | Live `spec.dependencies` add → dep Deployments + shadow app pod rollout with injected env |
 | `mongo_egress.bats` | Mongo egress path (integration) |
 
@@ -119,7 +121,7 @@ Helpers: `monarch_wait_shadowtest_bringup_started`, `monarch_wait_shadowtest_cle
 | `http_otel_rmq_python.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Python) |
 | `http_otel_rmq_nodejs.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Node.js) |
 | `http_ingress_rmq_go.bats` | HTTP igris ingress → OTel Mongo + RMQ Firehose egress (Go) |
-| `kaisel-capture/kaisel_capture.bats` | Full HTTP route + Kaisel→Shop→Envoy replay→Beru HTTP egress match (`make test-bats-kaisel`) |
+| `kaisel-capture/kaisel_capture.bats` | Record-mode Kaisel capture (+ S3); hybrid tests patch `mode=replay` mid-test for ABC/Shop/Beru (`make test-bats-kaisel`) |
 
 Hybrid suite flow map: [/verification/hybrid-rmq-e2e-flow.md](/verification/hybrid-rmq-e2e-flow.md).  
 HTTP ingress suite flow map: [/verification/http-ingress-e2e-flow.md](/verification/http-ingress-e2e-flow.md).

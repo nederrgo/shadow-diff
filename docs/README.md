@@ -2,10 +2,9 @@
 
 ## Architecture
 
-- [ARCHITECTURE.md](architecture/ARCHITECTURE.md) — system overview and component interactions
-- [FINAL_ARCHITECT.md](architecture/FINAL_ARCHITECT.md) — final architecture notes
-- [ROADMAP.md](architecture/ROADMAP.md) — planned work and milestones
-- [architacture.md](architecture/architacture.md) — supplementary architecture notes
+- [ARCHITECTURE.md](architecture/ARCHITECTURE.md) — current system overview (S3 record/replay)
+- [ARCHITECTURE-OLD.md](architecture/ARCHITECTURE-OLD.md) — historical live-coupled layer stack
+- [architecture/index.md](architecture/index.md) — architecture hub
 
 ## Verification
 

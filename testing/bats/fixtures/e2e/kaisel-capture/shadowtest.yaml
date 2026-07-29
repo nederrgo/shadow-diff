@@ -1,3 +1,5 @@
+# Record-mode ShadowTest for Kaisel eBPF capture E2E.
+# Hybrid tests patch mode=replay mid-test after seeding the S3 session.
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest
 metadata:
@@ -6,7 +8,16 @@ metadata:
 spec:
   targetDeployment: kaisel-capture-prod
   targetNamespace: default
-  # control-a/b use target Deployment image; candidate uses newImage.
+  mode: record
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain
+  # control-a/b use target Deployment image; candidate uses newImage (replay).
   oldImage: egress-test-app:dev
   newImage: egress-test-app:dev
   servicePort: 8080

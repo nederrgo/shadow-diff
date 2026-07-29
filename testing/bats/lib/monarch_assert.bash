@@ -339,3 +339,108 @@ monarch_assert_operating_mode() {
   }
   return 0
 }
+
+# Patch ShadowTest.spec.mode (and optional sessionID for replay).
+# Usage: monarch_patch_mode <name> <ns> <record|replay> [session_id]
+monarch_patch_mode() {
+  local name="$1" ns="$2" mode="$3" session="${4:-}"
+  local patch
+  if [[ "$mode" == "replay" ]]; then
+    [[ -n "$session" ]] || {
+      echo "monarch_patch_mode: session_id required for replay" >&2
+      return 1
+    }
+    patch=$(printf '{"spec":{"mode":"replay","sessionID":"%s"}}' "$session")
+  else
+    patch='{"spec":{"mode":"record"}}'
+  fi
+  echo "==> [monarch] patch ${ns}/${name} mode=${mode}${session:+ session=${session}}"
+  kubectl patch shadowtest "$name" -n "$ns" --type=merge -p "$patch"
+}
+
+# Wait until KaiselRule is gone (replay GC).
+# Usage: monarch_wait_no_kaisel_rule <shadowtest_name> [namespace] [timeout_seconds]
+monarch_wait_no_kaisel_rule() {
+  local name="$1" ns="${2:-default}" timeout="${3:-120}"
+  local elapsed=0
+  echo "==> [monarch] wait KaiselRule kaisel-${name} absent"
+  while true; do
+    if ! kubectl get kaiselrule "kaisel-${name}" -n "$ns" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "FAIL: KaiselRule kaisel-${name} still present after ${timeout}s" >&2
+      return 1
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+}
+
+# Wait until no ABC Deployments remain (record GC).
+# Usage: monarch_wait_no_abc_roles <shadow_ns> [timeout_seconds]
+monarch_wait_no_abc_roles() {
+  local shadow_ns="$1" timeout="${2:-120}"
+  local elapsed=0 abc
+  echo "==> [monarch] wait ABC roles gone in ${shadow_ns}"
+  while true; do
+    abc=$(kubectl get deploy -n "$shadow_ns" -o name 2>/dev/null \
+      | grep -E 'control-a|control-b|candidate' || true)
+    if [[ -z "$abc" ]]; then
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "FAIL: ABC Deployments still present after ${timeout}s:" >&2
+      echo "$abc" | sed 's/^/  /' >&2
+      return 1
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+}
+
+# Wait until Shop + Igris Deployments show OPERATING_MODE=<mode>.
+# Usage: monarch_wait_operating_mode <shadow_ns> <shadowtest> <record|replay> [timeout]
+monarch_wait_operating_mode() {
+  local shadow_ns="$1" shadowtest="$2" want="$3" timeout="${4:-180}"
+  local elapsed=0
+  echo "==> [monarch] wait OPERATING_MODE=${want} on igris+shop"
+  while true; do
+    if monarch_assert_operating_mode "$shadow_ns" "$shadowtest" "$want" 2>/dev/null; then
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      monarch_assert_operating_mode "$shadow_ns" "$shadowtest" "$want"
+      return 1
+    fi
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+}
+
+# Wait until Monarch has triggered Igris replay (status.replayState=started).
+# OPERATING_MODE=replay on the Deployment spec is not enough — maybeTriggerReplay
+# runs on a later reconcile after roll-ready.
+# Usage: monarch_wait_replay_started <name> [namespace] [timeout_seconds]
+monarch_wait_replay_started() {
+  local name="$1" ns="${2:-default}" timeout="${3:-180}"
+  local elapsed=0 replay
+  echo "==> [monarch] wait replayState=started on ${ns}/${name}"
+  while true; do
+    replay=$(kubectl get shadowtest "$name" -n "$ns" \
+      -o jsonpath='{.status.replayState}' 2>/dev/null || true)
+    if [[ "$replay" == "started" ]]; then
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "FAIL: replayState=${replay:-<empty>}, want started after ${timeout}s" >&2
+      kubectl get shadowtest "$name" -n "$ns" \
+        -o jsonpath='phase={.status.phase} kaisel={.status.kaiselPhase} replay={.status.replayState} msg={.status.message}{"\n"}' >&2 || true
+      return 1
+    fi
+    echo "    waiting replayState (got=${replay:-<empty>}) (${elapsed}s/${timeout}s)..."
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+}
+

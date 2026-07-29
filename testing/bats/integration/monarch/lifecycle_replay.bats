@@ -34,6 +34,8 @@ setup_file() {
   kubectl wait --for=condition=Available deployment/shop \
     -n "$SHADOW_NS" --timeout=180s
   monarch_wait_all_roles_running "$SHADOW_NS" "$SHADOWTEST" 180
+  monarch_wait_operating_mode "$SHADOW_NS" "$SHADOWTEST" replay 180
+  monarch_wait_replay_started "$SHADOWTEST" "$SHADOWTEST_NS" 180
 
   bats_suite_mark SETUP_COMPLETE 1
   bats_write_suite_state
@@ -61,6 +63,7 @@ setup() {
   [[ "$mode" == "replay" ]] || fail "mode=${mode}, want replay"
   [[ "$kaisel" == "Disabled" ]] || fail "kaiselPhase=${kaisel}, want Disabled"
   [[ "$session" == "session-lifecycle-empty" ]] || fail "session=${session}"
+  # setup_file already waited; re-assert so the @test documents the contract.
   [[ "$replay" == "started" ]] || fail "replayState=${replay}, want started"
 }
 

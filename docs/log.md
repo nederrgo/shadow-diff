@@ -9,8 +9,17 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-29]
+### Added
+* 'testing/bats/lib': Poll status.replayState=started after mode switch (fix hybrid flake)
+* 'testing/bats/e2e/kaisel-capture': Migrate suite to record setup + mid-test replay switch for hybrid ABC/Beru tests
+
 ## [2026-07-28]
 ### Added
+* 'docs/architecture/ARCHITECTURE.md': New record/replay system architecture; index hub; ARCHITECTURE-OLD remains historical
+* 'testing/bats/lib/minio.bash': Strip kubectl run --rm noise so empty-prefix checks work for S3 Delete retention
+* 'testing/bats/integration/monarch/lifecycle_s3_retention.bats': Add Retain vs Delete S3 prefix tests on ShadowTest delete
+* 'testing/bats/integration/monarch/lifecycle_mode_switch.bats': Add record↔replay mode-switch GC tests (KaiselRule vs ABC)
 * 'testing/bats/lib/platform.bash': Heal Kaisel DaemonSet without full image rebuild when Monarch is already healthy
 * 'testing/bats/integration/monarch': Split lifecycle into lifecycle_record.bats + lifecycle_replay.bats (mode stack shape)
 * 'pipeline/shop/internal/api': Return mock hash on record-mode POST /v1/record_egress so Kaisel can log Envoy keys
