@@ -4,7 +4,7 @@ title: Monarch Controller — Envoy-Only Shadow Injection
 description: Reconcile contract for record/replay ShadowTests; S3 env; replay trigger; S3 prefix finalizer.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [architecture, control-plane, monarch, envoy, shop, beru, record-replay]
-timestamp: 2026-07-30T16:10:00Z
+timestamp: 2026-07-30T17:20:00Z
 ---
 
 # Monarch Controller — Envoy-Only Shadow Injection
@@ -110,6 +110,8 @@ On terminal failure Monarch:
 3. Leaves the ShadowTest CR in place as an autopsy. Further reconciles are **sticky**: `phase=Failed` means do not recreate the stack
 
 Retry: `kubectl delete shadowtest …` and re-apply. Spec-only edits do not clear Failed.
+
+Teardown unreachable-broker / S3-retry trade-offs: [/control-plane/shadowtest-teardown-edge-cases.md](/control-plane/shadowtest-teardown-edge-cases.md).
 
 ## Beru wire ingest (Plan 2)
 

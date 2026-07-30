@@ -11,6 +11,7 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-30]
 ### Added
+* 'docs/control-plane/shadowtest-teardown-edge-cases.md': ADR for queue delete fail-open + x-expires vs S3 finalizer retry and Failed autopsy
 * 'pipeline/monarch/internal/controller/shadowtest_rabbitmq.go': prod shadow queue x-expires 10m idle TTL leak fail-safe
 * 'testing/bats/integration/monarch/amqp_queue_failure.bats': drop flaky QueueBind integration case; declare autopsy remains; bind covered by unit tests
 * 'pipeline/pkg/{trace,replay},igris-rabbitmq,monarch,bats': igris-rabbitmq dual-mode S3 (record|replay); shared trace/replay pkgs; Monarch storageEnv+admin:9090; replay skips prod queue; AMQP bats record→replay

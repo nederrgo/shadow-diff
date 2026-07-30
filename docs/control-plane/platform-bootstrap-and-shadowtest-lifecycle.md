@@ -4,7 +4,7 @@ title: Platform Bootstrap and ShadowTest Lifecycle
 description: One-time Monarch + Kaisel (+ optional shared Beru) install; record then replay ShadowTest lifecycles; teardown of beru-local with the shadow namespace.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [operations, control-plane, monarch, kaisel, kaiselrule, shadowtest, deployment, record-replay, beru, s3]
-timestamp: 2026-07-30T13:30:00Z
+timestamp: 2026-07-30T17:20:00Z
 ---
 
 # Platform Bootstrap and ShadowTest Lifecycle
@@ -222,6 +222,8 @@ Shared Beru in `beru-system` (if used) is untouched.
 ### Boot failure vs delete
 
 Terminal boot failure tears down KaiselRule + shadow namespace the same way, but **keeps** the CR (`phase=Failed`) and **skips** S3 cleanup / finalizer removal. Retry: delete the CR and re-apply. See [/control-plane/monarch-controller.md](/control-plane/monarch-controller.md).
+
+Teardown edge cases (unreachable prod broker vs unreachable S3, `x-expires` leak fail-safe, why those trade-offs): [/control-plane/shadowtest-teardown-edge-cases.md](/control-plane/shadowtest-teardown-edge-cases.md).
 
 ### Delete race note
 
