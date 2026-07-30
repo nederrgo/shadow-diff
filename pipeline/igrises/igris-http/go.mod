@@ -2,7 +2,11 @@ module github.com/shadow-diff/igris
 
 go 1.26.0
 
-require github.com/shadow-diff/s3utils v0.0.0
+require (
+	github.com/shadow-diff/replay v0.0.0
+	github.com/shadow-diff/s3utils v0.0.0
+	github.com/shadow-diff/trace v0.0.0
+)
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.36.3 // indirect
@@ -26,4 +30,8 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 )
 
-replace github.com/shadow-diff/s3utils => ../../pkg/s3utils
+replace (
+	github.com/shadow-diff/replay => ../../pkg/replay
+	github.com/shadow-diff/s3utils => ../../pkg/s3utils
+	github.com/shadow-diff/trace => ../../pkg/trace
+)

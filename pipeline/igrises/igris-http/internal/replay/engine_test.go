@@ -11,7 +11,7 @@ import (
 
 	"github.com/shadow-diff/igris/internal/driver"
 	"github.com/shadow-diff/igris/internal/payload"
-	"github.com/shadow-diff/igris/internal/trace"
+	"github.com/shadow-diff/trace"
 )
 
 func TestEngineStartMulticastsTraceparentAndRole(t *testing.T) {
@@ -45,8 +45,8 @@ func TestEngineStartMulticastsTraceparentAndRole(t *testing.T) {
 	c := httptest.NewServer(record("candidate"))
 	defer c.Close()
 
-	eng := &Engine{
-		Records: []driver.IngressCapture{
+	eng := NewEngine(
+		[]driver.IngressCapture{
 			{
 				Traceparent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
 				TraceID:     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -63,13 +63,14 @@ func TestEngineStartMulticastsTraceparentAndRole(t *testing.T) {
 				RequestURI:  "/health",
 			},
 		},
-		Targets: []payload.Target{
+		[]payload.Target{
 			{Name: "control-a", BaseURL: a.URL},
 			{Name: "control-b", BaseURL: b.URL},
 			{Name: "candidate", BaseURL: c.URL},
 		},
-		Client: a.Client(),
-	}
+		a.Client(),
+		nil,
+	)
 
 	n, already := eng.Start()
 	if already || n != 2 {
@@ -115,11 +116,12 @@ func TestEngineStartConflictWhileRunning(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	eng := &Engine{
-		Records: []driver.IngressCapture{{Method: "GET", RequestURI: "/x"}},
-		Targets: []payload.Target{{Name: "control-a", BaseURL: srv.URL}},
-		Client:  srv.Client(),
-	}
+	eng := NewEngine(
+		[]driver.IngressCapture{{Method: "GET", RequestURI: "/x"}},
+		[]payload.Target{{Name: "control-a", BaseURL: srv.URL}},
+		srv.Client(),
+		nil,
+	)
 	if _, already := eng.Start(); already {
 		t.Fatal("first Start should not be already")
 	}
@@ -151,11 +153,12 @@ func TestHandlerStartAcceptedAndConflict(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	eng := &Engine{
-		Records: []driver.IngressCapture{{Method: "GET", RequestURI: "/y"}},
-		Targets: []payload.Target{{Name: "control-a", BaseURL: srv.URL}},
-		Client:  srv.Client(),
-	}
+	eng := NewEngine(
+		[]driver.IngressCapture{{Method: "GET", RequestURI: "/y"}},
+		[]payload.Target{{Name: "control-a", BaseURL: srv.URL}},
+		srv.Client(),
+		nil,
+	)
 	h := &Handler{Engine: eng}
 	mux := http.NewServeMux()
 	h.Mount(mux)

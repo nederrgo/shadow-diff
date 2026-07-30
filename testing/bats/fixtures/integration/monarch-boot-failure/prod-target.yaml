@@ -1,0 +1,33 @@
+# Minimal prod target for Monarch boot-failure integration tests.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monarch-boot-fail-target
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monarch-boot-fail-target
+  template:
+    metadata:
+      labels:
+        app: monarch-boot-fail-target
+    spec:
+      containers:
+        - name: app
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monarch-boot-fail-target
+  namespace: default
+spec:
+  selector:
+    app: monarch-boot-fail-target
+  ports:
+    - port: 8888
+      targetPort: 80

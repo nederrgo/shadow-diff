@@ -51,7 +51,7 @@ type Config struct {
 	MaxConcurrency int
 	TCPDialTimeout time.Duration
 	TCPIdleTimeout time.Duration
-	OperatingMode  string // live | record | replay (default live)
+	OperatingMode  string // record | replay
 	AdminAddr      string // HTTP admin (replay trigger); default :9090
 }
 
@@ -234,33 +234,8 @@ func (c Config) Validate() error {
 				return err
 			}
 		}
-	default: // live
-		targets := []struct {
-			name string
-			raw  string
-		}{
-			{"CONTROL_A_URL", c.ControlAURL},
-			{"CONTROL_B_URL", c.ControlBURL},
-			{"CANDIDATE_URL", c.CandidateURL},
-		}
-		for _, t := range targets {
-			if err := validateTargetURL(t.name, t.raw); err != nil {
-				return err
-			}
-		}
-		addrs := []struct {
-			name string
-			raw  string
-		}{
-			{"CONTROL_A_ADDR", c.ControlAAddr},
-			{"CONTROL_B_ADDR", c.ControlBAddr},
-			{"CANDIDATE_ADDR", c.CandidateAddr},
-		}
-		for _, t := range addrs {
-			if err := validateTargetHost(t.name, t.raw); err != nil {
-				return err
-			}
-		}
+	default:
+		return fmt.Errorf("OPERATING_MODE must be record or replay, got %q", c.OperatingMode)
 	}
 	for _, l := range c.Listeners {
 		if l.Port < 1 || l.Port > 65535 {
@@ -286,9 +261,6 @@ func (c Config) Validate() error {
 
 func operatingModeFromEnv() string {
 	m := strings.ToLower(strings.TrimSpace(os.Getenv("OPERATING_MODE")))
-	if m == "" {
-		return "live"
-	}
 	return m
 }
 

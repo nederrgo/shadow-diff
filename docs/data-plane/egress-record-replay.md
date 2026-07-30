@@ -4,7 +4,7 @@ title: Egress Record and Replay
 description: How Shadow-Diff captures production HTTP egress with Kaisel eBPF request/response pairing, seeds Shop with Put dedup, replays via Envoy egress ext_proc, and async-reports to Beru for diff-of-diffs.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel
 tags: [data-plane, kaisel, shop, envoy, egress, replay, beru]
-timestamp: 2026-07-28T13:35:00Z
+timestamp: 2026-07-30T13:30:00Z
 ---
 
 # Egress Record and Replay
@@ -137,7 +137,7 @@ shopDeploymentReady     → requeue until available
 
 ## Async record mode (`OPERATING_MODE=record`)
 
-When Shop starts with `OPERATING_MODE=record`, `POST /v1/record_egress` no longer seeds the in-memory mock map. It buffers the Kaisel payload via shared [`pipeline/pkg/s3utils`](../../pipeline/pkg/s3utils) `BatchUploader` (JSON Lines under `shadow-diff/<TEST_NAMESPACE>/<TEST_NAME>/sessions/<SESSION_ID>/egress/`) and returns `202 Accepted`. Live in-memory seeding remains the default when the mode is unset or `live`. See [/refactor/async-record-replay.md](/refactor/async-record-replay.md).
+When Shop starts with `OPERATING_MODE=record`, `POST /v1/record_egress` buffers the Kaisel payload via shared [`pipeline/pkg/s3utils`](../../pipeline/pkg/s3utils) `BatchUploader` (JSON Lines under `shadow-diff/<TEST_NAMESPACE>/<TEST_NAME>/sessions/<SESSION_ID>/egress/`) and returns `202 Accepted`. `OPERATING_MODE` must be `record` or `replay`. See [/refactor/async-record-replay.md](/refactor/async-record-replay.md).
 
 ## Async replay mode (`OPERATING_MODE=replay`)
 

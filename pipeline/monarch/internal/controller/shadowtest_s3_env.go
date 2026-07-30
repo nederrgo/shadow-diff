@@ -96,7 +96,7 @@ func (r *ShadowTestReconciler) syncStorageSecret(
 	return err
 }
 
-// storageEnvVars builds OPERATING_MODE + S3 env for Igris and Shop.
+// storageEnvVars builds OPERATING_MODE + S3 env for Igris, igris-rabbitmq, and Shop.
 func storageEnvVars(st *enginev1alpha1.ShadowTest, sessionID string) []corev1.EnvVar {
 	cfg := st.Spec.Storage
 	if cfg == nil {

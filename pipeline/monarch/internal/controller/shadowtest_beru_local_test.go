@@ -105,7 +105,7 @@ func TestPodTerminalReason_imagePullBackOff(t *testing.T) {
 			}},
 		},
 	}
-	reason := podTerminalReason(pod)
+	reason := podTerminalReason(pod, localBeruName)
 	if !reason.terminal {
 		t.Fatal("expected terminal reason for ImagePullBackOff")
 	}

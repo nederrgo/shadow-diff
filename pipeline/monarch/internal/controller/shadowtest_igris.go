@@ -13,7 +13,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
@@ -284,31 +283,27 @@ func (r *ShadowTestReconciler) shadowDeploymentsReady(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
-) (bool, error) {
+) (bool, workloadWaitReason, error) {
 	for _, role := range []string{roleControlA, roleControlB, roleCandidate} {
-		var deploy appsv1.Deployment
-		key := client.ObjectKey{Namespace: shadowNS, Name: shadowDeploymentName(st, role)}
-		if err := r.Get(ctx, key, &deploy); err != nil {
-			return false, err
+		name := shadowDeploymentName(st, role)
+		component := fmt.Sprintf("shadow deployment %s", name)
+		ready, reason, err := r.deploymentBootReady(ctx, shadowNS, name, component)
+		if err != nil {
+			return false, workloadWaitReason{}, err
 		}
-		if deploy.Status.AvailableReplicas < 1 {
-			return false, nil
+		if !ready {
+			return false, reason, nil
 		}
 	}
-	return true, nil
+	return true, workloadWaitReason{}, nil
 }
 
 func (r *ShadowTestReconciler) igrisDeploymentReady(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
-) (bool, error) {
-	var deploy appsv1.Deployment
-	key := client.ObjectKey{Namespace: shadowNS, Name: igrisDeploymentName(st)}
-	if err := r.Get(ctx, key, &deploy); err != nil {
-		return false, err
-	}
-	return deploy.Status.AvailableReplicas > 0, nil
+) (bool, workloadWaitReason, error) {
+	return r.deploymentBootReady(ctx, shadowNS, igrisDeploymentName(st), "Igris")
 }
 
 func igrisControlURLs(st *enginev1alpha1.ShadowTest, shadowNS string) (string, string, string) {

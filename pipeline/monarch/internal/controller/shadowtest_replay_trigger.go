@@ -18,20 +18,29 @@ import (
 const replayStartTimeout = 10 * time.Second
 const replayStateStarted = "started"
 
-// replayAdminURL is Igris admin POST /v1/replay/start (port 9090, not ingress).
+// replayAdminURL is the ingress hub admin POST /v1/replay/start (port 9090).
 func replayAdminURL(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	host := shadowServiceHost(shadowNS, igrisServiceName(st))
+	svc := igrisServiceName(st)
+	if needsAMQPIngress(st) {
+		svc = igrisRabbitMQServiceName(st)
+	}
+	host := shadowServiceHost(shadowNS, svc)
 	return fmt.Sprintf("http://%s:%d/v1/replay/start", host, igrisAdminPort)
 }
 
 func replayWorkloadNames(st *enginev1alpha1.ShadowTest) []string {
-	return []string{
-		shopServiceName(),
-		igrisDeploymentName(st),
+	names := []string{shopServiceName()}
+	if needsAMQPIngress(st) {
+		names = append(names, igrisRabbitMQDeploymentName(st))
+	} else {
+		names = append(names, igrisDeploymentName(st))
+	}
+	names = append(names,
 		shadowDeploymentName(st, roleControlA),
 		shadowDeploymentName(st, roleControlB),
 		shadowDeploymentName(st, roleCandidate),
-	}
+	)
+	return names
 }
 
 // deploymentsRollReady reports ReadyReplicas > 0 and UpdatedReplicas == Replicas.

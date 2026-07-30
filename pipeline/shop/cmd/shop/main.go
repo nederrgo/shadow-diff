@@ -37,7 +37,11 @@ func main() {
 	httpSrv := &api.Server{Log: log, Mocks: mocks}
 	httpSrv.Ready.Store(true)
 
-	mode := s3utils.OperatingMode()
+	mode, err := s3utils.RequireOperatingMode()
+	if err != nil {
+		slog.Error("operating mode", "err", err)
+		os.Exit(1)
+	}
 	var uploader *s3utils.BatchUploader
 
 	switch mode {
@@ -60,7 +64,8 @@ func main() {
 		log.Info("Shop operating mode: replay (preloading egress mocks)")
 
 	default:
-		log.Info("Shop operating mode: live")
+		slog.Error("OPERATING_MODE must be record or replay", "got", mode)
+		os.Exit(1)
 	}
 
 	go func() {

@@ -11,7 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
@@ -121,11 +120,6 @@ func (r *ShadowTestReconciler) reconcileShop(
 func (r *ShadowTestReconciler) shopDeploymentReady(
 	ctx context.Context,
 	shadowNS string,
-) (bool, error) {
-	var deploy appsv1.Deployment
-	key := client.ObjectKey{Namespace: shadowNS, Name: shopServiceName()}
-	if err := r.Get(ctx, key, &deploy); err != nil {
-		return false, err
-	}
-	return deploy.Status.AvailableReplicas > 0, nil
+) (bool, workloadWaitReason, error) {
+	return r.deploymentBootReady(ctx, shadowNS, shopServiceName(), "Shop")
 }

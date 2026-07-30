@@ -4,7 +4,7 @@ title: Bats-Core Modular Testing Framework
 description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, settlement-based Beru assertions, Jest-like reporter for BATS_PARALLEL_JOBS=1, and idempotent platform bootstrap.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats
 tags: [infrastructure, testing, bats, e2e, integration, monarch, beru]
-timestamp: 2026-07-29T08:20:00Z
+timestamp: 2026-07-30T15:45:00Z
 ---
 
 # Bats-Core Modular Testing Framework
@@ -57,6 +57,8 @@ testing/tools/            # standalone developer utilities (not called by bats)
 
 Escape hatches: `SKIP_PLATFORM_BOOTSTRAP`, `SKIP_BUILD`, `SKIP_LOAD`, `BATS_FORCE_PLATFORM_BOOTSTRAP`.
 
+When the platform is already healthy, image build/load is skipped. Suites that need non-core `:dev` images (e.g. `egress-relay-rabbitmq`, `shadow-soldier`) call `bats_ensure_dev_image` in `setup_file` so a missing tag is built into the cluster docker daemon instead of failing with `ErrImagePull`.
+
 ## Jest-like reporter (`lib/reporter.bash`)
 
 [`run.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/run.sh) / [`run-one.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/run-one.sh) call `bats_invoke`, which may pipe bats TAP through `tap-mocha-reporter spec`.
@@ -101,8 +103,10 @@ make test-bats
 
 | File | Scenario |
 |------|----------|
-| `monarch/http_input.bats` | HTTP input stack Ready (igris-http, KaiselRule, roles, deps) |
+| `monarch/http_input.bats` | HTTP replay stack Ready (igris-http, Shop, ABC roles, rabbitmq+mongo deps; Kaisel Disabled) |
 | `monarch/ambiguous_ports.bats` | Multi-port target → `Failed` with `applicationPort` message |
+| `monarch/boot_failure.bats` | Boot gate: bad igris-rabbitmq image → `Failed`; KaiselRule + shadow NS + prod AMQP queue torn down; kubectl apply cannot inject `status.phase` |
+| `monarch/amqp_queue_failure.bats` | Prod AMQP `QueueDeclare` (conflicting args) → same `markBootFailed` autopsy/teardown as deployment boot fail; `QueueBind` covered by unit tests |
 | `monarch/lifecycle_record.bats` | `mode=record` stack: KaiselRule + igris + shop, no ABC; delete after Ready |
 | `monarch/lifecycle_replay.bats` | `mode=replay` stack: ABC + igris + shop, no KaiselRule, `replayState=started` |
 | `monarch/lifecycle_mode_switch.bats` | Live `spec.mode` patch: record→replay removes KaiselRule / adds ABC; replay→record removes ABC / adds KaiselRule |
@@ -110,7 +114,7 @@ make test-bats
 | `monarch/deps_update.bats` | Live `spec.dependencies` add → dep Deployments + shadow app pod rollout with injected env |
 | `mongo_egress.bats` | Mongo egress path (integration) |
 
-Helpers: `monarch_wait_shadowtest_bringup_started`, `monarch_wait_shadowtest_cleaned`, `monarch_wait_dependency_available`, `monarch_assert_shadow_app_env` in `lib/monarch_assert.bash`.
+Helpers: `monarch_wait_shadowtest_bringup_started`, `monarch_wait_shadowtest_cleaned`, `monarch_wait_dependency_available`, `monarch_assert_shadow_app_env`, `monarch_wait_amqp_queue_name`, `monarch_assert_prod_queue_absent`, `monarch_declare_conflicting_prod_queue`, `monarch_scale_controller` in `lib/monarch_assert.bash`.
 
 ### E2E suites (`testing/bats/e2e/`)
 

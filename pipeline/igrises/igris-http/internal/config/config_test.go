@@ -9,6 +9,7 @@ import (
 
 func validCfg() Config {
 	return Config{
+		OperatingMode:  "replay",
 		ControlAURL:    "http://a:8080",
 		ControlBURL:    "https://b:8443",
 		CandidateURL:   "http://c:8080",
@@ -79,19 +80,18 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "missing addr",
+			name: "replay ignores missing addr",
 			cfg: func() Config {
 				c := validCfg()
 				c.ControlAAddr = ""
 				return c
 			}(),
-			wantErr: true,
 		},
 		{
-			name: "addr with port",
+			name: "invalid operating mode",
 			cfg: func() Config {
 				c := validCfg()
-				c.ControlAAddr = "host:27017"
+				c.OperatingMode = "live"
 				return c
 			}(),
 			wantErr: true,

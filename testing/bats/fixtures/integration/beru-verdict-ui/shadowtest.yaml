@@ -8,3 +8,11 @@ metadata:
 spec:
   targetDeployment: monarch-integ-target
   newImage: nginx:alpine
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain

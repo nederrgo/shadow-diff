@@ -130,6 +130,57 @@ func TestReplayAdminURL(t *testing.T) {
 	}
 }
 
+func TestReplayAdminURL_AMQPOnly(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "rmq"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Inputs: []enginev1alpha1.InputSpec{{
+				Driver: "rabbitmq_message",
+				AMQP: &enginev1alpha1.AMQPInputSpec{
+					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
+					TargetDependency: "rabbitmq",
+				},
+			}},
+		},
+	}
+	got := replayAdminURL(st, "shadow-default-rmq")
+	want := "http://rmq-igris-rabbitmq.shadow-default-rmq.svc.cluster.local:9090/v1/replay/start"
+	if got != want {
+		t.Fatalf("replayAdminURL AMQP = %q, want %q", got, want)
+	}
+}
+
+func TestReplayWorkloadNames_AMQPOnly(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "rmq"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Inputs: []enginev1alpha1.InputSpec{{
+				Driver: "rabbitmq_message",
+				AMQP: &enginev1alpha1.AMQPInputSpec{
+					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
+					TargetDependency: "rabbitmq",
+				},
+			}},
+		},
+	}
+	names := replayWorkloadNames(st)
+	want := igrisRabbitMQDeploymentName(st)
+	found := false
+	for _, n := range names {
+		if n == want {
+			found = true
+		}
+		if n == igrisDeploymentName(st) {
+			t.Fatalf("AMQP-only roll-ready list must not include HTTP igris %q: %v", n, names)
+		}
+	}
+	if !found {
+		t.Fatalf("missing %q in %v", want, names)
+	}
+}
+
 func TestCleanupS3IfNeeded_NoFinalizer(t *testing.T) {
 	t.Parallel()
 	rec := &ShadowTestReconciler{}

@@ -287,6 +287,8 @@ While progressing, common `status.message` values include:
 - `waiting for igris-rabbitmq` / `waiting for egress-relay-rabbitmq`
 - `waiting for shadow Deployments` / `waiting for Igris` / `waiting for Shop`
 
+**Boot failure:** if a managed pod hits CrashLoop/ImagePull (or stays not Ready for 90s), Monarch sets `phase: Failed` with the reason, deletes the KaiselRule + shadow namespace (and AMQP shadow queue if any), and stops recreating the stack. Inspect `status.message` / `kubectl describe shadowtest`. Retry with delete + re-apply.
+
 ---
 
 ## Step 5 — Verify shadow workloads
@@ -378,7 +380,8 @@ See `testing/tools/e2e-reset-minikube.sh` and `testing/bats/manifests/e2e-shadow
 
 | Symptom | Likely cause | What to do |
 |---------|----------------|------------|
-| `phase: Failed`, target not found | Wrong `targetDeployment` / `targetNamespace` | Fix spec; ensure Deployment exists |
+| `phase: Failed`, target not found | Wrong `targetDeployment` / `targetNamespace` | Fix spec; ensure Deployment exists; delete+re-apply ShadowTest |
+| `phase: Failed`, CrashLoop/ImagePull in message | Shadow/Shop/Igris/beru-local (or dep) will not start | Fix image/config; `kubectl delete shadowtest` + re-apply (stack already torn down) |
 | `waiting for egress-relay-rabbitmq` | Image not loaded (Kind) | Build/load `egress-relay-rabbitmq:dev`; ensure `MONARCH_MODE=dev` on operator |
 | Stale `monarch:dev` (Docker cache) after controller changes | Pod still on old image digest | `docker build --no-cache` + `kubectl rollout restart` manager |
 | `kaiselPhase: Degraded` | KaiselRule reconcile failed | Check Monarch logs; `kubectl get kaiselrule` |

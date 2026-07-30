@@ -4,7 +4,7 @@ title: Shadow-Diff Architecture
 description: Asynchronous record/replay architecture — S3-backed capture, on-demand A/B/C differential testing, Monarch mode orchestration.
 resource: https://github.com/shadow-diff/monarch
 tags: [architecture, record-replay, s3, monarch, beru, shop, kaisel, igris]
-timestamp: 2026-07-28T18:45:00Z
+timestamp: 2026-07-30T13:30:00Z
 ---
 
 # Shadow-Diff — Architecture
@@ -28,7 +28,9 @@ For CRD fields and install, see [/control-plane/monarch-controller.md](/control-
 | [`pipeline/shop/`](../../pipeline/shop/) | HTTP egress mock store — record: buffer to S3; replay: preload mocks + Envoy ext_proc |
 | [`pipeline/beru/`](../../pipeline/beru/) | Diff-of-diffs sink — ingress ext_proc, egress HTTP/AMQP/DB reports, dashboard |
 | [`pipeline/shadow-soldier/`](../../pipeline/shadow-soldier/) | DB egress TCP proxy sidecar (replay stack) → Beru |
-| [`pipeline/igrises/igris-rabbitmq/`](../../pipeline/igrises/igris-rabbitmq/) | AMQP fan-out (replay / hybrid ShadowTests) |
+| [`pipeline/igrises/igris-rabbitmq/`](../../pipeline/igrises/igris-rabbitmq/) | AMQP hub — record: prod queue → S3; replay: S3 → three shadow brokers |
+| [`pipeline/pkg/trace/`](../../pipeline/pkg/trace/) | Shared W3C `traceparent` parse / admit helpers |
+| [`pipeline/pkg/replay/`](../../pipeline/pkg/replay/) | Shared JSONL preload + replay engine + admin `POST /v1/replay/start` |
 | [`pipeline/egress-relay-rabbitmq/`](../../pipeline/egress-relay-rabbitmq/) | Shadow broker Firehose → Beru AMQP egress diff |
 
 ---

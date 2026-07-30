@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# E2E: Python hybrid — RMQ ingress + Mongo + HTTP record/replay + dual egress regressions.
+# E2E: Python hybrid — RMQ ingress + Mongo + HTTP; record→S3→replay A/B/C.
 
 load '../../test_helper'
 
@@ -13,6 +13,7 @@ setup_file() {
   ensure_platform_ready
   build_test_images_if_needed
   load_test_images_if_needed
+  minio_ensure
 
   kubectl apply -f "${REPO}/testing/bats/manifests/rabbitmq-e2e/prod-rabbitmq.yaml"
   kubectl apply -f "${MANIFEST_DIR}/prod-mongo.yaml"
@@ -32,24 +33,34 @@ setup_file() {
   bats_prepare_shadowtest_slot "$SHADOWTEST" "$SHADOWTEST_NS"
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
-  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" \
-    --require-mongo --require-rmq --require-kaisel
+  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-kaisel
 
   SHADOW_NS="$(shadow_namespace)"
   export SHADOW_NS
 
   bats_source_e2e_helpers
   wait_local_beru_rollout "$SHADOW_NS"
+  monarch_wait_igris_running "$SHADOW_NS" "$SHADOWTEST" 180
+  kubectl wait --for=condition=Available deployment/shop -n "$SHADOW_NS" --timeout=180s
 
   bats_suite_mark SETUP_COMPLETE 1
   bats_write_suite_state
 }
 
-@test "verify HTTP ingress reaches all shadow roles (python)" {
+# Record one prod order, wait for Kaisel egress seed, then switch to replay.
+_hybrid_record_then_replay() {
+  run kaisel_ensure_record_mode
+  assert_success
   publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
   if ! wait_kaisel_egress_seed; then
     skip "Kaisel egress seed not available"
   fi
+  run kaisel_switch_to_replay both
+  assert_success
+}
+
+@test "verify HTTP ingress reaches all shadow roles (python)" {
+  _hybrid_record_then_replay
   for role in control-a control-b candidate; do
     run assert_worker_http_replay "$role" "$BATS_ORDER_ID"
     assert_success
@@ -57,10 +68,7 @@ setup_file() {
 }
 
 @test "verify RabbitMQ egress count regression (python)" {
-  publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
-  if ! wait_kaisel_egress_seed; then
-    skip "Kaisel egress seed not available"
-  fi
+  _hybrid_record_then_replay
   for role in control-a control-b candidate; do
     run assert_worker_http_replay "$role" "$BATS_ORDER_ID"
     assert_success
@@ -71,10 +79,7 @@ setup_file() {
 }
 
 @test "verify MongoDB egress is captured for all three roles (python)" {
-  publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
-  if ! wait_kaisel_egress_seed; then
-    skip "Kaisel egress seed not available"
-  fi
+  _hybrid_record_then_replay
   # shadow-soldier proxies each role's Mongo connection and reports the command
   # document; the worker embeds the traceparent in the BSON comment field.
   run wait_mongodb_egress_reports "$BATS_TRACE_ID" 120
@@ -82,10 +87,7 @@ setup_file() {
 }
 
 @test "verify MongoDB egress count regression (python)" {
-  publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
-  if ! wait_kaisel_egress_seed; then
-    skip "Kaisel egress seed not available"
-  fi
+  _hybrid_record_then_replay
   for role in control-a control-b candidate; do
     run assert_worker_http_replay "$role" "$BATS_ORDER_ID"
     assert_success

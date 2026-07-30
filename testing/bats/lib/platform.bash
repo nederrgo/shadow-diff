@@ -127,6 +127,30 @@ ensure_platform_ready() {
   bats_platform_with_flock _ensure_platform_ready_body
 }
 
+# Ensure a :dev image exists in the docker daemon used by the cluster (minikube
+# docker-env when driver != none). Builds via make if missing. Fails hard if
+# still absent — do not swallow errors (ImagePullBackOff fails ShadowTests).
+# Usage: bats_ensure_dev_image <image:tag> <makefile-dir> <MAKE_VAR>
+bats_ensure_dev_image() {
+  local img="$1" dir="$2" make_var="$3"
+  bats_init_env
+  bats_source_e2e_helpers
+  bats_source_cluster_helpers
+  e2e_prepare_docker_build
+  require_docker || return 1
+
+  if docker image inspect "$img" >/dev/null 2>&1; then
+    echo "==> [bats] image present: ${img}"
+    return 0
+  fi
+  echo "==> [bats] build missing image ${img}"
+  make -C "$dir" docker-build "${make_var}=${img}" || return 1
+  docker image inspect "$img" >/dev/null 2>&1 || {
+    echo "FAIL: ${img} still missing after docker-build in ${dir}" >&2
+    return 1
+  }
+}
+
 build_test_images_if_needed() {
   bats_init_env
   [[ "${SKIP_BUILD:-0}" == "1" ]] && return 0

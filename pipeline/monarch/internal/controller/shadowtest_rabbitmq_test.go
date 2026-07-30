@@ -11,4 +11,7 @@ func TestProdShadowQueueArgs(t *testing.T) {
 	if got := args[amqpArgOverflow]; got != "drop-head" {
 		t.Fatalf("x-overflow = %v want drop-head", got)
 	}
+	if got := args[amqpArgExpires]; got != int32(prodShadowQueueExpiresMs) {
+		t.Fatalf("x-expires = %v want %d", got, prodShadowQueueExpiresMs)
+	}
 }

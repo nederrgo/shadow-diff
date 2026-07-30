@@ -27,6 +27,7 @@ setup_file() {
 
   echo "==> [verdict_ui] ensure_platform_ready" >&3
   ensure_platform_ready
+  minio_ensure
 
   echo "==> [verdict_ui] apply prod target" >&3
   kubectl apply -f "${FIXTURE_DIR}/prod-target.yaml"

@@ -4,7 +4,7 @@ title: Monarch Controller — Envoy-Only Shadow Injection
 description: Reconcile contract for record/replay ShadowTests; S3 env; replay trigger; S3 prefix finalizer.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [architecture, control-plane, monarch, envoy, shop, beru, record-replay]
-timestamp: 2026-07-28T14:15:00Z
+timestamp: 2026-07-30T16:10:00Z
 ---
 
 # Monarch Controller — Envoy-Only Shadow Injection
@@ -17,14 +17,16 @@ Every ShadowTest is either `record` or `replay` (`spec.mode`; default `record`).
 
 | Mode | Provisions | Garbage collects |
 |------|------------|------------------|
-| `record` | KaiselRule → Igris → Shop (+ beru-local); mints `status.currentSessionID` when unset | ABC Deployments/Services; clears `status.replayState` |
+| `record` | Bottom-up: unbound AMQP queue (if any) + Shop + Igris → Ready gate → KaiselRule → AMQP bind; (+ beru-local); mints `status.currentSessionID` when unset | ABC Deployments/Services; clears `status.replayState` |
 | `replay` | Shop → Igris → ABC (+ deps); requires `spec.sessionID` or existing `status.currentSessionID` | KaiselRule |
 
-Monarch copies `storage.credentialsSecretRef` from the CR namespace into the shadow namespace (same name), then injects `OPERATING_MODE`, `S3_*`, `TEST_*`, `SESSION_ID`, and optional AWS `secretKeyRef` env into Igris and Shop. Igris exposes admin `:9090` (`IGRIS_ADMIN_ADDR`, Service port `9090`).
+Record mode opens eBPF (`KaiselRule`) only after Shop/Igris are Available, and binds the prod AMQP shadow queue only after KaiselRule exists — see [platform bootstrap lifecycle](/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md).
+
+Monarch copies `storage.credentialsSecretRef` from the CR namespace into the shadow namespace (same name), then injects `OPERATING_MODE`, `S3_*`, `TEST_*`, `SESSION_ID`, and optional AWS `secretKeyRef` env into Igris, **igris-rabbitmq**, and Shop. Both HTTP Igris and igris-rabbitmq expose admin `:9090` (`IGRIS_ADMIN_ADDR`, Service port `9090`).
 
 ### Replay trigger
 
-After Shop, Igris, and ABC Deployments are roll-ready (`ReadyReplicas > 0` and `UpdatedReplicas == Replicas`), if `status.replayState` is empty Monarch `POST`s `http://<igris>.<shadow-ns>.svc:9090/v1/replay/start` (10s timeout). HTTP 202 or 409 sets `status.replayState=started`.
+After Shop, the ingress hub (HTTP `*-igris` or AMQP `*-igris-rabbitmq`), and ABC Deployments are roll-ready (`ReadyReplicas > 0` and `UpdatedReplicas == Replicas`), if `status.replayState` is empty Monarch `POST`s `http://<hub>.<shadow-ns>.svc:9090/v1/replay/start` (10s timeout). HTTP 202 or 409 sets `status.replayState=started`.
 
 ### S3 retention finalizer
 
@@ -87,9 +89,27 @@ Shadow pods run at fixed low replica counts with no autoscaling, so Monarch and 
 |---|---|---|
 | Concurrency cap | igris-http | `IGRIS_MAX_CONCURRENCY = shadowRoleReplicas × spec.maxQPSPerPod` (default 50), computed by Monarch and passed as an env var. Requests over the cap get `429` before trace resolution or multicast — never forwarded to shadow pods. |
 | Per-message TTL | igris-rabbitmq | Every mirrored AMQP message published to the 3 shadow brokers carries `Expiration: "10000"` (10s) — stale backlog expires instead of being processed by a stuck shadow consumer. |
-| Prod shadow queue bound | Monarch (`shadowtest_rabbitmq.go`) | `x-max-length: 500`, `x-overflow: drop-head` on the prod-side shadow queue declare — oldest messages are dropped once the queue backs up. |
+| Prod shadow queue bound | Monarch (`shadowtest_rabbitmq.go`) | `x-max-length: 500`, `x-overflow: drop-head` on the prod-side shadow queue declare — oldest messages are dropped once the queue backs up. `x-expires: 600000` (10m idle TTL) deletes the queue if it has no consumers — leak fail-safe when teardown cannot reach the prod broker. |
 
 `shadowRoleReplicas` (currently `1`, one shared constant for control-a/b/candidate) is the single source of truth for both the shadow Deployment replica count and this capacity calc, so they can't drift.
+
+## Boot failure gates
+
+While any Monarch-managed Deployment is not Available, Monarch requeues every 5s (`Progressing`). Terminal boot failure is declared when:
+
+- a pod (app or init) reports `CrashLoopBackOff`, `ImagePullBackOff`, `ErrImagePull`, `CreateContainerConfigError`, `InvalidImageName`, or `ErrImageNeverPull`
+- a container exits non-zero
+- Deployment `ProgressDeadlineExceeded`
+- the Deployment is still not Available after **90s** from creation
+- prod AMQP shadow queue `QueueDeclare` or `QueueBind` fails (record Phase 1 / Phase 3)
+
+On terminal failure Monarch:
+
+1. Sets `status.phase=Failed` and `status.message` (which component/pod and why), emits a Warning Event
+2. Tears down runtime resources with the same steps as delete (KaiselRule, prod AMQP shadow queue if any, shadow namespace) — **without** removing CR finalizers or running S3 cleanup
+3. Leaves the ShadowTest CR in place as an autopsy. Further reconciles are **sticky**: `phase=Failed` means do not recreate the stack
+
+Retry: `kubectl delete shadowtest …` and re-apply. Spec-only edits do not clear Failed.
 
 ## Beru wire ingest (Plan 2)
 

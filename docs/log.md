@@ -9,8 +9,25 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-30]
+### Added
+* 'pipeline/monarch/internal/controller/shadowtest_rabbitmq.go': prod shadow queue x-expires 10m idle TTL leak fail-safe
+* 'testing/bats/integration/monarch/amqp_queue_failure.bats': drop flaky QueueBind integration case; declare autopsy remains; bind covered by unit tests
+* 'pipeline/pkg/{trace,replay},igris-rabbitmq,monarch,bats': igris-rabbitmq dual-mode S3 (record|replay); shared trace/replay pkgs; Monarch storageEnv+admin:9090; replay skips prod queue; AMQP bats record→replay
+* 'pipeline/monarch + bats + docs/control-plane': AMQP queue declare/bind failures use markBootFailed autopsy path; integration coverage
+* 'testing/bats/integration/monarch/spike_guard.bats': Spike Guard burst test asserts 429 shedding without requiring every concurrent response
+* 'pipeline/monarch + docs/control-plane': Record-mode bottom-up reconcile (sinks → KaiselRule → AMQP bind); split queue declare/bind
+* 'docs/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md': Added replay-mode reconcile create order
+* 'docs/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md': Added record-mode reconcile create order
+* 'docs/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md': Rewrote for record/replay lifecycle; beru-local dies with shadow namespace; removed Vizier/Gate leftovers
+
 ## [2026-07-29]
 ### Added
+* 'testing/bats': http_input ensures egress-relay+shadow-soldier images when platform skip-load would leave them missing
+* 'testing/bats': Fix deps_update/http_input/spike_guard for record/replay — mode=replay + sessionID; http_input expects Kaisel Disabled'
+* 'testing/bats/fixtures/integration': Add required spec.storage (+ minio_ensure) to ShadowTest fixtures missing it after CRD storage required'
+* 'testing/bats': Add monarch boot_failure integration suite — Failed autopsy, KaiselRule/NS/AMQP queue teardown, sticky Failed, kubectl apply status ignored
+* 'pipeline/monarch': Boot failure gates — terminal CrashLoop/ImagePull/90s timeout marks ShadowTest Failed, tears down KaiselRule+shadow NS+AMQP queue, sticky Failed prevents recreate; docs updated
 * 'testing/bats/lib': Poll status.replayState=started after mode switch (fix hybrid flake)
 * 'testing/bats/e2e/kaisel-capture': Migrate suite to record setup + mid-test replay switch for hybrid ABC/Beru tests
 

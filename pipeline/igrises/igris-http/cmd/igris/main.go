@@ -14,6 +14,7 @@ import (
 	"github.com/shadow-diff/igris/internal/driver"
 	httpdriver "github.com/shadow-diff/igris/internal/driver/http"
 	tcpdriver "github.com/shadow-diff/igris/internal/driver/tcpstream"
+	"github.com/shadow-diff/igris/internal/payload"
 	"github.com/shadow-diff/igris/internal/replay"
 	"github.com/shadow-diff/s3utils"
 )
@@ -65,16 +66,11 @@ func main() {
 			"session", scfg.SessionID,
 			"prefix", scfg.ObjectKeyPrefix(),
 		)
-		targets := make([]core.Target, 0, 3)
+		targets := make([]payload.Target, 0, 3)
 		for _, t := range cfg.Targets() {
-			targets = append(targets, core.Target{Name: t.Name, BaseURL: t.BaseURL})
+			targets = append(targets, payload.Target{Name: t.Name, BaseURL: t.BaseURL})
 		}
-		engine = &replay.Engine{
-			Records: records,
-			Targets: targets,
-			Client:  &http.Client{},
-			Log:     log,
-		}
+		engine = replay.NewEngine(records, targets, &http.Client{}, log)
 		mux := http.NewServeMux()
 		(&replay.Handler{Engine: engine}).Mount(mux)
 		adminSrv = &http.Server{Addr: cfg.AdminAddr, Handler: mux}
@@ -88,7 +84,8 @@ func main() {
 		log.Info("Igris operating mode: replay")
 
 	default:
-		log.Info("Igris operating mode: live")
+		slog.Error("OPERATING_MODE must be record or replay", "got", cfg.OperatingMode)
+		os.Exit(1)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

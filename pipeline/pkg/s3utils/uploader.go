@@ -22,7 +22,6 @@ const (
 	// DataTypeEgress is the S3 prefix segment for recorded egress traffic.
 	DataTypeEgress = "egress"
 
-	ModeLive   = "live"
 	ModeRecord = "record"
 	ModeReplay = "replay"
 
@@ -107,13 +106,17 @@ func TestKeyPrefix(namespace, testName string) string {
 	return fmt.Sprintf("shadow-diff/%s/%s/", namespace, testName)
 }
 
-// OperatingMode returns OPERATING_MODE (default live).
-func OperatingMode() string {
+// RequireOperatingMode returns OPERATING_MODE; only record|replay are valid.
+func RequireOperatingMode() (string, error) {
 	m := strings.ToLower(strings.TrimSpace(os.Getenv("OPERATING_MODE")))
-	if m == "" {
-		return ModeLive
+	switch m {
+	case ModeRecord, ModeReplay:
+		return m, nil
+	case "":
+		return "", fmt.Errorf("s3utils: OPERATING_MODE is required (record|replay)")
+	default:
+		return "", fmt.Errorf("s3utils: OPERATING_MODE %q invalid (want record|replay)", m)
 	}
-	return m
 }
 
 // BatchUploader buffers JSON records and flushes them as JSON Lines to S3.

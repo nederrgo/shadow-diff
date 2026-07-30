@@ -9,6 +9,7 @@
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 package controller
 
@@ -22,6 +23,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,12 +40,16 @@ import (
 
 type ShadowTestReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 
 	// ReplayStarter POSTs Igris admin /v1/replay/start. Nil uses net/http.
 	ReplayStarter func(ctx context.Context, url string) (statusCode int, err error)
 	// S3Cleaner deletes the ShadowTest S3 prefix on CR deletion. Nil uses s3utils.
 	S3Cleaner func(ctx context.Context, st *enginev1alpha1.ShadowTest) error
+	// ProdQueueEnsureDeclared / ProdQueueEnsureBound override AMQP broker ops in tests.
+	ProdQueueEnsureDeclared func(ctx context.Context, st *enginev1alpha1.ShadowTest) (string, error)
+	ProdQueueEnsureBound     func(ctx context.Context, st *enginev1alpha1.ShadowTest) error
 }
 
 func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -71,8 +77,13 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+	// Sticky Failed: keep autopsy on CR; finish teardown if needed; never recreate stack.
+	if shadowTest.Status.Phase == phaseFailed {
+		return r.reconcileStickyFailed(ctx, &shadowTest, shadowNS)
+	}
+
 	if err := validateInputs(&shadowTest); err != nil {
-		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+		_ = r.patchStatus(ctx, &shadowTest, phaseFailed, err.Error(), shadowNS)
 		return ctrl.Result{}, nil
 	}
 	if err := validateDependencies(&shadowTest); err != nil {
@@ -127,14 +138,6 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	kaiselPhase := ""
 
 	if mode == modeRecord {
-		// KaiselRule only needs target pod IPs — create it early so eBPF capture
-		// starts as soon as the target pods exist.
-		var err error
-		captureTargets, kaiselPhase, err = r.reconcileKaiselCapture(ctx, &shadowTest, shadowNS, &target)
-		if err != nil {
-			log.Error(err, "Kaisel capture reconcile failed")
-			kaiselPhase = "Degraded"
-		}
 		if err := r.clearReplayState(ctx, &shadowTest); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -160,8 +163,7 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 		if !ready {
 			if reason.terminal {
-				_ = r.patchStatus(ctx, &shadowTest, "Failed", reason.message, shadowNS)
-				return ctrl.Result{}, nil
+				return r.markBootFailed(ctx, &shadowTest, shadowNS, reason.message)
 			}
 			_ = r.patchStatus(ctx, &shadowTest, "Progressing",
 				"Local analytics backend is booting up (beru-local)", shadowNS)
@@ -173,15 +175,18 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	if mode == modeReplay {
 		if err := r.reconcileShadowDependencies(ctx, &shadowTest, shadowNS); err != nil {
-			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+			_ = r.patchStatus(ctx, &shadowTest, phaseFailed, err.Error(), shadowNS)
 			return ctrl.Result{}, err
 		}
 		if len(shadowTest.Spec.Dependencies) > 0 {
-			depsReady, err := r.shadowDependenciesReady(ctx, &shadowTest, shadowNS)
+			depsReady, reason, err := r.shadowDependenciesReady(ctx, &shadowTest, shadowNS)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
 			if !depsReady {
+				if reason.terminal {
+					return r.markBootFailed(ctx, &shadowTest, shadowNS, reason.message)
+				}
 				_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for shadow dependencies", shadowNS)
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			}
@@ -189,33 +194,42 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 		// Shop before ABC so egress mocks are ready when shadow pods start.
 		if err := r.reconcileShop(ctx, &shadowTest, shadowNS); err != nil {
-			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+			_ = r.patchStatus(ctx, &shadowTest, phaseFailed, err.Error(), shadowNS)
 			return ctrl.Result{}, err
 		}
-		shopReady, err := r.shopDeploymentReady(ctx, shadowNS)
+		shopReady, reason, err := r.shopDeploymentReady(ctx, shadowNS)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 		if !shopReady {
+			if reason.terminal {
+				return r.markBootFailed(ctx, &shadowTest, shadowNS, reason.message)
+			}
 			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Shop", shadowNS)
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 
-		ingressReady, err := r.reconcileIngressRelays(ctx, req, &shadowTest, shadowNS)
+		ingressReady, reason, err := r.reconcileIngressRelays(ctx, req, &shadowTest, shadowNS)
 		if err != nil {
-			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+			_ = r.patchStatus(ctx, &shadowTest, phaseFailed, err.Error(), shadowNS)
 			return ctrl.Result{}, err
 		}
 		if !ingressReady {
+			if reason.terminal {
+				return r.markBootFailed(ctx, &shadowTest, shadowNS, reason.message)
+			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 
-		shadowsReady, err := r.reconcileShadowWorkloads(ctx, &shadowTest, shadowNS, env, &target)
+		shadowsReady, reason, err := r.reconcileShadowWorkloads(ctx, &shadowTest, shadowNS, env, &target)
 		if err != nil {
-			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+			_ = r.patchStatus(ctx, &shadowTest, phaseFailed, err.Error(), shadowNS)
 			return ctrl.Result{}, err
 		}
 		if !shadowsReady {
+			if reason.terminal {
+				return r.markBootFailed(ctx, &shadowTest, shadowNS, reason.message)
+			}
 			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for shadow Deployments", shadowNS)
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
@@ -229,28 +243,16 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 	} else {
-		// Record: Kaisel + Igris + Shop; no ABC / deps.
-		ingressReady, err := r.reconcileIngressRelays(ctx, req, &shadowTest, shadowNS)
-		if err != nil {
-			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-			return ctrl.Result{}, err
+		// Record: unbound queue + Shop/Igris → KaiselRule → AMQP bind.
+		rec := r.reconcileRecordMode(ctx, &shadowTest, shadowNS, &target)
+		if rec.err != nil {
+			return rec.requeue, rec.err
 		}
-		if !ingressReady {
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		if !rec.done {
+			return rec.requeue, nil
 		}
-
-		if err := r.reconcileShop(ctx, &shadowTest, shadowNS); err != nil {
-			_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
-			return ctrl.Result{}, err
-		}
-		shopReady, err := r.shopDeploymentReady(ctx, shadowNS)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if !shopReady {
-			_ = r.patchStatus(ctx, &shadowTest, "Progressing", "waiting for Shop", shadowNS)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
+		captureTargets = rec.captureTargets
+		kaiselPhase = rec.kaiselPhase
 	}
 
 	var igrisEndpoint string
@@ -287,76 +289,86 @@ func (r *ShadowTestReconciler) reconcileIngressRelays(
 	req ctrl.Request,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
-) (bool, error) {
+) (bool, workloadWaitReason, error) {
 	mode := operatingMode(st)
 	// Egress-relay needs per-role shadow brokers (deps + ABC); skip in record.
 	wantEgressRelay := mode == modeReplay
 
 	if needsAMQPIngress(st) {
-		if _, err := r.ensureProdShadowQueue(ctx, st); err != nil {
-			return false, err
-		}
+		// Replay loads ingress from S3 — no prod shadow queue declare/bind.
 		if err := r.reconcileIgrisRabbitMQStack(ctx, st, shadowNS); err != nil {
-			return false, err
+			return false, workloadWaitReason{}, err
 		}
-		igrisRMQReady, err := r.igrisRabbitMQDeploymentReady(ctx, st, shadowNS)
+		igrisRMQReady, reason, err := r.igrisRabbitMQDeploymentReady(ctx, st, shadowNS)
 		if err != nil {
-			return false, err
+			return false, workloadWaitReason{}, err
 		}
 		if !igrisRMQReady {
+			if reason.terminal {
+				return false, reason, nil
+			}
 			_ = r.patchStatusIgrisRabbitMQ(ctx, st, "Progressing", "waiting for igris-rabbitmq", shadowNS, "Progressing")
-			return false, nil
+			return false, workloadWaitReason{}, nil
 		}
 		if wantEgressRelay {
 			if err := r.reconcileEgressRelayRabbitMQStack(ctx, st, shadowNS); err != nil {
-				return false, err
+				return false, workloadWaitReason{}, err
 			}
-			egressRelayReady, err := r.egressRelayRabbitMQDeploymentReady(ctx, st, shadowNS)
+			egressRelayReady, reason, err := r.egressRelayRabbitMQDeploymentReady(ctx, st, shadowNS)
 			if err != nil {
-				return false, err
+				return false, workloadWaitReason{}, err
 			}
 			if !egressRelayReady {
+				if reason.terminal {
+					return false, reason, nil
+				}
 				_ = r.patchStatusIgrisRabbitMQ(ctx, st, "Progressing", "waiting for egress-relay-rabbitmq", shadowNS, "Progressing")
-				return false, nil
+				return false, workloadWaitReason{}, nil
 			}
 		}
 	}
 
 	if needsHTTPTCPIngress(st) {
 		if err := r.reconcileIgrisConfigMap(ctx, st, shadowNS); err != nil {
-			return false, err
+			return false, workloadWaitReason{}, err
 		}
 		if err := r.reconcileIgrisDeployment(ctx, st, shadowNS); err != nil {
-			return false, err
+			return false, workloadWaitReason{}, err
 		}
 		if err := r.reconcileIgrisService(ctx, st, shadowNS); err != nil {
-			return false, err
+			return false, workloadWaitReason{}, err
 		}
-		igrisReady, err := r.igrisDeploymentReady(ctx, st, shadowNS)
+		igrisReady, reason, err := r.igrisDeploymentReady(ctx, st, shadowNS)
 		if err != nil {
-			return false, err
+			return false, workloadWaitReason{}, err
 		}
 		if !igrisReady {
+			if reason.terminal {
+				return false, reason, nil
+			}
 			_ = r.patchStatus(ctx, st, "Progressing", "waiting for Igris", shadowNS)
-			return false, nil
+			return false, workloadWaitReason{}, nil
 		}
 	}
 
 	if wantEgressRelay && needsEgressRelayRabbitMQ(st) && needsHTTPTCPIngress(st) {
 		if err := r.reconcileEgressRelayRabbitMQStack(ctx, st, shadowNS); err != nil {
-			return false, err
+			return false, workloadWaitReason{}, err
 		}
-		egressRelayReady, err := r.egressRelayRabbitMQDeploymentReady(ctx, st, shadowNS)
+		egressRelayReady, reason, err := r.egressRelayRabbitMQDeploymentReady(ctx, st, shadowNS)
 		if err != nil {
-			return false, err
+			return false, workloadWaitReason{}, err
 		}
 		if !egressRelayReady {
+			if reason.terminal {
+				return false, reason, nil
+			}
 			_ = r.patchStatus(ctx, st, "Progressing", "waiting for egress-relay-rabbitmq", shadowNS)
-			return false, nil
+			return false, workloadWaitReason{}, nil
 		}
 	}
 
-	return true, nil
+	return true, workloadWaitReason{}, nil
 }
 
 func (r *ShadowTestReconciler) reconcileShadowWorkloads(
@@ -365,7 +377,7 @@ func (r *ShadowTestReconciler) reconcileShadowWorkloads(
 	shadowNS string,
 	env []corev1.EnvVar,
 	target *appsv1.Deployment,
-) (bool, error) {
+) (bool, workloadWaitReason, error) {
 	for _, step := range []struct {
 		role  string
 		image string
@@ -375,21 +387,17 @@ func (r *ShadowTestReconciler) reconcileShadowWorkloads(
 		{roleCandidate, st.Spec.NewImage},
 	} {
 		if err := r.reconcileEnvoyConfigMap(ctx, st, shadowNS, step.role); err != nil {
-			return false, err
+			return false, workloadWaitReason{}, err
 		}
 		if err := r.reconcileShadowDeployment(ctx, st, shadowNS, step.role, step.image, env); err != nil {
-			return false, err
+			return false, workloadWaitReason{}, err
 		}
 		if err := r.reconcileShadowService(ctx, st, shadowNS, step.role); err != nil {
-			return false, err
+			return false, workloadWaitReason{}, err
 		}
 	}
 
-	shadowsReady, err := r.shadowDeploymentsReady(ctx, st, shadowNS)
-	if err != nil {
-		return false, err
-	}
-	return shadowsReady, nil
+	return r.shadowDeploymentsReady(ctx, st, shadowNS)
 }
 
 // podIPChangedPredicate reduces reconcile spam: only enqueue for pod events

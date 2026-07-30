@@ -18,7 +18,7 @@ import (
 	"github.com/shadow-diff/igris/internal/core"
 	"github.com/shadow-diff/igris/internal/driver"
 	"github.com/shadow-diff/igris/internal/payload"
-	"github.com/shadow-diff/igris/internal/trace"
+	"github.com/shadow-diff/trace"
 )
 
 const testMaxBodySize = 512 * 1024

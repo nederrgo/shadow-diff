@@ -7,6 +7,8 @@ ARG TARGETARCH
 
 WORKDIR /src
 COPY pkg/s3utils /src/pkg/s3utils
+COPY pkg/trace /src/pkg/trace
+COPY pkg/replay /src/pkg/replay
 COPY igrises/igris-http/go.mod igrises/igris-http/go.sum /src/igrises/igris-http/
 WORKDIR /src/igrises/igris-http
 RUN go mod download

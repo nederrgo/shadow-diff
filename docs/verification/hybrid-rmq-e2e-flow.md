@@ -4,7 +4,7 @@ title: Hybrid RMQ E2E Test Flow
 description: End-to-end data and assertion flow for Node.js and Python hybrid bats suites — RMQ ingress, Kaisel HTTP record/replay, RabbitMQ and MongoDB egress regressions, plus RMQ+Shop sampling.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/rabbitmq-ingress
 tags: [verification, e2e, bats, hybrid, rabbitmq, kaisel, shop, shadow-soldier, mongodb, sampling]
-timestamp: 2026-07-26T21:15:00Z
+timestamp: 2026-07-30T13:30:00Z
 ---
 
 # Hybrid RMQ E2E Test Flow
@@ -30,9 +30,9 @@ SKIP_BUILD=1 SKIP_LOAD=1 make test-bats-one FILE=e2e/rabbitmq-ingress/rmq_sampli
 
 One ShadowTest wires **four concerns** in a single prod worker path:
 
-1. **Ingress** — prod RMQ `orders` → igris-rabbitmq fan-out → three shadow workers  
-2. **HTTP egress record/replay** — prod worker HTTP → Kaisel (request+response paired) → Shop; shadows get mocks via Envoy `shop_ext_proc`  
-3. **RabbitMQ egress** — shadow Firehose → egress-relay → Beru; candidate intentionally publishes twice  
+1. **Ingress** — record: prod RMQ → igris-rabbitmq → S3; replay: S3 → three shadow brokers  
+2. **HTTP egress record/replay** — prod worker HTTP → Kaisel → Shop (S3 in record; mocks in replay via Envoy `shop_ext_proc`)  
+3. **RabbitMQ egress** — shadow Firehose → egress-relay → Beru (replay stack); candidate intentionally publishes twice  
 4. **MongoDB egress** — shadow-soldier proxies each role's Mongo connection and reports the decoded command to beru-local; candidate intentionally inserts a second document per order
 
 There is **no** `igris-http` on these fixtures (RMQ-only input); the "HTTP ingress" test name is inherited from the shared helper naming, not an actual igris-http path.
@@ -43,11 +43,11 @@ There is **no** `igris-http` on these fixtures (RMQ-only input); the "HTTP ingre
 
 ```mermaid
 flowchart TD
-  plat[ensure_platform_ready] --> prod[Deploy prod RMQ Mongo user-service worker]
+  plat[ensure_platform_ready + minio] --> prod[Deploy prod RMQ Mongo user-service worker]
   prod --> onlyOne[Delete competing language worker]
-  onlyOne --> st[Apply ShadowTest CR]
-  st --> wait[wait_shadowtest_ready mongo rmq kaisel]
-  wait --> beru[wait_local_beru_rollout]
+  onlyOne --> st[Apply ShadowTest mode=record + storage]
+  st --> wait[wait_shadowtest_ready Kaisel]
+  wait --> beru[wait_local_beru_rollout + igris-rabbitmq + Shop]
 ```
 
 Prod stack (default namespace):
@@ -56,7 +56,7 @@ Prod stack (default namespace):
 - Downstream stub (`user-service-*`)
 - Language worker that consumes `order.created` and performs Mongo + HTTP + RMQ egress
 
-Monarch materializes `shadow-default-<shadowtest>` with control-a / control-b / candidate, igris-rabbitmq, Shop, beru-local, per-role Mongo/RMQ, egress-relay-rabbitmq, and a `KaiselRule` (ingress + egress URLs).
+`setup_file` brings up the **record** stack: unbound→bound prod shadow queue, igris-rabbitmq, Shop, beru-local, `KaiselRule`. Each `@test` that needs A/B/C calls `kaisel_ensure_record_mode` → publish → `kaisel_switch_to_replay`, which provisions control-a/b/candidate, per-role deps, and egress-relay.
 
 Competing workers share the same prod `orders` queue — each suite deletes the other language’s prod Deployment so only one consumer is active.
 
@@ -134,7 +134,7 @@ specific one, so this suite asserts the regression rather than a clean trace.
 
 Same Node prod stack and HTTP record/replay path, with `spec.samplePercentage: 10`. Two gates share `github.com/shadow-diff/sample`: decode the 32-hex W3C trace id to 16 bytes, `V = FNV-1a-64(bytes) & 0xFF`, keep iff `(V*100)<(N*256)`:
 
-1. **igris-rabbitmq** — drops out-of-sample AMQP fan-out to shadow brokers  
+1. **igris-rabbitmq** — drops out-of-sample AMQP before S3 capture (record); replay only fans out recorded messages  
 2. **Kaisel egress** — drops out-of-sample Shop seeds (`POST /v1/record_egress`)
 
 Prod still consumes and egresses every published order; absence asserts cover shadow pods and Shop only.

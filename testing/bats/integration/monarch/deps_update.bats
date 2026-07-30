@@ -13,6 +13,7 @@ FIXTURE_DIR="${BATS_TEST_DIRNAME}/../../fixtures/integration/monarch-deps-update
 setup_file() {
   bats_begin_suite "bats-monarch-deps-update" "default"
   ensure_platform_ready
+  minio_ensure
 
   echo "==> apply prod target"
   kubectl apply -f "${FIXTURE_DIR}/prod-target.yaml"
@@ -57,6 +58,27 @@ setup() {
 
   wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-mongo
   monarch_wait_dependency_available "$SHADOW_NS" "mongodb"
+
+  # Wait for Monarch to patch app Deployments (MONGO_URL + soldier) and roll pods.
+  local role deploy
+  for role in control-a control-b candidate; do
+    deploy="${SHADOWTEST}-${role}"
+    echo "==> wait ${deploy} MONGO_URL + rollout"
+    local elapsed=0
+    while true; do
+      if monarch_assert_shadow_app_env "$SHADOW_NS" "$SHADOWTEST" "$role" "MONGO_URL" "mongodb-${role}" 2>/dev/null; then
+        break
+      fi
+      if [[ "$elapsed" -ge 120 ]]; then
+        monarch_assert_shadow_app_env "$SHADOW_NS" "$SHADOWTEST" "$role" "MONGO_URL" "mongodb-${role}"
+        return 1
+      fi
+      sleep 5
+      elapsed=$((elapsed + 5))
+    done
+    kubectl rollout status "deployment/${deploy}" -n "$SHADOW_NS" --timeout=180s
+  done
+
   monarch_wait_all_roles_running "$SHADOW_NS" "$SHADOWTEST"
   monarch_assert_no_crashloop "$SHADOW_NS"
 

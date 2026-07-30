@@ -13,7 +13,7 @@ import (
 
 	"github.com/shadow-diff/igris/internal/driver"
 	"github.com/shadow-diff/igris/internal/payload"
-	"github.com/shadow-diff/igris/internal/trace"
+	"github.com/shadow-diff/trace"
 )
 
 const driverName = "http_request"
@@ -169,7 +169,7 @@ func (d *Driver) ParseMetadata(sess driver.Session) (driver.Metadata, error) {
 	if !ok {
 		return driver.Metadata{}, fmt.Errorf("invalid HTTP session type")
 	}
-	resolved, err := trace.ResolveContext(s.Request.Header)
+	resolved, err := trace.ResolveHTTP(s.Request.Header)
 	if err != nil {
 		return driver.Metadata{}, err
 	}

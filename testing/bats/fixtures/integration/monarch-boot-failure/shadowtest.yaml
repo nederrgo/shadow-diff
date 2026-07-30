@@ -1,0 +1,32 @@
+# Record-mode ShadowTest that declares a prod AMQP shadow queue, then fails
+# boot when igris-rabbitmq cannot pull a bogus image (ImagePullBackOff).
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-monarch-boot-failure
+  namespace: default
+spec:
+  targetDeployment: monarch-boot-fail-target
+  newImage: nginx:alpine
+  mode: record
+  inputs:
+    - driver: rabbitmq_message
+      amqp:
+        prodUrl: amqp://guest:guest@rmq-prod-broker.default.svc.cluster.local:5672/
+        exchange: orders
+        routingKey: order.created
+        targetDependency: rabbitmq
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL
+  igrisRabbitmq:
+    image: shadow-diff.invalid/igris-rabbitmq-boot-fail:v0
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain

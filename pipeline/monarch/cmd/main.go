@@ -180,8 +180,9 @@ func main() {
 	}
 
 	if err := (&controller.ShadowTestReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("shadowtest"),
 	}).SetupWithManager(mgr, ctrlcontroller.Options{MaxConcurrentReconciles: 2}); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "shadowtest")
 		os.Exit(1)
