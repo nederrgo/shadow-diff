@@ -171,34 +171,18 @@ func resolveSpecDefaults(st *enginev1alpha1.ShadowTest, target *appsv1.Deploymen
 	return nil
 }
 
-func beruGRPCAddressFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	if st.Spec.BeruGRPCAddress != "" {
-		return st.Spec.BeruGRPCAddress
-	}
+// Beru always runs as beru-local inside the shadow namespace, one per ShadowTest.
+func beruGRPCAddressFor(_ *enginev1alpha1.ShadowTest, shadowNS string) string {
 	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruGRPCPort)
 }
 
-func beruHTTPHostFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	if st.Spec.BeruGRPCAddress != "" {
-		host, _, err := parseBeruHostPort(st.Spec.BeruGRPCAddress)
-		if err != nil || host == "" {
-			return defaultBeruHTTPAddress
-		}
-		return fmt.Sprintf("%s:8080", host)
-	}
+func beruHTTPHostFor(_ *enginev1alpha1.ShadowTest, shadowNS string) string {
 	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
 }
 
 // beruIngestURLFor is the base URL a shadow-pod sidecar posts egress reports to.
 // It uses the ingest port rather than 8080 — see localBeruIngestPort.
-func beruIngestURLFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	if st.Spec.BeruGRPCAddress != "" {
-		host, _, err := parseBeruHostPort(st.Spec.BeruGRPCAddress)
-		if err != nil || host == "" {
-			return "http://" + defaultBeruHTTPAddress
-		}
-		return fmt.Sprintf("http://%s:8080", host)
-	}
+func beruIngestURLFor(_ *enginev1alpha1.ShadowTest, shadowNS string) string {
 	return fmt.Sprintf("http://%s:%d", localBeruDNSHost(shadowNS), localBeruIngestPort)
 }
 
@@ -207,16 +191,6 @@ func beruGRPCTimeoutFor(st *enginev1alpha1.ShadowTest) string {
 		return st.Spec.BeruGRPCTimeout
 	}
 	return defaultBeruGRPCTimeout
-}
-
-func beruIngestAddressFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	if st.Spec.BeruIngestAddress != "" {
-		return st.Spec.BeruIngestAddress
-	}
-	if st.Spec.BeruGRPCAddress != "" {
-		return defaultBeruIngestAddress
-	}
-	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
 }
 
 func parseBeruHostPort(address string) (host string, port int32, err error) {

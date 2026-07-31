@@ -43,8 +43,8 @@ make deploy IMG=monarch:dev   # deploy controller to current kube context
 make proto        # regenerate protobuf (requires protoc + plugins)
 make test
 make docker-build BERU_IMG=beru:dev
-kubectl apply -f deploy/   # creates beru-system ns + Deployment + Service
 ```
+Beru has no manifests of its own — Monarch deploys `beru-local` into each shadow namespace.
 
 ### Single Go test
 ```bash
@@ -107,7 +107,7 @@ Subscribes to Firehose on each shadow broker, deduplicates (OTel pika double-pub
 
 ### Beru-local
 
-When `spec.beruGRPCAddress` is unset, Monarch provisions a per-ShadowTest `beru-local` pod inside the shadow namespace. It uses an **in-memory EmptyDir** for SQLite — all diff state is lost on pod restart. The prod Beru in `beru-system` uses a persistent volume.
+Monarch provisions a `beru-local` pod per ShadowTest inside the shadow namespace — this is the only Beru. By default it uses an **in-memory EmptyDir** for SQLite, so diff state is lost on pod restart and with the namespace. Setting `BERU_DB_SECRET` on the manager switches it to a shared PostgreSQL: Monarch replicates the named Secret into each shadow namespace and mounts it via `envFrom`, and diff history then outlives the ShadowTest. See `docs/data-plane/beru-postgres-storage.md`.
 
 ### Key design patterns
 

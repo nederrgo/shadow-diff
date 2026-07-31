@@ -13,7 +13,6 @@ spec:
   newImage: ghcr.io/org/app:v2
   servicePort: 8080
   applicationPort: 8081
-  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
   # record (default) | replay. Record captures to S3 without ABC pods; replay
   # runs ABC against a pinned session. Bats fixtures that omit mode/storage
   # must be updated to match this contract.

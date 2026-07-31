@@ -1,0 +1,96 @@
+# Local PostgreSQL fixture for Beru's durable storage backend (DB_DRIVER=postgres).
+# Not managed by Monarch — this is the BYO-Postgres a real deployment supplies.
+#
+# Lives in monarch-system alongside the MinIO fixture: reachable from every shadow
+# namespace, and outlives them. Monarch replicates the Secret below into each
+# shadow namespace when BERU_DB_SECRET names it (see shadowtest_beru_db.go).
+#
+# monarch-system enforces PodSecurity restricted (same as the controller), hence
+# the securityContext below.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: beru-postgres
+  namespace: monarch-system
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: shadow-diff
+type: Opaque
+stringData:
+  DB_DRIVER: postgres
+  DB_HOST: postgres.monarch-system.svc.cluster.local
+  DB_PORT: "5432"
+  DB_USER: beru
+  DB_PASSWORD: beru
+  DB_NAME: beru
+  # Local fixture only. Real deployments keep the "require" default.
+  DB_SSLMODE: disable
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: monarch-system
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: shadow-diff
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: shadow-diff
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              value: beru
+            - name: POSTGRES_PASSWORD
+              value: beru
+            - name: POSTGRES_DB
+              value: beru
+            # initdb refuses a non-empty directory, and a mounted volume root is
+            # never empty (lost+found), so PGDATA points at a subdirectory.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 999
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "beru", "-d", "beru"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "beru", "-d", "beru"]
+            initialDelaySeconds: 20
+            periodSeconds: 20
+      volumes:
+        # Ephemeral on purpose: this fixture is reset with the cluster.
+        - name: data
+          emptyDir: {}

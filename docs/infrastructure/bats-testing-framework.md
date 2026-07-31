@@ -42,7 +42,6 @@ testing/bats/
 
 testing/tools/            # standalone developer utilities (not called by bats)
   e2e-reset-minikube.sh   # bootstrap a local minikube cluster from scratch
-  send-json-trace.sh      # send a synthetic gRPC ReportTraffic to Beru for debugging
 ```
 
 ## Platform bootstrap (`lib/platform.bash`)
@@ -51,7 +50,6 @@ testing/tools/            # standalone developer utilities (not called by bats)
 
 - Minikube (kvm2/virtualbox)
 - Monarch CRDs + operator (`MONARCH_MODE=dev`)
-- Beru (`beru-system`)
 - Kaisel DaemonSet (no per-test restart)
 - Kaisel DaemonSet (`pipeline/kaisel/deploy/`, also via `e2e-reset-minikube.sh`)
 

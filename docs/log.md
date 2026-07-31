@@ -9,8 +9,14 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-07-31]
+### Added
+* 'pipeline/monarch + pipeline/beru + docs': Removed the shared beru-system Beru in favour of per-ShadowTest beru-local — deleted pipeline/beru/deploy/, spec.beruGRPCAddress and spec.beruIngestAddress, usesLocalBeru and the external-address branches; diff history now shared via BERU_DB_SECRET PostgreSQL. ADR in docs/data-plane/beru-system-removal.md
+* 'pipeline/monarch + pipeline/beru + testing': beru-local durable storage — BERU_DB_SECRET replicated into each shadow namespace and mounted via envFrom, tmpfs SQLite volume dropped when Postgres is active, verdicts.shadow_test_name for shared-database tenancy, Postgres fixture moved to monarch-system, beru go.sum completed for the pgx/pgxpool/puddle chain
+
 ## [2026-07-30]
 ### Added
+* 'pipeline/beru + monarch + testing': BYO-PostgreSQL storage driver — RunStore interface extraction, PostgresStore satisfying both storage halves, embedded migrations with traces/diff_reports UI projection, DB_DRIVER boot selection, beru-local SESSION_ID plumbing, Beru egress NetworkPolicy, and a local Postgres E2E fixture
 * 'docs/control-plane/shadowtest-teardown-edge-cases.md': ADR for queue delete fail-open + x-expires vs S3 finalizer retry and Failed autopsy
 * 'pipeline/monarch/internal/controller/shadowtest_rabbitmq.go': prod shadow queue x-expires 10m idle TTL leak fail-safe
 * 'testing/bats/integration/monarch/amqp_queue_failure.bats': drop flaky QueueBind integration case; declare autopsy remains; bind covered by unit tests

@@ -29,10 +29,4 @@ func TestShopEnv_beruHTTPURL(t *testing.T) {
 	if envs[envShadowTestName] != "my-test" {
 		t.Fatalf("SHADOW_TEST_NAME = %q", envs[envShadowTestName])
 	}
-
-	st.Spec.BeruGRPCAddress = "beru.beru-system.svc.cluster.local:50051"
-	wantProd := "http://" + beruHTTPHostFor(st, shadowNS)
-	if wantProd != "http://beru.beru-system.svc.cluster.local:8080" {
-		t.Fatalf("prod BERU_HTTP_URL host = %q", wantProd)
-	}
 }

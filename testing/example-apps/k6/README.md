@@ -29,8 +29,8 @@ Parallel load test for the shadow stack: steady JSON traffic, noisy payloads (Be
    ```bash
    make beru-docker-build BERU_IMG=beru:dev
    kind load docker-image beru:dev --name "$(kind get clusters | head -1)"
-   kubectl rollout restart deployment/beru -n beru-system
-   kubectl rollout status deployment/beru -n beru-system
+   kubectl rollout restart deployment/beru-local -n "$SHADOW_NS"
+   kubectl rollout status deployment/beru-local -n "$SHADOW_NS"
    curl -sf http://127.0.0.1:8080/healthz   # after port-forward to Beru :8080
    ```
 
@@ -45,7 +45,7 @@ export SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='
 
 kubectl port-forward -n "$SHADOW_NS" svc/my-app-shadow-igris 8888:8888
 kubectl port-forward -n "$SHADOW_NS" svc/my-app-shadow-control-a 8889:8888
-kubectl port-forward -n beru-system svc/beru 8080:8080
+kubectl port-forward -n "$SHADOW_NS" svc/beru-local 8080:8080
 ```
 
 | Local URL | Backend |
@@ -169,13 +169,13 @@ For local debugging only, you may temporarily relax the threshold (not recommend
 2. **Beru logs** — no panics; steady traffic mostly `No regression`:
 
    ```bash
-   kubectl logs -n beru-system deployment/beru --tail=200
+   kubectl logs -n "$SHADOW_NS" deployment/beru-local --tail=200
    ```
 
 3. **Orphan timeouts** — greppable trace IDs:
 
    ```bash
-   kubectl logs -n beru-system deployment/beru --tail=500 | grep 'k6-orphan-'
+   kubectl logs -n "$SHADOW_NS" deployment/beru-local --tail=500 | grep 'k6-orphan-'
    ```
 
    Expect lines like `Timed out waiting for Trace k6-orphan-...` with missing `control-b` / `candidate`.
@@ -183,7 +183,7 @@ For local debugging only, you may temporarily relax the threshold (not recommend
 4. **Memory (optional)** — Beru/Igris stay stable under load:
 
    ```bash
-   kubectl top pod -n beru-system -l app.kubernetes.io/name=beru
+   kubectl top pod -n "$SHADOW_NS" -l app=beru-local
    kubectl top pod -n "$SHADOW_NS" -l app.kubernetes.io/component=igris
    ```
 
@@ -193,7 +193,6 @@ With identical echo images (`testing/bats/manifests/e2e-shadowtest.yaml`), contr
 
 ## Related scripts
 
-- [`testing/tools/send-json-trace.sh`](../../testing/tools/send-json-trace.sh) — grpcurl orphan flood, 10MB 413 check, `hey` burst (complementary).
 - [`testing/tools/e2e-reset-minikube.sh`](../../testing/tools/e2e-reset-minikube.sh) — full Minikube deploy.
 - [`e2e-pipeline-test.sh`](../../scripts/e2e-pipeline-test.sh) — single-trace ingress validation.
 
@@ -203,7 +202,7 @@ With identical echo images (`testing/bats/manifests/e2e-shadowtest.yaml`), contr
 |---------|----------------|-----|
 | `connection refused` on `:8080` after Beru restart | Stale `kubectl port-forward` | Re-run `./run-stress-test.sh` (now kills stale forwards); or `pkill -f 'port-forward.*:8080'` |
 | `connection refused` on `:8888` / `:8889` / `:8080` | Port-forwards not running | Use `./run-stress-test.sh` or start the three `kubectl port-forward` commands |
-| `beru_health_success` 0% | Beru not forwarded or old image without `/healthz` | `./run-stress-test.sh` preflights health; if **404**, run `kind load` + `kubectl rollout restart deployment/beru -n beru-system` |
+| `beru_health_success` 0% | Beru not forwarded or old image without `/healthz` | `./run-stress-test.sh` preflights health; if **404**, run `kind load` + `kubectl rollout restart deployment/beru-local -n "$SHADOW_NS"` |
 | 200 on 1MB POST to Igris | Old Igris without 512KiB limit | Rebuild/redeploy Igris (`IGRIS_MAX_BODY_SIZE` default 524288) |
 | `limit_payload` gets 413 | Payload too large or old Igris | Default `LIMIT_PAYLOAD_KB=450`; cluster must use 512KiB limit |
 | Igris `status_code 500` on limit | Request too large for Envoy buffered response | Lower `LIMIT_PAYLOAD_KB` (default 450); raise Envoy buffer in Monarch if needed |

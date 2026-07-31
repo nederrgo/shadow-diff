@@ -216,7 +216,7 @@ Beru is the analysis sink for replay (and any path that reports diffs):
 - **AMQP / DB egress:** egress-relay-rabbitmq / shadow-soldier → same HTTP ingest
 - **Engine:** FNV-shard by trace ID → re-evaluate full history → verdict (noise vs regression)
 
-Per-ShadowTest **beru-local** (EmptyDir SQLite) when `spec.beruGRPCAddress` is unset; cluster Beru in `beru-system` for shared persistence.
+Monarch provisions a **beru-local** pod per ShadowTest inside the shadow namespace. It runs on tmpfs SQLite by default, or on a shared PostgreSQL when `BERU_DB_SECRET` is configured — see [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md).
 
 ---
 

@@ -226,17 +226,9 @@ type ShadowTestSpec struct {
 	// +optional
 	ApplicationPort int32 `json:"applicationPort,omitempty"`
 
-	// BeruGRPCAddress is the host:port of the Beru ext_proc gRPC service.
-	// +optional
-	BeruGRPCAddress string `json:"beruGRPCAddress,omitempty"`
-
 	// BeruGRPCTimeout is the ext_proc gRPC timeout (e.g. "2s").
 	// +optional
 	BeruGRPCTimeout string `json:"beruGRPCTimeout,omitempty"`
-
-	// BeruIngestAddress is the host:port of the Beru wire-payload ingest service (HTTP).
-	// +optional
-	BeruIngestAddress string `json:"beruIngestAddress,omitempty"`
 
 	// Inputs defines Igris listener ports and drivers. When empty, Monarch defaults to
 	// a single HTTP listener on servicePort.
@@ -273,7 +265,7 @@ type ShadowTestSpec struct {
 	// +optional
 	MaxQPSPerPod int `json:"maxQPSPerPod,omitempty"`
 
-	// Beru overrides the beru-local image when spec.beruGRPCAddress is unset.
+	// Beru overrides the beru-local analytics image (one per shadow namespace).
 	// +optional
 	Beru *BeruSpec `json:"beru,omitempty"`
 

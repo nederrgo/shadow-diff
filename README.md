@@ -56,7 +56,7 @@ monarch/                          # repo root (Shadow-Diff monorepo)
 
 ## Pipeline services
 
-Each service has its own README with layer role, build commands, and Monarch wiring. **Monarch** orchestrates L0–L5 from a `ShadowTest` CR; **Beru** is installed separately (cluster-wide) and referenced via `spec.beruGRPCAddress`.
+Each service has its own README with layer role, build commands, and Monarch wiring. **Monarch** orchestrates L0–L5 from a `ShadowTest` CR, including a **Beru** analysis pod per shadow namespace.
 
 | Layer | Service | README |
 | ----- | ------- | ------ |

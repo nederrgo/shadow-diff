@@ -34,13 +34,8 @@ const (
 	configMapKeyEnvoyYAML  = "envoy.yaml"
 	volumeNameEnvoyConfig  = "envoy-config"
 
-	defaultBeruGRPCAddress   = "beru.beru-system.svc.cluster.local:50051"
-	defaultBeruHTTPAddress   = "beru.beru-system.svc.cluster.local:8080"
-	defaultBeruIngestAddress = "beru-ingest.shadow-system.svc.cluster.local:8080"
-	defaultBeruGRPCTimeout   = "10s"
-	beruSystemNamespace      = "beru-system"
-	beruServiceName          = "beru"
-	envBeruGRPCAddress       = "BERU_GRPC_ADDRESS"
+	defaultBeruGRPCTimeout = "10s"
+	envBeruGRPCAddress     = "BERU_GRPC_ADDRESS"
 
 	egressProxyPort int32 = 10001
 

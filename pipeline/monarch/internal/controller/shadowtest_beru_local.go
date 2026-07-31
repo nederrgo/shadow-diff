@@ -28,10 +28,6 @@ const (
 	localBeruSQLiteSizeMi = int64(64)
 )
 
-func usesLocalBeru(st *enginev1alpha1.ShadowTest) bool {
-	return st != nil && st.Spec.BeruGRPCAddress == ""
-}
-
 func localBeruLabels(st *enginev1alpha1.ShadowTest) map[string]string {
 	return map[string]string{
 		labelManagedBy:           valueManagedBy,
@@ -45,17 +41,6 @@ func localBeruLabels(st *enginev1alpha1.ShadowTest) map[string]string {
 
 func localBeruDNSHost(shadowNS string) string {
 	return shadowServiceHost(shadowNS, localBeruName)
-}
-
-func (r *ShadowTestReconciler) reconcileLocalBeruIfNeeded(
-	ctx context.Context,
-	st *enginev1alpha1.ShadowTest,
-	shadowNS string,
-) error {
-	if !usesLocalBeru(st) {
-		return nil
-	}
-	return r.reconcileLocalBeru(ctx, st, shadowNS)
 }
 
 func (r *ShadowTestReconciler) reconcileLocalBeru(
@@ -91,7 +76,6 @@ func (r *ShadowTestReconciler) reconcileLocalBeru(
 		},
 	}
 	replicas := int32(1)
-	sqliteSizeLimit := resource.NewQuantity(localBeruSQLiteSizeMi*1024*1024, resource.BinarySI)
 	_, err := ctrl.CreateOrPatch(ctx, r.Client, deploy, func() error {
 		deploy.Labels = podLabels
 		deploy.Spec.Replicas = &replicas
@@ -100,43 +84,74 @@ func (r *ShadowTestReconciler) reconcileLocalBeru(
 		for k, v := range podLabels {
 			deploy.Spec.Template.ObjectMeta.Labels[k] = v
 		}
-		deploy.Spec.Template.Spec.Containers = []corev1.Container{{
-			Name:            "beru",
-			Image:           beruImageFor(st),
-			ImagePullPolicy: corev1.PullIfNotPresent,
-			Ports: []corev1.ContainerPort{
-				{Name: "grpc", ContainerPort: localBeruGRPCPort, Protocol: corev1.ProtocolTCP},
-				{Name: "http", ContainerPort: localBeruHTTPPort, Protocol: corev1.ProtocolTCP},
-			},
-			Env: []corev1.EnvVar{
-				{Name: "BERU_GRPC_ADDR", Value: ":50051"},
-				{Name: "BERU_HTTP_ADDR", Value: ":8080"},
-				{Name: "BERU_DB_PATH", Value: "/data/beru.db"},
-				{Name: "BERU_SHADOW_TEST_NAME", Value: st.Name},
-			},
-			Resources: corev1.ResourceRequirements{
-				Limits: corev1.ResourceList{
-					corev1.ResourceMemory: resource.MustParse("128Mi"),
-					corev1.ResourceCPU:    resource.MustParse("200m"),
-				},
-			},
-			VolumeMounts: []corev1.VolumeMount{{
-				Name:      volumeNameLocalBeruData,
-				MountPath: "/data",
-			}},
-		}}
-		deploy.Spec.Template.Spec.Volumes = []corev1.Volume{{
-			Name: volumeNameLocalBeruData,
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{
-					Medium:    corev1.StorageMediumMemory,
-					SizeLimit: sqliteSizeLimit,
-				},
-			},
-		}}
+		container, volumes := localBeruPodSpec(st)
+		deploy.Spec.Template.Spec.Containers = []corev1.Container{container}
+		deploy.Spec.Template.Spec.Volumes = volumes
 		return nil
 	})
 	return err
+}
+
+// localBeruPodSpec builds the beru-local container and its volumes. Split out of
+// the CreateOrPatch mutation so the storage-mode branch is testable without a
+// cluster.
+//
+// With BERU_DB_SECRET configured, DB_* arrives wholesale from the replicated
+// Secret — adding a connection setting later needs no controller change — and
+// the tmpfs volume is dropped, since no SQLite file is opened and the 64Mi
+// in-memory EmptyDir is charged against the container's 128Mi limit.
+func localBeruPodSpec(st *enginev1alpha1.ShadowTest) (corev1.Container, []corev1.Volume) {
+	_, dbSecretName, usesPostgres := beruDBSecretRef()
+
+	container := corev1.Container{
+		Name:            "beru",
+		Image:           beruImageFor(st),
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Ports: []corev1.ContainerPort{
+			{Name: "grpc", ContainerPort: localBeruGRPCPort, Protocol: corev1.ProtocolTCP},
+			{Name: "http", ContainerPort: localBeruHTTPPort, Protocol: corev1.ProtocolTCP},
+		},
+		Env: []corev1.EnvVar{
+			{Name: "BERU_GRPC_ADDR", Value: ":50051"},
+			{Name: "BERU_HTTP_ADDR", Value: ":8080"},
+			{Name: "BERU_SHADOW_TEST_NAME", Value: st.Name},
+			// Session identity for durable storage: the same session folder
+			// as the S3 layout, so diff rows join to recorded artifacts.
+			{Name: envSessionID, Value: st.Status.CurrentSessionID},
+			{Name: "SHADOW_NAMESPACE", Value: st.Namespace},
+			{Name: "SHADOW_MODE", Value: st.Spec.Mode},
+		},
+		Resources: corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
+				corev1.ResourceCPU:    resource.MustParse("200m"),
+			},
+		},
+	}
+
+	if usesPostgres {
+		container.EnvFrom = []corev1.EnvFromSource{{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: dbSecretName},
+			},
+		}}
+		return container, nil
+	}
+
+	container.Env = append(container.Env, corev1.EnvVar{Name: "BERU_DB_PATH", Value: "/data/beru.db"})
+	container.VolumeMounts = []corev1.VolumeMount{{
+		Name:      volumeNameLocalBeruData,
+		MountPath: "/data",
+	}}
+	return container, []corev1.Volume{{
+		Name: volumeNameLocalBeruData,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{
+				Medium:    corev1.StorageMediumMemory,
+				SizeLimit: resource.NewQuantity(localBeruSQLiteSizeMi*1024*1024, resource.BinarySI),
+			},
+		},
+	}}
 }
 
 func (r *ShadowTestReconciler) localBeruReady(

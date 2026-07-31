@@ -49,7 +49,7 @@ type ShadowTestReconciler struct {
 	S3Cleaner func(ctx context.Context, st *enginev1alpha1.ShadowTest) error
 	// ProdQueueEnsureDeclared / ProdQueueEnsureBound override AMQP broker ops in tests.
 	ProdQueueEnsureDeclared func(ctx context.Context, st *enginev1alpha1.ShadowTest) (string, error)
-	ProdQueueEnsureBound     func(ctx context.Context, st *enginev1alpha1.ShadowTest) error
+	ProdQueueEnsureBound    func(ctx context.Context, st *enginev1alpha1.ShadowTest) error
 }
 
 func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -132,6 +132,10 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
 		return ctrl.Result{}, err
 	}
+	if err := r.syncBeruDBSecret(ctx, &shadowTest, shadowNS); err != nil {
+		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
+		return ctrl.Result{}, err
+	}
 
 	mode := operatingMode(&shadowTest)
 	var captureTargets []string
@@ -152,23 +156,21 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		kaiselPhase = "Disabled"
 	}
 
-	if err := r.reconcileLocalBeruIfNeeded(ctx, &shadowTest, shadowNS); err != nil {
+	if err := r.reconcileLocalBeru(ctx, &shadowTest, shadowNS); err != nil {
 		_ = r.patchStatus(ctx, &shadowTest, "Failed", err.Error(), shadowNS)
 		return ctrl.Result{}, err
 	}
-	if usesLocalBeru(&shadowTest) {
-		ready, reason, err := r.localBeruReady(ctx, shadowNS)
-		if err != nil {
-			return ctrl.Result{}, err
+	ready, reason, err := r.localBeruReady(ctx, shadowNS)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !ready {
+		if reason.terminal {
+			return r.markBootFailed(ctx, &shadowTest, shadowNS, reason.message)
 		}
-		if !ready {
-			if reason.terminal {
-				return r.markBootFailed(ctx, &shadowTest, shadowNS, reason.message)
-			}
-			_ = r.patchStatus(ctx, &shadowTest, "Progressing",
-				"Local analytics backend is booting up (beru-local)", shadowNS)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
+		_ = r.patchStatus(ctx, &shadowTest, "Progressing",
+			"Local analytics backend is booting up (beru-local)", shadowNS)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	env, warnMsg := envFromTarget(&target)

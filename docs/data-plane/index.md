@@ -18,6 +18,8 @@ Specifications for the Shadow-Diff data-plane pipeline: traffic capture, diff an
 * [/data-plane/kernel-compatibility.md](/data-plane/kernel-compatibility.md) — Which eBPF build a node's kernel accepts: gated on 5.17+, ungated with user-space sampling on 5.2+, refusal below; tier selection by load attempt, and what each tier costs.
 * [/data-plane/siphon-audit.md](/data-plane/siphon-audit.md) — Historical ADR: Siphon removed; Kaisel owns HTTP ingress admit/sample/forward.
 * [/data-plane/beru-analysis.md](/data-plane/beru-analysis.md) — Beru v2 single-trace verdicts: completeness timeout, baseline void, compound diffs.
+* [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md) — Beru storage backends: RunStore and TraceRepository behind `DB_DRIVER`, BYO-PostgreSQL reached by beru-local via a Monarch-replicated Secret, and the UI projection tables.
+* [/data-plane/beru-system-removal.md](/data-plane/beru-system-removal.md) — ADR: shared `beru-system` Beru and `spec.beruGRPCAddress` removed; one beru-local per ShadowTest backed by a shared PostgreSQL.
 * [/data-plane/egress-record-replay.md](/data-plane/egress-record-replay.md) — Kaisel seeds Shop → Envoy egress replay; record mode writes egress JSONL to S3; replay mode preloads mocks with `/healthz` readiness gate.
 * [/data-plane/shadow-soldier.md](/data-plane/shadow-soldier.md) — Database egress capture: plain-text TCP proxy sidecar decoding MongoDB, PostgreSQL, Redis and MSSQL wire protocols, with fail-open piping and a bounded parser tap.
 * [/data-plane/db-egress-capture-adr.md](/data-plane/db-egress-capture-adr.md) — ADR: database egress captured by an in-pod proxy; Beru's OTLP MongoDB route retired.

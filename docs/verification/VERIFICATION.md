@@ -110,7 +110,6 @@ spec:
   newImage: nginx:1.25-alpine
   servicePort: 80
   applicationPort: 8080
-  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
 EOF
 ```
 
@@ -178,7 +177,10 @@ kubectl logs -n "$SHADOW_NS" -l shadow-diff.io/role=control-a -c envoy-sidecar
 
 ---
 
-## 5. Deploy Beru
+## 5. Build the Beru image
+
+Monarch deploys Beru itself, as `beru-local` in each shadow namespace. Only the image has
+to be present and named on the manager.
 
 ```bash
 cd "$REPO"
@@ -188,11 +190,9 @@ make beru-docker-build BERU_IMG=$BERU_IMG
 # Kind: kind load docker-image $BERU_IMG
 # Minikube: minikube image load $BERU_IMG
 
-kubectl apply -f beru/deploy/
-kubectl set image deployment/beru beru=$BERU_IMG -n beru-system
-
-kubectl rollout status deployment/beru -n beru-system --timeout=120s
-kubectl get pods,svc -n beru-system
+kubectl set env deployment/monarch-controller-manager -n monarch-system BERU_IMAGE=$BERU_IMG
+kubectl rollout status deployment/beru-local -n "$SHADOW_NS" --timeout=120s
+kubectl get pods,svc -n "$SHADOW_NS" -l app=beru-local
 ```
 
 ---
@@ -202,7 +202,7 @@ kubectl get pods,svc -n beru-system
 Port-forward (terminal 1):
 
 ```bash
-kubectl port-forward svc/beru 50051:50051 -n beru-system
+kubectl port-forward svc/beru-local 50051:50051 -n "$SHADOW_NS"
 ```
 
 Call RPC (terminal 2):
@@ -217,7 +217,7 @@ grpcurl -plaintext \
 Check logs:
 
 ```bash
-kubectl logs -n beru-system deployment/beru --tail=20
+kubectl logs -n "$SHADOW_NS" deployment/beru-local --tail=20
 ```
 
 Expected log:
@@ -340,7 +340,7 @@ Send traffic (new terminal):
 
 ```bash
 curl -i -H 'traceparent: e2e-igris-1' http://localhost:8080/
-kubectl logs -n beru-system deployment/beru -f
+kubectl logs -n "$SHADOW_NS" deployment/beru-local -f
 ```
 
 Confirm Beru correlates ingress for trace `e2e-igris-1` across control-a, control-b, and candidate.
@@ -427,7 +427,6 @@ sudo make test-integration   # real BPF + netns lab, needs root
 ```bash
 kubectl delete shadowtest my-app-shadow -n default
 kubectl delete deployment my-prod-app -n default
-kubectl delete -f "$REPO/pipeline/beru/deploy/"
 
 cd "$REPO/pipeline/monarch"
 make undeploy
@@ -443,7 +442,7 @@ make uninstall
 | `phase: Failed`, target not found | Wrong `targetDeployment` / `targetNamespace` | Fix spec; ensure Deployment exists |
 | Pods `ImagePullBackOff` | Local image not in cluster | `kind load` / `minikube image load` or use a registry |
 | Pods `1/2` not Ready | Envoy sidecar failing | `kubectl logs ... -c envoy-sidecar` |
-| `grpcurl` connection refused | Beru not ready or no port-forward | Check `beru-system` pods; re-run port-forward |
+| `grpcurl` connection refused | Beru not ready or no port-forward | Check `beru-local` in the shadow namespace; re-run port-forward |
 | Wrong cluster | Multiple kube contexts | `kubectl config current-context` |
 | Kaisel `Degraded`, empty capture | TC not on CNI iface / no prod traffic | Check `/v1/status`; hit prod Service URL |
 | No Igris logs after prod curl | `samplePercentage` sampling the trace out, missing `traceparent`, or wrong pod IPs | `kubectl get shadowtest -o yaml` → `spec.samplePercentage`; ensure W3C `traceparent` on the request |
@@ -473,7 +472,7 @@ For JSON diff tests, use an app image that returns JSON bodies (not default ngin
 ### Watch Beru logs
 
 ```bash
-kubectl logs -n beru-system deployment/beru -f
+kubectl logs -n "$SHADOW_NS" deployment/beru-local -f
 ```
 
 Expected messages include:
@@ -485,7 +484,7 @@ Expected messages include:
 ### Manual ReportTraffic (optional)
 
 ```bash
-kubectl port-forward svc/beru 50051:50051 -n beru-system
+kubectl port-forward svc/beru-local 50051:50051 -n "$SHADOW_NS"
 grpcurl -plaintext -d '{
   "report": {
     "trace_id": "trace-123",
@@ -544,7 +543,7 @@ The http-ingress bats suites verify Shop replay (Envoy egress proxy, seed, mock 
 ### Seed a mock response (manual)
 
 ```bash
-kubectl port-forward svc/beru 8080:8080 -n beru-system &
+kubectl port-forward svc/beru-local 8080:8080 -n "$SHADOW_NS" &
 curl -s -X POST http://127.0.0.1:8080/v1/seed_mock \
   -H 'Content-Type: application/json' \
   -d '{
@@ -582,7 +581,7 @@ Repeat the curl **without** seeding (or with a different body). Expected: HTTP *
 Watch Beru logs:
 
 ```bash
-kubectl logs -n beru-system deployment/beru -f | grep 'Egress Regression'
+kubectl logs -n "$SHADOW_NS" deployment/beru-local -f | grep 'Egress Regression'
 ```
 
 ### Verify Envoy egress config
@@ -703,7 +702,7 @@ cd ../igris-rabbitmq && go test ./internal/multicast/... -run TestBuildPublishin
 ## Phase 2a scope (superseded by 2b config)
 
 - Phase 2b Envoy config uses **ext_proc** + **generate_request_id** (no longer admin-only placeholder).
-- Monarch does **not** deploy Beru; apply `beru/deploy/` separately.
+- Monarch deploys Beru as `beru-local` per shadow namespace.
 
 ---
 
@@ -732,7 +731,7 @@ Verify:
 
 End-to-end Kind test for a realistic AMQP shadow workload: prod publish with W3C **`traceparent`** → **`igris-rabbitmq`** multicast → **`rmq-mongo-worker`** (Mongo `insertOne`, Envoy ingress report, RabbitMQ egress publish). See [`testing/bats/manifests/rmq-mongo-e2e/README.md`](testing/bats/manifests/rmq-mongo-e2e/README.md).
 
-**v1 Beru assertions:** ingress (`No regression for Trace <hex>` on **beru-local**) and RabbitMQ egress (`No egress regression for Trace <hex> (rabbitmq)` on **beru-local** — Monarch routes egress-relay to per-shadow Beru when `spec.beruGRPCAddress` is unset). Mongo is verified via pod logs (`mongo insert ok`) until Phase 2b Envoy mongo wire ingest enables Beru `mongodb` egress diff.
+**v1 Beru assertions:** ingress (`No regression for Trace <hex>` on **beru-local**) and RabbitMQ egress (`No egress regression for Trace <hex> (rabbitmq)` on **beru-local** — Monarch routes egress-relay to the shadow namespace's beru-local). Mongo is verified via pod logs (`mongo insert ok`) until Phase 2b Envoy mongo wire ingest enables Beru `mongodb` egress diff.
 
 ```bash
 make -C testing/example-apps/rmq-mongo-worker docker-build RMQ_MONGO_WORKER_IMG=rmq-mongo-worker:dev
@@ -886,7 +885,7 @@ cd monarch && go test ./internal/controller/ -run 'TestOtel|TestRenderEnvoy'
 - [ ] `ShadowTest` status `Ready` with `shadowNamespace`
 - [ ] Three shadow Deployments; pods `2/2` with `app` + `envoy-sidecar`
 - [ ] Three Envoy ConfigMaps in shadow namespace
-- [ ] Beru pod running in `beru-system`
+- [ ] `beru-local` pod running in the shadow namespace
 - [ ] `grpcurl ReportTraffic` returns `{}` and log shows received report
 - [ ] `make -C igris test` passes
 - [ ] Igris returns 202 and multicasts to three targets (local smoke or cluster port-forwards)

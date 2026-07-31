@@ -99,6 +99,31 @@ func markAvailable(t *testing.T, c client.Client, ns, name string) {
 	}
 }
 
+// driveBeruLocalReady reconciles until beru-local exists, then marks it Available.
+// Every ShadowTest provisions beru-local and the reconcile gates on its readiness,
+// which a fake client never reports on its own.
+func driveBeruLocalReady(
+	t *testing.T,
+	rec *ShadowTestReconciler,
+	c client.Client,
+	req reconcile.Request,
+	shadowNS string,
+) {
+	t.Helper()
+	for i := 0; i < 5; i++ {
+		if _, err := rec.Reconcile(context.Background(), req); err != nil {
+			t.Fatalf("reconcile beru bring-up %d: %v", i, err)
+		}
+		var beru appsv1.Deployment
+		key := types.NamespacedName{Namespace: shadowNS, Name: localBeruName}
+		if err := c.Get(context.Background(), key, &beru); err == nil {
+			markAvailable(t, c, shadowNS, localBeruName)
+			return
+		}
+	}
+	t.Fatalf("beru-local was never created in %s", shadowNS)
+}
+
 // TestRecordMode_KaiselAfterSinksReady asserts KaiselRule is not created until
 // Shop and Igris report AvailableReplicas > 0.
 func TestRecordMode_KaiselAfterSinksReady(t *testing.T) {
@@ -115,17 +140,7 @@ func TestRecordMode_KaiselAfterSinksReady(t *testing.T) {
 	nn := types.NamespacedName{Name: st.Name, Namespace: st.Namespace}
 	req := reconcile.Request{NamespacedName: nn}
 
-	// Drive through beru-local create + wait.
-	for i := 0; i < 5; i++ {
-		if _, err := rec.Reconcile(context.Background(), req); err != nil {
-			t.Fatalf("reconcile beru bring-up %d: %v", i, err)
-		}
-		var beru appsv1.Deployment
-		if err := c.Get(context.Background(), types.NamespacedName{Namespace: shadowNS, Name: localBeruName}, &beru); err == nil {
-			markAvailable(t, c, shadowNS, localBeruName)
-			break
-		}
-	}
+	driveBeruLocalReady(t, rec, c, req, shadowNS)
 	if _, err := rec.Reconcile(context.Background(), req); err != nil {
 		t.Fatalf("reconcile after beru ready: %v", err)
 	}
@@ -172,7 +187,6 @@ func TestRecordMode_KaiselAfterSinksReady(t *testing.T) {
 func TestRecordMode_AMQPBindAfterKaisel(t *testing.T) {
 	scheme := deleteLifecycleScheme(t)
 	st := recordOrderShadowTest("record-amqp-order")
-	st.Spec.BeruGRPCAddress = "beru.beru-system.svc.cluster.local:50051"
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{
 		Driver: "rabbitmq_message",
 		AMQP: &enginev1alpha1.AMQPInputSpec{
@@ -183,10 +197,10 @@ func TestRecordMode_AMQPBindAfterKaisel(t *testing.T) {
 		},
 	}}
 	st.Spec.Dependencies = []enginev1alpha1.DependencySpec{{
-		Name:             "rabbitmq",
-		Type:             "rabbitmq",
-		Image:            "rabbitmq:3-management",
-		EnvVarInjection:  "AMQP_URL",
+		Name:            "rabbitmq",
+		Type:            "rabbitmq",
+		Image:           "rabbitmq:3-management",
+		EnvVarInjection: "AMQP_URL",
 	}}
 	shadowNS := shadowNamespaceForCR(st)
 
@@ -214,6 +228,7 @@ func TestRecordMode_AMQPBindAfterKaisel(t *testing.T) {
 	nn := types.NamespacedName{Name: st.Name, Namespace: st.Namespace}
 	req := reconcile.Request{NamespacedName: nn}
 
+	driveBeruLocalReady(t, rec, c, req, shadowNS)
 	if _, err := rec.Reconcile(context.Background(), req); err != nil {
 		t.Fatalf("reconcile phase1: %v", err)
 	}
@@ -284,7 +299,6 @@ func TestEnsureProdShadowQueue_DeclareThenBindHooks(t *testing.T) {
 
 func amqpRecordShadowTest(name string) *enginev1alpha1.ShadowTest {
 	st := recordOrderShadowTest(name)
-	st.Spec.BeruGRPCAddress = "beru.beru-system.svc.cluster.local:50051"
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{
 		Driver: "rabbitmq_message",
 		AMQP: &enginev1alpha1.AMQPInputSpec{
@@ -322,6 +336,7 @@ func TestRecordMode_QueueDeclareFail_MarkBootFailed(t *testing.T) {
 	nn := types.NamespacedName{Name: st.Name, Namespace: st.Namespace}
 	req := reconcile.Request{NamespacedName: nn}
 
+	driveBeruLocalReady(t, rec, c, req, shadowNS)
 	if _, err := rec.Reconcile(context.Background(), req); err != nil {
 		t.Fatalf("reconcile declare fail: %v", err)
 	}
@@ -380,6 +395,7 @@ func TestRecordMode_QueueBindFail_MarkBootFailed(t *testing.T) {
 	nn := types.NamespacedName{Name: st.Name, Namespace: st.Namespace}
 	req := reconcile.Request{NamespacedName: nn}
 
+	driveBeruLocalReady(t, rec, c, req, shadowNS)
 	if _, err := rec.Reconcile(context.Background(), req); err != nil {
 		t.Fatalf("reconcile phase1: %v", err)
 	}

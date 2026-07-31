@@ -2,7 +2,7 @@
 
 Beru is the **L5 — analysis sink** for Shadow-Diff. It correlates traffic from the three shadow roles (control-a, control-b, candidate), runs **diff-of-diffs** to separate noise from regressions, serves **egress mock responses** for strict downstream replay, and exposes a **web dashboard** for inspecting traces.
 
-Monarch provisions Beru automatically. When `spec.beruGRPCAddress` is unset, Monarch deploys a per-ShadowTest **`beru-local`** pod inside the shadow namespace (SQLite on an in-memory EmptyDir — state is lost on pod restart). To use a persistent, shared Beru instance instead, set `spec.beruGRPCAddress` on the `ShadowTest` CR and point it at a separately deployed Beru (e.g. `beru.beru-system.svc.cluster.local:50051`). See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) for how Beru fits in the full pipeline.
+Monarch provisions Beru automatically: one **`beru-local`** pod per ShadowTest, inside that ShadowTest's shadow namespace. It runs on SQLite over an in-memory EmptyDir, so state is lost on pod restart and with the namespace. Setting `BERU_DB_SECRET` on the Monarch manager points every beru-local at a shared PostgreSQL instead, and diff history then outlives the ShadowTest — see [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md). For how Beru fits in the full pipeline see [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md).
 
 ---
 
@@ -63,24 +63,35 @@ make test
 
 Open the dashboard at [http://localhost:8080/dashboard/](http://localhost:8080/dashboard/).
 
-### Deploy to Kubernetes
+### In Kubernetes
+
+Beru ships no manifests. Build the image and let Monarch place it:
 
 ```sh
 make docker-build BERU_IMG=beru:dev
-# Kind: load the image into your cluster, then:
-kubectl apply -f deploy/
+kubectl set env deployment/monarch-controller-manager -n monarch-system BERU_IMAGE=beru:dev
 ```
 
-This creates namespace `**beru-system**`, Deployment `**beru**`, and Service `**beru**`:
+Monarch creates Deployment and Service `beru-local` in each shadow namespace:
 
 
 | Port      | Protocol | Purpose                                                       |
 | --------- | -------- | ------------------------------------------------------------- |
 | **50051** | gRPC     | `TrafficReporter`, Envoy `ext_proc`                           |
 | **8080**  | HTTP     | Egress diff ingest, dashboard                                 |
+| **8081**  | HTTP     | Egress ingest for in-pod sidecars (Service port → container 8080) |
 
 
-Point Monarch / ShadowTest at `beru.beru-system.svc.cluster.local:50051` (gRPC). shadow-soldier and egress-relay-rabbitmq post egress diffs to `:8080/api/v1/egress/diff`.
+In-pod sidecars post to `:8081` rather than `:8080`, because the shadow pod's iptables rules REDIRECT outbound 8080 into Envoy's egress listener.
+
+To browse history after a ShadowTest is gone, run Beru anywhere against the same database:
+
+```sh
+kubectl run beru --image=beru:dev --restart=Never \
+  --env=DB_DRIVER=postgres --env=DB_HOST=postgres.monarch-system.svc.cluster.local \
+  --env=DB_USER=beru --env=DB_PASSWORD=beru --env=DB_NAME=beru --env=DB_SSLMODE=disable
+kubectl port-forward pod/beru 8080:8080   # then open /dashboard/
+```
 
 ---
 
@@ -244,6 +255,7 @@ RabbitMQ egress-relay deduplicates duplicate Firehose publishes (by trace+span+p
 ## Related reading
 
 - [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — layers, data flow, Envoy sidecar roles
-- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — ShadowTest `beruGRPCAddress`; always-on Shop egress replay
+- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — ShadowTest deployment; always-on Shop egress replay
+- [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md) — storage backends and durable diff history
 - [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) — end-to-end verification steps
 

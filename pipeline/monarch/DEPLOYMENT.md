@@ -32,7 +32,6 @@ Each shadow app pod (when egress is enabled) gets `HTTP_PROXY` / `HTTPS_PROXY` �
 3. **Container images** pullable by the cluster:
    - Shadow apps: `oldImage`, `newImage`
    - Helper images (Igris, Shop, AMQP relays): resolved by Monarch — see **Helper image resolution** below. Optional CR overrides (`spec.igris`, etc.) or operator env vars still work.
-4. **Beru** deployed (e.g. `kubectl apply -f pipeline/beru/deploy/`) in `beru-system`.
 5. **Kaisel DaemonSet** (once per cluster):
    ```bash
    kubectl apply -k pipeline/kaisel/deploy/
@@ -108,16 +107,11 @@ kubectl api-resources | grep shadowtest   # short name: st
 
 ---
 
-## Step 2 — Deploy Beru
+## Step 2 — Beru
 
-Monarch does not install Beru. Apply the Beru manifest and ensure `spec.beruGRPCAddress` on the ShadowTest matches the Service DNS name:
+Monarch deploys Beru itself: one `beru-local` Deployment and Service per shadow namespace, reachable at `beru-local.<shadow-ns>.svc.cluster.local:50051`. Nothing to install — only make sure the image is resolvable (`BERU_IMAGE` on the manager, or `spec.beru.image`).
 
-```bash
-kubectl apply -f pipeline/beru/deploy/
-kubectl rollout status deployment/beru -n beru-system
-```
-
-Default gRPC address: `beru.beru-system.svc.cluster.local:50051`.
+For diff history that outlives the ShadowTest, point every beru-local at a shared PostgreSQL with `BERU_DB_SECRET` — see [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md).
 
 ---
 
@@ -153,7 +147,6 @@ spec:
   newImage: ghcr.io/org/app:v2
   servicePort: 8888          # Envoy ingress listener in shadow pods
   applicationPort: 8080      # App container port (Envoy forwards here)
-  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
 ```
 
 ### Full HTTP + Kaisel + egress example
@@ -182,7 +175,6 @@ When `inputs[].driver` is `rabbitmq_message`, Monarch skips HTTP Igris and deplo
 | `newImage` | yes | Image for **candidate** |
 | `servicePort` | no | TCP port for Envoy **ingress** listener (default **8888**) |
 | `applicationPort` | no | App listen port (default **8080** for HTTP/TCP; AMQP-only uses `servicePort+1`) |
-| `beruGRPCAddress` | no | Beru ext_proc gRPC `host:port`; default `beru.beru-system.svc.cluster.local:50051` |
 | `beruGRPCTimeout` | no | ext_proc timeout (e.g. `2s`) |
 
 ### Ingress — `inputs`, `igris`
@@ -356,10 +348,9 @@ See `testing/tools/e2e-reset-minikube.sh` and `testing/bats/manifests/e2e-shadow
 ## End-to-end checklist
 
 - [ ] Cluster reachable; target Deployment exists
-- [ ] Beru running in `beru-system`
 - [ ] `pipeline/kaisel/deploy/` applied (Kaisel DaemonSet)
 - [ ] Monarch installed (`make -C pipeline/monarch deploy IMG=...`)
-- [ ] ShadowTest applied with correct images, ports, and `beruGRPCAddress`
+- [ ] ShadowTest applied with correct images and ports
 - [ ] `kubectl get st` shows `phase: Ready` and `shadowNamespace`
 - [ ] Three shadow Deployments (+ Igris/Shop as configured) are Ready
 - [ ] `status.kaiselPhase: Ready` for HTTP ingress ShadowTests

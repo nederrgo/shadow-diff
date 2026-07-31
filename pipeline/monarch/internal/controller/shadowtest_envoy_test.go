@@ -16,7 +16,6 @@ func TestRenderEnvoyYAML(t *testing.T) {
 		Spec: enginev1alpha1.ShadowTestSpec{
 			ServicePort:     80,
 			ApplicationPort: 8080,
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			BeruGRPCTimeout: "2s",
 		},
 	}
@@ -111,7 +110,6 @@ func TestRenderEnvoyYAML_egressProxy(t *testing.T) {
 		Spec: enginev1alpha1.ShadowTestSpec{
 			ServicePort:     80,
 			ApplicationPort: 8080,
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			BeruGRPCTimeout: "2s",
 		},
 	}
@@ -181,7 +179,7 @@ func TestServicePortFor_default8888(t *testing.T) {
 func TestEnvoySidecarEnvHasNoProxy(t *testing.T) {
 	envoyEnv := []corev1.EnvVar{
 		{Name: envShadowRole, Value: roleControlA},
-		{Name: envBeruGRPCAddress, Value: defaultBeruGRPCAddress},
+		{Name: envBeruGRPCAddress, Value: "beru-local.shadow-default-x.svc.cluster.local:50051"},
 	}
 	for _, e := range envoyEnv {
 		if e.Name == "HTTP_PROXY" || e.Name == "HTTPS_PROXY" || e.Name == "NO_PROXY" {
@@ -196,7 +194,6 @@ func TestRenderEnvoyYAML_mongoEgress(t *testing.T) {
 		Spec: enginev1alpha1.ShadowTestSpec{
 			ServicePort:     8888,
 			ApplicationPort: 8080,
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			BeruGRPCTimeout: "2s",
 			Dependencies: []enginev1alpha1.DependencySpec{{
 				Name: "mongo", Type: "mongodb", Image: "mongo:7", Port: 27017, EnvVarInjection: "MONGO_URL",

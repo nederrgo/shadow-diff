@@ -22,16 +22,16 @@ const (
 type TraceRouter struct {
 	workers []chan *v2storage.RawReport
 	repo    v2storage.TraceRepository
-	runs    *storage.DB
+	runs    storage.RunStore
 	timeout time.Duration
 	stop    chan struct{}
 }
 
-func NewTraceRouter(workerCount int, repo v2storage.TraceRepository, runs *storage.DB) *TraceRouter {
+func NewTraceRouter(workerCount int, repo v2storage.TraceRepository, runs storage.RunStore) *TraceRouter {
 	return NewTraceRouterWithTimeout(workerCount, repo, runs, TraceTimeoutFromEnv())
 }
 
-func NewTraceRouterWithTimeout(workerCount int, repo v2storage.TraceRepository, runs *storage.DB, timeout time.Duration) *TraceRouter {
+func NewTraceRouterWithTimeout(workerCount int, repo v2storage.TraceRepository, runs storage.RunStore, timeout time.Duration) *TraceRouter {
 	if workerCount < 1 {
 		workerCount = 1
 	}

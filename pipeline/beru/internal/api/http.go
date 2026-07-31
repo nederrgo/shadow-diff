@@ -19,7 +19,7 @@ import (
 type Server struct {
 	Log       *slog.Logger
 	Router    *v2engine.TraceRouter
-	DB        *storage.DB
+	DB        storage.RunStore
 	Dashboard *dashboard.Handler
 }
 

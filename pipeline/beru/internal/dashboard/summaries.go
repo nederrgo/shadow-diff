@@ -10,7 +10,7 @@ import (
 	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
-func listTraceSummaries(ctx context.Context, repo v2storage.TraceRepository, db *storage.DB, shadowTestName, statusFilter string, limit int) ([]v2storage.TraceSummary, error) {
+func listTraceSummaries(ctx context.Context, repo v2storage.TraceRepository, db storage.RunStore, shadowTestName, statusFilter string, limit int) ([]v2storage.TraceSummary, error) {
 	var userNoise map[string]struct{}
 	if db != nil && shadowTestName != "" {
 		userNoise, _ = db.NoisePathsForTest(ctx, shadowTestName)

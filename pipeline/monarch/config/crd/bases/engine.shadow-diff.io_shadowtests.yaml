@@ -51,23 +51,15 @@ spec:
                 minimum: 1
                 type: integer
               beru:
-                description: Beru overrides the beru-local image when spec.beruGRPCAddress
-                  is unset.
+                description: Beru overrides the beru-local analytics image (one per
+                  shadow namespace).
                 properties:
                   image:
                     description: Image overrides the default Beru container image.
                     type: string
                 type: object
-              beruGRPCAddress:
-                description: BeruGRPCAddress is the host:port of the Beru ext_proc
-                  gRPC service.
-                type: string
               beruGRPCTimeout:
                 description: BeruGRPCTimeout is the ext_proc gRPC timeout (e.g. "2s").
-                type: string
-              beruIngestAddress:
-                description: BeruIngestAddress is the host:port of the Beru wire-payload
-                  ingest service (HTTP).
                 type: string
               dependencies:
                 description: Dependencies lists ephemeral backing services (e.g. Redis)

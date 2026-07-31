@@ -21,6 +21,14 @@
 #   ./testing/tools/e2e-reset-minikube.sh --no-reset      # deploy/upgrade only (no deletes; reuses running minikube)
 #   ./testing/tools/e2e-reset-minikube.sh --skip-load --skip-build --no-reset  # fastest: cluster already up + images present
 #
+# A PostgreSQL fixture is always deployed to monarch-system. beru-local stays on
+# tmpfs SQLite unless BERU_POSTGRES=1, which sets BERU_DB_SECRET on the manager;
+# Monarch then replicates the Secret into each shadow namespace:
+#   BERU_POSTGRES=1 ./testing/tools/e2e-reset-minikube.sh
+# Reach it from the host (Go conformance suite) on the fixed NodePort:
+#   export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@$(minikube ip):30432/beru?sslmode=disable"
+#   go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection' -v
+#
 set -euo pipefail
 
 # testing/tools/<script> → repo root is ../..
@@ -47,7 +55,7 @@ NO_RESET=0
 
 usage() {
   # Comment header only (through the blank line before set -euo).
-  sed -n '2,25p' "$0"
+  sed -n '2,31p' "$0"
   echo "Flags: --skip-build --skip-load --no-reset -h"
 }
 
@@ -131,8 +139,28 @@ e2e_reset_deploy_stack() {
 
   echo "==> Monarch operator"
   make -C pipeline/monarch deploy IMG="$MONARCH_IMG"
-  kubectl set env deployment/monarch-controller-manager -n monarch-system \
-    MONARCH_MODE=dev BERU_IMAGE="$BERU_IMG" SHOP_IMAGE="$SHOP_IMG"
+
+  # Local PostgreSQL fixture for Beru's durable backend (BYO-Postgres). Not
+  # managed by Monarch. Applied here because `make deploy` creates monarch-system,
+  # and the Secret must exist before the manager reconciles a ShadowTest.
+  echo "==> PostgreSQL (monarch-system, BYO-Postgres local fixture)"
+  kubectl apply -f "$REPO/testing/bats/manifests/postgres/deployment.yaml"
+  kubectl apply -f "$REPO/testing/bats/manifests/postgres/service.yaml"
+  kubectl rollout status deployment/postgres -n monarch-system --timeout=180s
+
+  # BERU_DB_SECRET is what switches beru-local onto Postgres: Monarch replicates
+  # the named Secret into each shadow namespace and mounts it via envFrom.
+  manager_env=(MONARCH_MODE=dev BERU_IMAGE="$BERU_IMG" SHOP_IMAGE="$SHOP_IMG")
+  if [[ "${BERU_POSTGRES:-0}" == "1" ]]; then
+    echo "    beru-local storage: postgres (BERU_DB_SECRET=monarch-system/beru-postgres)"
+    manager_env+=(BERU_DB_SECRET=monarch-system/beru-postgres)
+  else
+    echo "    beru-local storage: sqlite (set BERU_POSTGRES=1 for Postgres)"
+    # Trailing '-' unsets it, so a --no-reset rerun drops a previous opt-in.
+    manager_env+=(BERU_DB_SECRET-)
+  fi
+  kubectl set env deployment/monarch-controller-manager -n monarch-system "${manager_env[@]}"
+
   if [[ "${SKIP_LOAD:-0}" -eq 0 ]]; then
     echo "==> Restart Monarch manager (pick up re-loaded ${MONARCH_IMG})"
     kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
@@ -149,13 +177,6 @@ e2e_reset_deploy_stack() {
   kubectl delete job minio-create-bucket -n monarch-system --ignore-not-found --wait=true
   kubectl apply -f "$REPO/testing/bats/manifests/minio/bucket-job.yaml"
   kubectl wait --for=condition=complete job/minio-create-bucket -n monarch-system --timeout=120s
-
-  # beru-system is optional for ShadowTests (beru-local), but bats platform health
-  # expects the Deployment; deploy YAML defaults to beru:latest — pin to BERU_IMG.
-  echo "==> Beru (beru-system image=${BERU_IMG})"
-  kubectl apply -f "$REPO/pipeline/beru/deploy/"
-  kubectl set image deployment/beru -n beru-system beru="$BERU_IMG"
-  kubectl rollout status deployment/beru -n beru-system --timeout=180s
 
   # Kaisel: cluster-wide HTTP ingress capture (Monarch writes KaiselRule per ShadowTest).
   # shellcheck source=testing/bats/lib/kaisel.bash
@@ -224,6 +245,10 @@ PHASE:.status.phase,KAISEL:.status.kaiselPhase,NS:.status.shadowNamespace,CAPTUR
   echo "  Kaisel ingress:   KaiselRule kaisel-${SHADOWTEST} -> igris in ${SHADOW_NS}"
   echo "  Beru (local):     beru-local.${SHADOW_NS}.svc.cluster.local:50051"
   echo "  MinIO (local):    minio-service.monarch-system.svc.cluster.local:9000 (bucket shadow-diff-local)"
+  echo "  Postgres (local): postgres.monarch-system.svc.cluster.local:5432 (db/user/pass: beru)"
+  local node_ip
+  node_ip=$(minikube ip -p "${MINIKUBE_PROFILE}" 2>/dev/null || echo '<minikube ip>')
+  echo "    from host:      postgres://beru:beru@${node_ip}:30432/beru?sslmode=disable"
   echo ""
   echo "Run bats tests:     make test-bats-e2e"
   echo "  Kaisel route E2E: make test-bats-kaisel"

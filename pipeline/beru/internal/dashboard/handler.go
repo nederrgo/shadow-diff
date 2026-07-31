@@ -17,14 +17,14 @@ var embedFS embed.FS
 
 // Handler serves dashboard pages and static assets.
 type Handler struct {
-	DB   *storage.DB
+	DB   storage.RunStore
 	Repo v2storage.TraceRepository
 	Log  *slog.Logger
 	tpl  *template.Template
 }
 
 // NewHandler loads embedded templates.
-func NewHandler(db *storage.DB, repo v2storage.TraceRepository, log *slog.Logger) (*Handler, error) {
+func NewHandler(db storage.RunStore, repo v2storage.TraceRepository, log *slog.Logger) (*Handler, error) {
 	if log == nil {
 		log = slog.Default()
 	}

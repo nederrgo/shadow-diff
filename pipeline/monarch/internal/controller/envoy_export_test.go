@@ -19,7 +19,6 @@ func TestDumpMongoEnvoyYAML(t *testing.T) {
 		Spec: enginev1alpha1.ShadowTestSpec{
 			ServicePort:     8888,
 			ApplicationPort: 8080,
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			BeruGRPCTimeout: "2s",
 			Dependencies: []enginev1alpha1.DependencySpec{{
 				Name: "mongo", Type: "mongodb", Image: "mongo:7", Port: 27017, EnvVarInjection: "MONGO_URL",

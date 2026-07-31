@@ -17,7 +17,6 @@ import (
 	"github.com/shadow-diff/beru/internal/server"
 	"github.com/shadow-diff/beru/internal/storage"
 	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
 )
 
@@ -32,30 +31,25 @@ func main() {
 
 	log := slog.Default()
 
-	db, err := storage.Open(log)
+	store, err := storage.OpenBackend(log)
 	if err != nil {
 		slog.Error("Failed to open storage", "err", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer store.Close()
 
-	v2Repo, err := v2storage.NewSQLiteRepository(db.SQL())
-	if err != nil {
-		slog.Error("Failed to open v2 storage repository", "err", err)
-		os.Exit(1)
-	}
-	router := v2engine.NewTraceRouter(8, v2Repo, db)
+	router := v2engine.NewTraceRouter(8, store.Traces, store.Runs)
 
-	defaultTest := db.DefaultShadowTestName()
+	defaultTest := store.Runs.DefaultShadowTestName()
 
-	dash, err := dashboard.NewHandler(db, v2Repo, log)
+	dash, err := dashboard.NewHandler(store.Runs, store.Traces, log)
 	if err != nil {
 		slog.Error("Failed to init dashboard", "err", err)
 		os.Exit(1)
 	}
 
 	httpAddr := envOr("BERU_HTTP_ADDR", ":8080")
-	httpSrv := &api.Server{Log: log, Router: router, DB: db, Dashboard: dash}
+	httpSrv := &api.Server{Log: log, Router: router, DB: store.Runs, Dashboard: dash}
 	go func() {
 		if err := httpSrv.Start(httpAddr); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server stopped", "err", err)

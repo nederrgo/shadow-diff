@@ -36,7 +36,6 @@ func TestEgressRelayRabbitMQEnv(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
 		Spec: enginev1alpha1.ShadowTestSpec{
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			Inputs: []enginev1alpha1.InputSpec{{
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
@@ -60,7 +59,7 @@ func TestEgressRelayRabbitMQEnv(t *testing.T) {
 	if byName[envControlAAMQPURL] == "" || byName[envControlBAMQPURL] == "" || byName[envCandidateAMQPURL] == "" {
 		t.Fatalf("missing AMQP URLs: %#v", byName)
 	}
-	if byName[envBeruHTTPURL] != "http://beru.beru-system.svc.cluster.local:8080" {
+	if byName[envBeruHTTPURL] != "http://beru-local.shadow-default-rmq-test.svc.cluster.local:8080" {
 		t.Fatalf("BERU_HTTP_URL = %q", byName[envBeruHTTPURL])
 	}
 }
@@ -99,7 +98,6 @@ func TestEgressRelayRabbitMQEnv_HTTPIngressOnly(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "http-rmq-test", Namespace: "default"},
 		Spec: enginev1alpha1.ShadowTestSpec{
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			Inputs: []enginev1alpha1.InputSpec{{
 				Port:   8888,
 				Driver: "http_request",
@@ -130,7 +128,6 @@ func TestEgressRelayRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
 		Spec: enginev1alpha1.ShadowTestSpec{
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			Inputs: []enginev1alpha1.InputSpec{{
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{

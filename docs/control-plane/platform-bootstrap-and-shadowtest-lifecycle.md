@@ -11,7 +11,7 @@ timestamp: 2026-07-30T17:20:00Z
 
 Shadow-Diff splits **platform install** (once per cluster) from **ShadowTest lifecycle** (on demand). Every ShadowTest is either `record` or `replay` (`spec.mode`; default `record`). `spec.storage` (BYOB S3) is required. There is no live-traffic reconcile path — capture writes sessions to S3; replay loads them later.
 
-Monarch and Kaisel are cluster infrastructure: they survive ShadowTest deletion. Analysis state does **not** automatically survive: when `spec.beruGRPCAddress` is unset, Monarch runs **beru-local** inside the shadow namespace (EmptyDir SQLite), and deleting the ShadowTest deletes that namespace — beru-local and its verdicts go with it. Durable artifacts live under the S3 prefix `shadow-diff/<cr-ns>/<cr-name>/`.
+Monarch and Kaisel are cluster infrastructure: they survive ShadowTest deletion. Monarch runs **beru-local** inside each shadow namespace, and deleting the ShadowTest deletes that namespace — the pod goes with it. On tmpfs SQLite its verdicts go too; with `BERU_DB_SECRET` they are written to a shared PostgreSQL and outlive the test ([/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md)). Durable artifacts live under the S3 prefix `shadow-diff/<cr-ns>/<cr-name>/`.
 
 ## Mental model
 
@@ -20,8 +20,8 @@ Monarch and Kaisel are cluster infrastructure: they survive ShadowTest deletion.
 | **Monarch** operator | Once (`monarch-system`) | Survives all ShadowTests |
 | **Kaisel** DaemonSet | Once (`kaisel-system`) | Survives all ShadowTests; watches `KaiselRule` CRs |
 | **Object storage** | BYOB bucket (MinIO in local E2E) | Sessions under `shadow-diff/<ns>/<name>/`; cleaned on delete only if `retentionPolicy: Delete` |
-| **Shared Beru** (`beru-system`) | Optional | Only when `spec.beruGRPCAddress` points at it; survives ShadowTest delete |
-| **beru-local** | Per ShadowTest (default when `beruGRPCAddress` unset) | Lives in shadow namespace; **gone on teardown** |
+| **PostgreSQL** (BYO) | Optional | Shared by every beru-local; survives ShadowTest delete |
+| **beru-local** | Per ShadowTest | Lives in shadow namespace; **gone on teardown** |
 | **ShadowTest** CR | Per test | `record` and/or `replay` → Ready → Delete |
 
 Monarch writes a **`KaiselRule`** in **record** mode (target pod IPs + forward URLs). Kaisel updates eBPF maps in place — no daemon restart when pod IPs change. In **replay** mode Monarch deletes the `KaiselRule` (no live capture).
@@ -84,20 +84,18 @@ In record mode Monarch creates a `KaiselRule` with target pod IPs, ports, `igris
 
 ### 4. Beru (choose one)
 
-| Choice | When | Who installs |
-|--------|------|--------------|
-| **beru-local** (default) | Omit `spec.beruGRPCAddress` | Monarch per shadow namespace |
-| **Shared Beru** | Set `spec.beruGRPCAddress` (e.g. `beru.beru-system.svc.cluster.local:50051`) | You: `kubectl apply -f pipeline/beru/deploy/` |
+| Storage | When | Who installs |
+|---------|------|--------------|
+| **tmpfs SQLite** (default) | `BERU_DB_SECRET` unset | Monarch, per shadow namespace |
+| **Shared PostgreSQL** | `BERU_DB_SECRET` set on the manager | You supply the database and Secret; Monarch replicates it into each shadow namespace |
 
-beru-local uses an in-memory EmptyDir for SQLite — verdicts are lost on pod restart **and** on ShadowTest delete. Shared Beru in `beru-system` can use a persistent volume and outlives individual tests.
+On tmpfs SQLite, verdicts are lost on pod restart **and** on ShadowTest delete. On PostgreSQL they persist, keyed by `shadow_test_name` and `session_id`.
 
 ### Bootstrap verification
 
 ```bash
 kubectl get pods -n monarch-system
 kubectl get pods -n kaisel-system -l app=kaisel
-# If using shared Beru:
-kubectl get pods -n beru-system
 ```
 
 ---
@@ -123,7 +121,7 @@ Bottom-up: sinks and unbound queue first, then eBPF tap, then AMQP bind. From `r
 4. Mint/patch `status.currentSessionID` (when unset)
 5. Copy storage Secret from CR namespace → shadow namespace
 6. Mode GC — clear `status.replayState`; delete leftover ABC Deployments/Services
-7. beru-local Service, then Deployment — wait until Ready (skipped when `beruGRPCAddress` is set)
+7. beru-local Service, then Deployment — wait until Ready
 8. **Phase 1 — sinks (taps closed):**
    - AMQP: declare durable shadow queue **unbound** + patch `status.amqpQueueName`
    - Shop Service + Deployment
@@ -140,7 +138,7 @@ Record does not provision control-a/b/candidate, shadow dependencies, or egress-
 | Resource | Notes |
 |----------|--------|
 | Shadow namespace | `shadow-<crNamespace>-<crName>` |
-| beru-local | If `beruGRPCAddress` unset |
+| beru-local | Always, one per shadow namespace |
 | Unbound AMQP shadow queue | Declared in Phase 1 when AMQP input; bound in Phase 3; igris-rabbitmq consumes → S3 |
 | Igris (HTTP/TCP or AMQP hub) | Writes ingress JSONL to S3 (`OPERATING_MODE=record`) |
 | Shop | Writes egress JSONL to S3; Kaisel seeds via `POST /v1/record_egress` |
@@ -176,7 +174,7 @@ From `ShadowTestReconciler.Reconcile` when `spec.mode` is `replay`. Requires a r
 4. Resolve/patch `status.currentSessionID` from `spec.sessionID` or existing status
 5. Copy storage Secret from CR namespace → shadow namespace
 6. Mode GC — delete `KaiselRule` (no live capture)
-7. beru-local Service, then Deployment — wait until Ready (skipped when `beruGRPCAddress` is set)
+7. beru-local Service, then Deployment — wait until Ready
 8. Shadow dependencies (when declared): per dep × role Deployment + Service — wait until Ready
 9. Shop Service, then Deployment — wait until Ready (preloads egress mocks from S3 before ABC)
 10. Igris / ingress relays — wait until Ready:
@@ -217,7 +215,7 @@ Monarch (`reconcileDelete`):
 
 **Leave the Kaisel DaemonSet running.** Removing the `KaiselRule` drops its addresses from the eBPF maps.
 
-Shared Beru in `beru-system` (if used) is untouched.
+Rows already written to a shared PostgreSQL are untouched.
 
 ### Boot failure vs delete
 
