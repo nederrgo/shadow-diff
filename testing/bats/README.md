@@ -5,7 +5,7 @@ Modular integration and E2E tests using [bats-core](https://github.com/bats-core
 ## Prerequisites
 
 - Linux host with Minikube **kvm2** or **virtualbox** driver (eBPF capture)
-- `kubectl`, `jq`, `openssl` (host `sqlite3` optional — only for `beru_sqlite_query`)
+- `kubectl`, `jq`, `openssl`
 - Container images built into Minikube docker (`make` targets below)
 - For Jest-like output: Node/npm once — `npm ci --prefix testing/bats`
 
@@ -13,10 +13,10 @@ Modular integration and E2E tests using [bats-core](https://github.com/bats-core
 
 ```
 testing/bats/
-  integration/     # Lighter multi-@test files (mongo egress, …)
+  integration/     # Lighter multi-@test files (mongo egress, beru postgres, …)
   e2e/             # Full hybrid pipeline scenarios
   lib/             # Shared helpers (platform, shadowtest, beru_assert, reporter, …)
-  fixtures/        # Per-suite ShadowTest + prod YAML
+  fixtures/        # Per-suite ShadowTest + prod YAML (or standalone beru)
   vendor/          # bats-core, bats-support, bats-assert (vendored; no nested .git)
   package.json     # tap-mocha-reporter pin
 ```
@@ -35,28 +35,28 @@ done
 
 | Hook | Phase |
 |------|-------|
-| `setup_file` | Platform bootstrap + prod app + ShadowTest CR (once) |
+| `setup_file` | Platform bootstrap + suite stack (ShadowTest, or standalone beru+Postgres) |
 | `setup` | Fresh trace UUID per `@test` (`isolate_test_state`) |
-| `@test` | Traffic + `beru_wait_log` / `beru_wait_verdict_settled` |
-| `teardown_file` | Delete ShadowTest + prod stack (once); skipped when `BATS_KEEP=1` |
+| `@test` | Traffic / seed + `beru_wait_log` / `beru_assert_verdict_status` |
+| `teardown_file` | Tear down suite stack (once); skipped when `BATS_KEEP=1` |
 
 The Kaisel DaemonSet runs continuously — tests never `pkill` or restart it.
 
-### Keep stack for dashboard UI
+### Standalone Beru + Postgres verdict suite
+
+`integration/beru/postgres_verdict.bats` deploys `beru-verdict` in `monarch-system` against the bats Postgres fixture (no ShadowTest). It seeds the same histories as `pipeline/beru/internal/v2/diff/diff_test.go` via `POST /api/v1/debug/seed-reports`, asserts via the HTTP API, and deletes Postgres rows per test. One scenario scales Postgres to 0 so a poison WAL batch is discarded after 3 flush failures (asserted via beru logs — distroless has no `tar`/`cat` for file reads), then restores Postgres, restarts beru (remigrate wiped emptyDir), and seeds a clean MATCH.
 
 ```bash
-# Rebuild beru so seed endpoint is present, then:
-BATS_KEEP=1 ./testing/bats/run-one.sh integration/beru/verdict_ui.bats
+# Rebuild/load beru if needed, then:
+BATS_KEEP=1 ./testing/bats/run-one.sh integration/beru/postgres_verdict.bats
 
-# After tests finish, port-forward beru-local and open the dashboard:
-kubectl -n shadow-default-bats-beru-verdict-ui port-forward svc/beru-local 8080:8080
+# After tests finish, port-forward and open the dashboard:
+kubectl -n monarch-system port-forward svc/beru-verdict 8080:8080
 # → http://localhost:8080/dashboard/
 
 # Cleanup when done:
-kubectl delete shadowtest bats-beru-verdict-ui -n default
+kubectl delete -f testing/bats/fixtures/integration/beru-postgres-verdict/beru.yaml
 ```
-
-`integration/beru/verdict_ui.bats` seeds the same histories as `pipeline/beru/internal/v2/diff/diff_test.go` via `POST /api/v1/debug/seed-reports` (no live traffic).
 
 ## Running
 
@@ -104,7 +104,7 @@ BATS_PARALLEL_JOBS=2 make test-bats-e2e       # parallel; NO Jest reporter
 | `SKIP_LOAD` | `0` | Skip image load into Minikube |
 | `SKIP_PLATFORM_BOOTSTRAP` | `0` | Health-check only; no install |
 | `BERU_QUIESCENCE_SEC` | `5` | Verdict settlement quiescence window |
-| `BATS_ISOLATE_MODE` | `trace` | `trace`, `wipe-beru`, or `full` |
+| `BATS_ISOLATE_MODE` | `trace` | `trace` or `full` (dependency reset) |
 | `BATS_PARALLEL_JOBS` | `1` | Multi-process file parallelism; Jest reporter only when `1` |
 | `BATS_REPORTER` | auto | `spec` \| `pretty` \| `tap` \| `off` (see above) |
 | `BATS_NODE` | auto | Override Node binary (prefer Linux `/usr/bin/node` for colors) |
@@ -127,7 +127,8 @@ beru_wait_http_egress_match "$trace_id" --signature="http:GET:/dep/echo?beru=…
 beru_wait_log --grep="Egress regression for Trace ${BATS_TRACE_ID} (http): Field"
 ```
 
-For SQLite/API verdict rows use `beru_wait_verdict_settled` (completeness + quiescence).
+For API verdict rows use `beru_wait_verdict_settled` (completeness + quiescence) or seed-only `beru_assert_verdict_status`.
 HTTP egress API queries need `?protocol=http&direction=egress` (`beru_http_get_trace`).
+Postgres cleanup: `beru_cleanup_trace_postgres` / `beru_cleanup_shadow_test_postgres`.
 
 See [docs/infrastructure/bats-testing-framework.md](/infrastructure/bats-testing-framework.md).

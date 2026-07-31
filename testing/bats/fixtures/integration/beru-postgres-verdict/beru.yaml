@@ -1,0 +1,94 @@
+# Standalone Beru for postgres_verdict bats — no ShadowTest / Monarch wiring.
+# Reuses monarch-system/beru-postgres Secret and EmptyDir /data for WAL + DLQ.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beru-verdict
+  namespace: monarch-system
+  labels:
+    app: beru-verdict
+    app.kubernetes.io/name: beru-verdict
+    app.kubernetes.io/part-of: shadow-diff
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: beru-verdict
+  template:
+    metadata:
+      labels:
+        app: beru-verdict
+        app.kubernetes.io/name: beru-verdict
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: beru
+          image: beru:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 50051
+          envFrom:
+            - secretRef:
+                name: beru-postgres
+          env:
+            - name: BERU_HTTP_ADDR
+              value: ":8080"
+            - name: BERU_GRPC_ADDR
+              value: ":50051"
+            - name: BERU_SHADOW_TEST_NAME
+              value: bats-beru-postgres-verdict
+            # Short flush bound so poison-pill bats reach 3 retries without waiting 3×30s.
+            - name: BERU_WAL_FLUSH_TIMEOUT
+              value: "3s"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          resources:
+            limits:
+              memory: 256Mi
+              cpu: 500m
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: beru-verdict
+  namespace: monarch-system
+  labels:
+    app: beru-verdict
+spec:
+  selector:
+    app: beru-verdict
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: grpc
+      port: 50051
+      targetPort: grpc

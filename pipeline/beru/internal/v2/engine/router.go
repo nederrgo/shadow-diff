@@ -87,26 +87,9 @@ func (tr *TraceRouter) startWorker(ch chan *v2storage.RawReport) {
 			_ = tr.runs.EnsureShadowTest(ctx, report.ShadowTestName)
 		}
 
-		history, err := tr.repo.AppendReport(ctx, report)
-		if err != nil {
+		// Verdict evaluation runs in the WAL flusher under pg_advisory_xact_lock.
+		if _, err := tr.repo.AppendReport(ctx, report); err != nil {
 			log.Printf("[Engine] Database append fault for trace %s: %v", report.TraceID, err)
-			cancel()
-			continue
-		}
-
-		var userNoise map[string]struct{}
-		if tr.runs != nil && report.ShadowTestName != "" {
-			userNoise, _ = tr.runs.NoisePathsForTest(ctx, report.ShadowTestName)
-		}
-		// Unconditionally re-evaluate — WAITING_FOR_ROLES is never terminal.
-		verdict := diff.EvaluateTraceHistory(history, userNoise, diff.EvalOptions{Timeout: tr.timeout})
-
-		if verdict != nil {
-			if err := tr.repo.SaveDiffVerdict(ctx, report.TraceID, verdict); err != nil {
-				log.Printf("[Engine] State execution save fault for trace %s: %v", report.TraceID, err)
-			} else {
-				mirrorLegacyLogs(report.TraceID, history, verdict)
-			}
 		}
 		cancel()
 	}

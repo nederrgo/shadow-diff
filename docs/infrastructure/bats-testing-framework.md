@@ -4,7 +4,7 @@ title: Bats-Core Modular Testing Framework
 description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, settlement-based Beru assertions, Jest-like reporter for BATS_PARALLEL_JOBS=1, and idempotent platform bootstrap.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats
 tags: [infrastructure, testing, bats, e2e, integration, monarch, beru]
-timestamp: 2026-07-30T15:45:00Z
+timestamp: 2026-07-31T14:30:00Z
 ---
 
 # Bats-Core Modular Testing Framework
@@ -15,10 +15,10 @@ Shadow-Diff E2E validation uses **bats-core** under [`testing/bats/`](https://gi
 
 | Bats hook | Phase | Responsibility |
 |-----------|-------|----------------|
-| `setup_file` | Platform + ShadowTest | `ensure_platform_ready`, prod deploy, ShadowTest CR, KaiselRule waits |
+| `setup_file` | Platform + suite stack | `ensure_platform_ready`, then ShadowTest CR **or** standalone beru+Postgres |
 | `setup` | Isolation | `isolate_test_state` — fresh `BATS_TRACE_ID` per `@test` |
-| `@test` | Validation | Live traffic: `beru_wait_verdict_settled`; seed-only UI: `beru_assert_verdict_status` |
-| `teardown_file` | Teardown | `delete_shadowtest_and_verify` **then** prod undeploy (prod must stay up until ShadowTest finalizer completes RMQ queue cleanup) |
+| `@test` | Validation | Live traffic: `beru_wait_verdict_settled`; seed-only: `beru_assert_verdict_status` |
+| `teardown_file` | Teardown | ShadowTest suites: `delete_shadowtest_and_verify` then prod undeploy; postgres_verdict: scrub rows + delete `beru-verdict` |
 
 **CI optimization:** Multiple `@test` blocks share one ShadowTest CR. Phase 4 runs in `teardown_file` only — not after each test.
 
@@ -82,11 +82,11 @@ beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" mongodb)"
 beru_wait_log --grep='custom substring from beru-local logs'
 ```
 
-Helpers match `pipeline/beru/internal/v2/engine/logs.go` wording. For live-traffic API/SQLite verdict rows use `beru_wait_verdict_settled` (completeness + quiescence). Seed-only suites (`integration/beru/verdict_ui.bats`) use `beru_assert_verdict_status` — history is static, so no drip wait.
+Helpers match `pipeline/beru/internal/v2/engine/logs.go` wording. For live-traffic API verdict rows use `beru_wait_verdict_settled` (completeness + quiescence). Seed-only suites (`integration/beru/postgres_verdict.bats`) use `beru_assert_verdict_status` — history is static, so no drip wait. That suite targets standalone `svc/beru-verdict` via `BERU_SVC`/`BERU_NS` and cleans Postgres with `beru_cleanup_trace_postgres` / `beru_cleanup_shadow_test_postgres`. The poison-pill scenario uses `beru_wait_dead_letter` (scale Postgres to 0 → discard log assert → restore + beru restart/remigrate → MATCH).
 
 ## Per-test isolation (`lib/test_isolation.bash`)
 
-Default: trace UUID scoping. Optional `BATS_ISOLATE_MODE=wipe-beru|full` for table wipes between tests.
+Default: trace UUID scoping. Optional `BATS_ISOLATE_MODE=full` for dependency resets between tests.
 
 ## Running
 
@@ -111,6 +111,7 @@ make test-bats
 | `monarch/lifecycle_s3_retention.bats` | `retentionPolicy=Retain` keeps S3 prefix on CR delete; `Delete` scrubs `shadow-diff/<ns>/<name>/` |
 | `monarch/deps_update.bats` | Live `spec.dependencies` add → dep Deployments + shadow app pod rollout with injected env |
 | `mongo_egress.bats` | Mongo egress path (integration) |
+| `beru/postgres_verdict.bats` | Standalone `beru-verdict` + Postgres fixture: seed-reports → WAL flush → API verdict assert; poison-pill DLQ (Postgres scale-to-0); per-test row cleanup |
 
 Helpers: `monarch_wait_shadowtest_bringup_started`, `monarch_wait_shadowtest_cleaned`, `monarch_wait_dependency_available`, `monarch_assert_shadow_app_env`, `monarch_wait_amqp_queue_name`, `monarch_assert_prod_queue_absent`, `monarch_declare_conflicting_prod_queue`, `monarch_scale_controller` in `lib/monarch_assert.bash`.
 

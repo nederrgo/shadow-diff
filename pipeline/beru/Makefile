@@ -18,10 +18,10 @@ proto:
 		-I api/proto/beru/v1 $(PROTO_SRC)
 
 build:
-	go build -o bin/beru ./cmd/beru
+	CGO_ENABLED=0 go build -o bin/beru ./cmd/beru
 
 test:
-	go test ./...
+	CGO_ENABLED=0 go test ./...
 
 docker-build:
 	docker build -t $(BERU_IMG) .

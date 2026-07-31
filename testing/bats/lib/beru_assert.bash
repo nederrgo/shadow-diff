@@ -1,13 +1,35 @@
-# Beru settlement polling and SQLite/API assertions.
+# Beru HTTP helpers, Postgres SQL cleanup, and verdict assertions.
 # shellcheck shell=bash
+
+# Base URL for beru HTTP. Prefer standalone BERU_SVC/BERU_NS (postgres_verdict);
+# fall back to beru-local in SHADOW_NS for ShadowTest suites.
+beru_http_base() {
+  local shadow_ns="${1:-${SHADOW_NS:-}}"
+  if [[ -n "${BERU_SVC:-}" ]]; then
+    echo "http://${BERU_SVC}.${BERU_NS:-monarch-system}.svc.cluster.local:8080"
+    return 0
+  fi
+  echo "http://beru-local.${shadow_ns}.svc.cluster.local:8080"
+}
+
+# Namespace used to run ephemeral curl pods (avoid restricted monarch-system PSA).
+beru_curl_ns() {
+  if [[ -n "${BERU_SVC:-}" ]]; then
+    echo "default"
+    return 0
+  fi
+  echo "${1:-${SHADOW_NS:-default}}"
+}
 
 beru_http_get() {
   local shadow_ns="$1" path="$2"
   bats_source_e2e_helpers
-  local out
-  out=$(kubectl run "bats-curl-${RANDOM}" --rm -i --restart=Never -n "$shadow_ns" \
+  local base curl_ns out
+  base="$(beru_http_base "$shadow_ns")"
+  curl_ns="$(beru_curl_ns "$shadow_ns")"
+  out=$(kubectl run "bats-curl-${RANDOM}" --rm -i --restart=Never -n "$curl_ns" \
     --image=curlimages/curl:8.5.0 -- \
-    curl -sf "http://beru-local.${shadow_ns}.svc.cluster.local:8080${path}" 2>&1) || true
+    curl -sf "${base}${path}" 2>&1) || true
   e2e_strip_kubectl_run_output "$out"
 }
 
@@ -19,30 +41,145 @@ beru_http_get_trace() {
   beru_http_get "$shadow_ns" "$path"
 }
 
-beru_sqlite_query() {
-  local pod="$1" ns="$2" db_path="$3" sql="$4"
-  command -v sqlite3 >/dev/null 2>&1 || return 2
-  local tmp
-  tmp="$(mktemp "${TMPDIR:-/tmp}/beru-XXXXXX.db")"
-  kubectl cp "${ns}/${pod}:${db_path}" "$tmp" 2>/dev/null || { rm -f "$tmp"; return 2; }
-  sqlite3 -batch -noheader "$tmp" "$sql"
-  local rc=$?
-  rm -f "$tmp"
-  return $rc
+beru_postgres_sql() {
+  local sql="$1"
+  kubectl exec -n monarch-system deploy/postgres -- \
+    env PGPASSWORD=beru psql -U beru -d beru -v ON_ERROR_STOP=1 -Atc "$sql"
+}
+
+# Scale the bats Postgres fixture. emptyDir is wiped on scale-to-0 — callers that
+# bring it back must restart beru-verdict so migrations re-apply.
+beru_postgres_scale() {
+  local replicas="$1"
+  kubectl scale deployment/postgres -n monarch-system --replicas="$replicas"
+}
+
+beru_postgres_wait_ready() {
+  local timeout="${1:-120}" i=0
+  kubectl rollout status deployment/postgres -n monarch-system --timeout="${timeout}s" || return 1
+  while [[ $i -lt "$timeout" ]]; do
+    if beru_postgres_sql 'SELECT 1' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "timeout waiting for Postgres SELECT 1" >&2
+  return 1
+}
+
+beru_postgres_wait_down() {
+  local timeout="${1:-60}" i=0 ready
+  while [[ $i -lt "$timeout" ]]; do
+    ready=$(kubectl get deployment/postgres -n monarch-system \
+      -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    [[ -z "$ready" || "$ready" == "0" ]] && return 0
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "timeout waiting for Postgres scale-to-0" >&2
+  return 1
+}
+
+# Restart standalone beru so OpenBackend re-runs migrations (after Postgres wipe).
+beru_verdict_restart_and_wait() {
+  local ns="${BERU_NS:-monarch-system}" i=0 pod logs
+  kubectl delete pod -n "$ns" -l "app=${BERU_SVC:-beru-verdict}" --wait=true
+  kubectl rollout status deployment/beru-verdict -n "$ns" --timeout=180s || return 1
+  while [[ $i -lt 60 ]]; do
+    pod=$(beru_verdict_pod)
+    logs=$(kubectl logs -n "$ns" "$pod" --tail=40 2>/dev/null || true)
+    if echo "$logs" | grep -Fq "PostgreSQL storage ready" \
+      && echo "$logs" | grep -Fq "WAL flusher ready"; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "beru-verdict did not log Postgres+WAL ready after restart" >&2
+  return 1
+}
+
+# Resolve the Beru pod for logs/exec (standalone beru-verdict or beru-local).
+beru_verdict_pod() {
+  local ns pod
+  if [[ -n "${BERU_SVC:-}" ]]; then
+    ns="${BERU_NS:-monarch-system}"
+    pod=$(kubectl get pods -n "$ns" -l "app=${BERU_SVC}" \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    echo "$pod"
+    return 0
+  fi
+  beru_local_pod
+}
+
+# Poll beru logs for a discarded poison-pill batch.
+# Distroless has no tar/cat, so we cannot kubectl cp/exec the DLQ file; unit
+# tests cover writeDeadLetter. Integration asserts the discard log line.
+# Usage: beru_wait_dead_letter <trace_id> [timeout_sec]
+beru_wait_dead_letter() {
+  local trace_id="$1" timeout="${2:-100}"
+  local pod ns i=0 logs
+  ns="${BERU_NS:-${SHADOW_NS:-monarch-system}}"
+  pod="$(beru_verdict_pod)"
+  [[ -n "$pod" ]] || {
+    echo "beru_wait_dead_letter: beru pod not found" >&2
+    return 2
+  }
+  while [[ $i -lt "$timeout" ]]; do
+    logs=$(kubectl logs -n "$ns" "$pod" --tail=400 2>/dev/null || true)
+    if echo "$logs" | grep -Fq "Discarding failed WAL batch after max retries" \
+      && echo "$logs" | grep -Fq "$trace_id"; then
+      echo "dead-lettered trace=${trace_id}"
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "timeout waiting for dead letter trace=${trace_id}" >&2
+  echo "--- recent logs ---" >&2
+  kubectl logs -n "$ns" "$pod" --tail=80 2>/dev/null >&2 || true
+  echo "--- tip: need BERU_WAL_FLUSH_TIMEOUT=3s in beru-verdict + rebuilt image ---" >&2
+  kubectl get deploy beru-verdict -n "$ns" -o jsonpath='{.spec.template.spec.containers[0].env}' 2>/dev/null >&2 || true
+  echo >&2
+  return 1
+}
+
+beru_cleanup_trace_postgres() {
+  local tid="${1:-}"
+  [[ -n "$tid" ]] || return 0
+  # Escape single quotes for SQL literals.
+  tid="${tid//\'/\'\'}"
+  beru_postgres_sql "
+DELETE FROM diff_reports WHERE trace_id = '${tid}';
+DELETE FROM traces WHERE trace_id = '${tid}';
+DELETE FROM verdicts WHERE trace_id = '${tid}';
+DELETE FROM raw_reports WHERE trace_id = '${tid}';
+" >/dev/null
+}
+
+beru_cleanup_shadow_test_postgres() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || return 0
+  name="${name//\'/\'\'}"
+  beru_postgres_sql "
+DELETE FROM diff_reports WHERE trace_id IN (
+  SELECT DISTINCT trace_id FROM raw_reports WHERE shadow_test_name = '${name}'
+  UNION SELECT trace_id FROM verdicts WHERE shadow_test_name = '${name}'
+  UNION SELECT trace_id FROM traces WHERE shadow_test_name = '${name}'
+);
+DELETE FROM traces WHERE shadow_test_name = '${name}';
+DELETE FROM verdicts WHERE shadow_test_name = '${name}';
+DELETE FROM raw_reports WHERE shadow_test_name = '${name}';
+DELETE FROM shadow_tests WHERE name = '${name}';
+" >/dev/null
 }
 
 beru_reports_role_count() {
   local trace_id="$1" protocol="$2" via="${3:-api}" direction="${4:-}"
-  if [[ "$via" == "sqlite" ]]; then
-    local pod; pod="$(beru_local_pod)"
-    local sql="SELECT COUNT(DISTINCT shadow_role) FROM raw_reports WHERE trace_id='${trace_id}' AND protocol='${protocol}'"
-    [[ -n "$direction" ]] && sql="${sql} AND direction='${direction}'"
-    sql="${sql};"
-    beru_sqlite_query "$pod" "${SHADOW_NS}" "/data/beru.db" "$sql"
-    return $?
-  fi
+  local ns="${SHADOW_NS:-${BERU_NS:-monarch-system}}"
   local json roles
-  json=$(beru_http_get_trace "${SHADOW_NS}" "$trace_id" "$protocol" "$direction") || return 1
+  json=$(beru_http_get_trace "$ns" "$trace_id" "$protocol" "$direction") || return 1
   roles=$(echo "$json" | jq -r '[.reports[].shadow_role] | unique | length' 2>/dev/null || echo "0")
   echo "$roles"
 }
@@ -84,7 +221,7 @@ beru_wait_http_egress_match() {
   fi
 
   if [[ -n "$want_sig" ]]; then
-    json=$(beru_http_get_trace "${SHADOW_NS}" "$trace_id" http egress) || return 1
+    json=$(beru_http_get_trace "${SHADOW_NS:-${BERU_NS}}" "$trace_id" http egress) || return 1
     if ! echo "$json" | jq -e --arg s "$want_sig" '[.reports[].signature] | unique | . == [$s]' >/dev/null 2>&1; then
       echo "HTTP egress signature mismatch want=${want_sig} got=$(echo "$json" | jq -c '[.reports[].signature] | unique' 2>/dev/null)" >&2
       return 1
@@ -98,21 +235,15 @@ beru_wait_http_egress_match() {
 
 _beru_verdict_snapshot_api() {
   local trace_id="$1" protocol="$2"
+  local ns="${SHADOW_NS:-${BERU_NS:-monarch-system}}"
   local json
-  json=$(beru_http_get "${SHADOW_NS}" "/api/v1/traces/${trace_id}?protocol=${protocol}") || return 1
+  json=$(beru_http_get "$ns" "/api/v1/traces/${trace_id}?protocol=${protocol}") || return 1
   local status regression updated
   status=$(echo "$json" | jq -r '.verdict.Status // .verdict.status // empty' 2>/dev/null)
   regression=$(echo "$json" | jq -r '.verdict.HasCountRegression // .verdict.has_count_regression // false' 2>/dev/null)
   updated=$(echo "$json" | jq -r '.verdict.UpdatedAt // .verdict.updated_at // empty' 2>/dev/null)
   [[ "$regression" == "true" || "$regression" == "1" ]] && regression=1 || regression=0
   echo "${status}|${regression}|${updated}"
-}
-
-_beru_verdict_snapshot_sqlite() {
-  local trace_id="$1"
-  local pod; pod="$(beru_local_pod)"
-  beru_sqlite_query "$pod" "${SHADOW_NS}" "/data/beru.db" \
-    "SELECT status, has_count_regression, updated_at FROM verdicts WHERE trace_id='${trace_id}';"
 }
 
 # Print status|has_count_regression (0/1) from Beru HTTP API.
@@ -148,13 +279,8 @@ beru_wait_verdict_settled() {
       continue
     fi
 
-    if [[ "$via" == "sqlite" ]]; then
-      snap=$(_beru_verdict_snapshot_sqlite "$trace_id" 2>/dev/null || true)
-      IFS='|' read -r status reg updated <<<"${snap//|/|}"
-    else
-      snap=$(_beru_verdict_snapshot_api "$trace_id" "$protocol" 2>/dev/null || true)
-      IFS='|' read -r status reg updated <<<"$snap"
-    fi
+    snap=$(_beru_verdict_snapshot_api "$trace_id" "$protocol" 2>/dev/null || true)
+    IFS='|' read -r status reg updated <<<"$snap"
 
     [[ -z "$status" ]] && { sleep 1; i=$((i + 1)); continue; }
 
@@ -184,11 +310,19 @@ beru_wait_verdict_settled() {
 
 beru_dump_trace_diagnostics() {
   local trace_id="$1" protocol="$2"
-  local pod; pod="$(beru_local_pod)"
+  local ns="${SHADOW_NS:-${BERU_NS:-monarch-system}}"
+  local pod
   echo "--- beru diagnostics trace=${trace_id} protocol=${protocol} ---"
-  beru_sqlite_query "$pod" "${SHADOW_NS}" "/data/beru.db" \
-    "SELECT shadow_role, COUNT(*) FROM raw_reports WHERE trace_id='${trace_id}' AND protocol='${protocol}' GROUP BY shadow_role;" 2>/dev/null || true
-  kubectl logs -n "${SHADOW_NS}" "$pod" --tail=40 2>/dev/null | grep -E "${trace_id}|${protocol}" || true
+  beru_http_get_trace "$ns" "$trace_id" "$protocol" 2>/dev/null | head -c 2000 || true
+  echo
+  if [[ -n "${BERU_SVC:-}" ]]; then
+    pod=$(kubectl get pods -n "${BERU_NS:-monarch-system}" -l "app=${BERU_SVC}" \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    [[ -n "$pod" ]] && kubectl logs -n "${BERU_NS:-monarch-system}" "$pod" --tail=40 2>/dev/null | grep -E "${trace_id}|${protocol}" || true
+  else
+    pod="$(beru_local_pod)"
+    [[ -n "$pod" ]] && kubectl logs -n "${SHADOW_NS}" "$pod" --tail=40 2>/dev/null | grep -E "${trace_id}|${protocol}" || true
+  fi
 }
 
 # Build mirrorLegacyLogs strings (pipeline/beru/internal/v2/engine/logs.go).
@@ -221,10 +355,9 @@ beru_log_no_regression() {
   echo "No regression for Trace ${trace_id}"
 }
 
-# Poll beru-local logs until an exact line appears (mirrorLegacyLogs output).
+# Poll beru logs until an exact line appears (mirrorLegacyLogs output).
 # Usage:
 #   beru_wait_log --grep="$(beru_log_egress_count_regression "$BATS_TRACE_ID" rabbitmq)"
-#   beru_wait_log 'Egress regression for Trace abc (http): Field ...'
 beru_wait_log() {
   local grep_pattern="" timeout=120 tail_lines=400
   while [[ $# -gt 0 ]]; do
@@ -244,16 +377,23 @@ beru_wait_log() {
     return 2
   }
 
-  local pod
-  pod="$(beru_local_pod)"
+  local pod ns
+  if [[ -n "${BERU_SVC:-}" ]]; then
+    ns="${BERU_NS:-monarch-system}"
+    pod=$(kubectl get pods -n "$ns" -l "app=${BERU_SVC}" \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  else
+    ns="${SHADOW_NS:-}"
+    pod="$(beru_local_pod)"
+  fi
   [[ -n "$pod" ]] || {
-    echo "beru_wait_log: beru-local pod not found in ${SHADOW_NS:-<unset>}" >&2
+    echo "beru_wait_log: beru pod not found in ${ns:-<unset>}" >&2
     return 2
   }
 
   local i=0
   while [[ "$i" -lt "$timeout" ]]; do
-    if kubectl logs -n "${SHADOW_NS}" "$pod" --tail="$tail_lines" 2>/dev/null | grep -Fq "$grep_pattern"; then
+    if kubectl logs -n "$ns" "$pod" --tail="$tail_lines" 2>/dev/null | grep -Fq "$grep_pattern"; then
       echo "beru log matched"
       return 0
     fi
@@ -262,7 +402,7 @@ beru_wait_log() {
   done
 
   echo "timeout waiting for beru log (${timeout}s): ${grep_pattern}" >&2
-  kubectl logs -n "${SHADOW_NS}" "$pod" --tail=30 2>/dev/null >&2 || true
+  kubectl logs -n "$ns" "$pod" --tail=30 2>/dev/null >&2 || true
   return 1
 }
 

@@ -2,10 +2,8 @@ package engine
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"hash/fnv"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -218,30 +216,11 @@ func TestRoute_differentTraceIDs_processConcurrently(t *testing.T) {
 	<-done
 }
 
-func TestRoute_withSQLiteRepository(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "engine.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-
-	repo, err := storage.NewSQLiteRepository(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	repoRecorder := &sqliteSmokeRepo{
-		TraceRepository: repo,
-		appendDone:      make(chan struct{}),
-	}
-	repoRecorder.appendRemaining.Store(3)
-
-	router := NewTraceRouter(1, repoRecorder, nil)
+func TestRoute_ingestOnlyAppends(t *testing.T) {
+	repo := newRecordingRepo()
+	repo.expectAppends(3)
+	router := NewTraceRouter(1, repo, nil)
 	capturedAt := time.Now().UTC()
-	payload := []byte(`{}`)
 	for _, role := range []string{"control-a", "control-b", "candidate"} {
 		router.Route(&storage.RawReport{
 			TraceID:      "trace-smoke",
@@ -250,41 +229,15 @@ func TestRoute_withSQLiteRepository(t *testing.T) {
 			Direction:    storage.DirectionIngress,
 			Signature:    "http:GET:/health",
 			StatusCode:   "200",
-			PayloadBytes: payload,
+			PayloadBytes: []byte(`{}`),
 			CapturedAt:   capturedAt,
 		})
 	}
-
-	select {
-	case <-repoRecorder.appendDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for router to append report")
-	}
-
-	ctx := context.Background()
-	var status string
-	err = db.QueryRowContext(ctx, `SELECT status FROM verdicts WHERE trace_id = ?`, "trace-smoke").Scan(&status)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status != "MATCH" {
-		t.Fatalf("verdict status = %q, want MATCH", status)
-	}
+	repo.waitAppends(t)
 }
 
 func TestReaper_marksWaitingForRoles(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "reaper.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-
-	repo, err := storage.NewSQLiteRepository(db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := newMemoryRepo()
 	router := NewTraceRouterWithTimeout(1, repo, nil, 50*time.Millisecond)
 	old := time.Now().UTC().Add(-200 * time.Millisecond)
 	ctx := context.Background()
@@ -311,20 +264,80 @@ func TestReaper_marksWaitingForRoles(t *testing.T) {
 	t.Fatal("reaper did not mark WAITING_FOR_ROLES")
 }
 
-type sqliteSmokeRepo struct {
-	storage.TraceRepository
-	appendRemaining atomic.Int32
-	appendDone      chan struct{}
-	appendDoneOnce  sync.Once
+// memoryRepo is enough for reaper tests: stores reports + verdicts in maps.
+type memoryRepo struct {
+	mu       sync.Mutex
+	reports  map[string][]storage.RawReport
+	verdicts map[string]*storage.VerdictState
 }
 
-func (r *sqliteSmokeRepo) AppendReport(ctx context.Context, report *storage.RawReport) ([]storage.RawReport, error) {
-	out, err := r.TraceRepository.AppendReport(ctx, report)
-	if err != nil {
-		return out, err
+func newMemoryRepo() *memoryRepo {
+	return &memoryRepo{
+		reports:  map[string][]storage.RawReport{},
+		verdicts: map[string]*storage.VerdictState{},
 	}
-	if r.appendRemaining.Add(-1) == 0 {
-		r.appendDoneOnce.Do(func() { close(r.appendDone) })
+}
+
+func (m *memoryRepo) AppendReport(_ context.Context, report *storage.RawReport) ([]storage.RawReport, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reports[report.TraceID] = append(m.reports[report.TraceID], *report)
+	out := append([]storage.RawReport(nil), m.reports[report.TraceID]...)
+	return out, nil
+}
+
+func (m *memoryRepo) SaveDiffVerdict(_ context.Context, traceID string, verdict *storage.VerdictState) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *verdict
+	m.verdicts[traceID] = &cp
+	return nil
+}
+
+func (m *memoryRepo) ListReports(_ context.Context, traceID, _ string) ([]storage.RawReport, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]storage.RawReport(nil), m.reports[traceID]...), nil
+}
+
+func (m *memoryRepo) ListTraceGroups(context.Context, string, int) ([]storage.TraceGroup, error) {
+	return nil, nil
+}
+
+func (m *memoryRepo) GetVerdict(_ context.Context, traceID string) (*storage.VerdictState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v := m.verdicts[traceID]
+	if v == nil {
+		return nil, nil
+	}
+	cp := *v
+	return &cp, nil
+}
+
+func (m *memoryRepo) ListStaleIncompleteTraces(_ context.Context, olderThan time.Time) ([]storage.StaleIncompleteTrace, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []storage.StaleIncompleteTrace
+	for tid, reps := range m.reports {
+		if len(reps) == 0 {
+			continue
+		}
+		first := reps[0].CapturedAt
+		roles := map[string]bool{}
+		for _, r := range reps {
+			roles[r.ShadowRole] = true
+			if r.CapturedAt.Before(first) {
+				first = r.CapturedAt
+			}
+		}
+		if first.After(olderThan) {
+			continue
+		}
+		if !roles["control-a"] || !roles["control-b"] || !roles["candidate"] {
+			out = append(out, storage.StaleIncompleteTrace{TraceID: tid, FirstSeen: first})
+		}
 	}
 	return out, nil
 }
+

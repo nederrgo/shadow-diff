@@ -11,6 +11,12 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-31]
 ### Added
+* 'testing/bats/integration/beru': poison-pill asserts discard log (no kubectl cp on distroless); fail before beru restart; pg connect_timeout=5s
+* 'testing/bats/integration/beru': poison-pill scale-to-0 + kubectl cp DLQ + beru remigrate; BERU_WAL_FLUSH_TIMEOUT=3s in fixture
+* 'testing/bats/integration/beru': poison-pill uses CONNECTION LIMIT 0 + kubectl cp DLQ; BERU_WAL_FLUSH_TIMEOUT for fast retries
+* 'testing/bats/integration/beru': poison-pill DLQ bats (Postgres down → dead_letters.jsonl → recover)
+* 'testing/bats/integration/beru': standalone postgres_verdict suite (no ShadowTest); per-test Postgres cleanup
+* 'pipeline/beru + monarch': Postgres-only Beru with claimed Bbolt WAL flusher, 3-retry dead-letter, advisory-locked evaluate
 * 'pipeline/monarch + pipeline/beru + docs': Removed the shared beru-system Beru in favour of per-ShadowTest beru-local — deleted pipeline/beru/deploy/, spec.beruGRPCAddress and spec.beruIngestAddress, usesLocalBeru and the external-address branches; diff history now shared via BERU_DB_SECRET PostgreSQL. ADR in docs/data-plane/beru-system-removal.md
 * 'pipeline/monarch + pipeline/beru + testing': beru-local durable storage — BERU_DB_SECRET replicated into each shadow namespace and mounted via envFrom, tmpfs SQLite volume dropped when Postgres is active, verdicts.shadow_test_name for shared-database tenancy, Postgres fixture moved to monarch-system, beru go.sum completed for the pgx/pgxpool/puddle chain
 

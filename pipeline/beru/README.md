@@ -98,39 +98,43 @@ kubectl port-forward pod/beru 8080:8080   # then open /dashboard/
 ## Configuration
 
 
-| Variable                  | Default                                                                                         | Description                                            |
-| ------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `BERU_GRPC_ADDR`          | `:50051`                                                                                        | gRPC listen address (ext_proc, TrafficReporter)        |
-| `BERU_HTTP_ADDR`          | `:8080`                                                                                         | HTTP listen address (egress diff ingest, dashboard)             |
-| `BERU_DB_PATH`            | `/var/lib/beru/shadow_diff.db` (falls back to `./shadow_diff.db` if parent dir is not writable) | SQLite path (`raw_reports`, `verdicts`, `shadow_tests`, `noise_filters`) |
-| `BERU_DB_RETENTION_DAYS`  | `7`                                                                                             | Purge `raw_reports` older than N days; orphan `verdicts` removed        |
-| `BERU_SHADOW_TEST_NAME`   | `default`                                                                                       | Default shadow test name when ingest metadata omits `shadow_test_name`  |
-| `BERU_TRACE_TIMEOUT`      | `10s`                                                                                           | Incomplete traces older than this become `WAITING_FOR_ROLES`            |
+| Variable                  | Default                    | Description                                            |
+| ------------------------- | -------------------------- | ------------------------------------------------------ |
+| `BERU_GRPC_ADDR`          | `:50051`                   | gRPC listen address (ext_proc, TrafficReporter)        |
+| `BERU_HTTP_ADDR`          | `:8080`                    | HTTP listen address (egress diff ingest, dashboard)    |
+| `DB_HOST` / `DB_USER` / `DB_NAME` | —                   | Required Postgres connection (boot fails if missing)   |
+| `DB_PORT` / `DB_PASSWORD` / `DB_SSLMODE` | `5432` / — / `require` | Postgres connection details                    |
+| `BERU_WAL_PATH`           | `/data/beru_wal.db`        | Bbolt disk WAL for ingest buffering                    |
+| `BERU_DEAD_LETTER_PATH`   | `/data/dead_letters.jsonl` | Poison-pill DLQ after 3 flush failures                 |
+| `BERU_WAL_FLUSH_TIMEOUT`  | `30s`                      | Per-attempt Postgres flush context bound               |
+| `BERU_DB_RETENTION_DAYS`  | `7`                        | Purge `raw_reports` older than N days; orphan `verdicts` removed |
+| `BERU_SHADOW_TEST_NAME`   | `default`                  | Default shadow test name when ingest metadata omits it |
+| `BERU_TRACE_TIMEOUT`      | `10s`                      | Incomplete traces older than this become `WAITING_FOR_ROLES` |
 
 
 ---
 
 ## Storage and lifecycle
 
-Beru uses **two persistence layers** plus an in-memory mock store.
+Beru uses **PostgreSQL** as the sole database, fronted by a **Bbolt disk WAL** so ingest never blocks on DB blips. See [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md).
 
 ### Overview
 
 | Layer | What it holds | Where | Survives restart? |
 | ----- | ------------- | ----- | ----------------- |
-| **State engine** | Every report + latest verdict per trace | SQLite `raw_reports`, `verdicts` | Yes |
-| **Shadow test runs** | Run names for dashboard filter + noise filter scope | SQLite `shadow_tests`, `noise_filters` | Yes |
+| **Disk WAL** | Unflushed `append_report` ops | Bbolt `/data/beru_wal.db` | No (EmptyDir) |
+| **State engine** | Every report + latest verdict per trace | Postgres `raw_reports`, `verdicts` | Yes |
+| **Shadow test runs** | Run names + noise filter scope | Postgres `shadow_tests`, `noise_filters` | Yes |
 
-### State engine (`internal/v2/`)
+### State engine (`internal/v2/` + `internal/storage/`)
 
 All ingress and egress sources normalize to a `RawReport` and hit the **TraceRouter**:
 
 ```
 Handler → TraceRouter (FNV-sharded worker)
-       → AppendReport (SQLite raw_reports)
-       → EvaluateTraceHistory (signature-based diff)
-       → SaveDiffVerdict (SQLite verdicts, upsert per trace_id)
-       → mirrorLegacyLogs (E2E log strings)
+       → AppendReport (Bbolt WAL, returns immediately)
+       → WAL flusher (8 workers, inFlight claim, pg_advisory_xact_lock)
+       → INSERT raw_reports → EvaluateTraceHistory → UPSERT verdicts
 ```
 
 | Table | Write model | Contents |

@@ -23,8 +23,6 @@ var _ RunStore = (*PostgresStore)(nil)
 const (
 	defaultPostgresPort    = "5432"
 	defaultPostgresSSLMode = "require"
-	// startTimeLayout matches what SQLite's datetime('now') renders, so the
-	// dashboard formats both backends identically.
 	startTimeLayout = "2006-01-02 15:04:05"
 )
 
@@ -68,20 +66,25 @@ func PostgresConfigFromEnv() (PostgresConfig, error) {
 		}
 	}
 	if len(missing) > 0 {
-		return PostgresConfig{}, fmt.Errorf("DB_DRIVER=postgres requires %v", missing)
+		return PostgresConfig{}, fmt.Errorf("postgres requires %v", missing)
 	}
 	return cfg, nil
 }
 
 // DSN renders the connection string. url.UserPassword escapes credentials, so a
 // password containing @ / : / # does not corrupt the URL.
+// connect_timeout keeps unreachable-host flush attempts from hanging on dial
+// longer than the WAL flush context (poison-pill / outage paths).
 func (c PostgresConfig) DSN() string {
 	u := &url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(c.User, c.Password),
 		Host:     net.JoinHostPort(c.Host, c.Port),
 		Path:     "/" + c.Name,
-		RawQuery: url.Values{"sslmode": {c.SSLMode}}.Encode(),
+		RawQuery: url.Values{
+			"sslmode":         {c.SSLMode},
+			"connect_timeout": {"5"},
+		}.Encode(),
 	}
 	return u.String()
 }
@@ -105,8 +108,7 @@ func OpenPostgres(log *slog.Logger, cfg PostgresConfig) (*PostgresStore, error) 
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
 	}
-	// SQLite pins MaxOpenConns to 1 because of its single-writer model; Postgres
-	// has no such constraint and the TraceRouter runs 8 workers.
+	// Headroom for 8 WAL flusher workers plus dashboard/reaper reads.
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(time.Hour)

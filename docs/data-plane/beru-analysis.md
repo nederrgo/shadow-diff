@@ -4,7 +4,7 @@ title: Beru Trace Analysis Engine
 description: Single-trace correctness pipeline for Beru v2 — completeness timeout, baseline void guard, and compound candidate diffing with structured verdict details.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2
 tags: [data-plane, beru, diff, analysis, verdict, baseline]
-timestamp: 2026-07-24T08:00:00Z
+timestamp: 2026-07-31T14:30:00Z
 ---
 
 # Beru Trace Analysis Engine
@@ -60,9 +60,9 @@ Signature-bucket pairing accumulates **all** findings without short-circuit:
 
 ## UI seed (bats / debug)
 
-`POST /api/v1/debug/seed-reports` accepts a `reports` array of RawReport-shaped JSON (`trace_id`, `shadow_role`, `protocol`, `direction`, `signature`, `status_code`, `payload`, optional `captured_at`) and routes each into the TraceRouter — same evaluation path as live ingest.
+`POST /api/v1/debug/seed-reports` accepts a `reports` array of RawReport-shaped JSON (`trace_id`, `shadow_role`, `protocol`, `direction`, `signature`, `status_code`, `payload`, optional `captured_at`) and routes each into the TraceRouter — same evaluation path as live ingest (WAL → Postgres flush → evaluate).
 
-Bats suite: `testing/bats/integration/beru/verdict_ui.bats` (mirrors unit-test histories; waits for beru-local only, asserts status after seed — no full Ready / quiescence). Leave the stack up with `BATS_KEEP=1` and port-forward `svc/beru-local:8080` to inspect the dashboard.
+Bats suite: `testing/bats/integration/beru/postgres_verdict.bats` — standalone `beru-verdict` Deployment in `monarch-system` against the bats Postgres fixture (no ShadowTest). Mirrors unit-test histories; asserts via HTTP after seed; deletes Postgres rows per test / suite. Includes a poison-pill case (Postgres scale-to-0 → `/data/dead_letters.jsonl` after 3 WAL flush failures → restore + beru remigrate + MATCH). Leave the stack up with `BATS_KEEP=1` and port-forward `svc/beru-verdict:8080` to inspect the dashboard.
 
 ## Citations
 

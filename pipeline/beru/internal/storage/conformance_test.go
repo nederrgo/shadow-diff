@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -17,36 +16,10 @@ import (
 	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
-// The same assertions run against both backends. SQLite and Postgres disagree on
-// placeholders, boolean width, timestamp typing, LastInsertId, ON CONFLICT
-// spelling and whether HAVING may reference a SELECT alias — none of which a
-// pure unit test would surface.
-
-func TestSQLiteConformance(t *testing.T) {
-	db, runs := newSQLiteBackend(t)
-	runTraceRepositoryConformance(t, db)
-	runRunStoreConformance(t, runs)
-}
-
 func TestPostgresConformance(t *testing.T) {
 	store := newPostgresBackend(t)
 	runTraceRepositoryConformance(t, store)
 	runRunStoreConformance(t, store)
-}
-
-func newSQLiteBackend(t *testing.T) (v2storage.TraceRepository, RunStore) {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "conformance.db")
-	db, err := OpenAt(slog.Default(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	repo, err := v2storage.NewSQLiteRepository(db.SQL())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return repo, db
 }
 
 // newPostgresBackend needs a throwaway database: it drops every Beru object

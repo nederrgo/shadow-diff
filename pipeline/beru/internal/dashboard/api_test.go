@@ -2,31 +2,139 @@ package dashboard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 	"github.com/shadow-diff/beru/internal/storage"
+	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
+
+type memRuns struct {
+	mu      sync.Mutex
+	filters map[string]map[string]struct{}
+	tests   []storage.ShadowTest
+}
+
+func newMemRuns() *memRuns {
+	return &memRuns{
+		filters: map[string]map[string]struct{}{},
+		tests:   []storage.ShadowTest{{ID: 1, Name: "default", StartTime: "now"}},
+	}
+}
+
+func (m *memRuns) EnsureShadowTest(context.Context, string) error { return nil }
+func (m *memRuns) DefaultShadowTestName() string                  { return "default" }
+func (m *memRuns) ListShadowTests(context.Context, int) ([]storage.ShadowTest, error) {
+	return append([]storage.ShadowTest(nil), m.tests...), nil
+}
+func (m *memRuns) GetShadowTest(_ context.Context, id int64) (storage.ShadowTest, error) {
+	for _, st := range m.tests {
+		if st.ID == id {
+			return st, nil
+		}
+	}
+	return storage.ShadowTest{}, context.Canceled
+}
+func (m *memRuns) NoisePathsForTest(_ context.Context, name string) (map[string]struct{}, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]struct{}{}
+	for p := range m.filters[name] {
+		out[p] = struct{}{}
+	}
+	return out, nil
+}
+func (m *memRuns) AddNoiseFilter(_ context.Context, name, path string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.filters[name] == nil {
+		m.filters[name] = map[string]struct{}{}
+	}
+	m.filters[name][path] = struct{}{}
+	return nil
+}
+func (m *memRuns) ListNoiseFilters(_ context.Context, name string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []string
+	for p := range m.filters[name] {
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+type memTraces struct {
+	mu      sync.Mutex
+	reports map[string][]v2storage.RawReport
+}
+
+func newMemTraces() *memTraces {
+	return &memTraces{reports: map[string][]v2storage.RawReport{}}
+}
+
+func (m *memTraces) AppendReport(_ context.Context, report *v2storage.RawReport) ([]v2storage.RawReport, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reports[report.TraceID] = append(m.reports[report.TraceID], *report)
+	return append([]v2storage.RawReport(nil), m.reports[report.TraceID]...), nil
+}
+func (m *memTraces) SaveDiffVerdict(context.Context, string, *v2storage.VerdictState) error {
+	return nil
+}
+func (m *memTraces) ListReports(_ context.Context, traceID, protocol string) ([]v2storage.RawReport, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []v2storage.RawReport
+	for _, r := range m.reports[traceID] {
+		if protocol == "" || r.Protocol == protocol {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+func (m *memTraces) ListTraceGroups(_ context.Context, shadowTestName string, limit int) ([]v2storage.TraceGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	type key struct{ tid, proto string }
+	seen := map[key]time.Time{}
+	for _, reps := range m.reports {
+		for _, r := range reps {
+			if shadowTestName != "" && r.ShadowTestName != "" && r.ShadowTestName != shadowTestName {
+				continue
+			}
+			k := key{r.TraceID, r.Protocol}
+			if t, ok := seen[k]; !ok || r.CapturedAt.After(t) {
+				seen[k] = r.CapturedAt
+			}
+		}
+	}
+	var out []v2storage.TraceGroup
+	for k, t := range seen {
+		out = append(out, v2storage.TraceGroup{
+			TraceID: k.tid, Protocol: k.proto, LastCapturedAt: t.UTC().Format(time.RFC3339Nano),
+		})
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+func (m *memTraces) GetVerdict(context.Context, string) (*v2storage.VerdictState, error) {
+	return nil, nil
+}
+func (m *memTraces) ListStaleIncompleteTraces(context.Context, time.Time) ([]v2storage.StaleIncompleteTrace, error) {
+	return nil, nil
+}
 
 func testHandler(t *testing.T) *Handler {
 	t.Helper()
-	dir := t.TempDir()
-	db, err := storage.OpenAt(slog.Default(), filepath.Join(dir, "dash.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	repo, err := v2storage.NewSQLiteRepository(db.SQL())
-	if err != nil {
-		t.Fatal(err)
-	}
-	h, err := NewHandler(db, repo, slog.Default())
+	h, err := NewHandler(newMemRuns(), newMemTraces(), slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}

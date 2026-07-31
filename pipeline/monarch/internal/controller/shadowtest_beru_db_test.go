@@ -56,28 +56,28 @@ func envValue(c corev1.Container, name string) (string, bool) {
 	return "", false
 }
 
-func TestLocalBeruPodSpec_sqliteByDefault(t *testing.T) {
+func TestLocalBeruPodSpec_alwaysMountsWALVolume(t *testing.T) {
 	t.Setenv(envBeruDBSecret, "")
 	container, volumes := localBeruPodSpec(beruLocalTestShadowTest())
 
 	if len(container.EnvFrom) != 0 {
 		t.Fatalf("EnvFrom = %+v, want none without BERU_DB_SECRET", container.EnvFrom)
 	}
-	if _, ok := envValue(container, "BERU_DB_PATH"); !ok {
-		t.Fatal("BERU_DB_PATH missing on the SQLite path")
+	if v, ok := envValue(container, "BERU_DB_PATH"); ok {
+		t.Fatalf("BERU_DB_PATH = %q, want it absent", v)
 	}
 	if len(volumes) != 1 || volumes[0].Name != volumeNameLocalBeruData {
-		t.Fatalf("volumes = %+v, want the SQLite EmptyDir", volumes)
+		t.Fatalf("volumes = %+v, want the WAL EmptyDir", volumes)
 	}
-	if volumes[0].EmptyDir == nil || volumes[0].EmptyDir.Medium != corev1.StorageMediumMemory {
-		t.Fatalf("expected an in-memory EmptyDir, got %+v", volumes[0].VolumeSource)
+	if volumes[0].EmptyDir == nil || volumes[0].EmptyDir.Medium != corev1.StorageMediumDefault {
+		t.Fatalf("expected a disk EmptyDir, got %+v", volumes[0].VolumeSource)
 	}
 	if len(container.VolumeMounts) != 1 || container.VolumeMounts[0].MountPath != "/data" {
 		t.Fatalf("volume mounts = %+v", container.VolumeMounts)
 	}
 }
 
-func TestLocalBeruPodSpec_postgresDropsSQLiteVolume(t *testing.T) {
+func TestLocalBeruPodSpec_postgresKeepsWALVolume(t *testing.T) {
 	t.Setenv(envBeruDBSecret, "monarch-system/beru-postgres")
 	container, volumes := localBeruPodSpec(beruLocalTestShadowTest())
 
@@ -88,20 +88,16 @@ func TestLocalBeruPodSpec_postgresDropsSQLiteVolume(t *testing.T) {
 	if ref == nil || ref.Name != "beru-postgres" {
 		t.Fatalf("secretRef = %+v, want beru-postgres", ref)
 	}
-	// The tmpfs EmptyDir is charged against the container's 128Mi limit, so it
-	// must not survive when no SQLite file is opened.
-	if volumes != nil {
-		t.Fatalf("volumes = %+v, want none on the Postgres path", volumes)
+	if len(volumes) != 1 || volumes[0].Name != volumeNameLocalBeruData {
+		t.Fatalf("volumes = %+v, want WAL EmptyDir alongside Postgres", volumes)
 	}
-	if len(container.VolumeMounts) != 0 {
-		t.Fatalf("volume mounts = %+v, want none", container.VolumeMounts)
+	if volumes[0].EmptyDir == nil || volumes[0].EmptyDir.Medium != corev1.StorageMediumDefault {
+		t.Fatalf("expected a disk EmptyDir, got %+v", volumes[0].VolumeSource)
 	}
 	if v, ok := envValue(container, "BERU_DB_PATH"); ok {
-		t.Fatalf("BERU_DB_PATH = %q, want it dropped on the Postgres path", v)
+		t.Fatalf("BERU_DB_PATH = %q, want it absent", v)
 	}
 
-	// Session identity must still be present — it is what makes shadow_sessions
-	// join to the S3 layout.
 	if v, _ := envValue(container, envSessionID); v != "session-1" {
 		t.Fatalf("%s = %q, want session-1", envSessionID, v)
 	}

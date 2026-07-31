@@ -91,6 +91,13 @@ type BaselineFailure struct {
 	ControlB  string `json:"control_b,omitempty"`
 }
 
+// TraceGroup is one (trace_id, protocol) pair for dashboard listing.
+type TraceGroup struct {
+	TraceID        string
+	Protocol       string
+	LastCapturedAt string
+}
+
 // StaleIncompleteTrace is a reaper candidate: incomplete roles past the timeout.
 type StaleIncompleteTrace struct {
 	TraceID   string

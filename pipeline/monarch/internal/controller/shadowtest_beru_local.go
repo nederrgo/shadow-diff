@@ -24,8 +24,9 @@ const (
 	// answer a sidecar's report with "502 egress: no mock found". Reporting on a
 	// port the redirect does not match is a three-line fix where an iptables
 	// exemption would be a per-process one.
-	localBeruIngestPort   = int32(8081)
-	localBeruSQLiteSizeMi = int64(64)
+	localBeruIngestPort = int32(8081)
+	// Disk EmptyDir for Bbolt WAL + dead-letter file (1 GiB matches Beru's WAL cap).
+	localBeruWALSizeGi = int64(1)
 )
 
 func localBeruLabels(st *enginev1alpha1.ShadowTest) map[string]string {
@@ -96,10 +97,9 @@ func (r *ShadowTestReconciler) reconcileLocalBeru(
 // the CreateOrPatch mutation so the storage-mode branch is testable without a
 // cluster.
 //
+// Always mounts a disk EmptyDir at /data for the Bbolt WAL and dead-letter file.
 // With BERU_DB_SECRET configured, DB_* arrives wholesale from the replicated
-// Secret — adding a connection setting later needs no controller change — and
-// the tmpfs volume is dropped, since no SQLite file is opened and the 64Mi
-// in-memory EmptyDir is charged against the container's 128Mi limit.
+// Secret via envFrom — adding a connection setting later needs no controller change.
 func localBeruPodSpec(st *enginev1alpha1.ShadowTest) (corev1.Container, []corev1.Volume) {
 	_, dbSecretName, usesPostgres := beruDBSecretRef()
 
@@ -121,6 +121,10 @@ func localBeruPodSpec(st *enginev1alpha1.ShadowTest) (corev1.Container, []corev1
 			{Name: "SHADOW_NAMESPACE", Value: st.Namespace},
 			{Name: "SHADOW_MODE", Value: st.Spec.Mode},
 		},
+		VolumeMounts: []corev1.VolumeMount{{
+			Name:      volumeNameLocalBeruData,
+			MountPath: "/data",
+		}},
 		Resources: corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
 				corev1.ResourceMemory: resource.MustParse("128Mi"),
@@ -135,23 +139,17 @@ func localBeruPodSpec(st *enginev1alpha1.ShadowTest) (corev1.Container, []corev1
 				LocalObjectReference: corev1.LocalObjectReference{Name: dbSecretName},
 			},
 		}}
-		return container, nil
 	}
 
-	container.Env = append(container.Env, corev1.EnvVar{Name: "BERU_DB_PATH", Value: "/data/beru.db"})
-	container.VolumeMounts = []corev1.VolumeMount{{
-		Name:      volumeNameLocalBeruData,
-		MountPath: "/data",
-	}}
-	return container, []corev1.Volume{{
+	volumes := []corev1.Volume{{
 		Name: volumeNameLocalBeruData,
 		VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{
-				Medium:    corev1.StorageMediumMemory,
-				SizeLimit: resource.NewQuantity(localBeruSQLiteSizeMi*1024*1024, resource.BinarySI),
+				SizeLimit: resource.NewQuantity(localBeruWALSizeGi<<30, resource.BinarySI),
 			},
 		},
 	}}
+	return container, volumes
 }
 
 func (r *ShadowTestReconciler) localBeruReady(

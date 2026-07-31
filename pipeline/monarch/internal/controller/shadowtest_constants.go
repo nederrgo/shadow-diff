@@ -96,7 +96,7 @@ $IPT -t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-port 10001`
 	secretKeyAccess  = "AWS_ACCESS_KEY_ID"
 	secretKeySecret  = "AWS_SECRET_ACCESS_KEY"
 
-	volumeNameLocalBeruData = "beru-sqlite-data"
+	volumeNameLocalBeruData = "beru-wal-data"
 )
 
 var envoyImagePullPolicy = corev1.PullIfNotPresent

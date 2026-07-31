@@ -9,18 +9,35 @@ import (
 	"time"
 
 	"github.com/shadow-diff/beru/internal/roles"
+	"github.com/shadow-diff/beru/internal/v2/diff"
 	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
+func evaluateHistory(history []v2storage.RawReport, noise map[string]struct{}, timeout time.Duration) *v2storage.VerdictState {
+	return diff.EvaluateTraceHistory(history, noise, diff.EvalOptions{Timeout: timeout})
+}
+
 var _ v2storage.TraceRepository = (*PostgresStore)(nil)
 
-// AppendReport stores one report and returns the trace's full timeline, which
-// the engine re-diffs on every arrival.
+// AppendReport stores one report and returns the trace's full timeline.
 func (p *PostgresStore) AppendReport(ctx context.Context, report *v2storage.RawReport) ([]v2storage.RawReport, error) {
 	if report == nil {
 		return nil, fmt.Errorf("append report: nil report")
 	}
-	_, err := p.db.ExecContext(ctx, `
+	if err := p.insertReport(ctx, p.db, report); err != nil {
+		return nil, err
+	}
+	return p.ListReports(ctx, report.TraceID, "")
+}
+
+type dbQuerier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (p *PostgresStore) insertReport(ctx context.Context, q dbQuerier, report *v2storage.RawReport) error {
+	_, err := q.ExecContext(ctx, `
 INSERT INTO raw_reports (trace_id, shadow_role, shadow_test_name, protocol, direction, signature, status_code, payload_bytes, captured_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		report.TraceID,
@@ -34,28 +51,133 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		report.CapturedAt.UTC(),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("append report insert: %w", err)
+		return fmt.Errorf("append report insert: %w", err)
 	}
-	return p.ListReports(ctx, report.TraceID, "")
+	return nil
+}
+
+// flushReportsAndEvaluate inserts WAL-batched reports under an advisory lock,
+// re-diffs the full history, and upserts the verdict + UI projection.
+func (p *PostgresStore) flushReportsAndEvaluate(
+	ctx context.Context,
+	reports []v2storage.RawReport,
+	noise map[string]struct{},
+	timeout time.Duration,
+) error {
+	if len(reports) == 0 {
+		return nil
+	}
+	traceID := reports[0].TraceID
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, traceID); err != nil {
+		return fmt.Errorf("advisory lock: %w", err)
+	}
+	for i := range reports {
+		if err := p.insertReport(ctx, tx, &reports[i]); err != nil {
+			return err
+		}
+	}
+	history, err := p.listReportsQ(ctx, tx, traceID, "")
+	if err != nil {
+		return err
+	}
+	verdict := evaluateHistory(history, noise, timeout)
+	if verdict != nil {
+		if err := p.upsertVerdict(ctx, tx, traceID, verdict, history); err != nil {
+			return err
+		}
+		if err := p.projectTraceTx(ctx, tx, traceID, verdict, history); err != nil {
+			p.log.Warn("Trace projection failed", "trace_id", traceID, "err", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// saveDiffVerdictUnderLock upserts a verdict while holding the per-trace advisory lock.
+func (p *PostgresStore) saveDiffVerdictUnderLock(ctx context.Context, traceID string, verdict *v2storage.VerdictState) error {
+	if verdict == nil {
+		return fmt.Errorf("save diff verdict: nil verdict")
+	}
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, traceID); err != nil {
+		return fmt.Errorf("advisory lock: %w", err)
+	}
+	history, err := p.listReportsQ(ctx, tx, traceID, "")
+	if err != nil {
+		return err
+	}
+	if err := p.upsertVerdict(ctx, tx, traceID, verdict, history); err != nil {
+		return err
+	}
+	if err := p.projectTraceTx(ctx, tx, traceID, verdict, history); err != nil {
+		p.log.Warn("Trace projection failed", "trace_id", traceID, "err", err)
+	}
+	return tx.Commit()
+}
+
+func (p *PostgresStore) upsertVerdict(
+	ctx context.Context,
+	q dbQuerier,
+	traceID string,
+	verdict *v2storage.VerdictState,
+	history []v2storage.RawReport,
+) error {
+	shadowTestName := ""
+	if len(history) > 0 {
+		shadowTestName = history[0].ShadowTestName
+	}
+	_, err := q.ExecContext(ctx, `
+INSERT INTO verdicts (trace_id, shadow_test_name, status, has_count_regression, summary_details, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (trace_id) DO UPDATE SET
+  shadow_test_name     = excluded.shadow_test_name,
+  status               = excluded.status,
+  has_count_regression = excluded.has_count_regression,
+  summary_details      = excluded.summary_details,
+  updated_at           = excluded.updated_at`,
+		traceID,
+		shadowTestName,
+		verdict.Status,
+		verdict.HasCountRegression,
+		jsonbValue(verdict.SummaryDetails),
+		verdict.UpdatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save diff verdict: %w", err)
+	}
+	return nil
 }
 
 // ListReports returns a trace's reports in capture order, optionally one protocol.
 func (p *PostgresStore) ListReports(ctx context.Context, traceID, protocol string) ([]v2storage.RawReport, error) {
+	return p.listReportsQ(ctx, p.db, traceID, protocol)
+}
+
+func (p *PostgresStore) listReportsQ(ctx context.Context, q dbQuerier, traceID, protocol string) ([]v2storage.RawReport, error) {
 	if traceID == "" {
 		return nil, fmt.Errorf("list reports: empty trace_id")
 	}
-	q := `
+	query := `
 SELECT trace_id, shadow_role, shadow_test_name, protocol, direction, signature, status_code, payload_bytes, captured_at
 FROM raw_reports
 WHERE trace_id = $1`
 	args := []any{traceID}
 	if protocol != "" {
-		q += ` AND protocol = $2`
+		query += ` AND protocol = $2`
 		args = append(args, protocol)
 	}
-	q += ` ORDER BY captured_at ASC, id ASC`
+	query += ` ORDER BY captured_at ASC, id ASC`
 
-	rows, err := p.db.QueryContext(ctx, q, args...)
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query reports: %w", err)
 	}
@@ -109,8 +231,6 @@ LIMIT $2`, shadowTestName, limit)
 		if err := rows.Scan(&g.TraceID, &g.Protocol, &lastAt); err != nil {
 			return nil, err
 		}
-		// TraceGroup.LastCapturedAt is a string the dashboard renders directly;
-		// re-emit the RFC3339Nano form SQLite stores so both look identical.
 		g.LastCapturedAt = lastAt.UTC().Format(time.RFC3339Nano)
 		out = append(out, g)
 	}
@@ -187,39 +307,13 @@ func (p *PostgresStore) SaveDiffVerdict(ctx context.Context, traceID string, ver
 	if verdict == nil {
 		return fmt.Errorf("save diff verdict: nil verdict")
 	}
-	// The verdict carries no shadow test name, so read the trace once here and
-	// hand the same history to the projection rather than loading it twice.
 	history, err := p.ListReports(ctx, traceID, "")
 	if err != nil {
 		return fmt.Errorf("save diff verdict: %w", err)
 	}
-	shadowTestName := ""
-	if len(history) > 0 {
-		shadowTestName = history[0].ShadowTestName
+	if err := p.upsertVerdict(ctx, p.db, traceID, verdict, history); err != nil {
+		return err
 	}
-
-	_, err = p.db.ExecContext(ctx, `
-INSERT INTO verdicts (trace_id, shadow_test_name, status, has_count_regression, summary_details, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (trace_id) DO UPDATE SET
-  shadow_test_name     = excluded.shadow_test_name,
-  status               = excluded.status,
-  has_count_regression = excluded.has_count_regression,
-  summary_details      = excluded.summary_details,
-  updated_at           = excluded.updated_at`,
-		traceID,
-		shadowTestName,
-		verdict.Status,
-		verdict.HasCountRegression,
-		jsonbValue(verdict.SummaryDetails),
-		verdict.UpdatedAt.UTC(),
-	)
-	if err != nil {
-		return fmt.Errorf("save diff verdict: %w", err)
-	}
-
-	// The projection is derived from raw_reports + verdicts, which stay
-	// authoritative. A projection fault must not lose the verdict.
 	if err := p.projectTrace(ctx, traceID, verdict, history); err != nil {
 		p.log.Warn("Trace projection failed", "trace_id", traceID, "err", err)
 	}
@@ -233,6 +327,24 @@ func (p *PostgresStore) projectTrace(
 	verdict *v2storage.VerdictState,
 	history []v2storage.RawReport,
 ) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := p.projectTraceTx(ctx, tx, traceID, verdict, history); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (p *PostgresStore) projectTraceTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	traceID string,
+	verdict *v2storage.VerdictState,
+	history []v2storage.RawReport,
+) error {
 	if len(history) == 0 {
 		return nil
 	}
@@ -242,12 +354,6 @@ func (p *PostgresStore) projectTrace(
 		_ = json.Unmarshal([]byte(verdict.SummaryDetails), &details)
 	}
 	noiseDiff := jsonOrNil(details.Baseline)
-
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 
 	sessionID := sql.NullString{String: p.sessionID, Valid: p.sessionID != ""}
 	method, path := httpMethodPath(history)
@@ -300,7 +406,7 @@ ON CONFLICT (trace_id, signature) DO UPDATE SET
 			return fmt.Errorf("project diff_reports row %s: %w", sig, err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // signatureOrder lists each distinct signature once, in first-seen order.

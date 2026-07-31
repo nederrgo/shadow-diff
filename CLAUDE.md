@@ -71,7 +71,7 @@ L3  Shadow stack            3× app Deployment + Envoy sidecar + ephemeral deps 
 L4a AMQP egress             egress-relay-rabbitmq (Firehose → Beru)
 L4b HTTP egress             Kaisel (request/response pairing → Shop mock store)
 L4c DB egress               shadow-soldier (TCP proxy sidecar → Beru egress diff)
-L5  Analysis sink           Beru (diff-of-diffs, SQLite, dashboard) + Shop (per-ShadowTest HTTP egress mock store)
+L5  Analysis sink           Beru (diff-of-diffs, Postgres + disk WAL, dashboard) + Shop (per-ShadowTest HTTP egress mock store)
 ```
 
 ### Key components
@@ -83,8 +83,8 @@ Key files: `internal/controller/shadowtest_controller.go` (main loop), `shadowte
 
 **`pipeline/beru/`** — L5 analysis sink (`github.com/shadow-diff/beru`)  
 Two ports: gRPC `:50051` (Envoy ext_proc + TrafficReporter), HTTP `:8080` (REST API, dashboard, egress diff).  
-State engine: `internal/v2/engine/` — `TraceRouter` FNV-shards reports by trace ID → single goroutine per trace → `AppendReport` (SQLite) → `EvaluateTraceHistory` → `SaveDiffVerdict` → `mirrorLegacyLogs`.  
-SQLite models in `internal/v2/storage/`. Protocol-specific report builders in `internal/v2/report/`.  
+State engine: `internal/v2/engine/` — `TraceRouter` FNV-shards reports by trace ID → `AppendReport` to Bbolt WAL → claimed 8-worker flusher under `pg_advisory_xact_lock` → insert + `EvaluateTraceHistory` + verdict upsert.  
+Models in `internal/v2/storage/`; Postgres + WAL in `internal/storage/`. Protocol-specific report builders in `internal/v2/report/`.  
 Egress diff ingest: `internal/api/http.go` `handleEgressDiff()` → `FromEgressWithSignature` → `Router.Route`. Producers may supply their own `protocol:operation:target` signature.
 
 **`pipeline/igrises/igris-http/`** — HTTP/TCP multicast hub  
@@ -107,7 +107,7 @@ Subscribes to Firehose on each shadow broker, deduplicates (OTel pika double-pub
 
 ### Beru-local
 
-Monarch provisions a `beru-local` pod per ShadowTest inside the shadow namespace — this is the only Beru. By default it uses an **in-memory EmptyDir** for SQLite, so diff state is lost on pod restart and with the namespace. Setting `BERU_DB_SECRET` on the manager switches it to a shared PostgreSQL: Monarch replicates the named Secret into each shadow namespace and mounts it via `envFrom`, and diff history then outlives the ShadowTest. See `docs/data-plane/beru-postgres-storage.md`.
+Monarch provisions a `beru-local` pod per ShadowTest inside the shadow namespace — this is the only Beru. It always mounts a disk EmptyDir at `/data` for the Bbolt WAL and dead-letter file. `BERU_DB_SECRET` on the manager names the Postgres Secret; Monarch replicates it into each shadow namespace and mounts it via `envFrom`. Diff history in PostgreSQL outlives the ShadowTest; the WAL does not survive pod restart. See `docs/data-plane/beru-postgres-storage.md`.
 
 ### Key design patterns
 

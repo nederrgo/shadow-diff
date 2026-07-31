@@ -21,11 +21,9 @@
 #   ./testing/tools/e2e-reset-minikube.sh --no-reset      # deploy/upgrade only (no deletes; reuses running minikube)
 #   ./testing/tools/e2e-reset-minikube.sh --skip-load --skip-build --no-reset  # fastest: cluster already up + images present
 #
-# A PostgreSQL fixture is always deployed to monarch-system. beru-local stays on
-# tmpfs SQLite unless BERU_POSTGRES=1, which sets BERU_DB_SECRET on the manager;
-# Monarch then replicates the Secret into each shadow namespace:
-#   BERU_POSTGRES=1 ./testing/tools/e2e-reset-minikube.sh
-# Reach it from the host (Go conformance suite) on the fixed NodePort:
+# A PostgreSQL fixture is always deployed to monarch-system. The manager always
+# gets BERU_DB_SECRET=monarch-system/beru-postgres so beru-local uses Postgres +
+# a disk WAL EmptyDir. Reach Postgres from the host (Go conformance) on NodePort:
 #   export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@$(minikube ip):30432/beru?sslmode=disable"
 #   go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection' -v
 #
@@ -148,17 +146,11 @@ e2e_reset_deploy_stack() {
   kubectl apply -f "$REPO/testing/bats/manifests/postgres/service.yaml"
   kubectl rollout status deployment/postgres -n monarch-system --timeout=180s
 
-  # BERU_DB_SECRET is what switches beru-local onto Postgres: Monarch replicates
-  # the named Secret into each shadow namespace and mounts it via envFrom.
-  manager_env=(MONARCH_MODE=dev BERU_IMAGE="$BERU_IMG" SHOP_IMAGE="$SHOP_IMG")
-  if [[ "${BERU_POSTGRES:-0}" == "1" ]]; then
-    echo "    beru-local storage: postgres (BERU_DB_SECRET=monarch-system/beru-postgres)"
-    manager_env+=(BERU_DB_SECRET=monarch-system/beru-postgres)
-  else
-    echo "    beru-local storage: sqlite (set BERU_POSTGRES=1 for Postgres)"
-    # Trailing '-' unsets it, so a --no-reset rerun drops a previous opt-in.
-    manager_env+=(BERU_DB_SECRET-)
-  fi
+  # BERU_DB_SECRET: Monarch replicates the Secret into each shadow namespace;
+  # beru-local mounts it via envFrom and keeps a disk WAL at /data.
+  echo "    beru-local storage: postgres (BERU_DB_SECRET=monarch-system/beru-postgres)"
+  manager_env=(MONARCH_MODE=dev BERU_IMAGE="$BERU_IMG" SHOP_IMAGE="$SHOP_IMG"
+    BERU_DB_SECRET=monarch-system/beru-postgres)
   kubectl set env deployment/monarch-controller-manager -n monarch-system "${manager_env[@]}"
 
   if [[ "${SKIP_LOAD:-0}" -eq 0 ]]; then
