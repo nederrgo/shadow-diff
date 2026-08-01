@@ -7,6 +7,9 @@ KAISEL_DIR := pipeline/kaisel
 IGRIS_RABBITMQ_DIR := pipeline/igrises/igris-rabbitmq
 EGRESS_RELAY_RABBITMQ_DIR := pipeline/egress-relay-rabbitmq
 SHADOW_SOLDIER_DIR := pipeline/shadow-soldier
+TUSK_DIR := pipeline/tusk
+THE_SYSTEM_DIR := pipeline/the-system
+MONARCHPB_DIR := pipeline/pkg/monarchpb
 KAISEL_IMG ?= kaisel:latest
 IGRIS_RABBITMQ_IMG ?= igris-rabbitmq:latest
 EGRESS_RELAY_RABBITMQ_IMG ?= egress-relay-rabbitmq:latest
@@ -14,6 +17,8 @@ IGRIS_IMG ?= igris-http:latest
 BERU_IMG ?= beru:latest
 SHOP_IMG ?= shop:latest
 SHADOW_SOLDIER_IMG ?= shadow-soldier:latest
+TUSK_IMG ?= tusk:latest
+THE_SYSTEM_IMG ?= the-system:latest
 IMG ?= controller:latest
 
 MONARCH_TARGETS := all help manifests generate fmt vet test setup-test-e2e test-e2e cleanup-test-e2e \
@@ -30,7 +35,9 @@ $(MONARCH_TARGETS):
 	igris-rabbitmq-test igris-rabbitmq-build igris-rabbitmq-docker-build \
 	nodejs-test-worker-docker-build python-test-worker-docker-build \
 	egress-relay-rabbitmq-test egress-relay-rabbitmq-build egress-relay-rabbitmq-docker-build \
-	shadow-soldier-test shadow-soldier-build shadow-soldier-docker-build
+	shadow-soldier-test shadow-soldier-build shadow-soldier-docker-build \
+	tusk-test tusk-build tusk-docker-build \
+	the-system-test the-system-docker-build monarchpb-proto
 beru-test: ## Run Beru unit tests.
 	@$(MAKE) -C $(BERU_DIR) test
 
@@ -109,7 +116,25 @@ shadow-soldier-build: ## Build shadow-soldier binary.
 shadow-soldier-docker-build: ## Build shadow-soldier container image.
 	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) docker-build SHADOW_SOLDIER_IMG=$(SHADOW_SOLDIER_IMG)
 
-test-all: ## Run Monarch, Beru, Shop, Igris, kaisel, igris-rabbitmq, egress-relay-rabbitmq, and shadow-soldier tests.
+monarchpb-proto: ## Regenerate the shared Monarch/Tusk gRPC contract.
+	@$(MAKE) -C $(MONARCHPB_DIR) proto
+
+tusk-test: ## Run Tusk unit tests.
+	@$(MAKE) -C $(TUSK_DIR) test
+
+tusk-build: ## Build Tusk binary.
+	@$(MAKE) -C $(TUSK_DIR) build
+
+tusk-docker-build: ## Build Tusk container image.
+	@$(MAKE) -C $(TUSK_DIR) docker-build TUSK_IMG=$(TUSK_IMG)
+
+the-system-test: ## Typecheck The System UI (Node 22).
+	@$(MAKE) -C $(THE_SYSTEM_DIR) test
+
+the-system-docker-build: ## Build The System Nginx container image.
+	@$(MAKE) -C $(THE_SYSTEM_DIR) docker-build THE_SYSTEM_IMG=$(THE_SYSTEM_IMG)
+
+test-all: ## Run Monarch, Beru, Shop, Igris, kaisel, igris-rabbitmq, egress-relay-rabbitmq, shadow-soldier and Tusk tests.
 	@$(MAKE) -C $(MONARCH_DIR) test
 	@$(MAKE) -C $(BERU_DIR) test
 	@$(MAKE) -C $(SHOP_DIR) test
@@ -117,6 +142,8 @@ test-all: ## Run Monarch, Beru, Shop, Igris, kaisel, igris-rabbitmq, egress-rela
 	@$(MAKE) -C $(KAISEL_DIR) test
 	@$(MAKE) -C $(IGRIS_RABBITMQ_DIR) test
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
+	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) test
+	@$(MAKE) -C $(TUSK_DIR) test
 .PHONY: test-bats test-bats-integration test-bats-e2e test-bats-kaisel test-bats-record
 test-bats-integration: ## Bats integration suite (one ShadowTest per .bats file).
 	@chmod +x testing/bats/run.sh

@@ -284,9 +284,9 @@ func (r *ShadowTestReconciler) reconcileKaiselCapture(
 	labels := copyStringMap(target.Spec.Template.Labels)
 
 	if err := r.reconcileKaiselRule(ctx, st, shadowNS, target); err != nil {
-		return formatCaptureTargets(labels), "Degraded", err
+		return formatCaptureTargets(labels), capturePhaseDegraded, err
 	}
-	return formatCaptureTargets(labels), "Ready", nil
+	return formatCaptureTargets(labels), capturePhaseReady, nil
 }
 
 // ── Deployment→ShadowTest watch mapper ────────────────────────────────────

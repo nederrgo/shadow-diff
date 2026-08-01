@@ -170,6 +170,7 @@ build_test_images_if_needed() {
   make -C "${REPO}/pipeline/beru" docker-build BERU_IMG="${BERU_IMG}"
   make -C "${REPO}/pipeline/shop" docker-build SHOP_IMG="${SHOP_IMG}"
   make -C "${REPO}/pipeline/shadow-soldier" docker-build SHADOW_SOLDIER_IMG="${SHADOW_SOLDIER_IMG}"
+  make -C "${REPO}/pipeline/tusk" docker-build TUSK_IMG="${TUSK_IMG}"
   make -C "${REPO}/pipeline/igrises/igris-http" docker-build IGRIS_IMG="${IGRIS_IMG}"
   make -C "${REPO}/pipeline/kaisel" docker-build KAISEL_IMG="${KAISEL_IMG:-kaisel:dev}" 2>/dev/null || true
   make -C "${REPO}/pipeline/igrises/igris-rabbitmq" docker-build IGRIS_RABBITMQ_IMG="${IGRIS_RABBITMQ_IMG}"
@@ -189,7 +190,7 @@ load_test_images_if_needed() {
   if [[ "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
     use_minikube_docker_env
   fi
-  for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$SHADOW_SOLDIER_IMG" "$IGRIS_IMG" "${KAISEL_IMG:-kaisel:dev}" \
+  for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$SHADOW_SOLDIER_IMG" "$TUSK_IMG" "$IGRIS_IMG" "${KAISEL_IMG:-kaisel:dev}" \
     "$IGRIS_RABBITMQ_IMG" "$EGRESS_RELAY_RABBITMQ_IMG" "$PYTHON_TEST_WORKER_IMG" \
     "$NODEJS_HYBRID_WORKER_IMG" "$HTTP_RMQ_PYTHON_WORKER_IMG" "$HTTP_RMQ_NODEJS_WORKER_IMG" "$HTTP_RMQ_GO_WORKER_IMG" \
     "$MONGO_IMAGE"; do

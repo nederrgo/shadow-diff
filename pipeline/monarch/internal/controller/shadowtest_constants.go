@@ -4,6 +4,8 @@ import (
 	"regexp"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/shadow-diff/monarchpb"
 )
 
 const (
@@ -19,9 +21,11 @@ const (
 	labelResourceKind    = "shadow-diff.io/resource-kind"
 	valueResourceKindDep = "dependency"
 	valueManagedBy       = "monarch"
-	roleControlA         = "control-a"
-	roleControlB         = "control-b"
-	roleCandidate        = "candidate"
+	// Role names double as the wire keys of ComponentStatus.ShadowRolesReady, so
+	// they are defined from the shared contract rather than re-typed here.
+	roleControlA  = monarchpb.RoleControlA
+	roleControlB  = monarchpb.RoleControlB
+	roleCandidate = monarchpb.RoleCandidate
 
 	containerEnvoySidecar  = "envoy-sidecar"
 	containerApp           = "app"

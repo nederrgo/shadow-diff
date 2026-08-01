@@ -126,8 +126,8 @@ func TestReconcileDelete_LateCreatesAfterDeletionTimestampStillCleaned(t *testin
 	if err := c.Get(context.Background(), nn, &after); err != nil {
 		t.Fatalf("ShadowTest should still exist until finalizer is removed: %v", err)
 	}
-	if after.Status.Phase == "Ready" {
-		t.Fatalf("bring-up resumed to Ready after deletionTimestamp; phase=%q msg=%q", after.Status.Phase, after.Status.Message)
+	if after.Status.Phase != phaseDeleting {
+		t.Fatalf("expected phase Deleting during teardown, got %q msg=%q", after.Status.Phase, after.Status.Message)
 	}
 	if !controllerutil.ContainsFinalizer(&after, finalizerName) {
 		t.Fatal("expected finalizer to remain until namespace is confirmed gone")
@@ -249,6 +249,9 @@ func TestReconcileDelete_RemovesFinalizerOnlyAfterNamespaceGone(t *testing.T) {
 	var after enginev1alpha1.ShadowTest
 	if err := c.Get(context.Background(), nn, &after); err != nil {
 		t.Fatalf("get ShadowTest: %v", err)
+	}
+	if after.Status.Phase != phaseDeleting {
+		t.Fatalf("expected phase Deleting while waiting on namespace, got %q", after.Status.Phase)
 	}
 	if !controllerutil.ContainsFinalizer(&after, finalizerName) {
 		t.Fatal("finalizer must remain until shadow namespace is NotFound")

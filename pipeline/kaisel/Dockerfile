@@ -9,6 +9,7 @@ WORKDIR /workspace
 # Shared modules monarch replace-points at (must exist before go mod download).
 COPY pipeline/pkg/s3utils/ ./pkg/s3utils/
 COPY pipeline/pkg/sample/ ./pkg/sample/
+COPY pipeline/pkg/monarchpb/ ./pkg/monarchpb/
 
 # Download monarch deps first (layer-cache friendly: rarely changes)
 COPY pipeline/monarch/go.mod pipeline/monarch/go.sum ./monarch/

@@ -11,6 +11,14 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-08-01]
 ### Added
+* 'pipeline/the-system': TeardownBanner is a flex strip above React Flow with red System-style NOTIFICATION chrome
+* 'pipeline/the-system': Keep last topology on delete; sticky red TeardownBanner for Deleting/Deleted instead of blank canvas
+* 'pipeline/pkg/monarchpb + monarch/tusk/the-system': ShadowTest delete stream emits PHASE_DELETING then PHASE_DELETED tombstone so Tusk/UI clear the graph
+* 'pipeline/the-system': Run Nginx unprivileged on :8080 with PSA RuntimeDefault seccomp so monarch-system admits the pod
+* 'pipeline/kaisel/Dockerfile': Copy pkg/monarchpb before monarch go mod download
+* 'pipeline/monarch/Dockerfile': Copy pkg/monarchpb into image before go mod download so local replace resolves
+* 'pipeline/the-system': Added The System React dashboard (topology Monitor via Tusk WS, ShadowTest YAML editor), Nginx/K8s deploy, Makefile/e2e wiring; widened Tusk localhost Origin allowlist
+* 'pipeline/pkg/monarchpb + pipeline/monarch/pkg/grpc + pipeline/tusk': Added shared gRPC status contract (monarchpb, enum vocabulary + role keys), Monarch status stream on :9090 with snapshot-then-live semantics, and the Tusk BFF translating it to React Flow topology over WebSockets on :8082
 * 'pipeline/monarch/api/v1alpha1 + internal/controller': Added BootStep, ComponentStatus and Conditions to ShadowTestStatus for the Tusk live topology graph; refactored status writes through patchStatusCore with a DeepEqual no-op guard
 
 ## [2026-07-31]

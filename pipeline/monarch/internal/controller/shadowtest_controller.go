@@ -38,10 +38,20 @@ import (
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
+// StatusPublisher receives ShadowTest status changes for live streaming.
+// Declared here rather than in pkg/grpc so the controller does not depend on the
+// transport. Nil disables publishing, which is the default in tests.
+type StatusPublisher interface {
+	Publish(st *enginev1alpha1.ShadowTest)
+}
+
 type ShadowTestReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+
+	// StatusPublisher broadcasts status changes to open gRPC streams. Nil is a no-op.
+	StatusPublisher StatusPublisher
 
 	// ReplayStarter POSTs Igris admin /v1/replay/start. Nil uses net/http.
 	ReplayStarter func(ctx context.Context, url string) (statusCode int, err error)
@@ -163,7 +173,7 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if err := r.deleteKaiselRule(ctx, &shadowTest); err != nil {
 			return ctrl.Result{}, err
 		}
-		kaiselPhase = "Disabled"
+		kaiselPhase = capturePhaseDisabled
 	}
 
 	if err := r.reconcileLocalBeru(ctx, &shadowTest, shadowNS); err != nil {
@@ -301,7 +311,7 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	} else {
 		msg = fmt.Sprintf("%s; %s mode; ingress [%s]", msg, mode, listenersSummary(&shadowTest))
 	}
-	if kaiselPhase != "" && kaiselPhase != "Disabled" {
+	if kaiselPhase != "" && kaiselPhase != capturePhaseDisabled {
 		msg = fmt.Sprintf("%s; Kaisel %s", msg, kaiselPhase)
 	}
 

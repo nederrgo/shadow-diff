@@ -90,10 +90,10 @@ func (r *ShadowTestReconciler) reconcileRecordMode(
 
 	// Phase 2: open eBPF tap once sinks are Available.
 	captureTargets, kaiselPhase, err := r.reconcileKaiselCapture(ctx, st, shadowNS, target)
-	boot.KaiselRuleActive = err == nil && kaiselPhase == "Ready"
+	boot.KaiselRuleActive = err == nil && kaiselPhase == capturePhaseReady
 	if err != nil {
 		log.Error(err, "Kaisel capture reconcile failed")
-		kaiselPhase = "Degraded"
+		kaiselPhase = capturePhaseDegraded
 		_ = r.patchBootStatus(ctx, st, phaseProgressing,
 			fmt.Sprintf("waiting for KaiselRule: %v", err), shadowNS,
 			enginev1alpha1.BootStepActivatingEgressTap, boot)

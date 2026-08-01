@@ -12,10 +12,18 @@ import (
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
+// Phase and capture-phase values are defined in api/v1alpha1 next to the status
+// fields they populate, so the gRPC contract and the controller cannot drift.
 const (
-	phaseFailed      = "Failed"
-	phaseReady       = "Ready"
-	phaseProgressing = "Progressing"
+	phaseFailed      = enginev1alpha1.PhaseFailed
+	phaseReady       = enginev1alpha1.PhaseReady
+	phaseProgressing = enginev1alpha1.PhaseProgressing
+	phaseDeleting    = enginev1alpha1.PhaseDeleting
+	phaseDeleted     = enginev1alpha1.PhaseDeleted
+
+	capturePhaseReady    = enginev1alpha1.CapturePhaseReady
+	capturePhaseDegraded = enginev1alpha1.CapturePhaseDegraded
+	capturePhaseDisabled = enginev1alpha1.CapturePhaseDisabled
 )
 
 // markBootFailed patches phase=Failed, emits a Warning Event, then tears down
@@ -30,7 +38,7 @@ func (r *ShadowTestReconciler) markBootFailed(
 ) (ctrl.Result, error) {
 	_ = r.patchStatusCore(ctx, st,
 		statusBase(st.Generation, phaseFailed, message, shadowNS),
-		statusExtras(nil, "Disabled", "", ""),
+		statusExtras(nil, capturePhaseDisabled, "", ""),
 		statusBoot(enginev1alpha1.BootStepFailed, comp),
 	)
 	if r.Recorder != nil {

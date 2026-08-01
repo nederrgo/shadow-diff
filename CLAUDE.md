@@ -72,6 +72,7 @@ L4a AMQP egress             egress-relay-rabbitmq (Firehose → Beru)
 L4b HTTP egress             Kaisel (request/response pairing → Shop mock store)
 L4c DB egress               shadow-soldier (TCP proxy sidecar → Beru egress diff)
 L5  Analysis sink           Beru (diff-of-diffs, Postgres + disk WAL, dashboard) + Shop (per-ShadowTest HTTP egress mock store)
+L6  Topology feed           Monarch gRPC :9090 → Tusk BFF (React Flow graph over WebSockets :8082)
 ```
 
 ### Key components
@@ -99,6 +100,9 @@ AF_PACKET + socket filter → TCP reassembly → admit/sample. Ingress: HTTP POS
 **`pipeline/shadow-soldier/`** — Database egress capture sidecar (`github.com/shadow-diff/shadow-soldier`)  
 Plain-text TCP proxy injected into each shadow role pod alongside Envoy. Monarch rewrites the app's dependency connection strings to `127.0.0.1:<port>`; the sidecar forwards to the real per-role dependency Service and decodes MongoDB / PostgreSQL / Redis / MSSQL wire protocols in passing, POSTing each query to beru-local `/api/v1/egress/diff` on port **8081** (not 8080 — the pod's iptables rules redirect 8080 into Envoy's egress listener). Fail-open: parser errors never break the socket. Only injected when a proxied dependency is declared; RabbitMQ is excluded (covered by egress-relay-rabbitmq).
 
+**`pipeline/tusk/`** — Topology BFF (`github.com/shadow-diff/tusk`)  
+Consumes Monarch's `monarch.v1.MonarchStatusService` stream on `:9090`, converts each `ShadowTestStatusUpdate` into a React Flow graph (`pkg/topology`), and fans it out to browsers on `:8082` via `GET /ws/monitor?test=&namespace=`. One upstream gRPC stream serves all clients; the latest graph per ShadowTest is cached so a browser attaching to a converged test renders immediately. Cluster-wide singleton — ships its own manifests in `deploy/`, like Kaisel. The shared wire contract lives in `pipeline/pkg/monarchpb` so Tusk never imports Monarch's operator module.
+
 **`pipeline/shop/`** — Per-ShadowTest HTTP egress mock store  
 In-memory mock store deployed by Monarch into each shadow namespace. gRPC ext_proc on `:50051` (Envoy egress replay), HTTP `:8080` (`POST /v1/record_egress` seeding). Mocks keyed by `trace:<traceID>:<METHOD>:<host>:<path>`.
 
@@ -120,7 +124,7 @@ Monarch provisions a `beru-local` pod per ShadowTest inside the shadow namespace
 
 ### Go workspace
 
-`go.work` ties together 10 modules (8 pipeline services + shared `pipeline/pkg/sample` + the db-test-app fixture). Run `go build ./...` or `go test ./...` from a module directory, not the repo root. The workspace requires Go 1.26; local toolchains running 1.23 produce `go.work requires go >= 1.26.0` warnings from LSP — these are harmless and do not affect `go build` or `go test`.
+`go.work` ties together 15 modules (9 pipeline services + the shared `pipeline/pkg/*` libraries — `sample`, `s3utils`, `trace`, `replay`, `monarchpb` — plus the db-test-app fixture). Run `go build ./...` or `go test ./...` from a module directory, not the repo root. The workspace requires Go 1.26; local toolchains running 1.23 produce `go.work requires go >= 1.26.0` warnings from LSP — these are harmless and do not affect `go build` or `go test`.
 
 ### CRD types
 

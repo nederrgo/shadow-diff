@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -297,6 +299,23 @@ type ShadowTestSpec struct {
 	Storage *StorageConfig `json:"storage"`
 }
 
+// Operating modes for ShadowTestSpec.Mode.
+const (
+	ModeRecord = "record"
+	ModeReplay = "replay"
+)
+
+// OperatingMode normalizes spec.mode, applying the same record default the
+// +kubebuilder:default marker applies server-side. Objects that never round-trip
+// through the API server (unit tests, fake clients) reach the same answer.
+func (in *ShadowTest) OperatingMode() string {
+	m := strings.TrimSpace(strings.ToLower(in.Spec.Mode))
+	if m == "" {
+		return ModeRecord
+	}
+	return m
+}
+
 // BootStep is the coarse position of a ShadowTest in the Monarch boot sequence.
 // Consumed by Tusk to drive the live topology graph.
 //
@@ -327,6 +346,26 @@ const (
 	ConditionReady       = "Ready"
 	ConditionProgressing = "Progressing"
 	ConditionDegraded    = "Degraded"
+)
+
+// Values of ShadowTestStatus.Phase.
+const (
+	PhaseProgressing = "Progressing"
+	PhaseReady       = "Ready"
+	PhaseFailed      = "Failed"
+	// PhaseDeleting is set on the CR while reconcileDelete tears the stack down.
+	PhaseDeleting = "Deleting"
+	// PhaseDeleted is stream-only: published after finalizers are removed so
+	// Tusk can drop the graph. It is never persisted — the CR is gone.
+	PhaseDeleted = "Deleted"
+)
+
+// Values of ShadowTestStatus.KaiselPhase. Degraded means the capture rule failed
+// to reconcile; Disabled means replay mode never opens the tap.
+const (
+	CapturePhaseReady    = "Ready"
+	CapturePhaseDegraded = "Degraded"
+	CapturePhaseDisabled = "Disabled"
 )
 
 // ComponentStatus reports per-component readiness for the topology graph.

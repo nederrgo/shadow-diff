@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package monarch.v1;
+
+option go_package = "github.com/shadow-diff/monarchpb;monarchpb";
+
+// StatusRequest selects which ShadowTests to stream. Leaving both fields empty
+// watches every ShadowTest in the cluster.
+message StatusRequest {
+  string test_name = 1;
+  string namespace = 2;
+}
+
+// Phase mirrors ShadowTest.status.phase. Deleting is written to the CR while
+// teardown runs; Deleted is a stream-only tombstone after finalizers drop —
+// the CR is gone by then, so consumers must treat it as "remove from cache".
+enum Phase {
+  PHASE_UNSPECIFIED = 0;
+  PHASE_PROGRESSING = 1;
+  PHASE_READY = 2;
+  PHASE_FAILED = 3;
+  PHASE_DELETING = 4;
+  PHASE_DELETED = 5;
+}
+
+// BootStep mirrors ShadowTest.status.bootStep. Record and replay walk disjoint
+// sub-paths, so consumers must not assume every step occurs.
+enum BootStep {
+  BOOT_STEP_UNSPECIFIED = 0;
+  BOOT_STEP_VALIDATING_INPUTS = 1;
+  BOOT_STEP_PROVISIONING_SINKS = 2;
+  BOOT_STEP_ACTIVATING_EGRESS_TAP = 3;
+  BOOT_STEP_BINDING_AMQP = 4;
+  BOOT_STEP_PROVISIONING_SHADOW = 5;
+  BOOT_STEP_READY = 6;
+  BOOT_STEP_FAILED = 7;
+}
+
+// CapturePhase mirrors ShadowTest.status.kaiselPhase. Distinguishes a degraded
+// eBPF tap from one that is simply switched off in replay mode.
+enum CapturePhase {
+  CAPTURE_PHASE_UNSPECIFIED = 0;
+  CAPTURE_PHASE_READY = 1;
+  CAPTURE_PHASE_DEGRADED = 2;
+  CAPTURE_PHASE_DISABLED = 3;
+}
+
+// Mode mirrors ShadowTest.spec.mode.
+enum Mode {
+  MODE_UNSPECIFIED = 0;
+  MODE_RECORD = 1;
+  MODE_REPLAY = 2;
+}
+
+// ComponentStatus reports per-component readiness for the topology graph.
+message ComponentStatus {
+  bool igris_ready = 1;
+  bool shop_ready = 2;
+  bool beru_ready = 3;
+  bool kaisel_rule_active = 4;
+  bool amqp_bound = 5;
+  // Keyed by the role names in roles.go: control-a, control-b, candidate.
+  // Empty in record mode, where no shadow roles are provisioned.
+  map<string, bool> shadow_roles_ready = 6;
+  string target_deployment = 7;
+}
+
+message ShadowTestStatusUpdate {
+  string test_name = 1;
+  string namespace = 2;
+  Phase phase = 3;
+  BootStep boot_step = 4;
+  string current_session_id = 5;
+  string replay_state = 6;
+  ComponentStatus components = 7;
+  Mode mode = 8;
+  string message = 9;
+  CapturePhase kaisel_phase = 10;
+}
+
+service MonarchStatusService {
+  // WatchShadowTestStatus sends one update per matching ShadowTest on connect
+  // (a snapshot of current state), then streams every subsequent change.
+  rpc WatchShadowTestStatus(StatusRequest) returns (stream ShadowTestStatusUpdate);
+}

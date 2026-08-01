@@ -1,4 +1,4 @@
-# Build context must be pipeline/ (parent of monarch/) so replace ../pkg/s3utils resolves.
+# Build context must be pipeline/ (parent of monarch/) so replace ../pkg/{s3utils,monarchpb} resolve.
 #   make docker-build  →  docker build -f Dockerfile -t … ..
 FROM golang:1.26 AS builder
 ARG TARGETOS
@@ -6,6 +6,7 @@ ARG TARGETARCH
 
 WORKDIR /src
 COPY pkg/s3utils /src/pkg/s3utils
+COPY pkg/monarchpb /src/pkg/monarchpb
 COPY monarch/go.mod monarch/go.sum /src/monarch/
 WORKDIR /src/monarch
 RUN go mod download

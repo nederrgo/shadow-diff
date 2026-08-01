@@ -1,0 +1,41 @@
+@import 'tailwindcss';
+@import '@xyflow/react/dist/style.css';
+
+:root {
+  --sys-bg: #090d16;
+  --sys-card: #111827;
+  --sys-primary: #3b82f6;
+  --sys-border: #1f2937;
+  --sys-muted: #94a3b8;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--sys-bg);
+  color: #e2e8f0;
+}
+
+/* React Flow dark canvas */
+.react-flow__background {
+  background: var(--sys-bg) !important;
+}
+
+.react-flow__controls {
+  button {
+    background: var(--sys-card);
+    border-color: var(--sys-border);
+    color: #e2e8f0;
+    fill: #e2e8f0;
+  }
+}
+
+.react-flow__edge-path {
+  stroke: #475569;
+}
+
+.react-flow__edge.animated path {
+  stroke: var(--sys-primary);
+}

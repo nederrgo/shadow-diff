@@ -8,17 +8,13 @@ import (
 )
 
 const (
-	modeRecord = "record"
-	modeReplay = "replay"
+	modeRecord = enginev1alpha1.ModeRecord
+	modeReplay = enginev1alpha1.ModeReplay
 )
 
 // operatingMode returns record or replay (empty defaults to record).
 func operatingMode(st *enginev1alpha1.ShadowTest) string {
-	m := strings.TrimSpace(strings.ToLower(st.Spec.Mode))
-	if m == "" {
-		return modeRecord
-	}
-	return m
+	return st.OperatingMode()
 }
 
 // validateStorage checks required spec.storage (BYOB S3) and mode/session rules.

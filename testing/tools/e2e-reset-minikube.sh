@@ -43,6 +43,8 @@ BERU_IMG="${BERU_IMG:-beru:dev}"
 SHOP_IMG="${SHOP_IMG:-shop:dev}"
 IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
 KAISEL_IMG="${KAISEL_IMG:-kaisel:dev}"
+TUSK_IMG="${TUSK_IMG:-tusk:dev}"
+THE_SYSTEM_IMG="${THE_SYSTEM_IMG:-the-system:dev}"
 
 SHADOWTEST="${SHADOWTEST:-my-app-shadow}"
 SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
@@ -70,7 +72,7 @@ done
 
 export SKIP_BUILD SKIP_LOAD NO_RESET
 
-export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG SHOP_IMG IGRIS_IMG KAISEL_IMG
+export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG SHOP_IMG IGRIS_IMG KAISEL_IMG TUSK_IMG THE_SYSTEM_IMG
 
 need() {
   command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing command: $1" >&2; exit 1; }
@@ -111,11 +113,13 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   make shop-docker-build SHOP_IMG="$SHOP_IMG"
   make igris-docker-build IGRIS_IMG="$IGRIS_IMG"
   make kaisel-docker-build KAISEL_IMG="$KAISEL_IMG"
+  make tusk-docker-build TUSK_IMG="$TUSK_IMG"
+  make the-system-docker-build THE_SYSTEM_IMG="$THE_SYSTEM_IMG"
 fi
 
 if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
   echo "==> Sync local images into containerd (none driver)"
-  load_minikube_images "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$KAISEL_IMG"
+  load_minikube_images "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$KAISEL_IMG" "$TUSK_IMG" "$THE_SYSTEM_IMG"
 fi
 
 if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
@@ -177,6 +181,17 @@ e2e_reset_deploy_stack() {
   kaisel_daemonset_deploy
   kaisel_daemonset_wait_ready 120
 
+  # Tusk: cluster-wide BFF streaming Monarch's :9090 status feed to the topology UI.
+  echo "==> Tusk BFF (monarch-system image=${TUSK_IMG})"
+  kubectl apply -k "$REPO/pipeline/tusk/deploy"
+  kubectl set image deployment/tusk -n monarch-system "tusk=${TUSK_IMG}"
+  kubectl rollout status deployment/tusk -n monarch-system --timeout=120s
+
+  # The System: cluster-wide topology / ShadowTest editor UI (Nginx :80).
+  echo "==> The System UI (monarch-system image=${THE_SYSTEM_IMG})"
+  kubectl apply -k "$REPO/pipeline/the-system/deploy"
+  kubectl set image deployment/the-system -n monarch-system "the-system=${THE_SYSTEM_IMG}"
+  kubectl rollout status deployment/the-system -n monarch-system --timeout=120s
 
   echo "==> Production app (echo on :80, memory limits)"
   kubectl apply -f "$REPO/testing/bats/manifests/e2e-prod-app.yaml"

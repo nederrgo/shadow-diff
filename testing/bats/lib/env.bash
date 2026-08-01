@@ -19,6 +19,7 @@ bats_init_env() {
   export BERU_IMG="${BERU_IMG:-beru:dev}"
   export SHOP_IMG="${SHOP_IMG:-shop:dev}"
   export SHADOW_SOLDIER_IMG="${SHADOW_SOLDIER_IMG:-shadow-soldier:dev}"
+  export TUSK_IMG="${TUSK_IMG:-tusk:dev}"
   export IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
   export PYTHON_TEST_WORKER_IMG="${PYTHON_TEST_WORKER_IMG:-python-test-worker:dev}"
   export NODEJS_HYBRID_WORKER_IMG="${NODEJS_HYBRID_WORKER_IMG:-nodejs-hybrid-worker:dev}"

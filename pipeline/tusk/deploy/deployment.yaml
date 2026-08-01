@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tusk
+  namespace: monarch-system
+  labels:
+    app.kubernetes.io/name: tusk
+    app.kubernetes.io/part-of: shadow-diff
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tusk
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tusk
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tusk
+          image: tusk:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8082
+              name: http
+              protocol: TCP
+          env:
+            - name: TUSK_HTTP_ADDR
+              value: ":8082"
+            - name: MONARCH_GRPC_ADDR
+              value: "monarch-status-grpc.monarch-system.svc.cluster.local:9090"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8082
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8082
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - "ALL"
+          resources:
+            limits:
+              cpu: 200m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi

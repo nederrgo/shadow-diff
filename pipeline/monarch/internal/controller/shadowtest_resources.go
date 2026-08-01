@@ -31,6 +31,14 @@ func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.Nam
 		return ctrl.Result{}, nil
 	}
 
+	// Event 1: status=Deleting so Tusk/UI show teardown in progress. DeepEqual in
+	// patchStatusCore makes this a single publish across requeues.
+	if err := r.patchStatusCore(ctx, &shadowTest,
+		statusBase(shadowTest.Generation, phaseDeleting, "tearing down shadow stack", shadowNS),
+	); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	if hasRabbitMQInput(&shadowTest) {
 		if err := r.deleteProdShadowQueue(ctx, &shadowTest); err != nil {
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
@@ -63,6 +71,9 @@ func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.Nam
 		}); err != nil {
 			return ctrl.Result{}, err
 		}
+		// Event 2: stream-only tombstone after finalizers drop. The CR is gone
+		// (or about to be); Tusk must drop its cache entry.
+		r.publishDeleted(&shadowTest)
 		return ctrl.Result{}, nil
 	}
 	if err != nil {
@@ -76,6 +87,18 @@ func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.Nam
 	}
 
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// publishDeleted emits a PHASE_DELETED tombstone. It does not write the CR —
+// by this point finalizers are gone and the API server may already have deleted it.
+func (r *ShadowTestReconciler) publishDeleted(st *enginev1alpha1.ShadowTest) {
+	if r.StatusPublisher == nil || st == nil {
+		return
+	}
+	tomb := st.DeepCopy()
+	tomb.Status.Phase = phaseDeleted
+	tomb.Status.Message = "deleted"
+	r.StatusPublisher.Publish(tomb)
 }
 
 func (r *ShadowTestReconciler) ensureShadowNamespace(ctx context.Context, st *enginev1alpha1.ShadowTest, name string) error {
@@ -210,7 +233,16 @@ func (r *ShadowTestReconciler) patchStatusCore(
 	if equality.Semantic.DeepEqual(base.Status, st.Status) {
 		return nil // converged; skip the API round-trip
 	}
-	return r.Status().Patch(ctx, st, client.MergeFrom(base))
+	if err := r.Status().Patch(ctx, st, client.MergeFrom(base)); err != nil {
+		return err
+	}
+	// Publish only after a successful write, and only here: this is the single
+	// status writer, so live streams see exactly one update per real transition
+	// and nothing at all once the ShadowTest has converged.
+	if r.StatusPublisher != nil {
+		r.StatusPublisher.Publish(st)
+	}
+	return nil
 }
 
 // statusBase sets phase/message/namespace and mirrors the phase onto the standard
@@ -241,7 +273,7 @@ func statusBase(generation int64, phase, message, shadowNS string) statusMutator
 			})
 		}
 		set(enginev1alpha1.ConditionReady, phase == phaseReady)
-		set(enginev1alpha1.ConditionProgressing, phase == phaseProgressing)
+		set(enginev1alpha1.ConditionProgressing, phase == phaseProgressing || phase == phaseDeleting)
 		set(enginev1alpha1.ConditionDegraded, phase == phaseFailed)
 	}
 }

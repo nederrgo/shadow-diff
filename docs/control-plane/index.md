@@ -4,7 +4,7 @@ title: Control Plane Hub
 description: High-level overview map for Shadow-Diff control plane specifications and operators.
 resource: https://github.com/your-org/shadow-diff/tree/main/docs/control-plane
 tags: [index, control-plane, monarch]
-timestamp: 2026-07-30T17:20:00Z
+timestamp: 2026-08-01T13:30:00Z
 ---
 
 # Control Plane Architecture
@@ -16,4 +16,7 @@ The control plane layer acts as the centralized automation hub of Shadow-Diff. D
 * [/control-plane/shadowtest-teardown-edge-cases.md](/control-plane/shadowtest-teardown-edge-cases.md) - ADR: queue delete fail-open + `x-expires` vs S3 finalizer retry; Failed autopsy vs delete.
 * [/infrastructure/bats-testing-framework.md](/infrastructure/bats-testing-framework.md) - Bats-core harness: shared ShadowTest per file, settlement-based Beru assertions.
 * [/control-plane/monarch-controller.md](/control-plane/monarch-controller.md) - Record/replay reconcile, status/topology surface (`bootStep`, `components`, `conditions`), S3 env, auto replay trigger, S3 prefix retention finalizer, boot failure gates.
+* [/control-plane/monarch-status-stream.md](/control-plane/monarch-status-stream.md) - The `monarch.v1` gRPC contract on `:9090`: shared `monarchpb` module, enum vocabulary, snapshot-then-live semantics, publish path.
+* [/control-plane/tusk-bff.md](/control-plane/tusk-bff.md) - Tusk BFF: single upstream stream, graph cache, React Flow node/edge model, `/ws/monitor` WebSocket fan-out.
+* [/control-plane/the-system.md](/control-plane/the-system.md) - The System dashboard UI: Monitor topology graph + ShadowTest YAML editor over Tusk WebSockets.
 * [/control-plane/monarch-security-model.md](/control-plane/monarch-security-model.md) - Deep dive specification regarding role compartmentalization, unprivileged eBPF decoupling boundary rules, and shadow sandboxing network policies.
