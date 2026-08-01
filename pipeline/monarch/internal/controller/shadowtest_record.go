@@ -15,9 +15,11 @@ import (
 const recordSinkRequeue = 2 * time.Second
 
 // recordModeResult is returned by reconcileRecordMode before the shared Ready patch.
+// components carries the readiness observed during this pass back to Reconcile.
 type recordModeResult struct {
 	captureTargets []string
 	kaiselPhase    string
+	components     enginev1alpha1.ComponentStatus
 	requeue        ctrl.Result
 	done           bool // true when Ready path may continue
 	err            error
@@ -32,63 +34,73 @@ func (r *ShadowTestReconciler) reconcileRecordMode(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 	target *appsv1.Deployment,
+	boot enginev1alpha1.ComponentStatus,
 ) recordModeResult {
 	log := log.FromContext(ctx)
 
 	// Phase 1: sinks + unbound queue (taps closed).
 	if needsAMQPIngress(st) {
 		if _, err := r.ensureProdShadowQueueDeclared(ctx, st); err != nil {
-			res, ferr := r.markBootFailed(ctx, st, shadowNS, err.Error())
-			return recordModeResult{requeue: res, err: ferr}
+			res, ferr := r.markBootFailed(ctx, st, shadowNS, err.Error(), boot)
+			return recordModeResult{components: boot, requeue: res, err: ferr}
 		}
 	}
 
 	if err := r.reconcileShop(ctx, st, shadowNS); err != nil {
-		_ = r.patchStatus(ctx, st, phaseFailed, err.Error(), shadowNS)
-		return recordModeResult{err: err}
+		_ = r.patchBootStatus(ctx, st, phaseFailed, err.Error(), shadowNS,
+			enginev1alpha1.BootStepProvisioningSinks, boot)
+		return recordModeResult{components: boot, err: err}
 	}
 
 	if err := r.reconcileRecordIngressSinks(ctx, st, shadowNS); err != nil {
-		_ = r.patchStatus(ctx, st, phaseFailed, err.Error(), shadowNS)
-		return recordModeResult{err: err}
+		_ = r.patchBootStatus(ctx, st, phaseFailed, err.Error(), shadowNS,
+			enginev1alpha1.BootStepProvisioningSinks, boot)
+		return recordModeResult{components: boot, err: err}
 	}
 
 	shopReady, reason, err := r.shopDeploymentReady(ctx, shadowNS)
 	if err != nil {
-		return recordModeResult{err: err}
+		return recordModeResult{components: boot, err: err}
 	}
+	boot.ShopReady = shopReady
 	if !shopReady {
 		if reason.terminal {
-			res, ferr := r.markBootFailed(ctx, st, shadowNS, reason.message)
-			return recordModeResult{requeue: res, err: ferr}
+			res, ferr := r.markBootFailed(ctx, st, shadowNS, reason.message, boot)
+			return recordModeResult{components: boot, requeue: res, err: ferr}
 		}
-		_ = r.patchStatus(ctx, st, "Progressing", "waiting for Shop", shadowNS)
-		return recordModeResult{requeue: ctrl.Result{RequeueAfter: recordSinkRequeue}}
+		_ = r.patchBootStatus(ctx, st, phaseProgressing, "waiting for Shop", shadowNS,
+			enginev1alpha1.BootStepProvisioningSinks, boot)
+		return recordModeResult{components: boot, requeue: ctrl.Result{RequeueAfter: recordSinkRequeue}}
 	}
 
 	ingressReady, reason, err := r.recordIngressSinksReady(ctx, st, shadowNS)
 	if err != nil {
-		return recordModeResult{err: err}
+		return recordModeResult{components: boot, err: err}
 	}
+	boot.IgrisReady = ingressReady
 	if !ingressReady {
 		if reason.terminal {
-			res, ferr := r.markBootFailed(ctx, st, shadowNS, reason.message)
-			return recordModeResult{requeue: res, err: ferr}
+			res, ferr := r.markBootFailed(ctx, st, shadowNS, reason.message, boot)
+			return recordModeResult{components: boot, requeue: res, err: ferr}
 		}
-		_ = r.patchStatus(ctx, st, "Progressing", "waiting for Igris", shadowNS)
-		return recordModeResult{requeue: ctrl.Result{RequeueAfter: recordSinkRequeue}}
+		_ = r.patchBootStatus(ctx, st, phaseProgressing, "waiting for Igris", shadowNS,
+			enginev1alpha1.BootStepProvisioningSinks, boot)
+		return recordModeResult{components: boot, requeue: ctrl.Result{RequeueAfter: recordSinkRequeue}}
 	}
 
 	// Phase 2: open eBPF tap once sinks are Available.
 	captureTargets, kaiselPhase, err := r.reconcileKaiselCapture(ctx, st, shadowNS, target)
+	boot.KaiselRuleActive = err == nil && kaiselPhase == "Ready"
 	if err != nil {
 		log.Error(err, "Kaisel capture reconcile failed")
 		kaiselPhase = "Degraded"
-		_ = r.patchStatus(ctx, st, "Progressing",
-			fmt.Sprintf("waiting for KaiselRule: %v", err), shadowNS)
+		_ = r.patchBootStatus(ctx, st, phaseProgressing,
+			fmt.Sprintf("waiting for KaiselRule: %v", err), shadowNS,
+			enginev1alpha1.BootStepActivatingEgressTap, boot)
 		return recordModeResult{
 			captureTargets: captureTargets,
 			kaiselPhase:    kaiselPhase,
+			components:     boot,
 			requeue:        ctrl.Result{RequeueAfter: recordSinkRequeue},
 		}
 	}
@@ -96,19 +108,22 @@ func (r *ShadowTestReconciler) reconcileRecordMode(
 	// Phase 3: bind AMQP only after KaiselRule exists.
 	if needsAMQPIngress(st) {
 		if err := r.ensureProdShadowQueueBound(ctx, st); err != nil {
-			res, ferr := r.markBootFailed(ctx, st, shadowNS, err.Error())
+			res, ferr := r.markBootFailed(ctx, st, shadowNS, err.Error(), boot)
 			return recordModeResult{
 				captureTargets: captureTargets,
 				kaiselPhase:    kaiselPhase,
+				components:     boot,
 				requeue:        res,
 				err:            ferr,
 			}
 		}
+		boot.AMQPBound = true
 	}
 
 	return recordModeResult{
 		captureTargets: captureTargets,
 		kaiselPhase:    kaiselPhase,
+		components:     boot,
 		done:           true,
 	}
 }

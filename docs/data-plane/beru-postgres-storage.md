@@ -4,7 +4,7 @@ title: Beru Storage Backends
 description: Beru's Postgres-only persistence behind RunStore and TraceRepository, the Bbolt disk WAL with claimed parallel flushers, advisory-locked evaluate, and 3-retry dead-lettering.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/storage
 tags: [data-plane, beru, storage, postgres, wal, persistence, networking]
-timestamp: 2026-07-31T14:45:00Z
+timestamp: 2026-07-31T15:00:00Z
 ---
 
 # Beru Storage Backends
@@ -99,11 +99,11 @@ Beru runs unrestricted. NetworkPolicy is deny-only, so beru-local reaches Postgr
 
 ```bash
 export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@$(minikube ip):30432/beru?sslmode=disable"
-go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection|WAL' -v
+go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection|WAL|concurrentFlushSameTrace' -v
 go -C pipeline/monarch test ./internal/controller/... -run 'BeruDB|LocalBeruPodSpec' -v
 ```
 
-`TestPostgresConformance` skips when the DSN is unset. `TestWAL_*` exercises claim-skip and 3-strike dead-lettering against a temp Bbolt file. `TestLocalBeruPodSpec_*` asserts the WAL EmptyDir is always mounted and `envFrom` appears when the Secret is configured.
+`TestPostgresConformance` skips when the DSN is unset. `TestPostgres_concurrentFlushSameTrace` opens two store pools and races `flushReportsAndEvaluate` on the same `trace_id` under `pg_advisory_xact_lock`. `TestWAL_*` exercises claim-skip and 3-strike dead-lettering against a temp Bbolt file. `TestLocalBeruPodSpec_*` asserts the WAL EmptyDir is always mounted and `envFrom` appears when the Secret is configured.
 
 # Citations
 

@@ -135,7 +135,8 @@ func TestMarkBootFailed_tearsDownKaiselAndNS(t *testing.T) {
 	if err := c.Get(context.Background(), types.NamespacedName{Name: st.Name, Namespace: st.Namespace}, &live); err != nil {
 		t.Fatal(err)
 	}
-	res, err := rec.markBootFailed(context.Background(), &live, shadowNS, "Shop pod x: CrashLoopBackOff (boom)")
+	boot := enginev1alpha1.ComponentStatus{BeruReady: true, TargetDeployment: "app"}
+	res, err := rec.markBootFailed(context.Background(), &live, shadowNS, "Shop pod x: CrashLoopBackOff (boom)", boot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +149,12 @@ func TestMarkBootFailed_tearsDownKaiselAndNS(t *testing.T) {
 	}
 	if live.Status.Phase != phaseFailed {
 		t.Fatalf("phase = %q", live.Status.Phase)
+	}
+	if live.Status.BootStep != enginev1alpha1.BootStepFailed {
+		t.Fatalf("bootStep = %q", live.Status.BootStep)
+	}
+	if !live.Status.Components.BeruReady {
+		t.Fatal("component state at failure should be preserved for autopsy")
 	}
 	if !strings.Contains(live.Status.Message, "CrashLoopBackOff") {
 		t.Fatalf("message = %q", live.Status.Message)

@@ -9,8 +9,13 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-08-01]
+### Added
+* 'pipeline/monarch/api/v1alpha1 + internal/controller': Added BootStep, ComponentStatus and Conditions to ShadowTestStatus for the Tusk live topology graph; refactored status writes through patchStatusCore with a DeepEqual no-op guard
+
 ## [2026-07-31]
 ### Added
+* 'pipeline/beru/internal/storage': concurrent dual-store flush race under pg_advisory_xact_lock
 * 'testing/bats/integration/beru': poison-pill asserts discard log (no kubectl cp on distroless); fail before beru restart; pg connect_timeout=5s
 * 'testing/bats/integration/beru': poison-pill scale-to-0 + kubectl cp DLQ + beru remigrate; BERU_WAL_FLUSH_TIMEOUT=3s in fixture
 * 'testing/bats/integration/beru': poison-pill uses CONNECTION LIMIT 0 + kubectl cp DLQ; BERU_WAL_FLUSH_TIMEOUT for fast retries

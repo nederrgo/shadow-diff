@@ -7,7 +7,9 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
@@ -190,8 +192,105 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 	return err
 }
 
+// statusMutator edits a status in place; composed by the patchStatus* wrappers below.
+type statusMutator func(*enginev1alpha1.ShadowTestStatus)
+
+// patchStatusCore is the single writer for ShadowTestStatus. The base snapshot is taken
+// here, before the mutators run — mutating st.Status beforehand yields an empty merge
+// patch and silently drops the change.
+func (r *ShadowTestReconciler) patchStatusCore(
+	ctx context.Context,
+	st *enginev1alpha1.ShadowTest,
+	apply ...statusMutator,
+) error {
+	base := st.DeepCopy()
+	for _, fn := range apply {
+		fn(&st.Status)
+	}
+	if equality.Semantic.DeepEqual(base.Status, st.Status) {
+		return nil // converged; skip the API round-trip
+	}
+	return r.Status().Patch(ctx, st, client.MergeFrom(base))
+}
+
+// statusBase sets phase/message/namespace and mirrors the phase onto the standard
+// Ready/Progressing/Degraded conditions. Every status write goes through it.
+func statusBase(generation int64, phase, message, shadowNS string) statusMutator {
+	reason := phase
+	if reason == "" {
+		reason = "Unknown"
+	}
+	return func(s *enginev1alpha1.ShadowTestStatus) {
+		s.Phase = phase
+		s.Message = message
+		s.ShadowNamespace = shadowNS
+
+		set := func(condType string, active bool) {
+			status := metav1.ConditionFalse
+			if active {
+				status = metav1.ConditionTrue
+			}
+			// SetStatusCondition only moves LastTransitionTime when Status flips, so a
+			// converged reconcile stays DeepEqual to the previous status.
+			meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+				Type:               condType,
+				Status:             status,
+				Reason:             reason,
+				Message:            message,
+				ObservedGeneration: generation,
+			})
+		}
+		set(enginev1alpha1.ConditionReady, phase == phaseReady)
+		set(enginev1alpha1.ConditionProgressing, phase == phaseProgressing)
+		set(enginev1alpha1.ConditionDegraded, phase == phaseFailed)
+	}
+}
+
+// statusBoot records the topology-graph fields consumed by Tusk.
+func statusBoot(step enginev1alpha1.BootStep, comp enginev1alpha1.ComponentStatus) statusMutator {
+	return func(s *enginev1alpha1.ShadowTestStatus) {
+		s.BootStep = step
+		s.Components = comp
+	}
+}
+
+// statusExtras sets the endpoint/phase detail fields; empty values leave them untouched.
+func statusExtras(
+	captureTargets []string,
+	kaiselPhase, igrisEndpoint, igrisRabbitMQPhase string,
+) statusMutator {
+	return func(s *enginev1alpha1.ShadowTestStatus) {
+		if captureTargets != nil {
+			s.CaptureTargets = captureTargets
+		}
+		if kaiselPhase != "" {
+			s.KaiselPhase = kaiselPhase
+		}
+		if igrisEndpoint != "" {
+			s.IgrisEndpoint = igrisEndpoint
+		}
+		if igrisRabbitMQPhase != "" {
+			s.IgrisRabbitMQPhase = igrisRabbitMQPhase
+		}
+	}
+}
+
 func (r *ShadowTestReconciler) patchStatus(ctx context.Context, st *enginev1alpha1.ShadowTest, phase, message, shadowNS string) error {
-	return r.patchStatusFull(ctx, st, phase, message, shadowNS, nil, "", "", "")
+	return r.patchStatusCore(ctx, st, statusBase(st.Generation, phase, message, shadowNS))
+}
+
+// patchBootStatus is the progress-reporting variant used by every boot gate.
+func (r *ShadowTestReconciler) patchBootStatus(
+	ctx context.Context,
+	st *enginev1alpha1.ShadowTest,
+	phase, message, shadowNS string,
+	step enginev1alpha1.BootStep,
+	comp enginev1alpha1.ComponentStatus,
+) error {
+	return r.patchStatusCore(ctx, st,
+		statusBase(st.Generation, phase, message, shadowNS),
+		statusBoot(step, comp),
+	)
 }
 
 func (r *ShadowTestReconciler) patchStatusIgrisRabbitMQ(
@@ -209,21 +308,24 @@ func (r *ShadowTestReconciler) patchStatusFull(
 	captureTargets []string,
 	kaiselPhase, igrisEndpoint, igrisRabbitMQPhase string,
 ) error {
-	base := st.DeepCopy()
-	st.Status.Phase = phase
-	st.Status.Message = message
-	st.Status.ShadowNamespace = shadowNS
-	if captureTargets != nil {
-		st.Status.CaptureTargets = captureTargets
-	}
-	if kaiselPhase != "" {
-		st.Status.KaiselPhase = kaiselPhase
-	}
-	if igrisEndpoint != "" {
-		st.Status.IgrisEndpoint = igrisEndpoint
-	}
-	if igrisRabbitMQPhase != "" {
-		st.Status.IgrisRabbitMQPhase = igrisRabbitMQPhase
-	}
-	return r.Status().Patch(ctx, st, client.MergeFrom(base))
+	return r.patchStatusCore(ctx, st,
+		statusBase(st.Generation, phase, message, shadowNS),
+		statusExtras(captureTargets, kaiselPhase, igrisEndpoint, igrisRabbitMQPhase),
+	)
+}
+
+// patchStatusReady is the terminal converged write: detail fields plus boot state.
+func (r *ShadowTestReconciler) patchStatusReady(
+	ctx context.Context,
+	st *enginev1alpha1.ShadowTest,
+	message, shadowNS string,
+	captureTargets []string,
+	kaiselPhase, igrisEndpoint, igrisRabbitMQPhase string,
+	comp enginev1alpha1.ComponentStatus,
+) error {
+	return r.patchStatusCore(ctx, st,
+		statusBase(st.Generation, phaseReady, message, shadowNS),
+		statusExtras(captureTargets, kaiselPhase, igrisEndpoint, igrisRabbitMQPhase),
+		statusBoot(enginev1alpha1.BootStepReady, comp),
+	)
 }

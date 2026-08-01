@@ -279,23 +279,40 @@ func (r *ShadowTestReconciler) reconcileIgrisService(
 	return err
 }
 
+// shadowDeploymentsReady probes every shadow role and reports readiness per role so the
+// topology graph can colour control-a/control-b/candidate independently. The returned
+// wait reason is the first terminal or pending one encountered.
 func (r *ShadowTestReconciler) shadowDeploymentsReady(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
-) (bool, workloadWaitReason, error) {
+) (map[string]bool, workloadWaitReason, error) {
+	roles := map[string]bool{}
+	var firstNotReady workloadWaitReason
 	for _, role := range []string{roleControlA, roleControlB, roleCandidate} {
 		name := shadowDeploymentName(st, role)
 		component := fmt.Sprintf("shadow deployment %s", name)
 		ready, reason, err := r.deploymentBootReady(ctx, shadowNS, name, component)
 		if err != nil {
-			return false, workloadWaitReason{}, err
+			return nil, workloadWaitReason{}, err
 		}
-		if !ready {
-			return false, reason, nil
+		roles[role] = ready
+		// Prefer a terminal reason over a plain pending one so boot failures surface.
+		if !ready && (firstNotReady.message == "" || (reason.terminal && !firstNotReady.terminal)) {
+			firstNotReady = reason
 		}
 	}
-	return true, workloadWaitReason{}, nil
+	return roles, firstNotReady, nil
+}
+
+// allRolesReady reports whether every shadow role in the map is ready.
+func allRolesReady(roles map[string]bool) bool {
+	for _, ready := range roles {
+		if !ready {
+			return false
+		}
+	}
+	return len(roles) > 0
 }
 
 func (r *ShadowTestReconciler) igrisDeploymentReady(

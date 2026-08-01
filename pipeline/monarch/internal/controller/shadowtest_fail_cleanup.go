@@ -12,17 +12,27 @@ import (
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
-const phaseFailed = "Failed"
+const (
+	phaseFailed      = "Failed"
+	phaseReady       = "Ready"
+	phaseProgressing = "Progressing"
+)
 
 // markBootFailed patches phase=Failed, emits a Warning Event, then tears down
 // KaiselRule / prod AMQP queue / shadow namespace (same steps as reconcileDelete,
-// without removing finalizers or running S3 cleanup).
+// without removing finalizers or running S3 cleanup). comp is the boot state observed
+// at the moment of failure, kept on the CR for autopsy.
 func (r *ShadowTestReconciler) markBootFailed(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS, message string,
+	comp enginev1alpha1.ComponentStatus,
 ) (ctrl.Result, error) {
-	_ = r.patchStatusFull(ctx, st, phaseFailed, message, shadowNS, nil, "Disabled", "", "")
+	_ = r.patchStatusCore(ctx, st,
+		statusBase(st.Generation, phaseFailed, message, shadowNS),
+		statusExtras(nil, "Disabled", "", ""),
+		statusBoot(enginev1alpha1.BootStepFailed, comp),
+	)
 	if r.Recorder != nil {
 		r.Recorder.Event(st, corev1.EventTypeWarning, "BootFailed", message)
 	}
@@ -68,5 +78,10 @@ func (r *ShadowTestReconciler) reconcileStickyFailed(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) (ctrl.Result, error) {
+	// Backfill bootStep for CRs that failed before this field existed; the DeepEqual
+	// guard in patchStatusCore makes this a no-op once set. Components are preserved.
+	_ = r.patchStatusCore(ctx, st, func(s *enginev1alpha1.ShadowTestStatus) {
+		s.BootStep = enginev1alpha1.BootStepFailed
+	})
 	return r.finishBootFailedCleanup(ctx, st, shadowNS)
 }

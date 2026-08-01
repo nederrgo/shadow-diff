@@ -15,5 +15,5 @@ The control plane layer acts as the centralized automation hub of Shadow-Diff. D
 * [/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md](/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md) - Platform bootstrap; record bottom-up (sinks → KaiselRule → AMQP bind) and replay lifecycles; beru-local teardown.
 * [/control-plane/shadowtest-teardown-edge-cases.md](/control-plane/shadowtest-teardown-edge-cases.md) - ADR: queue delete fail-open + `x-expires` vs S3 finalizer retry; Failed autopsy vs delete.
 * [/infrastructure/bats-testing-framework.md](/infrastructure/bats-testing-framework.md) - Bats-core harness: shared ShadowTest per file, settlement-based Beru assertions.
-* [/control-plane/monarch-controller.md](/control-plane/monarch-controller.md) - Record/replay reconcile, S3 env, auto replay trigger, S3 prefix retention finalizer, boot failure gates.
+* [/control-plane/monarch-controller.md](/control-plane/monarch-controller.md) - Record/replay reconcile, status/topology surface (`bootStep`, `components`, `conditions`), S3 env, auto replay trigger, S3 prefix retention finalizer, boot failure gates.
 * [/control-plane/monarch-security-model.md](/control-plane/monarch-security-model.md) - Deep dive specification regarding role compartmentalization, unprivileged eBPF decoupling boundary rules, and shadow sandboxing network policies.

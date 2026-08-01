@@ -297,6 +297,71 @@ type ShadowTestSpec struct {
 	Storage *StorageConfig `json:"storage"`
 }
 
+// BootStep is the coarse position of a ShadowTest in the Monarch boot sequence.
+// Consumed by Tusk to drive the live topology graph.
+//
+// Record and replay mode walk disjoint sub-paths: record never provisions the shadow
+// roles, replay never activates the egress tap or binds AMQP. The constants below are
+// the union of both sequences, so consumers must not assume every step occurs.
+type BootStep string
+
+const (
+	// BootStepValidating covers spec validation and target Deployment resolution.
+	BootStepValidating BootStep = "ValidatingInputs"
+	// BootStepProvisioningSinks covers beru-local, Shop and Igris (and replay dependencies).
+	BootStepProvisioningSinks BootStep = "ProvisioningSinks"
+	// BootStepActivatingEgressTap covers KaiselRule eBPF capture (record mode only).
+	BootStepActivatingEgressTap BootStep = "ActivatingEgressTap"
+	// BootStepBindingAMQP covers the prod shadow queue bind (record mode only).
+	BootStepBindingAMQP BootStep = "BindingAMQP"
+	// BootStepProvisioningShadow covers the control-a/control-b/candidate roles (replay only).
+	BootStepProvisioningShadow BootStep = "ProvisioningShadow"
+	// BootStepReady is the terminal converged step.
+	BootStepReady BootStep = "Ready"
+	// BootStepFailed is the terminal sticky-failure step.
+	BootStepFailed BootStep = "Failed"
+)
+
+// Condition types reported on ShadowTestStatus.Conditions.
+const (
+	ConditionReady       = "Ready"
+	ConditionProgressing = "Progressing"
+	ConditionDegraded    = "Degraded"
+)
+
+// ComponentStatus reports per-component readiness for the topology graph.
+type ComponentStatus struct {
+	// IgrisReady is true when the ingress hub (igris or igris-rabbitmq) is Available.
+	// +optional
+	IgrisReady bool `json:"igrisReady"`
+
+	// ShopReady is true when the per-ShadowTest egress mock store is Available.
+	// +optional
+	ShopReady bool `json:"shopReady"`
+
+	// BeruReady is true when the beru-local analysis sink is Available.
+	// +optional
+	BeruReady bool `json:"beruReady"`
+
+	// KaiselRuleActive is true when the eBPF capture rule reconciled cleanly (record mode).
+	// +optional
+	KaiselRuleActive bool `json:"kaiselRuleActive"`
+
+	// AMQPBound is true once the prod shadow queue is bound, or when the ShadowTest
+	// declares no AMQP ingress at all.
+	// +optional
+	AMQPBound bool `json:"amqpBound"`
+
+	// ShadowRolesReady maps control-a/control-b/candidate to Deployment readiness.
+	// Empty in record mode, where no shadow roles are provisioned.
+	// +optional
+	ShadowRolesReady map[string]bool `json:"shadowRolesReady,omitempty"`
+
+	// TargetDeployment is the production Deployment this ShadowTest shadows.
+	// +optional
+	TargetDeployment string `json:"targetDeployment,omitempty"`
+}
+
 // ShadowTestStatus defines the observed state of ShadowTest.
 type ShadowTestStatus struct {
 	// Phase is a high-level summary of reconciliation (e.g. Ready, Progressing, Failed).
@@ -338,11 +403,31 @@ type ShadowTestStatus struct {
 	// ReplayState tracks automated replay trigger progress ("" | started | completed).
 	// +optional
 	ReplayState string `json:"replayState,omitempty"`
+
+	// BootStep is the current position in the Monarch boot sequence.
+	// +optional
+	BootStep BootStep `json:"bootStep,omitempty"`
+
+	// Components reports per-component readiness for the topology graph.
+	// +optional
+	Components ComponentStatus `json:"components,omitzero"`
+
+	// Conditions follow the standard Kubernetes condition contract.
+	// Types: Ready, Progressing, Degraded.
+	// +listType=map
+	// +listMapKey=type
+	// +patchStrategy=merge
+	// +patchMergeKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=st
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Boot Step",type=string,JSONPath=`.status.bootStep`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // ShadowTest is the Schema for the shadowtests API.
 type ShadowTest struct {

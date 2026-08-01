@@ -1,10 +1,10 @@
 ---
 type: Architecture Specification
 title: Monarch Controller — Envoy-Only Shadow Injection
-description: Reconcile contract for record/replay ShadowTests; S3 env; replay trigger; S3 prefix finalizer.
+description: Reconcile contract for record/replay ShadowTests; status/topology surface; S3 env; replay trigger; S3 prefix finalizer.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
-tags: [architecture, control-plane, monarch, envoy, shop, beru, record-replay]
-timestamp: 2026-07-30T17:20:00Z
+tags: [architecture, control-plane, monarch, envoy, shop, beru, record-replay, status, topology]
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # Monarch Controller — Envoy-Only Shadow Injection
@@ -93,6 +93,44 @@ Shadow pods run at fixed low replica counts with no autoscaling, so Monarch and 
 
 `shadowRoleReplicas` (currently `1`, one shared constant for control-a/b/candidate) is the single source of truth for both the shadow Deployment replica count and this capacity calc, so they can't drift.
 
+## Status surface
+
+`ShadowTest.status` is the topology contract consumed by Tusk (BFF) and the live node graph. The types live in `pipeline/monarch/api/v1alpha1` and are imported directly by consumers as `github.com/shadow-diff/monarch/api/v1alpha1`.
+
+### `status.bootStep`
+
+Coarse position in the boot sequence. Record and replay walk **disjoint sub-paths**, so the constants are the union of both — consumers must not assume every step occurs.
+
+| Value | Covers | Modes |
+|-------|--------|-------|
+| `ValidatingInputs` | spec validation, target Deployment lookup, session/secret sync | both |
+| `ProvisioningSinks` | beru-local, Shop, ingress hub, replay dependencies | both |
+| `ActivatingEgressTap` | KaiselRule eBPF capture | record |
+| `BindingAMQP` | prod shadow queue `QueueBind` | record |
+| `ProvisioningShadow` | control-a / control-b / candidate roles, replay trigger | replay |
+| `Ready` | converged | both |
+| `Failed` | terminal boot failure | both |
+
+### `status.components`
+
+| Field | True when |
+|-------|-----------|
+| `beruReady` | beru-local Deployment Available |
+| `shopReady` | Shop Deployment Available |
+| `igrisReady` | ingress hub (`*-igris` or `*-igris-rabbitmq`) Available |
+| `kaiselRuleActive` | KaiselRule reconciled with capture phase `Ready` |
+| `amqpBound` | prod shadow queue bound, or the ShadowTest declares no AMQP ingress |
+| `shadowRolesReady` | map of `control-a`/`control-b`/`candidate` → Deployment readiness; empty in record mode |
+| `targetDeployment` | resolved from `spec.targetDeployment` |
+
+### `status.conditions`
+
+Standard Kubernetes conditions carrying `observedGeneration`, keyed by type: `Ready`, `Progressing`, `Degraded`. Exactly one is True at a time, mirroring `status.phase`.
+
+Every status write funnels through `patchStatusCore`, which snapshots the object, applies its mutators, and skips the API round-trip when the result is semantically equal — a converged ShadowTest re-reconciled by a Deployment or Pod watch event performs no write.
+
+`kubectl get shadowtests` prints `Phase`, `Boot Step` and `Age`.
+
 ## Boot failure gates
 
 While any Monarch-managed Deployment is not Available, Monarch requeues every 5s (`Progressing`). Terminal boot failure is declared when:
@@ -105,7 +143,7 @@ While any Monarch-managed Deployment is not Available, Monarch requeues every 5s
 
 On terminal failure Monarch:
 
-1. Sets `status.phase=Failed` and `status.message` (which component/pod and why), emits a Warning Event
+1. Sets `status.phase=Failed`, `status.bootStep=Failed` and `status.message` (which component/pod and why), preserves the `status.components` snapshot observed at the moment of failure, and emits a Warning Event
 2. Tears down runtime resources with the same steps as delete (KaiselRule, prod AMQP shadow queue if any, shadow namespace) — **without** removing CR finalizers or running S3 cleanup
 3. Leaves the ShadowTest CR in place as an autopsy. Further reconciles are **sticky**: `phase=Failed` means do not recreate the stack
 
@@ -128,7 +166,8 @@ Beru exposes `POST /api/v1/ingest/wire` on `:8080` (`BERU_HTTP_ADDR`). Envelopes
 - [ARCHITECTURE_SHIFT.md](/refactor/ARCHITACTURE_SHIFT.md) — telemetry-dependent strategy
 - [async-record-replay.md](/refactor/async-record-replay.md) — S3-backed async Record & Replay ADR
 - [pipeline/monarch/internal/controller/shadowtest_envoy.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_envoy.go) — Envoy YAML generation
-- [pipeline/monarch/internal/controller/shadowtest_resources.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_resources.go) — Deployment patch
+- [pipeline/monarch/api/v1alpha1/shadowtest_types.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/api/v1alpha1/shadowtest_types.go) — `BootStep`, `ComponentStatus`, `ShadowTestStatus`
+- [pipeline/monarch/internal/controller/shadowtest_resources.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_resources.go) — Deployment patch, `patchStatusCore` status writer
 - [pipeline/monarch/internal/controller/shadowtest_replay_trigger.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_replay_trigger.go) — automated replay start
 - [pipeline/monarch/internal/controller/shadowtest_s3_cleanup.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_s3_cleanup.go) — S3 prefix retention finalizer
 - [pipeline/pkg/s3utils/deleter.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/pkg/s3utils/deleter.go) — `DeletePrefix` / `TestKeyPrefix`
