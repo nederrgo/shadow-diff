@@ -4,11 +4,11 @@
 # POST /api/v1/debug/seed-reports into a Deployment that is NOT owned by a
 # ShadowTest — only Postgres + the Bbolt WAL flusher are under test.
 #
-# Leave beru up for dashboard inspection:
+# Leave beru up for API / The System inspection:
 #   BATS_KEEP=1 SKIP_BUILD=1 SKIP_LOAD=1 \
 #     ./testing/bats/run-one.sh integration/beru/postgres_verdict.bats
 #   kubectl -n monarch-system port-forward svc/beru-verdict 8080:8080
-#   open http://localhost:8080/dashboard/
+#   curl -s 'http://localhost:8080/api/v1/traces/<id>?protocol=mongodb' | jq .
 #
 # shellcheck shell=bash
 
@@ -277,9 +277,9 @@ teardown_file() {
     echo ""
     echo "============================================================"
     echo "BATS_KEEP=1 — leaving beru-verdict + Postgres running"
-    echo "  Port-forward dashboard:"
+    echo "  Port-forward trace API:"
     echo "    kubectl -n monarch-system port-forward svc/beru-verdict 8080:8080"
-    echo "  Then open http://localhost:8080/dashboard/"
+    echo "  Or browse The System /diffs (Tusk + Postgres)"
     echo "  Cleanup later:"
     echo "    kubectl delete -f ${FIXTURE_DIR}/beru.yaml"
     echo "============================================================"

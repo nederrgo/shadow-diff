@@ -50,9 +50,9 @@ The Kaisel DaemonSet runs continuously — tests never `pkill` or restart it.
 # Rebuild/load beru if needed, then:
 BATS_KEEP=1 ./testing/bats/run-one.sh integration/beru/postgres_verdict.bats
 
-# After tests finish, port-forward and open the dashboard:
+# After tests finish, inspect via slim API or The System /diffs:
 kubectl -n monarch-system port-forward svc/beru-verdict 8080:8080
-# → http://localhost:8080/dashboard/
+# → GET http://localhost:8080/api/v1/traces/<id>?protocol=mongodb
 
 # Cleanup when done:
 kubectl delete -f testing/bats/fixtures/integration/beru-postgres-verdict/beru.yaml

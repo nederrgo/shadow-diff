@@ -3,7 +3,7 @@ type: Manifesto
 title: Shadow-Diff Core Premise, Philosophy & Decision-Making Manifesto
 description: The core vision, strict architectural constraints, and decision compass for the Shadow-Diff open-source project.
 tags: [architecture, philosophy, decision-making, framework, zero-touch, ebpf, security]
-timestamp: 2026-06-27T18:45:00Z
+timestamp: 2026-08-02T06:40:00Z
 ---
 
 # Shadow-Diff — Core Premise & Decision-Making Manifesto
@@ -71,4 +71,4 @@ When faced with a fork in the road during development, use these verified projec
 ### Structural Verification over String Flaking
 * **Scenario**: Database statements and event payloads naturally contain non-deterministic data (timestamps, auto-generated IDs, random hashes).
 * **The Rule**: Our analysis engine (`Beru`) relies on a **diff-of-diffs** model. By comparing `control-a` against `control-b`, we isolate dynamic system noise. This allows us to safely validate the structural shape and correctness of the `candidate` workload without setting up complex payload scrubbing rules.
-* **Egress Sequence Logic**: For database interactions, we pair events by their semantic signature (e.g., `mongodb:insert:orders`), not their strict execution index. We track N+1 loop counts to immediately flag query loop anomalies without misaligning subsequent event tracks. All telemetry is persisted directly to an underlying SQLite database to provide clear sequence debugging via the dashboard.
+* **Egress Sequence Logic**: For database interactions, we pair events by their semantic signature (e.g., `mongodb:insert:orders`), not their strict execution index. We track N+1 loop counts to immediately flag query loop anomalies without misaligning subsequent event tracks. All telemetry is persisted to PostgreSQL so The System ShadowDiff page can inspect sequence regressions.

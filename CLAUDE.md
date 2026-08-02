@@ -71,7 +71,7 @@ L3  Shadow stack            3× app Deployment + Envoy sidecar + ephemeral deps 
 L4a AMQP egress             egress-relay-rabbitmq (Firehose → Beru)
 L4b HTTP egress             Kaisel (request/response pairing → Shop mock store)
 L4c DB egress               shadow-soldier (TCP proxy sidecar → Beru egress diff)
-L5  Analysis sink           Beru (diff-of-diffs, Postgres + disk WAL, dashboard) + Shop (per-ShadowTest HTTP egress mock store)
+L5  Analysis sink           Beru (diff-of-diffs, Postgres + disk WAL) + Shop (per-ShadowTest HTTP egress mock store)
 L6  Topology feed           Monarch gRPC :9090 → Tusk BFF (React Flow graph over WebSockets :8082)
 ```
 
@@ -83,7 +83,7 @@ Shadow namespace is always `shadow-<crNamespace>-<crName>`.
 Key files: `internal/controller/shadowtest_controller.go` (main loop), `shadowtest_envoy.go` (Envoy YAML rendering), `shadowtest_dependencies.go` (dep env injection), `shadowtest_kaisel.go` (KaiselRule), `shadowtest_beru_local.go` (per-ShadowTest beru-local pod).
 
 **`pipeline/beru/`** — L5 analysis sink (`github.com/shadow-diff/beru`)  
-Two ports: gRPC `:50051` (Envoy ext_proc + TrafficReporter), HTTP `:8080` (REST API, dashboard, egress diff).  
+Two ports: gRPC `:50051` (Envoy ext_proc + TrafficReporter), HTTP `:8080` (egress/wire ingest, seed, slim trace detail).  
 State engine: `internal/v2/engine/` — `TraceRouter` FNV-shards reports by trace ID → `AppendReport` to Bbolt WAL → claimed 8-worker flusher under `pg_advisory_xact_lock` → insert + `EvaluateTraceHistory` + verdict upsert.  
 Models in `internal/v2/storage/`; Postgres + WAL in `internal/storage/`. Protocol-specific report builders in `internal/v2/report/`.  
 Egress diff ingest: `internal/api/http.go` `handleEgressDiff()` → `FromEgressWithSignature` → `Router.Route`. Producers may supply their own `protocol:operation:target` signature.

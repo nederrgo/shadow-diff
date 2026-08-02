@@ -13,7 +13,7 @@ type ShadowTest struct {
 }
 
 // RunStore is the shadow-test / noise-filter half of Beru's persistence, the
-// part the TraceRouter and the dashboard reach for. The trace half lives behind
+// part the TraceRouter reaches for. The trace half lives behind
 // v2/storage.TraceRepository. Both are satisfied by *PostgresStore and *WALStore.
 type RunStore interface {
 	EnsureShadowTest(ctx context.Context, name string) error

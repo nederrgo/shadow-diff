@@ -11,6 +11,8 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-08-02]
 ### Added
+* 'pipeline/beru': Removed embedded /dashboard/; bats keep GET /api/v1/traces/{id} via internal/api
+* 'pipeline/tusk + the-system/diffs': Tusk Postgres LISTEN/NOTIFY + ShadowDiff UI
 * 'pipeline/the-system Monitor': Searchable picker of live ShadowTests from unfiltered Tusk stream; local includes filter + click to select
 * 'pipeline/kaisel/Dockerfile': COPY pkg/shadowspec so monarch go mod download resolves during kaisel image build
 * 'pipeline/monarch/Dockerfile': COPY pkg/shadowspec into build context so go mod download resolves the replace

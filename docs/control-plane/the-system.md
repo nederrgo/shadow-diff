@@ -1,10 +1,10 @@
 ---
 type: Architecture Specification
 title: The System — Shadow-Diff Dashboard UI
-description: React SPA for live ShadowTest topology monitoring (via Tusk WebSockets) and interactive ShadowTest YAML authoring.
+description: React SPA for live ShadowTest topology, ShadowDiff verdict inspection via Tusk, and interactive ShadowTest YAML authoring.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/the-system
-tags: [architecture, control-plane, the-system, ui, react, topology, websocket]
-timestamp: 2026-08-02T05:40:00Z
+tags: [architecture, control-plane, the-system, ui, react, topology, websocket, diffs]
+timestamp: 2026-08-02T06:20:00Z
 ---
 
 # The System — Dashboard UI
@@ -17,6 +17,7 @@ The System is the cluster-wide web dashboard for Shadow-Diff. It is a static Rea
 |-------|---------|
 | `/` (Monitor) | Live OpenShift-style topology graph for a ShadowTest |
 | `/editor` | Interactive form → `engine.shadow-diff.io/v1alpha1` ShadowTest YAML |
+| `/diffs` (ShadowDiff) | Session picker, verdict summary cards, side-by-side payload inspector |
 
 ## Topology stream
 
@@ -53,6 +54,24 @@ Node positions are a fixed client-side layout (Tusk does not send coordinates). 
 
 The node details drawer shows id / type / label / status. Progress and error text come from graph-level `TopologyGraph.message` (Tusk has no per-node message field).
 
+## ShadowDiff page
+
+Hybrid hydrate + live updates against Tusk `:8082`:
+
+| Call | Role |
+|------|------|
+| `GET /api/v1/sessions` | Session dropdown |
+| `GET /api/v1/diffs?session_id=` | Full payload rows for the selected session |
+| `ws://…:8082/ws/diffs?session_id=` | Summary snapshot + live verdict/summary frames |
+
+UI pieces:
+
+- Summary cards — total / MATCH / MISMATCH / VOIDED_BASELINE_DIVERGENCE
+- Verdict filter — All / Regressions / Noise / Matches
+- Payload inspector — trace list with badges; three columns (control-a, control-b, candidate); yellow `noise_diff` and red `regression_diff` banners from stored JSONB (raw payloads, no PII redaction in MVP)
+
+On each `{type:verdict}` WebSocket frame the page refetches REST diffs so new traces appear without pushing payloads over the socket. Selection is URL-backed (`?session_id=`).
+
 ## ShadowTest editor
 
 Form fields map to CRD paths (`spec.storage.bucketName`, etc.), including required `spec.newImage`. Dependencies use collapsible Add menus; **input** is a single driver chooser (default / `http_request` / `rabbitmq_message`) with fields that swap underneath — at most one `spec.inputs` entry.
@@ -86,5 +105,6 @@ Local Vite dev server: `npm run dev` on `:3000` (Tusk allows localhost Origins o
 # Citations
 
 - [pipeline/the-system/](https://github.com/shadow-diff/monarch/tree/main/pipeline/the-system) — SPA source
-- [/control-plane/tusk-bff.md](/control-plane/tusk-bff.md) — WebSocket BFF and graph model
+- [/control-plane/tusk-bff.md](/control-plane/tusk-bff.md) — WebSocket BFF, graph model, ShadowDiff APIs
 - [/control-plane/monarch-status-stream.md](/control-plane/monarch-status-stream.md) — upstream gRPC status contract
+- [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md) — projection tables Tusk reads

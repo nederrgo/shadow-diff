@@ -108,7 +108,7 @@ func OpenPostgres(log *slog.Logger, cfg PostgresConfig) (*PostgresStore, error) 
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
 	}
-	// Headroom for 8 WAL flusher workers plus dashboard/reaper reads.
+	// Headroom for 8 WAL flusher workers plus reaper / HTTP trace reads.
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(time.Hour)

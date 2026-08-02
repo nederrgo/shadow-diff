@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from 'react-router-dom'
 import { cn } from '@/lib/cn'
 import Monitor from '@/pages/Monitor'
 import Editor from '@/pages/Editor'
+import Diffs from '@/pages/Diffs'
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
@@ -26,12 +27,16 @@ export default function App() {
           <NavLink to="/editor" className={linkClass}>
             Editor
           </NavLink>
+          <NavLink to="/diffs" className={linkClass}>
+            ShadowDiff
+          </NavLink>
         </nav>
       </header>
       <main className="min-h-0 flex-1">
         <Routes>
           <Route path="/" element={<Monitor />} />
           <Route path="/editor" element={<Editor />} />
+          <Route path="/diffs" element={<Diffs />} />
         </Routes>
       </main>
     </div>

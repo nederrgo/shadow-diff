@@ -33,6 +33,11 @@ spec:
               value: ":8082"
             - name: MONARCH_GRPC_ADDR
               value: "monarch-status-grpc.monarch-system.svc.cluster.local:9090"
+          # Same DB_* keys as beru-local. Optional so topology still runs without Postgres.
+          envFrom:
+            - secretRef:
+                name: beru-postgres
+                optional: true
           readinessProbe:
             httpGet:
               path: /healthz

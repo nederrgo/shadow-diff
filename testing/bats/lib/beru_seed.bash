@@ -103,10 +103,10 @@ beru_print_ui_hint() {
   local tid="${1:-}"
   echo ""
   if [[ -n "${BERU_SVC:-}" ]]; then
-    echo "==> UI: kubectl -n ${BERU_NS:-monarch-system} port-forward svc/${BERU_SVC} 8080:8080"
+    echo "==> Trace API: kubectl -n ${BERU_NS:-monarch-system} port-forward svc/${BERU_SVC} 8080:8080"
   else
-    echo "==> UI: kubectl -n ${SHADOW_NS} port-forward svc/beru-local 8080:8080"
+    echo "==> Trace API: kubectl -n ${SHADOW_NS} port-forward svc/beru-local 8080:8080"
   fi
-  echo "    open http://localhost:8080/dashboard/"
+  echo "    GET /api/v1/traces/<id>?protocol=…  (or The System /diffs)"
   [[ -n "$tid" ]] && echo "    trace_id=${tid}"
 }

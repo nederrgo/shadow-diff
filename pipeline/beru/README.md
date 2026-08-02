@@ -1,6 +1,6 @@
 # Beru
 
-Beru is the **L5 — analysis sink** for Shadow-Diff. It correlates traffic from the three shadow roles (control-a, control-b, candidate), runs **diff-of-diffs** to separate noise from regressions, serves **egress mock responses** for strict downstream replay, and exposes a **web dashboard** for inspecting traces.
+Beru is the **L5 — analysis sink** for Shadow-Diff. It correlates traffic from the three shadow roles (control-a, control-b, candidate), runs **diff-of-diffs** to separate noise from regressions, and serves **egress mock responses** for strict downstream replay. Trace inspection UI lives in [The System](../../docs/control-plane/the-system.md) (ShadowDiff via Tusk + Postgres).
 
 Monarch provisions Beru automatically: one **`beru-local`** pod per ShadowTest, inside that ShadowTest's shadow namespace. It runs on SQLite over an in-memory EmptyDir, so state is lost on pod restart and with the namespace. Setting `BERU_DB_SECRET` on the Monarch manager points every beru-local at a shared PostgreSQL instead, and diff history then outlives the ShadowTest — see [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md). For how Beru fits in the full pipeline see [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md).
 
@@ -61,7 +61,7 @@ make test
 # gRPC :50051, HTTP :8080 (defaults)
 ```
 
-Open the dashboard at [http://localhost:8080/dashboard/](http://localhost:8080/dashboard/).
+Inspect diffs in The System at `/diffs` (Tusk reads Beru's Postgres projection tables).
 
 ### In Kubernetes
 
@@ -78,20 +78,13 @@ Monarch creates Deployment and Service `beru-local` in each shadow namespace:
 | Port      | Protocol | Purpose                                                       |
 | --------- | -------- | ------------------------------------------------------------- |
 | **50051** | gRPC     | `TrafficReporter`, Envoy `ext_proc`                           |
-| **8080**  | HTTP     | Egress diff ingest, dashboard                                 |
+| **8080**  | HTTP     | Egress/wire ingest, seed, slim trace detail API               |
 | **8081**  | HTTP     | Egress ingest for in-pod sidecars (Service port → container 8080) |
 
 
 In-pod sidecars post to `:8081` rather than `:8080`, because the shadow pod's iptables rules REDIRECT outbound 8080 into Envoy's egress listener.
 
-To browse history after a ShadowTest is gone, run Beru anywhere against the same database:
-
-```sh
-kubectl run beru --image=beru:dev --restart=Never \
-  --env=DB_DRIVER=postgres --env=DB_HOST=postgres.monarch-system.svc.cluster.local \
-  --env=DB_USER=beru --env=DB_PASSWORD=beru --env=DB_NAME=beru --env=DB_SSLMODE=disable
-kubectl port-forward pod/beru 8080:8080   # then open /dashboard/
-```
+History outlives the ShadowTest in shared Postgres. Browse it in The System `/diffs` (Tusk connects to the same database).
 
 ---
 
@@ -101,7 +94,7 @@ kubectl port-forward pod/beru 8080:8080   # then open /dashboard/
 | Variable                  | Default                    | Description                                            |
 | ------------------------- | -------------------------- | ------------------------------------------------------ |
 | `BERU_GRPC_ADDR`          | `:50051`                   | gRPC listen address (ext_proc, TrafficReporter)        |
-| `BERU_HTTP_ADDR`          | `:8080`                    | HTTP listen address (egress diff ingest, dashboard)    |
+| `BERU_HTTP_ADDR`          | `:8080`                    | HTTP listen address (ingest, seed, trace detail)       |
 | `DB_HOST` / `DB_USER` / `DB_NAME` | —                   | Required Postgres connection (boot fails if missing)   |
 | `DB_PORT` / `DB_PASSWORD` / `DB_SSLMODE` | `5432` / — / `require` | Postgres connection details                    |
 | `BERU_WAL_PATH`           | `/data/beru_wal.db`        | Bbolt disk WAL for ingest buffering                    |
@@ -146,13 +139,7 @@ Late-arriving spans **re-open** the timeline and overwrite the verdict — inclu
 
 `shadow_test_name` is set from ingest metadata (`shadow_test_name` on gRPC/HTTP, `x-shadow-test-name` on ext_proc) or falls back to `BERU_SHADOW_TEST_NAME`.
 
-### Dashboard
-
-The web UI reads **v2 tables only** — no duplicate legacy projection. Trace list shows one row per `(trace_id, protocol)` with signatures from stored `raw_reports`. Detail URLs: `/dashboard/traces/{traceID}?protocol=mongodb`.
-
-Match/mismatch stats on the index page are **computed on load** from v2 data (not stored counters on `shadow_tests`).
-
-### SQLite retention
+### Retention
 
 A background job runs **every hour** and deletes `raw_reports` rows older than `BERU_DB_RETENTION_DAYS` (default 7), then removes `verdicts` whose `trace_id` no longer appears in `raw_reports`. Noise filters are **not** auto-deleted.
 
@@ -180,12 +167,9 @@ Protobuf: `[api/proto/beru/v1/traffic.proto](api/proto/beru/v1/traffic.proto)` (
 | ----------------------------------------------- | ----------------------------------------------------------------------- |
 | `GET /healthz`                                  | Liveness                                                                |
 | `POST /api/v1/egress/diff`                      | Egress diff ingest — used by **shadow-soldier** and **egress-relay-rabbitmq** (optional `signature`, `shadow_test_name`) |
-| `POST /api/v1/debug/seed-reports`               | Inject RawReport histories for UI/bats (no live traffic)                            |
-| `GET /dashboard/`                               | Web UI — trace list, diff detail, egress sequence, noise filter management |
-| `GET /api/v1/traces?shadow_test_id=`            | Dashboard JSON — trace summaries (`trace_id`, `protocol`, `status`, `signatures`) |
-| `GET /api/v1/traces/{traceID}?protocol=`        | Trace detail — `raw_reports`, `verdict`, `sequence_steps`               |
-| `GET /api/v1/shadow-tests`                      | Shadow test run list (for dashboard run selector)                       |
-| `POST /api/v1/noise/filters`                    | Save a noise filter path for a shadow test name                         |
+| `POST /api/v1/ingest/wire`                      | Envoy Lua wire-protocol HTTP egress ingest                              |
+| `POST /api/v1/debug/seed-reports`               | Inject RawReport histories for bats (no live traffic)                   |
+| `GET /api/v1/traces/{traceID}?protocol=`        | Slim trace detail — `reports` + `verdict` (optional `direction=` for HTTP) |
 
 
 ### Trace correlation
@@ -221,12 +205,10 @@ internal/
     report/            RawReport builders (ingress, egress, signatures)
   envoyextproc/        Envoy ext_proc (ingress observe → TraceRouter)
   diff/                JSON diff-of-diffs (ingress noise paths; noise filter tests)
-  api/                 HTTP handlers (egress diff, wire ingest, seed)
-  dashboard/           Embedded web UI + REST API (reads v2 tables)
-  storage/             SQLite shadow_tests + noise_filters + retention
+  api/                 HTTP handlers (egress/wire ingest, seed, slim traces)
+  storage/             Postgres + WAL (raw_reports, verdicts, noise_filters)
   server/              gRPC TrafficReporter
 api/proto/beru/v1/     Protobuf definitions
-deploy/                Kubernetes Deployment + Service
 pkg/api/beru/v1/       Generated protobuf Go code
 ```
 

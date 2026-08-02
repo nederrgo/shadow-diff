@@ -19,10 +19,12 @@ const defaultCORSOrigin = "http://localhost:3000"
 // goroutine forever.
 const writeTimeout = 10 * time.Second
 
-// HTTPServer serves the WebSocket monitor endpoint and health check.
+// HTTPServer serves topology WebSockets, diff REST/WS, and health check.
 type HTTPServer struct {
-	Hub *Hub
-	Log *slog.Logger
+	Hub     *Hub
+	DiffHub *DiffHub
+	Store   SessionStore // nil = control-plane-only (topology still works)
+	Log     *slog.Logger
 
 	upgrader websocket.Upgrader
 }
@@ -61,6 +63,9 @@ func (s *HTTPServer) Handler() http.Handler {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("GET /ws/monitor", s.handleMonitor)
+	mux.HandleFunc("GET /api/v1/sessions", s.handleListSessions)
+	mux.HandleFunc("GET /api/v1/diffs", s.handleGetDiffs)
+	mux.HandleFunc("GET /ws/diffs", s.handleDiffsWS)
 	return withCORS(mux)
 }
 
@@ -133,8 +138,12 @@ func (s *HTTPServer) handleMonitor(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeGraph(conn *websocket.Conn, g *topology.TopologyGraph) error {
-	if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+	if err := conn.SetWriteDeadline(deadlineNow()); err != nil {
 		return err
 	}
 	return conn.WriteJSON(g)
+}
+
+func deadlineNow() time.Time {
+	return time.Now().Add(writeTimeout)
 }

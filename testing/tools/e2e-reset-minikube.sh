@@ -181,8 +181,13 @@ e2e_reset_deploy_stack() {
   kaisel_daemonset_deploy
   kaisel_daemonset_wait_ready 120
 
-  # Tusk: cluster-wide BFF streaming Monarch's :9090 status feed to the topology UI.
+  # Tusk: cluster-wide BFF — Monarch :9090 → topology WS, and shared Postgres
+  # (beru-postgres Secret via envFrom) → ShadowDiff REST/WS for The System.
   echo "==> Tusk BFF (monarch-system image=${TUSK_IMG})"
+  if ! kubectl get secret beru-postgres -n monarch-system >/dev/null 2>&1; then
+    echo "ERROR: secret/beru-postgres missing in monarch-system (required for Tusk ShadowDiff)" >&2
+    exit 1
+  fi
   kubectl apply -k "$REPO/pipeline/tusk/deploy"
   kubectl set image deployment/tusk -n monarch-system "tusk=${TUSK_IMG}"
   kubectl rollout status deployment/tusk -n monarch-system --timeout=120s

@@ -4,7 +4,7 @@ title: Shared Beru Removed in Favour of Per-ShadowTest beru-local
 description: Decision to delete the beru-system Deployment and the spec.beruGRPCAddress escape hatch, leaving one beru-local per shadow namespace backed by a shared PostgreSQL.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller
 tags: [data-plane, beru, adr, monarch, storage, deprecation]
-timestamp: 2026-07-31T12:00:00Z
+timestamp: 2026-08-02T06:40:00Z
 ---
 
 # Shared Beru Removed in Favour of Per-ShadowTest beru-local
@@ -53,10 +53,10 @@ manifest still carrying `beruGRPCAddress` or `beruIngestAddress`. A ShadowTest p
 with either reconciles onto `beru-local` silently — its Envoy `ext_proc` cluster is
 repointed, which rolls the shadow Deployments.
 
-**The dashboard is now per-ShadowTest.** Beru serves `/dashboard/` from its own process,
-so the UI dies with the namespace even when the rows survive. Running Beru anywhere
-against the same database restores a dashboard over all history; a dedicated UI over
-`traces` / `diff_reports` is the longer-term answer.
+**UI is cluster-wide The System.** Beru has no embedded dashboard. The System ShadowDiff
+page reads shared Postgres projection tables (`shadow_sessions` / `traces` /
+`diff_reports`) through Tusk, so history remains browsable after a ShadowTest namespace
+is gone.
 
 **A latent bug went with it.** `beruIngestURLFor`'s external branch returned port `8080`
 for in-pod sidecars, which the shadow pod's iptables rules REDIRECT into Envoy's egress

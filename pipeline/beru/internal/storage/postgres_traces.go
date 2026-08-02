@@ -406,6 +406,20 @@ ON CONFLICT (trace_id, signature) DO UPDATE SET
 			return fmt.Errorf("project diff_reports row %s: %w", sig, err)
 		}
 	}
+
+	// Fan out to Tusk LISTEN/NOTIFY so The System ShadowDiff page can hydrate
+	// via GET then stream live verdict deltas without polling.
+	notifyPayload, err := json.Marshal(map[string]string{
+		"session_id": p.sessionID,
+		"trace_id":   traceID,
+		"verdict":    verdict.Status,
+	})
+	if err != nil {
+		return fmt.Errorf("project notify payload: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_notify('verdict_events', $1)`, string(notifyPayload)); err != nil {
+		return fmt.Errorf("project pg_notify: %w", err)
+	}
 	return nil
 }
 

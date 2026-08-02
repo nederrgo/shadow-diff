@@ -3,9 +3,11 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/shadow-diff/beru/internal/roles"
 	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
@@ -230,6 +232,54 @@ SELECT shadow_test_name, namespace, mode FROM shadow_sessions WHERE session_id =
 		}
 		if namespace != "shadow-default-conformance" || mode != "record" {
 			t.Fatalf("session = %q/%q, want shadow-default-conformance/record", namespace, mode)
+		}
+	})
+
+	t.Run("projection emits verdict_events NOTIFY", func(t *testing.T) {
+		// Second connection LISTENs while we re-project; Tusk depends on this channel.
+		listenDSN := os.Getenv("BERU_TEST_POSTGRES_DSN")
+		conn, err := pgx.Connect(ctx, listenDSN)
+		if err != nil {
+			t.Fatalf("listen connect: %v", err)
+		}
+		defer conn.Close(ctx)
+		if _, err := conn.Exec(ctx, `LISTEN verdict_events`); err != nil {
+			t.Fatalf("LISTEN: %v", err)
+		}
+
+		notifyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		got := make(chan string, 1)
+		go func() {
+			n, err := conn.WaitForNotification(notifyCtx)
+			if err != nil {
+				return
+			}
+			got <- n.Payload
+		}()
+
+		if err := store.SaveDiffVerdict(ctx, trace, &v2storage.VerdictState{
+			Status:    v2storage.StatusMismatch,
+			UpdatedAt: t0.Add(2 * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		select {
+		case payload := <-got:
+			var ev struct {
+				SessionID string `json:"session_id"`
+				TraceID   string `json:"trace_id"`
+				Verdict   string `json:"verdict"`
+			}
+			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+				t.Fatalf("payload %q: %v", payload, err)
+			}
+			if ev.SessionID != "conformance-session" || ev.TraceID != trace || ev.Verdict != v2storage.StatusMismatch {
+				t.Fatalf("notify = %+v, want session/trace/MISMATCH", ev)
+			}
+		case <-notifyCtx.Done():
+			t.Fatal("timed out waiting for verdict_events NOTIFY")
 		}
 	})
 }

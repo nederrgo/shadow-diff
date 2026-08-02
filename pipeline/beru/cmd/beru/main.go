@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,7 +13,6 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/shadow-diff/beru/internal/api"
-	"github.com/shadow-diff/beru/internal/dashboard"
 	"github.com/shadow-diff/beru/internal/envoyextproc"
 	"github.com/shadow-diff/beru/internal/server"
 	"github.com/shadow-diff/beru/internal/storage"
@@ -42,16 +42,10 @@ func main() {
 
 	defaultTest := store.Runs.DefaultShadowTestName()
 
-	dash, err := dashboard.NewHandler(store.Runs, store.Traces, log)
-	if err != nil {
-		slog.Error("Failed to init dashboard", "err", err)
-		os.Exit(1)
-	}
-
 	httpAddr := envOr("BERU_HTTP_ADDR", ":8080")
-	httpSrv := &api.Server{Log: log, Router: router, DB: store.Runs, Dashboard: dash}
+	httpSrv := &api.Server{Log: log, Router: router, DB: store.Runs, Repo: store.Traces}
 	go func() {
-		if err := httpSrv.Start(httpAddr); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.Start(httpAddr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("HTTP server stopped", "err", err)
 			os.Exit(1)
 		}

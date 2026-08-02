@@ -1,6 +1,6 @@
-// Command tusk is the BFF between Monarch's ShadowTest status stream and the
-// topology UI: it consumes gRPC updates, converts them to React Flow graphs, and
-// fans them out to browsers over WebSockets.
+// Command tusk is the BFF between Monarch's ShadowTest status stream and The
+// System UI: topology over WebSockets from gRPC, and ShadowDiff over REST/WS
+// from shared Postgres (LISTEN/NOTIFY).
 package main
 
 import (
@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/shadow-diff/tusk/pkg/db"
 	"github.com/shadow-diff/tusk/pkg/server"
 )
 
@@ -26,16 +27,53 @@ func main() {
 	monarchAddr := envOr("MONARCH_GRPC_ADDR", "monarch-status-grpc.monarch-system.svc.cluster.local:9090")
 
 	hub := server.NewHub()
-	httpSrv := &http.Server{
-		Addr:    httpAddr,
-		Handler: (&server.HTTPServer{Hub: hub, Log: log}).Handler(),
-		// No WriteTimeout: WebSocket connections are long-lived and the per-frame
-		// deadline in writeGraph bounds writes instead.
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	diffHub := server.NewDiffHub()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	var (
+		pgStore      *db.Store
+		sessionStore server.SessionStore // interface; must stay nil when Postgres is off
+	)
+	if cfg, ok := db.ConfigFromEnv(); ok {
+		opened, err := db.Open(cfg)
+		if err != nil {
+			log.Error("Postgres open failed; running control-plane-only", "err", err)
+		} else {
+			pgStore = opened
+			sessionStore = opened
+			defer func() { _ = pgStore.Close() }()
+			log.Info("Postgres connected", "host", cfg.Host, "db", cfg.Name)
+			go func() {
+				if err := db.Listen(ctx, cfg.DSN(), log, func(ev db.VerdictEvent) {
+					if sum, err := pgStore.SessionSummary(ctx, ev.SessionID); err == nil {
+						diffHub.BroadcastSummary(sum)
+					} else {
+						log.Warn("SessionSummary after NOTIFY failed", "err", err, "session_id", ev.SessionID)
+					}
+					diffHub.BroadcastVerdict(ev)
+				}); err != nil && !errors.Is(err, context.Canceled) {
+					log.Error("Postgres LISTEN stopped", "err", err)
+				}
+			}()
+		}
+	} else {
+		log.Warn("DB_HOST/DB_USER/DB_NAME unset; running control-plane-only (no ShadowDiff APIs)")
+	}
+
+	httpSrv := &http.Server{
+		Addr: httpAddr,
+		Handler: (&server.HTTPServer{
+			Hub:     hub,
+			DiffHub: diffHub,
+			Store:   sessionStore,
+			Log:     log,
+		}).Handler(),
+		// No WriteTimeout: WebSocket connections are long-lived and the per-frame
+		// deadline in writeGraph / writeDiffFrame bounds writes instead.
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)

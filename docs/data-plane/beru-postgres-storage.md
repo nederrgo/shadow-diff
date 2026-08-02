@@ -4,7 +4,7 @@ title: Beru Storage Backends
 description: Beru's Postgres-only persistence behind RunStore and TraceRepository, the Bbolt disk WAL with claimed parallel flushers, advisory-locked evaluate, and 3-retry dead-lettering.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/storage
 tags: [data-plane, beru, storage, postgres, wal, persistence, networking]
-timestamp: 2026-07-31T15:00:00Z
+timestamp: 2026-08-02T06:40:00Z
 ---
 
 # Beru Storage Backends
@@ -13,8 +13,8 @@ Beru persists behind two interfaces. Both are satisfied by `*storage.WALStore`, 
 
 | Interface | Owns | Consumers |
 | --- | --- | --- |
-| `v2/storage.TraceRepository` | `raw_reports`, `verdicts` | WAL flusher, dashboard, reaper |
-| `storage.RunStore` | `shadow_tests`, `noise_filters` | TraceRouter, dashboard, HTTP API |
+| `v2/storage.TraceRepository` | `raw_reports`, `verdicts` | WAL flusher, slim HTTP traces API, reaper |
+| `storage.RunStore` | `shadow_tests`, `noise_filters` | TraceRouter, seed/ingest HTTP |
 
 PostgreSQL is the sole database engine. Missing `DB_HOST` / `DB_USER` / `DB_NAME` fails boot. There is no SQLite path.
 
@@ -87,6 +87,14 @@ Every ShadowTest gets a `beru-local` pod in the shadow namespace.
 | `traces` | `trace_id` | One status column per role |
 | `diff_reports` | `(trace_id, signature)` | One row per signature bucket |
 
+After each successful projection transaction, Beru emits Postgres `NOTIFY` on channel `verdict_events` so Tusk can stream live verdict deltas to The System ShadowDiff page:
+
+```json
+{"session_id":"session-…","trace_id":"…","verdict":"MISMATCH"}
+```
+
+Payload fields are always present; `session_id` may be `""` if `SESSION_ID` was unset at beru-local boot. Tusk `LISTEN`s this channel and fans frames to `/ws/diffs`.
+
 Migrations live in `pipeline/beru/migrations/*.sql`, embedded via `go:embed`.
 
 ## Network surface
@@ -113,3 +121,4 @@ go -C pipeline/monarch test ./internal/controller/... -run 'BeruDB|LocalBeruPodS
 * [pipeline/beru/internal/storage/postgres.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/storage/postgres.go) — PostgresStore
 * [pipeline/beru/migrations/0001_init.sql](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/migrations/0001_init.sql) — Schema
 * [pipeline/monarch/internal/controller/shadowtest_beru_local.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_beru_local.go) — beru-local pod spec
+* [/control-plane/tusk-bff.md](/control-plane/tusk-bff.md) — Tusk LISTEN/NOTIFY consumer and ShadowDiff APIs
