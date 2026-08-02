@@ -135,12 +135,26 @@ type SessionSummary struct {
 	Voided    int    `json:"voided"`
 }
 
-// ListSessions returns every shadow_sessions row, newest first.
-func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
-	rows, err := s.db.QueryContext(ctx, `
-SELECT session_id, shadow_test_name, namespace, mode, created_at
-FROM shadow_sessions
-ORDER BY created_at DESC`)
+// ListSessionsOpts controls which shadow_sessions rows are returned.
+type ListSessionsOpts struct {
+	// WithDiffsOnly keeps sessions that have at least one traces row
+	// (projected verdict data). Empty boot-only sessions are dropped.
+	WithDiffsOnly bool
+}
+
+// ListSessions returns shadow_sessions rows, newest first.
+func (s *Store) ListSessions(ctx context.Context, opts ListSessionsOpts) ([]Session, error) {
+	q := `
+SELECT s.session_id, s.shadow_test_name, s.namespace, s.mode, s.created_at
+FROM shadow_sessions s`
+	if opts.WithDiffsOnly {
+		q += `
+WHERE EXISTS (SELECT 1 FROM traces t WHERE t.session_id = s.session_id)`
+	}
+	q += `
+ORDER BY s.created_at DESC`
+
+	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}

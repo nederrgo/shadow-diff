@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { DiffsSummary } from '@/components/DiffsSummary'
 import { PayloadInspector } from '@/components/PayloadInspector'
+import { SessionPicker } from '@/components/SessionPicker'
 import { useDiffStream } from '@/hooks/useDiffStream'
 import { cn } from '@/lib/cn'
 import { tuskHttpBase } from '@/lib/tuskBase'
@@ -64,12 +65,15 @@ export default function Diffs() {
   const [diffsError, setDiffsError] = useState<string | null>(null)
   const [filter, setFilter] = useState<VerdictFilter>('ALL')
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null)
+  // Default on: hide boot-only sessions with no projected traces.
+  const [withDiffsOnly, setWithDiffsOnly] = useState(true)
 
   const { summary: liveSummary, lastVerdictTraceId, connectionStatus } = useDiffStream(sessionId)
 
   const loadSessions = useCallback(async () => {
     try {
-      const resp = await fetch(`${tuskHttpBase()}/api/v1/sessions`)
+      const q = withDiffsOnly ? '?with_diffs=true' : ''
+      const resp = await fetch(`${tuskHttpBase()}/api/v1/sessions${q}`)
       if (!resp.ok) {
         setSessionsError(resp.status === 503 ? 'Postgres not configured on Tusk' : `Sessions HTTP ${resp.status}`)
         setSessions([])
@@ -82,7 +86,7 @@ export default function Diffs() {
       setSessionsError('Failed to reach Tusk :8082')
       setSessions([])
     }
-  }, [])
+  }, [withDiffsOnly])
 
   const loadDiffs = useCallback(async (id: string) => {
     if (!id) {
@@ -143,23 +147,15 @@ export default function Diffs() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-end gap-3 border-b border-[#1f2937] bg-[#090d16] px-4 py-3">
-        <label className="flex min-w-[16rem] flex-col gap-1">
-          <span className="text-xs uppercase tracking-wide text-slate-500">Session</span>
-          <select
-            value={sessionId}
-            onChange={(e) => selectSession(e.target.value)}
-            className="rounded-md border border-[#1f2937] bg-[#111827] px-3 py-2 text-sm text-slate-200 outline-none focus:border-[#3b82f6]"
-          >
-            <option value="">Select a session…</option>
-            {sessions.map((s) => (
-              <option key={s.session_id} value={s.session_id}>
-                {s.shadow_test_name || s.session_id}
-                {s.namespace ? ` · ${s.namespace}` : ''}
-                {s.mode ? ` · ${s.mode}` : ''}
-                {` · ${s.session_id}`}
-              </option>
-            ))}
-          </select>
+        <SessionPicker sessions={sessions} sessionId={sessionId} onSelect={selectSession} />
+        <label className="flex items-center gap-2 pb-1.5 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            checked={withDiffsOnly}
+            onChange={(e) => setWithDiffsOnly(e.target.checked)}
+            className="rounded border-[#1f2937] bg-[#111827] text-[#3b82f6] focus:ring-[#3b82f6]"
+          />
+          With diffs only
         </label>
         <p className="pb-1.5 text-xs text-slate-500">
           Stream: <code className="text-slate-400">ws://…:8082/ws/diffs</code>
@@ -173,6 +169,7 @@ export default function Diffs() {
           >
             {connectionStatus}
           </span>
+          {` · ${sessions.length} sessions`}
           {sessionsError ? <span className="ml-2 text-red-400">{sessionsError}</span> : null}
           {diffsError ? <span className="ml-2 text-red-400">{diffsError}</span> : null}
         </p>

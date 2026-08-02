@@ -4,7 +4,7 @@ title: The System — Shadow-Diff Dashboard UI
 description: React SPA for live ShadowTest topology, ShadowDiff verdict inspection via Tusk, and interactive ShadowTest YAML authoring.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/the-system
 tags: [architecture, control-plane, the-system, ui, react, topology, websocket, diffs]
-timestamp: 2026-08-02T06:20:00Z
+timestamp: 2026-08-02T10:55:00Z
 ---
 
 # The System — Dashboard UI
@@ -61,14 +61,16 @@ Hybrid hydrate + live updates against Tusk `:8082`:
 | Call | Role |
 |------|------|
 | `GET /api/v1/sessions` | Session dropdown |
-| `GET /api/v1/diffs?session_id=` | Full payload rows for the selected session |
+| `GET /api/v1/diffs?session_id=` | Projection rows for the selected session (first payload per signature) |
+| `GET /api/v1/diffs/occurrences?trace_id=&signature=` | Lazy all occurrences for the selected signature |
 | `ws://…:8082/ws/diffs?session_id=` | Summary snapshot + live verdict/summary frames |
 
 UI pieces:
 
+- Session picker — searchable dropdown (same pattern as Monitor’s ShadowTest picker); filter by test name, namespace, or `session_id`. Defaults to `GET /api/v1/sessions?with_diffs=true` (hide boot-only empty sessions); checkbox toggles that filter.
 - Summary cards — total / MATCH / MISMATCH / VOIDED_BASELINE_DIVERGENCE
 - Verdict filter — All / Regressions / Noise / Matches
-- Payload inspector — trace list with badges; three columns (control-a, control-b, candidate); yellow `noise_diff` and red `regression_diff` banners from stored JSONB (raw payloads, no PII redaction in MVP)
+- Payload inspector — trace list with badges; signature chips; occurrence chips (1-based) that turn red when `regression_diff` has a `MISMATCH_PAYLOAD` step at that `index` (auto-selects the first red); three columns swap to the selected occurrence; count-mismatch cards; yellow `noise_diff` and red `regression_diff` from stored JSONB (raw payloads, no PII redaction in MVP)
 
 On each `{type:verdict}` WebSocket frame the page refetches REST diffs so new traces appear without pushing payloads over the socket. Selection is URL-backed (`?session_id=`).
 

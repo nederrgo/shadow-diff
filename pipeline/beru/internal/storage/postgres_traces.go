@@ -458,8 +458,8 @@ func sourceType(bucket []v2storage.RawReport) string {
 //
 // ponytail: a role that performs the same operation twice in one trace lands in
 // the same signature bucket and only its first payload is projected. raw_reports
-// keeps every occurrence, so nothing is lost — to surface repeats in the UI, add
-// an occurrence column to the diff_reports unique key.
+// keeps every occurrence; The System loads repeats lazily via Tusk
+// GET /api/v1/diffs/occurrences (not by widening the diff_reports unique key).
 func payloadJSON(bucket []v2storage.RawReport, role string) any {
 	for _, r := range bucket {
 		if r.ShadowRole != role {

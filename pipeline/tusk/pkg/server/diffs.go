@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/websocket"
+	"github.com/shadow-diff/tusk/pkg/db"
 )
 
 func (s *HTTPServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -12,13 +13,25 @@ func (s *HTTPServer) handleListSessions(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "postgres not configured", http.StatusServiceUnavailable)
 		return
 	}
-	sessions, err := s.Store.ListSessions(r.Context())
+	opts := db.ListSessionsOpts{
+		WithDiffsOnly: queryTruthy(r.URL.Query().Get("with_diffs")),
+	}
+	sessions, err := s.Store.ListSessions(r.Context(), opts)
 	if err != nil {
 		s.Log.Warn("ListSessions failed", "err", err)
 		http.Error(w, "list sessions failed", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, sessions)
+}
+
+func queryTruthy(v string) bool {
+	switch v {
+	case "1", "true", "TRUE", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *HTTPServer) handleGetDiffs(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +51,26 @@ func (s *HTTPServer) handleGetDiffs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, diffs)
+}
+
+func (s *HTTPServer) handleGetOccurrences(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		http.Error(w, "postgres not configured", http.StatusServiceUnavailable)
+		return
+	}
+	traceID := r.URL.Query().Get("trace_id")
+	signature := r.URL.Query().Get("signature")
+	if traceID == "" || signature == "" {
+		http.Error(w, "trace_id and signature are required", http.StatusBadRequest)
+		return
+	}
+	out, err := s.Store.GetSignatureOccurrences(r.Context(), traceID, signature)
+	if err != nil {
+		s.Log.Warn("GetSignatureOccurrences failed", "err", err, "trace_id", traceID, "signature", signature)
+		http.Error(w, "get occurrences failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, out)
 }
 
 func (s *HTTPServer) handleDiffsWS(w http.ResponseWriter, r *http.Request) {

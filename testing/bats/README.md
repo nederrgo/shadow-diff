@@ -47,12 +47,11 @@ The Kaisel DaemonSet runs continuously — tests never `pkill` or restart it.
 `integration/beru/postgres_verdict.bats` deploys `beru-verdict` in `monarch-system` against the bats Postgres fixture (no ShadowTest). It seeds the same histories as `pipeline/beru/internal/v2/diff/diff_test.go` via `POST /api/v1/debug/seed-reports`, asserts via the HTTP API, and deletes Postgres rows per test. One scenario scales Postgres to 0 so a poison WAL batch is discarded after 3 flush failures (asserted via beru logs — distroless has no `tar`/`cat` for file reads), then restores Postgres, restarts beru (remigrate wiped emptyDir), and seeds a clean MATCH.
 
 ```bash
-# Rebuild/load beru if needed, then:
+# Rebuild/load beru if needed, then leave Deployment + Postgres rows for UI:
 BATS_KEEP=1 ./testing/bats/run-one.sh integration/beru/postgres_verdict.bats
 
-# After tests finish, inspect via slim API or The System /diffs:
-kubectl -n monarch-system port-forward svc/beru-verdict 8080:8080
-# → GET http://localhost:8080/api/v1/traces/<id>?protocol=mongodb
+# After tests finish → The System → ShadowDiff → session-bats-beru-postgres-verdict
+# (BATS_KEEP skips per-test and suite DELETE of traces/verdicts/diff_reports)
 
 # Cleanup when done:
 kubectl delete -f testing/bats/fixtures/integration/beru-postgres-verdict/beru.yaml

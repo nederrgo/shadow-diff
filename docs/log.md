@@ -11,6 +11,10 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-08-02]
 ### Added
+* 'pipeline/tusk,the-system,beru': Lazy signature occurrence pager — Tusk GET /api/v1/diffs/occurrences from raw_reports (cap 50), Beru idx_raw_reports_trace_sig, PayloadInspector chips with red MISMATCH_PAYLOAD indexes
+* 'testing/bats/integration/beru': BATS_KEEP retains Postgres rows + SESSION_ID for The System /diffs
+* 'pipeline/tusk + the-system/diffs': sessions?with_diffs=true filter; UI defaults to diffs-only
+* 'pipeline/the-system/diffs': SessionPicker searchable filter like Monitor TestPicker
 * 'pipeline/beru': Removed embedded /dashboard/; bats keep GET /api/v1/traces/{id} via internal/api
 * 'pipeline/tusk + the-system/diffs': Tusk Postgres LISTEN/NOTIFY + ShadowDiff UI
 * 'pipeline/the-system Monitor': Searchable picker of live ShadowTests from unfiltered Tusk stream; local includes filter + click to select

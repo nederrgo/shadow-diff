@@ -4,11 +4,11 @@
 # POST /api/v1/debug/seed-reports into a Deployment that is NOT owned by a
 # ShadowTest — only Postgres + the Bbolt WAL flusher are under test.
 #
-# Leave beru up for API / The System inspection:
+# Leave beru + Postgres rows for The System /diffs inspection:
 #   BATS_KEEP=1 SKIP_BUILD=1 SKIP_LOAD=1 \
 #     ./testing/bats/run-one.sh integration/beru/postgres_verdict.bats
-#   kubectl -n monarch-system port-forward svc/beru-verdict 8080:8080
-#   curl -s 'http://localhost:8080/api/v1/traces/<id>?protocol=mongodb' | jq .
+#   Open The System → ShadowDiff → session-bats-beru-postgres-verdict
+#   (skips per-test and suite Postgres deletes; you clean up afterward)
 #
 # shellcheck shell=bash
 
@@ -93,9 +93,14 @@ setup() {
 teardown() {
   # Belt-and-suspenders: poison-pill must not leave Postgres scaled down.
   beru_postgres_scale 1 >/dev/null 2>&1 || true
-  beru_cleanup_trace_postgres "${BATS_TRACE_ID:-}" || true
-  beru_cleanup_trace_postgres "${BATS_POISON_RECOVER_TRACE:-}" || true
-  unset BATS_POISON_RECOVER_TRACE
+  if [[ "${BATS_KEEP:-0}" == "1" ]]; then
+    # Keep seeded rows so The System /diffs can show this suite's verdicts.
+    unset BATS_POISON_RECOVER_TRACE
+  else
+    beru_cleanup_trace_postgres "${BATS_TRACE_ID:-}" || true
+    beru_cleanup_trace_postgres "${BATS_POISON_RECOVER_TRACE:-}" || true
+    unset BATS_POISON_RECOVER_TRACE
+  fi
   if [[ "${BATS_TEST_COMPLETED:-}" == "0" ]]; then
     capture_failure_artifacts || true
   fi
@@ -271,21 +276,21 @@ teardown_file() {
   beru_postgres_scale 1 >/dev/null 2>&1 || true
   beru_postgres_wait_ready 120 >/dev/null 2>&1 || true
 
-  beru_cleanup_shadow_test_postgres "${SHADOWTEST:-bats-beru-postgres-verdict}" || true
-
   if [[ "${BATS_KEEP:-0}" == "1" ]]; then
     echo ""
     echo "============================================================"
-    echo "BATS_KEEP=1 — leaving beru-verdict + Postgres running"
-    echo "  Port-forward trace API:"
-    echo "    kubectl -n monarch-system port-forward svc/beru-verdict 8080:8080"
-    echo "  Or browse The System /diffs (Tusk + Postgres)"
+    echo "BATS_KEEP=1 — leaving beru-verdict + Postgres rows for UI"
+    echo "  The System → ShadowDiff → session-bats-beru-postgres-verdict"
+    echo "  (uncheck \"With diffs only\" only if the session list looks empty)"
     echo "  Cleanup later:"
     echo "    kubectl delete -f ${FIXTURE_DIR}/beru.yaml"
+    echo "    # optional: wipe suite rows"
+    echo "    # beru_cleanup_shadow_test_postgres bats-beru-postgres-verdict"
     echo "============================================================"
     echo ""
     return 0
   fi
 
+  beru_cleanup_shadow_test_postgres "${SHADOWTEST:-bats-beru-postgres-verdict}" || true
   kubectl delete deployment/beru-verdict service/beru-verdict -n monarch-system --ignore-not-found --wait=false || true
 }

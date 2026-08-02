@@ -73,3 +73,18 @@ export type VerdictStep = {
   detail?: string
   noise_path?: string
 }
+
+/** One aligned index from Tusk GET /api/v1/diffs/occurrences. */
+export type SignatureOccurrence = {
+  index: number
+  control_a_payload: unknown
+  control_b_payload: unknown
+  candidate_payload: unknown
+}
+
+export type SignatureOccurrences = {
+  trace_id: string
+  signature: string
+  occurrences: SignatureOccurrence[]
+  truncated: boolean
+}

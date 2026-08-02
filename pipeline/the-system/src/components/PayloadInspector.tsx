@@ -1,6 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/cn'
-import type { SessionDiff, TraceGroup, Verdict, VerdictStep } from '@/types/diffs'
+import { tuskHttpBase } from '@/lib/tuskBase'
+import type {
+  SessionDiff,
+  SignatureOccurrence,
+  SignatureOccurrences,
+  TraceGroup,
+  Verdict,
+  VerdictStep,
+} from '@/types/diffs'
 
 type Props = {
   traces: TraceGroup[]
@@ -142,16 +150,21 @@ function CountMismatchCard({ step }: { step: VerdictStep }) {
         <p className="mt-2 font-mono text-xs text-red-200">{step.detail || step.reason || ''}</p>
       )}
       <p className="mt-3 text-xs text-slate-400">
-        Count regressions compare how many times this signature ran per role. The payload panels below show only
-        the first occurrence — they are not the mismatch.
+        Count regressions compare how many times this signature ran per role. Use the occurrence chips below to
+        inspect each index; missing sides show as empty.
       </p>
     </div>
   )
 }
 
-function PayloadStepCard({ step }: { step: VerdictStep }) {
+function PayloadStepCard({ step, active }: { step: VerdictStep; active?: boolean }) {
   return (
-    <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+    <div
+      className={cn(
+        'rounded-md border px-3 py-2 text-xs text-red-200',
+        active ? 'border-red-400 bg-red-500/20' : 'border-red-500/40 bg-red-500/10',
+      )}
+    >
       <p className="font-medium uppercase tracking-wide text-red-300">{stepHeadline(step)}</p>
       {step.detail ? <p className="mt-1 font-mono text-red-100/90">{step.detail}</p> : null}
       {step.reason ? <p className="mt-1 text-slate-400">reason: {step.reason}</p> : null}
@@ -169,9 +182,22 @@ function NoiseBanner({ value }: { value: unknown }) {
   )
 }
 
+function cacheKey(traceId: string, signature: string) {
+  return `${traceId}\0${signature}`
+}
+
+function firstRedIndex(mismatchIndexes: Set<number>): number {
+  if (mismatchIndexes.size === 0) return 0
+  return Math.min(...mismatchIndexes)
+}
+
 export function PayloadInspector({ traces, selectedTraceId, onSelectTrace }: Props) {
   const selected = traces.find((t) => t.trace_id === selectedTraceId) ?? null
   const [sigIndex, setSigIndex] = useState(0)
+  const [occIndex, setOccIndex] = useState(0)
+  const [occCache, setOccCache] = useState<Record<string, SignatureOccurrences>>({})
+  const [occLoading, setOccLoading] = useState(false)
+  const [occError, setOccError] = useState<string | null>(null)
 
   const activeDiff: SessionDiff | null = useMemo(() => {
     if (!selected || selected.diffs.length === 0) return null
@@ -179,13 +205,90 @@ export function PayloadInspector({ traces, selectedTraceId, onSelectTrace }: Pro
   }, [selected, sigIndex])
 
   const steps = useMemo(() => asSteps(activeDiff?.regression_diff), [activeDiff])
-  const countSteps = steps.filter((s) => s.kind === 'MISMATCH_COUNT' || s.kind === 'MISMATCH_SIGNATURE')
-  const payloadSteps = steps.filter((s) => s.kind === 'MISMATCH_PAYLOAD')
-  const countOnly = countSteps.length > 0 && payloadSteps.length === 0
+  const countSteps = useMemo(
+    () => steps.filter((s) => s.kind === 'MISMATCH_COUNT' || s.kind === 'MISMATCH_SIGNATURE'),
+    [steps],
+  )
+  const payloadSteps = useMemo(() => steps.filter((s) => s.kind === 'MISMATCH_PAYLOAD'), [steps])
+  const mismatchIndexes = useMemo(() => {
+    const set = new Set<number>()
+    for (const s of payloadSteps) {
+      if (typeof s.index === 'number') set.add(s.index)
+    }
+    return set
+  }, [payloadSteps])
+
+  const activeKey = activeDiff ? cacheKey(activeDiff.trace_id, activeDiff.signature) : null
+  const loaded = activeKey ? occCache[activeKey] : undefined
+  const occCacheRef = useRef(occCache)
+  occCacheRef.current = occCache
 
   useEffect(() => {
     setSigIndex(0)
   }, [selectedTraceId])
+
+  useEffect(() => {
+    const red = new Set<number>()
+    for (const s of asSteps(activeDiff?.regression_diff)) {
+      if (s.kind === 'MISMATCH_PAYLOAD' && typeof s.index === 'number') red.add(s.index)
+    }
+    setOccIndex(firstRedIndex(red))
+  }, [activeKey, activeDiff?.regression_diff])
+
+  useEffect(() => {
+    if (!activeDiff || !activeKey) return
+    if (occCacheRef.current[activeKey]) {
+      setOccLoading(false)
+      setOccError(null)
+      return
+    }
+
+    const ac = new AbortController()
+    const key = activeKey
+    const traceID = activeDiff.trace_id
+    const signature = activeDiff.signature
+    setOccLoading(true)
+    setOccError(null)
+    const url =
+      `${tuskHttpBase()}/api/v1/diffs/occurrences` +
+      `?trace_id=${encodeURIComponent(traceID)}` +
+      `&signature=${encodeURIComponent(signature)}`
+
+    fetch(url, { signal: ac.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Occurrences HTTP ${res.status}`)
+        return (await res.json()) as SignatureOccurrences
+      })
+      .then((data) => {
+        setOccCache((prev) => ({ ...prev, [key]: data }))
+      })
+      .catch((err: unknown) => {
+        if (ac.signal.aborted) return
+        setOccError(err instanceof Error ? err.message : 'Failed to load occurrences')
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setOccLoading(false)
+      })
+
+    return () => ac.abort()
+  }, [activeDiff?.trace_id, activeDiff?.signature, activeKey])
+
+  const occurrences: SignatureOccurrence[] = useMemo(() => {
+    if (loaded?.occurrences?.length) return loaded.occurrences
+    if (!activeDiff) return []
+    // Optimistic first occurrence from session hydrate until lazy fetch returns.
+    return [
+      {
+        index: 0,
+        control_a_payload: activeDiff.control_a_payload,
+        control_b_payload: activeDiff.control_b_payload,
+        candidate_payload: activeDiff.candidate_payload,
+      },
+    ]
+  }, [loaded, activeDiff])
+
+  const selectedOcc = occurrences[Math.min(occIndex, Math.max(occurrences.length - 1, 0))] ?? null
+  const selectedIsMismatch = selectedOcc != null && mismatchIndexes.has(selectedOcc.index)
 
   return (
     <div className="flex min-h-0 flex-1 gap-3">
@@ -227,7 +330,7 @@ export function PayloadInspector({ traces, selectedTraceId, onSelectTrace }: Pro
       </aside>
 
       <section className="flex min-w-0 flex-1 flex-col gap-3 overflow-hidden">
-        {!selected || !activeDiff ? (
+        {!selected || !activeDiff || !selectedOcc ? (
           <div className="flex flex-1 items-center justify-center rounded-lg border border-[#1f2937] bg-[#111827] text-sm text-slate-500">
             Select a trace to inspect payloads
           </div>
@@ -255,13 +358,46 @@ export function PayloadInspector({ traces, selectedTraceId, onSelectTrace }: Pro
               <p className="font-mono text-xs text-slate-500">{activeDiff.signature}</p>
             )}
 
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="mr-1 text-[11px] uppercase tracking-wide text-slate-500">Occurrence</span>
+              {occurrences.map((o) => {
+                const red = mismatchIndexes.has(o.index)
+                const active = o.index === occIndex
+                return (
+                  <button
+                    key={o.index}
+                    type="button"
+                    onClick={() => setOccIndex(o.index)}
+                    className={cn(
+                      'min-w-8 rounded-md px-2.5 py-1 text-xs font-medium tabular-nums transition-colors',
+                      red && active && 'bg-red-500/30 text-red-200 ring-1 ring-red-400/60',
+                      red && !active && 'bg-red-500/15 text-red-300 hover:bg-red-500/25',
+                      !red && active && 'bg-[#3b82f6]/20 text-[#3b82f6]',
+                      !red && !active && 'bg-[#111827] text-slate-400 hover:bg-white/5',
+                    )}
+                  >
+                    {o.index + 1}
+                  </button>
+                )
+              })}
+              {occLoading ? <span className="ml-2 text-[11px] text-slate-500">Loading…</span> : null}
+              {occError ? <span className="ml-2 text-[11px] text-red-400">{occError}</span> : null}
+              {loaded?.truncated ? (
+                <span className="ml-2 text-[11px] text-amber-400">Showing first 50</span>
+              ) : null}
+            </div>
+
             <div className="flex max-h-[40%] flex-col gap-2 overflow-y-auto">
               <NoiseBanner value={activeDiff.noise_diff} />
               {countSteps.map((step, i) => (
                 <CountMismatchCard key={`count-${i}`} step={step} />
               ))}
               {payloadSteps.map((step, i) => (
-                <PayloadStepCard key={`payload-${i}`} step={step} />
+                <PayloadStepCard
+                  key={`payload-${i}`}
+                  step={step}
+                  active={typeof step.index === 'number' && step.index === occIndex}
+                />
               ))}
               {steps.length === 0 && activeDiff.regression_diff != null ? (
                 <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">
@@ -274,21 +410,21 @@ export function PayloadInspector({ traces, selectedTraceId, onSelectTrace }: Pro
             <div className="flex min-h-0 flex-1 gap-2 overflow-hidden">
               <PayloadColumn
                 title="Control-A"
-                payload={activeDiff.control_a_payload}
+                payload={selectedOcc.control_a_payload}
                 accent={activeDiff.noise_diff != null ? 'noise' : undefined}
-                subtitle={countOnly ? '1st occurrence (count differs above)' : undefined}
+                subtitle={`Occurrence ${selectedOcc.index + 1}`}
               />
               <PayloadColumn
                 title="Control-B"
-                payload={activeDiff.control_b_payload}
+                payload={selectedOcc.control_b_payload}
                 accent={activeDiff.noise_diff != null ? 'noise' : undefined}
-                subtitle={countOnly ? '1st occurrence' : undefined}
+                subtitle={`Occurrence ${selectedOcc.index + 1}`}
               />
               <PayloadColumn
                 title="Candidate"
-                payload={activeDiff.candidate_payload}
-                accent={payloadSteps.length > 0 ? 'regression' : undefined}
-                subtitle={countOnly ? '1st occurrence (count differs above)' : undefined}
+                payload={selectedOcc.candidate_payload}
+                accent={selectedIsMismatch ? 'regression' : undefined}
+                subtitle={`Occurrence ${selectedOcc.index + 1}`}
               />
             </div>
           </>

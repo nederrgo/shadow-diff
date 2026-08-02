@@ -4,7 +4,7 @@ title: Beru Storage Backends
 description: Beru's Postgres-only persistence behind RunStore and TraceRepository, the Bbolt disk WAL with claimed parallel flushers, advisory-locked evaluate, and 3-retry dead-lettering.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/storage
 tags: [data-plane, beru, storage, postgres, wal, persistence, networking]
-timestamp: 2026-08-02T06:40:00Z
+timestamp: 2026-08-02T10:55:00Z
 ---
 
 # Beru Storage Backends
@@ -74,7 +74,7 @@ Every ShadowTest gets a `beru-local` pod in the shadow namespace.
 
 | Table | Key | Notes |
 | --- | --- | --- |
-| `raw_reports` | `id` | Append-only. `payload_bytes` is `BYTEA` |
+| `raw_reports` | `id` | Append-only. `payload_bytes` is `BYTEA`. Index `idx_raw_reports_trace_sig` on `(trace_id, signature)` for Tusk occurrence pager |
 | `verdicts` | `trace_id` | Upserted; `summary_details` is `JSONB`. `shadow_test_name` denormalised for shared-DB filtering |
 | `shadow_tests` | `id` | Created lazily per shadow test name |
 | `noise_filters` | `(shadow_test_name, path)` | User ignore paths |
@@ -85,7 +85,7 @@ Every ShadowTest gets a `beru-local` pod in the shadow namespace.
 | --- | --- | --- |
 | `shadow_sessions` | `session_id` | Written once at boot |
 | `traces` | `trace_id` | One status column per role |
-| `diff_reports` | `(trace_id, signature)` | One row per signature bucket |
+| `diff_reports` | `(trace_id, signature)` | One row per signature bucket (first payload per role; repeats stay in `raw_reports`) |
 
 After each successful projection transaction, Beru emits Postgres `NOTIFY` on channel `verdict_events` so Tusk can stream live verdict deltas to The System ShadowDiff page:
 

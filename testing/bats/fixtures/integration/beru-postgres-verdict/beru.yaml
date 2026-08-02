@@ -46,6 +46,13 @@ spec:
               value: ":50051"
             - name: BERU_SHADOW_TEST_NAME
               value: bats-beru-postgres-verdict
+            # So projected traces join shadow_sessions for The System /diffs (BATS_KEEP).
+            - name: SESSION_ID
+              value: session-bats-beru-postgres-verdict
+            - name: SHADOW_NAMESPACE
+              value: monarch-system
+            - name: SHADOW_MODE
+              value: replay
             # Short flush bound so poison-pill bats reach 3 retries without waiting 3×30s.
             - name: BERU_WAL_FLUSH_TIMEOUT
               value: "3s"
