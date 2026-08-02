@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
+	"github.com/shadow-diff/shadowspec"
 )
 
 func targetNamespaceFor(st *enginev1alpha1.ShadowTest) string {
@@ -210,39 +211,7 @@ func parseBeruHostPort(address string) (host string, port int32, err error) {
 }
 
 func resolveDependencyDefaults(dep enginev1alpha1.DependencySpec) (image string, port int32) {
-	image = dep.Image
-	port = dep.Port
-	switch strings.ToLower(dep.Type) {
-	case "rabbitmq":
-		if image == "" {
-			image = "rabbitmq:3-management-alpine"
-		}
-		if port == 0 {
-			port = 5672
-		}
-	case "mongodb", "mongo":
-		if image == "" {
-			image = "mongo:6.0"
-		}
-		if port == 0 {
-			port = 27017
-		}
-	case "redis":
-		if image == "" {
-			image = "redis:7-alpine"
-		}
-		if port == 0 {
-			port = 6379
-		}
-	case "postgres", "postgresql":
-		if image == "" {
-			image = "postgres:16-alpine"
-		}
-		if port == 0 {
-			port = 5432
-		}
-	}
-	return
+	return shadowspec.ResolveDependencyDefaults(dep.Type, dep.Image, dep.Port)
 }
 
 // dependencyContainerEnv returns the environment a dependency image needs to

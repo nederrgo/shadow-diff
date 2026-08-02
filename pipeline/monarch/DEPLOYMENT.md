@@ -183,7 +183,7 @@ When `inputs[].driver` is `rabbitmq_message`, Monarch skips HTTP Igris and deplo
 |-------|-------------|
 | `inputs[]` | Igris listener ports and drivers. Empty → single HTTP listener on `servicePort`. |
 | `inputs[].port` | TCP port Igris binds (omit for `rabbitmq_message`) |
-| `inputs[].driver` | `http_request`, `tcp_stream`, or `rabbitmq_message` |
+| `inputs[].driver` | `http_request` or `rabbitmq_message` |
 | `inputs[].amqp` | Required for `rabbitmq_message`: `prodUrl`, `exchange`, `routingKey`, `targetDependency` |
 | `inputs[].amqp.exchangeType` | `topic` (default), `direct`, `fanout`, `headers` |
 | `inputs[].addon` | Deprecated; use `driver` (`http` → `http_request`) |

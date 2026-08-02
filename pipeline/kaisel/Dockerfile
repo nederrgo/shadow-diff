@@ -10,6 +10,7 @@ WORKDIR /workspace
 COPY pipeline/pkg/s3utils/ ./pkg/s3utils/
 COPY pipeline/pkg/sample/ ./pkg/sample/
 COPY pipeline/pkg/monarchpb/ ./pkg/monarchpb/
+COPY pipeline/pkg/shadowspec/ ./pkg/shadowspec/
 
 # Download monarch deps first (layer-cache friendly: rarely changes)
 COPY pipeline/monarch/go.mod pipeline/monarch/go.sum ./monarch/

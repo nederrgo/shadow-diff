@@ -37,7 +37,7 @@ func TestIgrisListenersJSONFromInputs(t *testing.T) {
 			ServicePort: 80,
 			Inputs: []enginev1alpha1.InputSpec{
 				{Port: 80, Driver: "http_request"},
-				{Port: 27017, Driver: "tcp_stream"},
+				{Port: 8080, Driver: "http_request"},
 			},
 		},
 	}

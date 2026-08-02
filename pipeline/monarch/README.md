@@ -49,7 +49,7 @@ One namespaced **`ShadowTest`** (`engine.shadow-diff.io/v1alpha1`) drives the fu
 | `oldImage` / `newImage` | control-a & control-b vs candidate; `oldImage` defaults from target when unset |
 | `servicePort` / `applicationPort` | Envoy ingress → app; both optional (Monarch derives conflict-free values) |
 | `beruGRPCTimeout` | Envoy `ext_proc` timeout; the target is always beru-local |
-| `inputs[]` | Ingress drivers: `http_request`, `tcp_stream`, `rabbitmq_message` |
+| `inputs[]` | Ingress drivers: `http_request`, `rabbitmq_message` |
 | `dependencies[]` | Ephemeral Redis, RabbitMQ, MongoDB, etc. per role + env injection |
 | `samplePercentage` | Shared prod sampling gate (1–100, default 100): HTTP → Kaisel; rabbitmq → igris-rabbitmq |
 | `shop` / `igris` / `igrisRabbitmq` / `egressRelayRabbitmq` | Optional component image/resource overrides (defaults via `MONARCH_MODE`) |

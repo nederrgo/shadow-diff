@@ -1,28 +1,38 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TeardownState } from '@/components/TeardownBanner'
 import type { ConnectionStatus, TopologyGraph } from '@/types/topology'
 
 const MIN_BACKOFF_MS = 1000
 const MAX_BACKOFF_MS = 30_000
 
-function buildWsUrl(testName: string, namespace: string): string {
-  const params = new URLSearchParams()
-  if (testName) params.set('test', testName)
-  if (namespace) params.set('namespace', namespace)
-  const qs = params.toString()
+export type CatalogEntry = {
+  namespace: string
+  testName: string
+  phase: string
+  mode: string
+}
+
+function catalogKey(namespace: string, testName: string): string {
+  return `${namespace}/${testName}`
+}
+
+function buildWsUrl(): string {
   const host = window.location.hostname
-  return `ws://${host}:8082/ws/monitor${qs ? `?${qs}` : ''}`
+  // Unfiltered stream: Tusk sends every ShadowTest; the UI picks locally.
+  return `ws://${host}:8082/ws/monitor`
 }
 
 /**
- * Subscribes to Tusk's topology WebSocket and reconnects with exponential backoff.
- * Keeps the last live graph through Deleting/Deleted so the canvas does not blank.
+ * Watches every ShadowTest on one WebSocket, keeps a local catalog, and exposes
+ * the graph for the URL-selected test. Selection changes do not reconnect.
  */
-export function useTopologyStream(testName: string, namespace: string) {
-  const [graph, setGraph] = useState<TopologyGraph | null>(null)
+export function useTopologyStream(selectedNamespace: string, selectedTest: string) {
+  const [catalog, setCatalog] = useState<Record<string, TopologyGraph>>({})
   const [teardown, setTeardown] = useState<TeardownState>(null)
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
   const backoffRef = useRef(MIN_BACKOFF_MS)
+  const selectionRef = useRef({ namespace: selectedNamespace, testName: selectedTest })
+  selectionRef.current = { namespace: selectedNamespace, testName: selectedTest }
 
   useEffect(() => {
     let disposed = false
@@ -45,12 +55,16 @@ export function useTopologyStream(testName: string, namespace: string) {
       reconnectTimer = setTimeout(connect, delay)
     }
 
+    const isSelected = (namespace: string, testName: string) => {
+      const sel = selectionRef.current
+      return sel.namespace === namespace && sel.testName === testName
+    }
+
     const connect = () => {
       if (disposed) return
       clearReconnect()
-      const url = buildWsUrl(testName, namespace)
       try {
-        ws = new WebSocket(url)
+        ws = new WebSocket(buildWsUrl())
       } catch {
         scheduleReconnect()
         return
@@ -66,25 +80,30 @@ export function useTopologyStream(testName: string, namespace: string) {
         if (disposed) return
         try {
           const next = JSON.parse(String(ev.data)) as TopologyGraph
-          // Tombstone: keep the last topology under the banner; do not wipe the canvas.
+          const key = catalogKey(next.namespace, next.testName)
+          const selected = isSelected(next.namespace, next.testName)
+
           if (next.phase === 'Deleted') {
-            setTeardown('deleted')
+            setCatalog((prev) => {
+              if (!(key in prev)) return prev
+              const { [key]: _, ...rest } = prev
+              return rest
+            })
+            if (selected) setTeardown('deleted')
             return
           }
-          if (next.phase === 'Deleting') {
-            setTeardown('deleting')
-            setGraph(next)
-            return
+
+          setCatalog((prev) => ({ ...prev, [key]: next }))
+          if (selected) {
+            setTeardown(next.phase === 'Deleting' ? 'deleting' : null)
           }
-          setTeardown(null)
-          setGraph(next)
         } catch {
           // ponytail: ignore malformed frames; next whole-state frame supersedes
         }
       }
 
       ws.onerror = () => {
-        // onclose handles reconnect; browsers fire both
+        // onclose handles reconnect
       }
 
       ws.onclose = () => {
@@ -94,7 +113,6 @@ export function useTopologyStream(testName: string, namespace: string) {
     }
 
     setConnectionStatus('reconnecting')
-    setTeardown(null)
     connect()
 
     return () => {
@@ -109,7 +127,40 @@ export function useTopologyStream(testName: string, namespace: string) {
       }
       setConnectionStatus('disconnected')
     }
-  }, [testName, namespace])
+  }, [])
 
-  return { graph, teardown, connectionStatus }
+  // Clear teardown when the user picks a different test.
+  useEffect(() => {
+    setTeardown(null)
+  }, [selectedNamespace, selectedTest])
+
+  // Mirror Deleting from the cached graph for the current selection.
+  // Missing entry is left alone so a Deleted tombstone from the WS handler sticks.
+  useEffect(() => {
+    if (!selectedNamespace || !selectedTest) return
+    const g = catalog[catalogKey(selectedNamespace, selectedTest)]
+    if (!g) return
+    setTeardown(g.phase === 'Deleting' ? 'deleting' : null)
+  }, [catalog, selectedNamespace, selectedTest])
+
+  const graph = useMemo(() => {
+    if (!selectedNamespace || !selectedTest) return null
+    return catalog[catalogKey(selectedNamespace, selectedTest)] ?? null
+  }, [catalog, selectedNamespace, selectedTest])
+
+  const tests = useMemo((): CatalogEntry[] => {
+    return Object.values(catalog)
+      .map((g) => ({
+        namespace: g.namespace,
+        testName: g.testName,
+        phase: g.phase,
+        mode: g.mode,
+      }))
+      .sort((a, b) => {
+        const ns = a.namespace.localeCompare(b.namespace)
+        return ns !== 0 ? ns : a.testName.localeCompare(b.testName)
+      })
+  }, [catalog])
+
+  return { graph, tests, teardown, connectionStatus }
 }

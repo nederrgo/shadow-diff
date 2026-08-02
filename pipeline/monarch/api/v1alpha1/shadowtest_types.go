@@ -43,17 +43,17 @@ type AMQPInputSpec struct {
 	TargetDependency string `json:"targetDependency"`
 }
 
-// InputSpec declares an ingress driver: HTTP/TCP listeners or RabbitMQ message capture.
+// InputSpec declares an ingress driver: HTTP listeners or RabbitMQ message capture.
 type InputSpec struct {
-	// Port is the TCP port Igris binds for HTTP/TCP inputs. Omit for rabbitmq_message.
+	// Port is the TCP port Igris binds for HTTP inputs. Omit for rabbitmq_message.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	Port int32 `json:"port,omitempty"`
 
-	// Driver selects the ingress path (http_request, tcp_stream, or rabbitmq_message).
-	// When empty on a port-based input, Monarch infers from the port.
-	// +kubebuilder:validation:Enum=http_request;tcp_stream;rabbitmq_message
+	// Driver selects the ingress path (http_request or rabbitmq_message).
+	// When empty on a port-based input, Monarch defaults to http_request.
+	// +kubebuilder:validation:Enum=http_request;rabbitmq_message
 	// +optional
 	Driver string `json:"driver,omitempty"`
 

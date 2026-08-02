@@ -13,7 +13,6 @@ import (
 	"github.com/shadow-diff/igris/internal/core"
 	"github.com/shadow-diff/igris/internal/driver"
 	httpdriver "github.com/shadow-diff/igris/internal/driver/http"
-	tcpdriver "github.com/shadow-diff/igris/internal/driver/tcpstream"
 	"github.com/shadow-diff/igris/internal/payload"
 	"github.com/shadow-diff/igris/internal/replay"
 	"github.com/shadow-diff/s3utils"
@@ -93,7 +92,6 @@ func main() {
 
 	factories := map[string]func() driver.InputDriver{
 		"http_request": func() driver.InputDriver { return httpdriver.New(cfg.MaxBodySize, cfg.MaxConcurrency) },
-		"tcp_stream":   func() driver.InputDriver { return tcpdriver.New() },
 	}
 
 	runDone := make(chan struct{})

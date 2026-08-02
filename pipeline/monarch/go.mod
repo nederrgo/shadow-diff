@@ -7,6 +7,7 @@ require (
 	github.com/onsi/gomega v1.39.0
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/shadow-diff/s3utils v0.0.0
+	github.com/shadow-diff/shadowspec v0.0.0
 	k8s.io/api v0.36.3
 	k8s.io/apimachinery v0.36.3
 	k8s.io/client-go v0.36.3
@@ -125,3 +126,5 @@ require (
 replace github.com/shadow-diff/s3utils => ../pkg/s3utils
 
 replace github.com/shadow-diff/monarchpb => ../pkg/monarchpb
+
+replace github.com/shadow-diff/shadowspec => ../pkg/shadowspec

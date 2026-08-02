@@ -9,8 +9,17 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-08-02]
+### Added
+* 'pipeline/the-system Monitor': Searchable picker of live ShadowTests from unfiltered Tusk stream; local includes filter + click to select
+* 'pipeline/kaisel/Dockerfile': COPY pkg/shadowspec so monarch go mod download resolves during kaisel image build
+* 'pipeline/monarch/Dockerfile': COPY pkg/shadowspec into build context so go mod download resolves the replace
+* 'pipeline/the-system editor': Input section is a single driver chooser with swapping fields (no Add list)
+
 ## [2026-08-01]
 ### Added
+* 'igris-http + monarch + shadowspec': Removed tcp_stream ingress driver; inputs are http_request or rabbitmq_message only
+* 'pipeline/pkg/shadowspec + the-system editor': Shared dependency/input catalog; collapsible Add menus emit spec.dependencies and spec.inputs
 * 'pipeline/the-system': TeardownBanner is a flex strip above React Flow with red System-style NOTIFICATION chrome
 * 'pipeline/the-system': Keep last topology on delete; sticky red TeardownBanner for Deleting/Deleted instead of blank canvas
 * 'pipeline/pkg/monarchpb + monarch/tusk/the-system': ShadowTest delete stream emits PHASE_DELETING then PHASE_DELETED tombstone so Tusk/UI clear the graph

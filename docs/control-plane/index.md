@@ -4,7 +4,7 @@ title: Control Plane Hub
 description: High-level overview map for Shadow-Diff control plane specifications and operators.
 resource: https://github.com/your-org/shadow-diff/tree/main/docs/control-plane
 tags: [index, control-plane, monarch]
-timestamp: 2026-08-01T13:30:00Z
+timestamp: 2026-08-01T17:15:00Z
 ---
 
 # Control Plane Architecture
@@ -19,4 +19,5 @@ The control plane layer acts as the centralized automation hub of Shadow-Diff. D
 * [/control-plane/monarch-status-stream.md](/control-plane/monarch-status-stream.md) - The `monarch.v1` gRPC contract on `:9090`: shared `monarchpb` module, enum vocabulary, snapshot-then-live semantics, publish path.
 * [/control-plane/tusk-bff.md](/control-plane/tusk-bff.md) - Tusk BFF: single upstream stream, graph cache, React Flow node/edge model, `/ws/monitor` WebSocket fan-out.
 * [/control-plane/the-system.md](/control-plane/the-system.md) - The System dashboard UI: Monitor topology graph + ShadowTest YAML editor over Tusk WebSockets.
+* [/control-plane/shadowspec-catalog.md](/control-plane/shadowspec-catalog.md) - Shared `pipeline/pkg/shadowspec` catalog for dependency kinds and input drivers (Monarch defaults + editor menus).
 * [/control-plane/monarch-security-model.md](/control-plane/monarch-security-model.md) - Deep dive specification regarding role compartmentalization, unprivileged eBPF decoupling boundary rules, and shadow sandboxing network policies.

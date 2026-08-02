@@ -4,7 +4,7 @@ title: The System — Shadow-Diff Dashboard UI
 description: React SPA for live ShadowTest topology monitoring (via Tusk WebSockets) and interactive ShadowTest YAML authoring.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/the-system
 tags: [architecture, control-plane, the-system, ui, react, topology, websocket]
-timestamp: 2026-08-01T16:35:00Z
+timestamp: 2026-08-02T05:40:00Z
 ---
 
 # The System — Dashboard UI
@@ -26,9 +26,9 @@ The Monitor page connects to Tusk:
 ws://${window.location.hostname}:8082/ws/monitor?test=<name>&namespace=<ns>
 ```
 
-Query params are optional (omit both to receive every ShadowTest). The `useTopologyStream` hook reconnects with exponential backoff (1s → 30s) and exposes `connectionStatus` (`connected` | `reconnecting` | `disconnected`).
+The Monitor opens one unfiltered WebSocket (`/ws/monitor`) and builds a local catalog of every live ShadowTest. A searchable picker lists them (filter by substring on namespace/name); choosing an entry sets `?namespace=&test=` and shows that graph without reconnecting. `useTopologyStream` reconnects with exponential backoff (1s → 30s) and exposes `connectionStatus` (`connected` | `reconnecting` | `disconnected`).
 
-Delete UX: `phase: "Deleting"` keeps the last topology and shows a red System-style `TeardownBanner` as a flex strip **above** the React Flow canvas (not an overlay — React Flow paints over absolute siblings). `phase: "Deleted"` keeps that last graph under the same banner rather than blanking the screen.
+Delete UX: `phase: "Deleting"` keeps the last topology and shows a red System-style `TeardownBanner` as a flex strip **above** the React Flow canvas (not an overlay — React Flow paints over absolute siblings). `phase: "Deleted"` drops the test from the picker catalog and shows the deleted banner for the current selection.
 
 Tusk graph contract:
 
@@ -55,7 +55,15 @@ The node details drawer shows id / type / label / status. Progress and error tex
 
 ## ShadowTest editor
 
-Form fields map to CRD paths (`spec.storage.bucketName`, etc.), including required `spec.newImage`. Preview is generated with `js-yaml`; Copy / Download only — apply with kubectl outside the UI.
+Form fields map to CRD paths (`spec.storage.bucketName`, etc.), including required `spec.newImage`. Dependencies use collapsible Add menus; **input** is a single driver chooser (default / `http_request` / `rabbitmq_message`) with fields that swap underneath — at most one `spec.inputs` entry.
+
+Menu options (dependency kinds and input drivers) come from the shared Go catalog [`pipeline/pkg/shadowspec`](https://github.com/shadow-diff/monarch/tree/main/pipeline/pkg/shadowspec). Monarch uses the same package for image/port defaults. Regenerate the UI module with:
+
+```bash
+make shadowspec-export   # → pipeline/the-system/src/lib/shadowCatalog.ts
+```
+
+Preview is generated with `js-yaml`; Copy / Download only — apply with kubectl outside the UI.
 
 ## Deploy
 

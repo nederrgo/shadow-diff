@@ -10,6 +10,7 @@ use (
 	./pipeline/pkg/monarchpb
 	./pipeline/pkg/sample
 	./pipeline/pkg/s3utils
+	./pipeline/pkg/shadowspec
 	./pipeline/pkg/trace
 	./pipeline/pkg/replay
 	./pipeline/shadow-soldier

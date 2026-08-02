@@ -105,6 +105,15 @@ func TestValidate(t *testing.T) {
 			}(),
 			wantErr: true,
 		},
+		{
+			name: "tcp_stream driver rejected",
+			cfg: func() Config {
+				c := validCfg()
+				c.Listeners = []Listener{{Port: 9090, Driver: "tcp_stream"}}
+				return c
+			}(),
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -123,7 +132,7 @@ func TestLoadListenersFromFile(t *testing.T) {
 	path := filepath.Join(dir, "listeners.json")
 	data, _ := json.Marshal([]listenerFileEntry{
 		{Port: 80, Driver: "http_request"},
-		{Port: 9090, Driver: "tcp_stream"},
+		{Port: 8080, Driver: "http_request"},
 	})
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
@@ -132,7 +141,7 @@ func TestLoadListenersFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listeners) != 2 || listeners[0].Driver != "http_request" {
+	if len(listeners) != 2 || listeners[0].Driver != "http_request" || listeners[1].Driver != "http_request" {
 		t.Fatalf("got %+v", listeners)
 	}
 }
@@ -213,6 +222,7 @@ func TestNormalizeDriver(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	if got := normalizeDriver("tcp_stream", ""); got != "tcp_stream" {
+		// Unknown drivers are left as-is so Validate can reject them.
 		t.Fatalf("got %q", got)
 	}
 }

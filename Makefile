@@ -10,6 +10,7 @@ SHADOW_SOLDIER_DIR := pipeline/shadow-soldier
 TUSK_DIR := pipeline/tusk
 THE_SYSTEM_DIR := pipeline/the-system
 MONARCHPB_DIR := pipeline/pkg/monarchpb
+SHADOWSPEC_DIR := pipeline/pkg/shadowspec
 KAISEL_IMG ?= kaisel:latest
 IGRIS_RABBITMQ_IMG ?= igris-rabbitmq:latest
 EGRESS_RELAY_RABBITMQ_IMG ?= egress-relay-rabbitmq:latest
@@ -37,7 +38,7 @@ $(MONARCH_TARGETS):
 	egress-relay-rabbitmq-test egress-relay-rabbitmq-build egress-relay-rabbitmq-docker-build \
 	shadow-soldier-test shadow-soldier-build shadow-soldier-docker-build \
 	tusk-test tusk-build tusk-docker-build \
-	the-system-test the-system-docker-build monarchpb-proto
+	the-system-test the-system-docker-build monarchpb-proto shadowspec-export shadowspec-test
 beru-test: ## Run Beru unit tests.
 	@$(MAKE) -C $(BERU_DIR) test
 
@@ -118,6 +119,12 @@ shadow-soldier-docker-build: ## Build shadow-soldier container image.
 
 monarchpb-proto: ## Regenerate the shared Monarch/Tusk gRPC contract.
 	@$(MAKE) -C $(MONARCHPB_DIR) proto
+
+shadowspec-test: ## Run shadowspec catalog unit tests.
+	@$(MAKE) -C $(SHADOWSPEC_DIR) test
+
+shadowspec-export: ## Regenerate The System shadowCatalog.ts from pipeline/pkg/shadowspec.
+	@$(MAKE) -C $(SHADOWSPEC_DIR) export-ts REPO_ROOT=$(CURDIR)
 
 tusk-test: ## Run Tusk unit tests.
 	@$(MAKE) -C $(TUSK_DIR) test

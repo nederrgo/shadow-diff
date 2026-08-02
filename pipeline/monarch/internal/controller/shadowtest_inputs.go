@@ -10,17 +10,8 @@ import (
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
-var wellKnownHTTPPorts = map[int32]bool{
-	80:   true,
-	443:  true,
-	8080: true,
-}
-
-func inferDriver(st *enginev1alpha1.ShadowTest, port int32) string {
-	if port == servicePortFor(st) || wellKnownHTTPPorts[port] {
-		return "http_request"
-	}
-	return "tcp_stream"
+func inferDriver(_ *enginev1alpha1.ShadowTest, _ int32) string {
+	return "http_request"
 }
 
 func hasRabbitMQInput(st *enginev1alpha1.ShadowTest) bool {
@@ -74,8 +65,6 @@ func normalizeInputSpec(st *enginev1alpha1.ShadowTest, in enginev1alpha1.InputSp
 		switch a {
 		case "http", "http_request":
 			d = "http_request"
-		case "tcp_stream":
-			d = "tcp_stream"
 		case "rabbitmq_message":
 			d = "rabbitmq_message"
 		}
@@ -125,7 +114,7 @@ func validateInputs(st *enginev1alpha1.ShadowTest) error {
 		}
 	}
 	if rabbit && nonRabbit {
-		return fmt.Errorf("ShadowTest cannot mix rabbitmq_message inputs with HTTP/TCP inputs")
+		return fmt.Errorf("ShadowTest cannot mix rabbitmq_message inputs with HTTP inputs")
 	}
 	if isAMQPOnlyShadowTest(st) {
 		for _, in := range st.Spec.Inputs {
@@ -159,9 +148,16 @@ func validateInputs(st *enginev1alpha1.ShadowTest) error {
 		return nil
 	}
 
+	for _, in := range st.Spec.Inputs {
+		d := strings.TrimSpace(strings.ToLower(in.Driver))
+		if d == "tcp_stream" {
+			return fmt.Errorf("input driver tcp_stream is no longer supported; use http_request or rabbitmq_message")
+		}
+	}
+
 	for _, in := range resolvedInputs(st) {
 		switch in.Driver {
-		case "http_request", "tcp_stream":
+		case "http_request":
 		default:
 			return fmt.Errorf("unsupported Igris driver %q for port %d", in.Driver, in.Port)
 		}

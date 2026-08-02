@@ -124,7 +124,7 @@ Monarch provisions a `beru-local` pod per ShadowTest inside the shadow namespace
 
 ### Go workspace
 
-`go.work` ties together 15 modules (9 pipeline services + the shared `pipeline/pkg/*` libraries — `sample`, `s3utils`, `trace`, `replay`, `monarchpb` — plus the db-test-app fixture). Run `go build ./...` or `go test ./...` from a module directory, not the repo root. The workspace requires Go 1.26; local toolchains running 1.23 produce `go.work requires go >= 1.26.0` warnings from LSP — these are harmless and do not affect `go build` or `go test`.
+`go.work` ties together 16 modules (9 pipeline services + the shared `pipeline/pkg/*` libraries — `sample`, `s3utils`, `trace`, `replay`, `monarchpb`, `shadowspec` — plus the db-test-app fixture). Run `go build ./...` or `go test ./...` from a module directory, not the repo root. The workspace requires Go 1.26; local toolchains running 1.23 produce `go.work requires go >= 1.26.0` warnings from LSP — these are harmless and do not affect `go build` or `go test`.
 
 ### CRD types
 

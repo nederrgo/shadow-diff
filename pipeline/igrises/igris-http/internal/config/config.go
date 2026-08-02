@@ -208,8 +208,6 @@ func normalizeDriver(driver, addon string) string {
 	switch d {
 	case "", "http", "http_request":
 		return "http_request"
-	case "tcp_stream":
-		return "tcp_stream"
 	default:
 		return d
 	}
@@ -242,7 +240,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("listener port %d out of range", l.Port)
 		}
 		switch l.Driver {
-		case "http_request", "tcp_stream":
+		case "http_request":
 		default:
 			return fmt.Errorf("unknown driver %q for port %d", l.Driver, l.Port)
 		}

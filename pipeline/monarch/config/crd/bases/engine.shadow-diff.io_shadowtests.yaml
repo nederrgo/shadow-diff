@@ -328,7 +328,7 @@ spec:
                   Inputs defines Igris listener ports and drivers. When empty, Monarch defaults to
                   a single HTTP listener on servicePort.
                 items:
-                  description: 'InputSpec declares an ingress driver: HTTP/TCP listeners
+                  description: 'InputSpec declares an ingress driver: HTTP listeners
                     or RabbitMQ message capture.'
                   properties:
                     addon:
@@ -371,15 +371,14 @@ spec:
                       type: object
                     driver:
                       description: |-
-                        Driver selects the ingress path (http_request, tcp_stream, or rabbitmq_message).
-                        When empty on a port-based input, Monarch infers from the port.
+                        Driver selects the ingress path (http_request or rabbitmq_message).
+                        When empty on a port-based input, Monarch defaults to http_request.
                       enum:
                       - http_request
-                      - tcp_stream
                       - rabbitmq_message
                       type: string
                     port:
-                      description: Port is the TCP port Igris binds for HTTP/TCP inputs.
+                      description: Port is the TCP port Igris binds for HTTP inputs.
                         Omit for rabbitmq_message.
                       format: int32
                       maximum: 65535
