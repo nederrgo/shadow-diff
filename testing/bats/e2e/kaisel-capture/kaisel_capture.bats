@@ -1,18 +1,9 @@
 #!/usr/bin/env bats
-# E2E: Monarch → prod → Kaisel eBPF → igris-http → shadow pods (control-a/b/candidate).
+# E2E: Kaisel capture under record/replay.
 #
-# Pipeline under test:
-#   1. Monarch lists prod pod IPs into a KaiselRule (+ igrisBaseURL, samplePercentage).
-#   2. Kaisel reconciles the CR into live eBPF maps.
-#   3. Traced HTTP to those IPs is captured, admitted, and POSTed to igris-http.
-#   4. igris multicasts to the three shadow Services; app access logs prove delivery.
-#
-# Egress (same target, opposite direction):
-#   5. The target app calls its dependency, propagating the inbound traceparent.
-#   6. Kaisel pairs the outbound request with the inbound response and POSTs the
-#      pair to the shadow namespace's Shop as a replayable mock.
-#   7. Shadows replay via Envoy shop_ext_proc; Shop async-reports to Beru for
-#      HTTP egress diff-of-diffs (protocol=http, direction=egress).
+# setup_file brings up mode=record (KaiselRule + Igris + Shop → MinIO; no ABC).
+# Capture-only @tests stay in record. Hybrid @tests (shadows / Beru) record
+# traffic first, then patch mode=replay mid-test and assert against A/B/C.
 #
 # Requirements:
 #   - Cluster with docker/kind/minikube image load
@@ -29,6 +20,9 @@ setup_file() {
   kaisel_setup_platform
   bats_suite_mark MONARCH_DEPLOYED 1
 
+  minio_ensure
+  bats_suite_mark MINIO_READY 1
+
   kaisel_daemonset_deploy
   bats_suite_mark KAISEL_DEPLOYED 1
 
@@ -37,7 +31,6 @@ setup_file() {
     -n default --timeout=120s
   bats_suite_mark PROD_DEPLOYED 1
 
-  # The dependency the target calls lives in the same fixture.
   kubectl wait --for=condition=Available deployment/kaisel-egress-dep \
     -n default --timeout=120s
   bats_suite_mark EGRESS_DEP_DEPLOYED 1
@@ -46,7 +39,7 @@ setup_file() {
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
 
-  # Full shadow stack Ready (igris, beru-local, shop, three roles) + KaiselRule.
+  # Record stack: KaiselRule + igris + shop (+ beru-local); no ABC roles.
   wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-kaisel
   SHADOW_NS="$(shadow_namespace)"
   export SHADOW_NS
@@ -56,7 +49,8 @@ setup_file() {
   bats_suite_mark KAISELRULE_READY 1
 
   monarch_wait_igris_running "$SHADOW_NS" "$SHADOWTEST" 180
-  monarch_wait_all_roles_running "$SHADOW_NS" "$SHADOWTEST" 180
+  kubectl wait --for=condition=Available deployment/shop \
+    -n "$SHADOW_NS" --timeout=180s
 
   kaisel_daemonset_wait_ready 120
   bats_suite_mark KAISEL_READY 1
@@ -76,6 +70,8 @@ teardown_file() {
   fi
 }
 
+# ── Record-only: KaiselRule + ingress capture ──────────────────────────────
+
 @test "monarch writes igrisBaseURL on KaiselRule for Kaisel export" {
   bats_load_suite_state
 
@@ -84,30 +80,6 @@ teardown_file() {
     -o jsonpath='{.spec.igrisBaseURL}')
   [[ -n "$url" ]] || fail "KaiselRule.spec.igrisBaseURL is empty"
   [[ "$url" == http://*igris* ]] || fail "unexpected igrisBaseURL: ${url}"
-}
-
-@test "full route: prod → Kaisel → igris → all three shadow pods" {
-  bats_load_suite_state
-  [[ -n "${SHADOW_NS:-}" ]] || fail "SHADOW_NS unset — setup did not reach Ready"
-
-  local probe trace_id
-  probe="/full-route-${RANDOM}"
-  trace_id="$(openssl rand -hex 16)"
-
-  run kaisel_publish_prod_traced "$probe" "$trace_id"
-  assert_success
-  # helper echoes the trace id on the last line
-  trace_id="$(echo "$output" | tail -1)"
-
-  sleep 2
-  run kaisel_assert_captured "uri=${probe}"
-  assert_success
-
-  run kaisel_assert_igris_multicast "$trace_id" 90
-  assert_success
-
-  run kaisel_assert_shadow_roles_saw_path "$probe"
-  assert_success
 }
 
 @test "kaisel captures HTTP GET to prod pod after KaiselRule IP sync" {
@@ -182,7 +154,7 @@ teardown_file() {
   assert_success
 }
 
-# ── Egress capture ─────────────────────────────────────────────────────────
+# ── Record-only: egress capture → Shop (S3 buffer) ─────────────────────────
 
 @test "monarch writes egressBaseURL on KaiselRule pointing at the shadow Shop" {
   bats_load_suite_state
@@ -204,9 +176,6 @@ teardown_file() {
   assert_success
   trace_id="$(echo "$output" | tail -1)"
 
-  # The asserted hash is Shop's OWN computed key, so a match proves the record
-  # arrived, validated, and was keyed exactly as the ext_proc replay path will
-  # look it up — which a 200 from Shop alone would not show.
   run kaisel_assert_egress_recorded "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_HOST}:/dep/echo" 90
   assert_success
 }
@@ -219,8 +188,6 @@ teardown_file() {
   assert_success
   trace_id="$(echo "$output" | tail -1)"
 
-  # Envoy's :path carries the query, so the seeded key must too — stripping it
-  # stores the mock where nothing ever looks.
   run kaisel_assert_egress_recorded "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_HOST}:/dep/echo?active=true" 90
   assert_success
 }
@@ -247,7 +214,6 @@ teardown_file() {
 
   run kaisel_assert_egress_recorded "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_HOST}:/dep/size/512000" 90
   assert_success
-  # Same Kaisel log line carries body_bytes; 512000 is under the 1 MiB drop cap.
   run kaisel_assert_egress_recorded "body_bytes=512000" 10
   assert_success
 }
@@ -292,13 +258,59 @@ teardown_file() {
   assert_success
 }
 
-@test "kaisel seed → Shop → Envoy replay from copied prod traffic" {
+@test "kaisel does not record egress for an untraced outbound call" {
+  bats_load_suite_state
+
+  local prod_ip marker
+  prod_ip=$(kubectl get pod -l "app=${KAISEL_PROD_DEPLOY}" -n default \
+    -o jsonpath='{.items[0].status.podIP}')
+  [[ -n "$prod_ip" ]] || skip "prod pod has no IP"
+  marker="/dep/echo%3Funtraced=${RANDOM}"
+
+  kubectl run "kaisel-untraced-${RANDOM}" --restart=Never --rm -i \
+    --image=curlimages/curl:latest -n default -- \
+    curl -sS --max-time 20 "http://${prod_ip}:8080/egress/get?path=${marker}" >/dev/null || true
+
+  sleep 5
+  run kaisel_assert_not_captured "egress recorded.*untraced="
+  assert_success
+}
+
+# ── Hybrid: record traffic → patch replay → assert A/B/C ───────────────────
+
+@test "full route: record ingress then replay reaches all three shadow pods" {
   bats_load_suite_state
   [[ -n "${SHADOW_NS:-}" ]] || fail "SHADOW_NS unset — setup did not reach Ready"
 
-  # One prod curl: Kaisel copies ingress (headers + X-Egress-Scenario) to igris,
-  # seeds Shop from the prod egress pair, and shadow roles dial the same FQDN
-  # path. Shadows retry 599/500 until the mock lands — no separate igris redrive.
+  run kaisel_ensure_record_mode
+  assert_success
+
+  local probe trace_id
+  probe="/full-route-${RANDOM}"
+  trace_id="$(openssl rand -hex 16)"
+
+  run kaisel_publish_prod_traced "$probe" "$trace_id"
+  assert_success
+  trace_id="$(echo "$output" | tail -1)"
+
+  sleep 2
+  run kaisel_assert_captured "uri=${probe}"
+  assert_success
+
+  run kaisel_switch_to_replay ingress
+  assert_success
+
+  run kaisel_assert_shadow_roles_saw_path "$probe"
+  assert_success
+}
+
+@test "kaisel seed → S3 → replay → Envoy Shop mock hit" {
+  bats_load_suite_state
+  [[ -n "${SHADOW_NS:-}" ]] || fail "SHADOW_NS unset — setup did not reach Ready"
+
+  run kaisel_ensure_record_mode
+  assert_success
+
   local mark path_enc trace_id
   mark="shopreplay${RANDOM}"
   path_enc="/dep/echo%3Freplay=${mark}"
@@ -311,16 +323,20 @@ teardown_file() {
     "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_FQDN}:/dep/echo?replay=${mark}" 90
   assert_success
 
+  run kaisel_switch_to_replay both
+  assert_success
+
   run kaisel_assert_shadow_egress_replay "replay=${mark}"
   assert_success
 }
 
-@test "kaisel seed → Shop → Envoy → Beru HTTP egress match" {
+@test "kaisel seed → S3 → replay → Envoy → Beru HTTP egress match" {
   bats_load_suite_state
   [[ -n "${SHADOW_NS:-}" ]] || fail "SHADOW_NS unset — setup did not reach Ready"
 
-  # Full chain: Kaisel seeds Shop from prod egress → shadows replay via Envoy
-  # shop_ext_proc → Shop async POSTs /api/v1/egress/diff → Beru diff-of-diffs.
+  run kaisel_ensure_record_mode
+  assert_success
+
   local mark path_enc trace_id want_sig
   mark="beruegress${RANDOM}"
   path_enc="/dep/echo%3Fberu=${mark}"
@@ -334,10 +350,12 @@ teardown_file() {
     "trace:${trace_id}:GET:${KAISEL_EGRESS_DEP_FQDN}:/dep/echo?beru=${mark}" 90
   assert_success
 
+  run kaisel_switch_to_replay both
+  assert_success
+
   run kaisel_assert_shadow_egress_replay "beru=${mark}"
   assert_success
 
-  # Shop must be wired to beru-local (Monarch injects BERU_HTTP_URL).
   local beru_url
   beru_url=$(kubectl get deploy shop -n "$SHADOW_NS" \
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="BERU_HTTP_URL")].value}')
@@ -345,24 +363,5 @@ teardown_file() {
   [[ "$beru_url" == *beru-local* ]] || fail "Shop BERU_HTTP_URL unexpected: ${beru_url}"
 
   run beru_wait_http_egress_match "$trace_id" --timeout=120 --signature="$want_sig"
-  assert_success
-}
-
-@test "kaisel does not record egress for an untraced outbound call" {
-  bats_load_suite_state
-
-  local prod_ip marker
-  prod_ip=$(kubectl get pod -l "app=${KAISEL_PROD_DEPLOY}" -n default \
-    -o jsonpath='{.items[0].status.podIP}')
-  [[ -n "$prod_ip" ]] || skip "prod pod has no IP"
-  marker="/dep/echo%3Funtraced=${RANDOM}"
-
-  # No traceparent: the mock could not be keyed, and Shop would reject it.
-  kubectl run "kaisel-untraced-${RANDOM}" --restart=Never --rm -i \
-    --image=curlimages/curl:latest -n default -- \
-    curl -sS --max-time 20 "http://${prod_ip}:8080/egress/get?path=${marker}" >/dev/null || true
-
-  sleep 5
-  run kaisel_assert_not_captured "egress recorded.*untraced="
   assert_success
 }

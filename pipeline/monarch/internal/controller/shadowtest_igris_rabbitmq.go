@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -11,7 +12,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
@@ -60,20 +60,36 @@ func (r *ShadowTestReconciler) igrisRabbitMQEnv(st *enginev1alpha1.ShadowTest, s
 		return nil, fmt.Errorf("dependency %q not found", amqpSpec.TargetDependency)
 	}
 	_, port := resolveDependencyDefaults(*dep)
-	queueName := st.Status.AmqpQueueName
-	if queueName == "" {
-		queueName = prodShadowQueueName(st)
-	}
-	return []corev1.EnvVar{
-		{Name: envProdURL, Value: amqpSpec.ProdURL},
-		{Name: envShadowQueueName, Value: queueName},
+	mode := operatingMode(st)
+	sessionID := strings.TrimSpace(st.Status.CurrentSessionID)
+
+	env := []corev1.EnvVar{
 		{Name: envShadowPublishExchange, Value: amqpSpec.Exchange},
 		{Name: envShadowPublishExchangeType, Value: amqpExchangeType(amqpSpec)},
-		{Name: envControlAAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlA, port)},
-		{Name: envControlBAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlB, port)},
-		{Name: envCandidateAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleCandidate, port)},
 		{Name: envSamplePercentage, Value: strconv.Itoa(samplePercentage(st))},
-	}, nil
+		{Name: envIgrisAdminAddr, Value: defaultIgrisAdminAddr},
+	}
+	env = append(env, storageEnvVars(st, sessionID)...)
+
+	switch mode {
+	case modeRecord:
+		queueName := st.Status.AmqpQueueName
+		if queueName == "" {
+			queueName = prodShadowQueueName(st)
+		}
+		env = append(env,
+			corev1.EnvVar{Name: envProdURL, Value: amqpSpec.ProdURL},
+			corev1.EnvVar{Name: envShadowQueueName, Value: queueName},
+		)
+		// ponytail: record dials prod only — omit shadow broker URLs so startup does not fail when deps are absent.
+	case modeReplay:
+		env = append(env,
+			corev1.EnvVar{Name: envControlAAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlA, port)},
+			corev1.EnvVar{Name: envControlBAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlB, port)},
+			corev1.EnvVar{Name: envCandidateAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleCandidate, port)},
+		)
+	}
+	return env, nil
 }
 
 func (r *ShadowTestReconciler) reconcileIgrisRabbitMQDeployment(
@@ -84,7 +100,7 @@ func (r *ShadowTestReconciler) reconcileIgrisRabbitMQDeployment(
 	if !hasRabbitMQInput(st) {
 		return nil
 	}
-	if st.Status.AmqpQueueName == "" {
+	if operatingMode(st) == modeRecord && st.Status.AmqpQueueName == "" {
 		return fmt.Errorf("cannot deploy igris-rabbitmq before prod shadow queue is provisioned")
 	}
 
@@ -118,7 +134,12 @@ func (r *ShadowTestReconciler) reconcileIgrisRabbitMQDeployment(
 			Name:            containerIgrisRabbitMQ,
 			Image:           igrisRabbitMQImageFor(st),
 			ImagePullPolicy: corev1.PullIfNotPresent,
-			Env:             env,
+			Ports: []corev1.ContainerPort{{
+				Name:          "admin",
+				ContainerPort: igrisAdminPort,
+				Protocol:      corev1.ProtocolTCP,
+			}},
+			Env: env,
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("50m"),
@@ -162,12 +183,14 @@ func (r *ShadowTestReconciler) reconcileIgrisRabbitMQService(
 	_, err := ctrl.CreateOrPatch(ctx, r.Client, svc, func() error {
 		svc.Labels = labels
 		svc.Spec.Selector = labels
-		svc.Spec.Ports = []corev1.ServicePort{{
-			Name:       "amqp",
-			Port:       5672,
-			TargetPort: intstr.FromInt32(5672),
-			Protocol:   corev1.ProtocolTCP,
-		}}
+		svc.Spec.Ports = []corev1.ServicePort{
+			{
+				Name:       "admin",
+				Port:       igrisAdminPort,
+				TargetPort: intstr.FromInt32(igrisAdminPort),
+				Protocol:   corev1.ProtocolTCP,
+			},
+		}
 		return nil
 	})
 	return err
@@ -177,16 +200,11 @@ func (r *ShadowTestReconciler) igrisRabbitMQDeploymentReady(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
-) (bool, error) {
+) (bool, workloadWaitReason, error) {
 	if !hasRabbitMQInput(st) {
-		return true, nil
+		return true, workloadWaitReason{}, nil
 	}
-	var deploy appsv1.Deployment
-	key := client.ObjectKey{Namespace: shadowNS, Name: igrisRabbitMQDeploymentName(st)}
-	if err := r.Get(ctx, key, &deploy); err != nil {
-		return false, client.IgnoreNotFound(err)
-	}
-	return deploy.Status.AvailableReplicas > 0, nil
+	return r.deploymentBootReady(ctx, shadowNS, igrisRabbitMQDeploymentName(st), "igris-rabbitmq")
 }
 
 func (r *ShadowTestReconciler) reconcileIgrisRabbitMQStack(

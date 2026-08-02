@@ -11,7 +11,7 @@ test:
 	go test ./...
 
 docker-build:
-	docker build -t $(IGRIS_IMG) .
+	docker build -f Dockerfile -t $(IGRIS_IMG) ../..
 
 run: build
 	./bin/igris

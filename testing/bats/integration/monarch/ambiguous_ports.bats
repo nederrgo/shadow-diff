@@ -13,6 +13,7 @@ FIXTURE_DIR="${BATS_TEST_DIRNAME}/../../fixtures/integration/monarch-ambiguous-p
 setup_file() {
   bats_begin_suite "bats-monarch-ambig-ports" "default"
   ensure_platform_ready
+  minio_ensure
 
   echo "==> apply prod target (ambiguous ports)"
   kubectl apply -f "${FIXTURE_DIR}/prod-target.yaml"

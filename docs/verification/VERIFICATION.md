@@ -110,7 +110,6 @@ spec:
   newImage: nginx:1.25-alpine
   servicePort: 80
   applicationPort: 8080
-  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
 EOF
 ```
 
@@ -178,7 +177,10 @@ kubectl logs -n "$SHADOW_NS" -l shadow-diff.io/role=control-a -c envoy-sidecar
 
 ---
 
-## 5. Deploy Beru
+## 5. Build the Beru image
+
+Monarch deploys Beru itself, as `beru-local` in each shadow namespace. Only the image has
+to be present and named on the manager.
 
 ```bash
 cd "$REPO"
@@ -188,11 +190,9 @@ make beru-docker-build BERU_IMG=$BERU_IMG
 # Kind: kind load docker-image $BERU_IMG
 # Minikube: minikube image load $BERU_IMG
 
-kubectl apply -f beru/deploy/
-kubectl set image deployment/beru beru=$BERU_IMG -n beru-system
-
-kubectl rollout status deployment/beru -n beru-system --timeout=120s
-kubectl get pods,svc -n beru-system
+kubectl set env deployment/monarch-controller-manager -n monarch-system BERU_IMAGE=$BERU_IMG
+kubectl rollout status deployment/beru-local -n "$SHADOW_NS" --timeout=120s
+kubectl get pods,svc -n "$SHADOW_NS" -l app=beru-local
 ```
 
 ---
@@ -202,7 +202,7 @@ kubectl get pods,svc -n beru-system
 Port-forward (terminal 1):
 
 ```bash
-kubectl port-forward svc/beru 50051:50051 -n beru-system
+kubectl port-forward svc/beru-local 50051:50051 -n "$SHADOW_NS"
 ```
 
 Call RPC (terminal 2):
@@ -217,7 +217,7 @@ grpcurl -plaintext \
 Check logs:
 
 ```bash
-kubectl logs -n beru-system deployment/beru --tail=20
+kubectl logs -n "$SHADOW_NS" deployment/beru-local --tail=20
 ```
 
 Expected log:
@@ -340,7 +340,7 @@ Send traffic (new terminal):
 
 ```bash
 curl -i -H 'traceparent: e2e-igris-1' http://localhost:8080/
-kubectl logs -n beru-system deployment/beru -f
+kubectl logs -n "$SHADOW_NS" deployment/beru-local -f
 ```
 
 Confirm Beru correlates ingress for trace `e2e-igris-1` across control-a, control-b, and candidate.
@@ -363,6 +363,7 @@ Expected: process stops accepting new connections, waits for in-flight multicast
 | `CANDIDATE_URL` | yes | — | Base URL for candidate |
 | `IGRIS_LISTENERS_FILE` | no | `/etc/igris/listeners.json` | Port → add-on map (from ConfigMap) |
 | `IGRIS_WORKER_POOL_SIZE` | no | `min(32, 4×CPU)` | Multicast worker pool |
+| `IGRIS_MAX_CONCURRENCY` | no | `50` | In-flight request cap (Spike Guard); negative disables it |
 
 ---
 
@@ -426,7 +427,6 @@ sudo make test-integration   # real BPF + netns lab, needs root
 ```bash
 kubectl delete shadowtest my-app-shadow -n default
 kubectl delete deployment my-prod-app -n default
-kubectl delete -f "$REPO/pipeline/beru/deploy/"
 
 cd "$REPO/pipeline/monarch"
 make undeploy
@@ -442,7 +442,7 @@ make uninstall
 | `phase: Failed`, target not found | Wrong `targetDeployment` / `targetNamespace` | Fix spec; ensure Deployment exists |
 | Pods `ImagePullBackOff` | Local image not in cluster | `kind load` / `minikube image load` or use a registry |
 | Pods `1/2` not Ready | Envoy sidecar failing | `kubectl logs ... -c envoy-sidecar` |
-| `grpcurl` connection refused | Beru not ready or no port-forward | Check `beru-system` pods; re-run port-forward |
+| `grpcurl` connection refused | Beru not ready or no port-forward | Check `beru-local` in the shadow namespace; re-run port-forward |
 | Wrong cluster | Multiple kube contexts | `kubectl config current-context` |
 | Kaisel `Degraded`, empty capture | TC not on CNI iface / no prod traffic | Check `/v1/status`; hit prod Service URL |
 | No Igris logs after prod curl | `samplePercentage` sampling the trace out, missing `traceparent`, or wrong pod IPs | `kubectl get shadowtest -o yaml` → `spec.samplePercentage`; ensure W3C `traceparent` on the request |
@@ -472,7 +472,7 @@ For JSON diff tests, use an app image that returns JSON bodies (not default ngin
 ### Watch Beru logs
 
 ```bash
-kubectl logs -n beru-system deployment/beru -f
+kubectl logs -n "$SHADOW_NS" deployment/beru-local -f
 ```
 
 Expected messages include:
@@ -484,7 +484,7 @@ Expected messages include:
 ### Manual ReportTraffic (optional)
 
 ```bash
-kubectl port-forward svc/beru 50051:50051 -n beru-system
+kubectl port-forward svc/beru-local 50051:50051 -n "$SHADOW_NS"
 grpcurl -plaintext -d '{
   "report": {
     "trace_id": "trace-123",
@@ -508,6 +508,19 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | grep -E '
 
 ---
 
+## Phase 4 — Record mode S3 capture (bats)
+
+With MinIO from [`e2e-reset-minikube.sh`](testing/tools/e2e-reset-minikube.sh) (or the suite’s own `minio_ensure`):
+
+```bash
+make test-bats-record
+# equivalent: make test-bats-one FILE=e2e/record/record_http.bats
+```
+
+Asserts `mode=record` stack (Kaisel + Igris + Shop, no ABC) and that traced prod ingress/egress flush JSONL under `shadow-diff/<ns>/<name>/sessions/<currentSessionID>/{ingress|egress}/` in bucket `shadow-diff-local`. Fixture: [`testing/bats/fixtures/e2e/record-http/`](testing/bats/fixtures/e2e/record-http/).
+
+---
+
 ## Phase 4a.1 — Egress interception & strict replay
 
 Monarch deploys Shop (always-on) into each shadow namespace and configures an egress Envoy listener with **ext_proc** to Shop. Shop returns a recorded mock keyed by `trace:<traceID>:<METHOD>:<host>:<path>` or **HTTP 599** on miss.
@@ -515,7 +528,7 @@ Monarch deploys Shop (always-on) into each shadow namespace and configures an eg
 ### Prerequisites
 
 - Shop deployed by Monarch (always-on; no `spec.recordAndReplay` field required)
-- `ShadowTest` applied (see [`testing/bats/manifests/e2e-shadowtest.yaml`](testing/bats/manifests/e2e-shadowtest.yaml))
+- `ShadowTest` applied (see [`testing/bats/manifests/e2e-shadowtest.yaml`](testing/bats/manifests/e2e-shadowtest.yaml); requires `spec.storage`)
 
 ### Automated Kind E2E
 
@@ -530,7 +543,7 @@ The http-ingress bats suites verify Shop replay (Envoy egress proxy, seed, mock 
 ### Seed a mock response (manual)
 
 ```bash
-kubectl port-forward svc/beru 8080:8080 -n beru-system &
+kubectl port-forward svc/beru-local 8080:8080 -n "$SHADOW_NS" &
 curl -s -X POST http://127.0.0.1:8080/v1/seed_mock \
   -H 'Content-Type: application/json' \
   -d '{
@@ -568,7 +581,7 @@ Repeat the curl **without** seeding (or with a different body). Expected: HTTP *
 Watch Beru logs:
 
 ```bash
-kubectl logs -n beru-system deployment/beru -f | grep 'Egress Regression'
+kubectl logs -n "$SHADOW_NS" deployment/beru-local -f | grep 'Egress Regression'
 ```
 
 ### Verify Envoy egress config
@@ -635,10 +648,61 @@ Covers: BPF ingress+egress clauses, `FlushOlderThan` goroutine lifecycle, keep-a
 
 ---
 
+## Spike Guard — ingress load shedding & AMQP TTL
+
+Protects shadow pods (fixed low replica counts, no autoscaling) from production traffic spikes. See [`monarch-controller.md`](/control-plane/monarch-controller.md#spike-guard-ingress-load-shedding).
+
+### Verify IGRIS_MAX_CONCURRENCY is computed and wired
+
+```bash
+export SHADOW_NS=$(kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.shadowNamespace}')
+kubectl get deploy -n "$SHADOW_NS" -l app.kubernetes.io/name=igris \
+  -o jsonpath='{.items[0].spec.template.spec.containers[0].env[?(@.name=="IGRIS_MAX_CONCURRENCY")].value}'
+```
+
+Expected: `shadowRoleReplicas (1) × spec.maxQPSPerPod` (default `50`).
+
+### Verify shedding under load
+
+**Automated (recommended):** `make test-bats-one FILE=integration/monarch/spike_guard.bats` — deploys a `ShadowTest` with a small `maxQPSPerPod` and fires a large concurrent burst via curl's `--parallel` transfer engine, asserting a mix of `202`/`429` and that the `IGRIS_MAX_CONCURRENCY` env var is wired correctly.
+
+**Manual:** the concurrency gate's occupied window per request is tiny (increment → body read → parse → early response → async pool submit → decrement), so a naive backgrounded-`curl`-per-process loop (`curl & ... & wait`) does **not** reliably overlap enough to trigger shedding — fork/exec and per-process connect latency spread requests out too much. Use a single `curl --parallel` invocation instead, and fire well past the cap (empirically ~40-60x on a local Minikube VM):
+
+```bash
+kubectl port-forward -n "$SHADOW_NS" svc/my-app-shadow-igris 8080:80 &
+BURST=3000   # comfortably past the default cap of 50 (spec.maxQPSPerPod unset)
+urls=$(printf 'http://localhost:8080/ %.0s' $(seq 1 "$BURST"))
+curl -sS --parallel --parallel-immediate --parallel-max "$BURST" \
+  -o /dev/null -w '%{http_code}\n' -H 'traceparent: e2e-spike-1' $urls | sort | uniq -c
+```
+
+Expected: a mix of `202` (accepted) and `429` (shed) status codes; shed requests never reach the shadow backends (no corresponding trace entries logged by Igris beyond the accepted count). Setting a small `spec.maxQPSPerPod` (e.g. `5`) on the `ShadowTest` makes this reproducible with a much smaller burst — see the bats fixture at `testing/bats/fixtures/integration/monarch-spike-guard/`.
+
+### Verify AMQP message TTL and prod queue bound
+
+```bash
+# igris-rabbitmq sets a 10s Expiration on every republished message — confirm via broker management API
+# or by inspecting a captured message's properties.expiration field.
+
+# Prod shadow queue bound (Monarch-declared):
+kubectl get shadowtest my-app-shadow -n default -o jsonpath='{.status.amqpQueueName}'
+# Inspect the queue on the prod broker: arguments should include x-max-length=500, x-overflow=drop-head
+```
+
+### Unit tests
+
+```bash
+cd pipeline/monarch && go test ./internal/controller/... -run 'TestMaxQPSPerPodFor|TestIgrisMaxConcurrencyFor|TestProdShadowQueueArgs' -v
+cd ../igrises/igris-http && go test ./internal/driver/http/... -run TestHandlerShedsOverCapacity -v
+cd ../igris-rabbitmq && go test ./internal/multicast/... -run TestBuildPublishingSetsExpiration -v
+```
+
+---
+
 ## Phase 2a scope (superseded by 2b config)
 
 - Phase 2b Envoy config uses **ext_proc** + **generate_request_id** (no longer admin-only placeholder).
-- Monarch does **not** deploy Beru; apply `beru/deploy/` separately.
+- Monarch deploys Beru as `beru-local` per shadow namespace.
 
 ---
 
@@ -667,7 +731,7 @@ Verify:
 
 End-to-end Kind test for a realistic AMQP shadow workload: prod publish with W3C **`traceparent`** → **`igris-rabbitmq`** multicast → **`rmq-mongo-worker`** (Mongo `insertOne`, Envoy ingress report, RabbitMQ egress publish). See [`testing/bats/manifests/rmq-mongo-e2e/README.md`](testing/bats/manifests/rmq-mongo-e2e/README.md).
 
-**v1 Beru assertions:** ingress (`No regression for Trace <hex>` on **beru-local**) and RabbitMQ egress (`No egress regression for Trace <hex> (rabbitmq)` on **beru-local** — Monarch routes egress-relay to per-shadow Beru when `spec.beruGRPCAddress` is unset). Mongo is verified via pod logs (`mongo insert ok`) until Phase 2b Envoy mongo wire ingest enables Beru `mongodb` egress diff.
+**v1 Beru assertions:** ingress (`No regression for Trace <hex>` on **beru-local**) and RabbitMQ egress (`No egress regression for Trace <hex> (rabbitmq)` on **beru-local** — Monarch routes egress-relay to the shadow namespace's beru-local). Mongo is verified via pod logs (`mongo insert ok`) until Phase 2b Envoy mongo wire ingest enables Beru `mongodb` egress diff.
 
 ```bash
 make -C testing/example-apps/rmq-mongo-worker docker-build RMQ_MONGO_WORKER_IMG=rmq-mongo-worker:dev
@@ -821,7 +885,7 @@ cd monarch && go test ./internal/controller/ -run 'TestOtel|TestRenderEnvoy'
 - [ ] `ShadowTest` status `Ready` with `shadowNamespace`
 - [ ] Three shadow Deployments; pods `2/2` with `app` + `envoy-sidecar`
 - [ ] Three Envoy ConfigMaps in shadow namespace
-- [ ] Beru pod running in `beru-system`
+- [ ] `beru-local` pod running in the shadow namespace
 - [ ] `grpcurl ReportTraffic` returns `{}` and log shows received report
 - [ ] `make -C igris test` passes
 - [ ] Igris returns 202 and multicasts to three targets (local smoke or cluster port-forwards)
@@ -838,3 +902,4 @@ cd monarch && go test ./internal/controller/ -run 'TestOtel|TestRenderEnvoy'
 - [ ] HTTP→RMQ OTel E2E (Node): `make test-bats-e2e` (igris-http ingress + Firehose egress, dual Beru correlation)
 - [ ] HTTP→RMQ OTel E2E (Python): `make test-bats-e2e` (Flask + pika zero-touch)
 - [ ] `make -C igris-rabbitmq test` passes
+- [ ] Spike Guard: `IGRIS_MAX_CONCURRENCY` wired on the igris Deployment; excess concurrent requests get `429`; AMQP messages carry a 10s `Expiration`

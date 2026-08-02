@@ -151,7 +151,7 @@ e2e_in_cluster_curl() {
   e2e_strip_kubectl_run_output "$out"
 }
 
-# Monarch provisions deployment/beru-local per ShadowTest (no shared beru-system).
+# Monarch provisions deployment/beru-local per ShadowTest.
 wait_local_beru_rollout() {
   local shadow_ns="$1" timeout="${2:-120s}"
   echo "==> Wait for beru-local in ${shadow_ns}"

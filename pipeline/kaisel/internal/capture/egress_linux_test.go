@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -124,10 +123,7 @@ func startEgressCapture(t *testing.T, iface string, targets []string, ports []ui
 		t.Fatalf("detect framing on %s: %v", iface, err)
 	}
 
-	var ips []net.IP
-	for _, s := range targets {
-		ips = append(ips, net.ParseIP(s))
-	}
+	ips := targetIPs(targets, 0)
 
 	// Gate pairing the way the exporter does -- only a target address, and only
 	// in the request direction. Leaving this nil would pair everything and hide

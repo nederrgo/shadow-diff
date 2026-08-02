@@ -4,10 +4,13 @@ import (
 	"regexp"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/shadow-diff/monarchpb"
 )
 
 const (
 	finalizerName = "shadowtest.finalizers.shadow-diff.io"
+	s3Finalizer   = "shadow-diff.io/s3-cleanup"
 
 	labelManagedBy       = "app.kubernetes.io/managed-by"
 	labelShadowTestName  = "shadow-diff.io/shadowtest-name"
@@ -18,9 +21,11 @@ const (
 	labelResourceKind    = "shadow-diff.io/resource-kind"
 	valueResourceKindDep = "dependency"
 	valueManagedBy       = "monarch"
-	roleControlA         = "control-a"
-	roleControlB         = "control-b"
-	roleCandidate        = "candidate"
+	// Role names double as the wire keys of ComponentStatus.ShadowRolesReady, so
+	// they are defined from the shared contract rather than re-typed here.
+	roleControlA  = monarchpb.RoleControlA
+	roleControlB  = monarchpb.RoleControlB
+	roleCandidate = monarchpb.RoleCandidate
 
 	containerEnvoySidecar  = "envoy-sidecar"
 	containerApp           = "app"
@@ -33,13 +38,8 @@ const (
 	configMapKeyEnvoyYAML  = "envoy.yaml"
 	volumeNameEnvoyConfig  = "envoy-config"
 
-	defaultBeruGRPCAddress   = "beru.beru-system.svc.cluster.local:50051"
-	defaultBeruHTTPAddress   = "beru.beru-system.svc.cluster.local:8080"
-	defaultBeruIngestAddress = "beru-ingest.shadow-system.svc.cluster.local:8080"
-	defaultBeruGRPCTimeout   = "10s"
-	beruSystemNamespace      = "beru-system"
-	beruServiceName          = "beru"
-	envBeruGRPCAddress       = "BERU_GRPC_ADDRESS"
+	defaultBeruGRPCTimeout = "10s"
+	envBeruGRPCAddress     = "BERU_GRPC_ADDRESS"
 
 	egressProxyPort int32 = 10001
 
@@ -68,6 +68,13 @@ $IPT -t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-port 10001`
 	defaultIgrisListenersPath    = "/etc/igris/listeners.json"
 	igrisTerminationGraceSeconds = int64(35)
 
+	// shadowRoleReplicas is the replica count for each shadow role (control-a/b/candidate).
+	// ponytail: hardcoded to 1 today; bump this (or replace with a CRD field) if per-role
+	// scaling is ever needed — every consumer of the shadow pod count reads this constant.
+	shadowRoleReplicas     int32 = 1
+	defaultMaxQPSPerPod          = 50
+	envIgrisMaxConcurrency       = "IGRIS_MAX_CONCURRENCY"
+
 	envShopHTTPURL = "SHOP_HTTP_URL"
 	envBeruHTTPURL = "BERU_HTTP_URL"
 
@@ -77,7 +84,23 @@ $IPT -t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-port 10001`
 	envShopGRPCAddr = "SHOP_GRPC_ADDR"
 	envShopHTTPAddr = "SHOP_HTTP_ADDR"
 
-	volumeNameLocalBeruData = "beru-sqlite-data"
+	igrisAdminPort        = int32(9090)
+	envIgrisAdminAddr     = "IGRIS_ADMIN_ADDR"
+	defaultIgrisAdminAddr = ":9090"
+
+	envOperatingMode = "OPERATING_MODE"
+	envS3Bucket      = "S3_BUCKET"
+	envS3Endpoint    = "S3_ENDPOINT"
+	envS3Region      = "S3_REGION"
+	envTestNamespace = "TEST_NAMESPACE"
+	envTestName      = "TEST_NAME"
+	envSessionID     = "SESSION_ID"
+	envAWSAccessKey  = "AWS_ACCESS_KEY_ID"
+	envAWSSecretKey  = "AWS_SECRET_ACCESS_KEY"
+	secretKeyAccess  = "AWS_ACCESS_KEY_ID"
+	secretKeySecret  = "AWS_SECRET_ACCESS_KEY"
+
+	volumeNameLocalBeruData = "beru-wal-data"
 )
 
 var envoyImagePullPolicy = corev1.PullIfNotPresent

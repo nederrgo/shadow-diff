@@ -1,6 +1,5 @@
 # Build context is the repo root:
 #   docker build -f pipeline/igrises/igris-rabbitmq/Dockerfile <repo-root>
-# Layout mirrors the repo so replace ../../pkg/sample resolves.
 FROM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
@@ -8,6 +7,9 @@ ARG TARGETARCH
 WORKDIR /workspace
 
 COPY pipeline/pkg/sample/ ./pkg/sample/
+COPY pipeline/pkg/s3utils/ ./pkg/s3utils/
+COPY pipeline/pkg/trace/ ./pkg/trace/
+COPY pipeline/pkg/replay/ ./pkg/replay/
 COPY pipeline/igrises/igris-rabbitmq/go.mod pipeline/igrises/igris-rabbitmq/go.sum ./igrises/igris-rabbitmq/
 RUN cd igrises/igris-rabbitmq && go mod download
 

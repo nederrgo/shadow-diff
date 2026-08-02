@@ -257,26 +257,21 @@ func (r *ShadowTestReconciler) shadowDependenciesReady(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
-) (bool, error) {
+) (bool, workloadWaitReason, error) {
 	for _, dep := range st.Spec.Dependencies {
 		for _, role := range []string{roleControlA, roleControlB, roleCandidate} {
-			var deploy appsv1.Deployment
-			key := client.ObjectKey{
-				Namespace: shadowNS,
-				Name:      dependencyResourceName(dep.Name, role),
+			name := dependencyResourceName(dep.Name, role)
+			component := fmt.Sprintf("dependency %s", name)
+			ready, reason, err := r.deploymentBootReady(ctx, shadowNS, name, component)
+			if err != nil {
+				return false, workloadWaitReason{}, err
 			}
-			if err := r.Get(ctx, key, &deploy); err != nil {
-				if apierrors.IsNotFound(err) {
-					return false, nil
-				}
-				return false, err
-			}
-			if deploy.Status.AvailableReplicas < 1 {
-				return false, nil
+			if !ready {
+				return false, reason, nil
 			}
 		}
 	}
-	return true, nil
+	return true, workloadWaitReason{}, nil
 }
 
 func dependencyEnvValue(shadowNS string, dep enginev1alpha1.DependencySpec, role string) string {

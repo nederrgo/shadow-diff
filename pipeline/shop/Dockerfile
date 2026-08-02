@@ -1,8 +1,12 @@
-FROM golang:1.25-alpine AS builder
+# Build context must be pipeline/ (parent of shop/) so replace ../pkg/s3utils resolves.
+#   make docker-build  →  docker build -f Dockerfile -t … ..
+FROM golang:1.26-alpine AS builder
 WORKDIR /src
-COPY go.mod go.sum ./
+COPY pkg/s3utils /src/pkg/s3utils
+COPY shop/go.mod shop/go.sum /src/shop/
+WORKDIR /src/shop
 RUN go mod download
-COPY . .
+COPY shop/ /src/shop/
 RUN CGO_ENABLED=0 go build -o /shop ./cmd/shop
 
 FROM gcr.io/distroless/static:nonroot

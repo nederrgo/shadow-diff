@@ -137,7 +137,7 @@ make docker-build EGRESS_RELAY_RABBITMQ_IMG=egress-relay-rabbitmq:dev
 | `CONTROL_A_AMQP_URL` | Yes | — | Shadow broker AMQP URL for control-a |
 | `CONTROL_B_AMQP_URL` | Yes | — | Shadow broker AMQP URL for control-b |
 | `CANDIDATE_AMQP_URL` | Yes | — | Shadow broker AMQP URL for candidate |
-| `BERU_HTTP_URL` | Yes | — | Beru HTTP base (e.g. `http://beru.beru-system.svc.cluster.local:8080`) |
+| `BERU_HTTP_URL` | Yes | — | Beru HTTP base (e.g. `http://beru-local.<shadow-ns>.svc.cluster.local:8080`) |
 | `BERU_EGRESS_DIFF_PATH` | No | `/api/v1/egress/diff` | Egress diff ingest path |
 | `RECONNECT_MIN_DELAY` | No | `1s` | Initial broker reconnect delay |
 | `RECONNECT_MAX_DELAY` | No | `30s` | Max broker reconnect delay |

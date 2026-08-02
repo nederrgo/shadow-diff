@@ -9,7 +9,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
@@ -140,16 +139,11 @@ func (r *ShadowTestReconciler) egressRelayRabbitMQDeploymentReady(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
-) (bool, error) {
+) (bool, workloadWaitReason, error) {
 	if !needsEgressRelayRabbitMQ(st) {
-		return true, nil
+		return true, workloadWaitReason{}, nil
 	}
-	var deploy appsv1.Deployment
-	key := client.ObjectKey{Namespace: shadowNS, Name: egressRelayRabbitMQDeploymentName(st)}
-	if err := r.Get(ctx, key, &deploy); err != nil {
-		return false, client.IgnoreNotFound(err)
-	}
-	return deploy.Status.AvailableReplicas > 0, nil
+	return r.deploymentBootReady(ctx, shadowNS, egressRelayRabbitMQDeploymentName(st), "egress-relay-rabbitmq")
 }
 
 func (r *ShadowTestReconciler) reconcileEgressRelayRabbitMQStack(

@@ -27,7 +27,7 @@ generate:
 # actually breaks the Go/C contract. The trailing build proves the regenerated
 # object still compiles and embeds.
 verify-generate: generate
-	git diff --exit-code -- internal/capture/bpf_bpfel.go
+	git diff --exit-code -- internal/capture/bpf_bpfel.go internal/capture/nogate_bpfel.go
 	go build ./...
 
 docker-build:

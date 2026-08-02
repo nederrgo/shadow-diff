@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # E2E proof: igris-rabbitmq prod-gate sampling at 10% (shared FNV full-id rule).
+# Record captures in-sample AMQP to S3; replay fans out to A/B/C.
 # Golden keep: V=0; golden drop: V=26 (FNV-1a-64 of full 16-byte trace id).
 
 load '../../test_helper'
@@ -17,6 +18,7 @@ setup_file() {
   ensure_platform_ready
   build_test_images_if_needed
   load_test_images_if_needed
+  minio_ensure
 
   kubectl apply -f "${REPO}/testing/bats/manifests/rabbitmq-e2e/prod-rabbitmq.yaml"
   kubectl apply -f "${MANIFEST_DIR}/prod-mongo.yaml"
@@ -34,14 +36,15 @@ setup_file() {
   bats_prepare_shadowtest_slot "$SHADOWTEST" "$SHADOWTEST_NS"
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
-  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" \
-    --require-mongo --require-rmq --require-kaisel
+  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-kaisel
 
   SHADOW_NS="$(shadow_namespace)"
   export SHADOW_NS
 
   bats_source_e2e_helpers
   wait_local_beru_rollout "$SHADOW_NS"
+  monarch_wait_igris_running "$SHADOW_NS" "$SHADOWTEST" 180
+  kubectl wait --for=condition=Available deployment/shop -n "$SHADOW_NS" --timeout=180s
 
   bats_suite_mark SETUP_COMPLETE 1
   bats_write_suite_state
@@ -49,7 +52,12 @@ setup_file() {
 
 @test "RMQ sampling: in-sample trace reaches all shadow roles" {
   local oid="keep-${SAMPLE_KEEP_TID:0:8}"
+  run kaisel_ensure_record_mode
+  assert_success
   publish_rmq_order "$SAMPLE_KEEP_TID" "$oid"
+  sleep 3
+  run kaisel_switch_to_replay ingress
+  assert_success
   for role in control-a control-b candidate; do
     run assert_worker_processed_order "$role" "$oid"
     assert_success
@@ -58,8 +66,12 @@ setup_file() {
 
 @test "RMQ sampling: out-of-sample trace is not forwarded to shadows" {
   local oid="drop-${SAMPLE_DROP_TID:0:8}"
+  run kaisel_ensure_record_mode
+  assert_success
   publish_rmq_order "$SAMPLE_DROP_TID" "$oid"
-  sleep 20
+  sleep 3
+  run kaisel_switch_to_replay ingress
+  assert_success
   for role in control-a control-b candidate; do
     run assert_worker_trace_absent "$role" "$SAMPLE_DROP_TID"
     assert_success

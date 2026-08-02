@@ -35,6 +35,15 @@ spec:
         args:
         - -iface=$(KAISEL_IFACE)
         - -log-bodies=$(KAISEL_LOG_BODIES)
+        # Metrics are off by default. This pod runs with hostNetwork, so a
+        # listener binds a real port on every node -- opt in deliberately.
+        # Serves kaisel_ebpf_gate_tier, which reports whether this node's
+        # kernel accepted the in-kernel trace gate or fell back to user-space
+        # sampling. See /data-plane/kernel-compatibility.md.
+        # - -metrics-bind-address=:9099
+        # ports:
+        # - name: metrics
+        #   containerPort: 9099
         env:
         - name: KAISEL_IFACE
           valueFrom:

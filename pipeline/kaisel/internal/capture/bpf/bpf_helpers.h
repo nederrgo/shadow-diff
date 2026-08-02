@@ -17,6 +17,7 @@ typedef unsigned char __u8;
 typedef unsigned short __u16;
 typedef unsigned int __u32;
 typedef unsigned long long __u64;
+typedef int __s32;
 
 #define SEC(name) __attribute__((section(name), used))
 
@@ -24,10 +25,25 @@ typedef unsigned long long __u64;
 #define __uint(name, val) int(*name)[val]
 #define __type(name, val) typeof(val) *name
 
+/* Launder a value through an empty asm block so the compiler -- and therefore
+ * the verifier -- loses track of its provenance.
+ *
+ * The verifier explores a state per distinct value a register can hold. A
+ * value produced by a search carries one per candidate offset, and every
+ * instruction downstream is then re-verified once per value. Laundering
+ * collapses that to a single unknown scalar, which the caller re-bounds with
+ * an explicit range check. Same definition as libbpf's barrier_var().
+ */
+#define barrier_var(var) asm volatile("" : "+r"(var))
+
 /* enum bpf_map_type */
 #define BPF_MAP_TYPE_HASH 1
 #define BPF_MAP_TYPE_PERF_EVENT_ARRAY 4
 #define BPF_MAP_TYPE_PERCPU_ARRAY 6
+#define BPF_MAP_TYPE_LRU_HASH 9
+
+/* bpf_map_update_elem flags. BPF_ANY creates or overwrites. */
+#define BPF_ANY 0
 
 /* Write to the perf buffer of whichever CPU the program is running on. */
 #define BPF_F_CURRENT_CPU 0xffffffffULL
@@ -54,9 +70,19 @@ struct __sk_buff {
 
 /* Helpers by their fixed ABI ids, the pre-libbpf calling convention. */
 static void *(*bpf_map_lookup_elem)(void *map, const void *key) = (void *)1;
+static long (*bpf_map_update_elem)(void *map, const void *key,
+				   const void *value, __u64 flags) = (void *)2;
+static long (*bpf_map_delete_elem)(void *map, const void *key) = (void *)3;
 static long (*bpf_perf_event_output)(void *ctx, void *map, __u64 flags,
 				     void *data, __u64 size) = (void *)25;
 static long (*bpf_skb_load_bytes)(const void *skb, __u32 offset, void *to,
 				  __u32 len) = (void *)26;
+/* Calls callback_fn(index, callback_ctx) nr_loops times, stopping early when
+ * the callback returns non-zero. The verifier checks the callback once instead
+ * of simulating every iteration, which is the only way a scan this wide fits
+ * inside the 1M instruction ceiling. Kernel >= 5.17.
+ */
+static long (*bpf_loop)(__u32 nr_loops, void *callback_fn, void *callback_ctx,
+			__u64 flags) = (void *)181;
 
 #endif /* __KAISEL_BPF_HELPERS_H */

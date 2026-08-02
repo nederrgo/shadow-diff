@@ -1,7 +1,6 @@
-# ShadowTest for Monarch HTTP input integration tests.
-# Monarch derives oldImage from the prod target, applicationPort from its container
-# port (nginx:alpine → 80), and picks a conflict-free servicePort automatically.
-# Deploys igris-http, KaiselRule, and both mongo + rabbitmq dependency pods per role.
+# ShadowTest for Monarch HTTP input integration tests (replay stack).
+# ABC roles + deps + igris-http + Shop; Kaisel disabled in replay.
+# Monarch derives oldImage / applicationPort / servicePort from the prod target.
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest
 metadata:
@@ -10,6 +9,17 @@ metadata:
 spec:
   targetDeployment: monarch-integ-target
   newImage: nginx:alpine
+  mode: replay
+  sessionID: session-http-input-empty
+
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain
 
   dependencies:
     - name: rabbitmq

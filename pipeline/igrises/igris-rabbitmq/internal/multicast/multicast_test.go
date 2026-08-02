@@ -5,94 +5,98 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
+	"github.com/shadow-diff/igris-rabbitmq/internal/capture"
 	"github.com/shadow-diff/igris-rabbitmq/internal/config"
-	"github.com/shadow-diff/igris-rabbitmq/internal/trace"
+	"github.com/shadow-diff/trace"
 )
 
-type recordingPublisher struct {
-	headers []amqp.Table
+type fakeSink struct {
+	recs []capture.IngressCapture
 }
 
-func (p *recordingPublisher) PublishAll(_ amqp.Delivery, headers amqp.Table) error {
-	for i := 0; i < 3; i++ {
-		copyTable := amqp.Table{}
-		for k, v := range headers {
-			copyTable[k] = v
-		}
-		p.headers = append(p.headers, copyTable)
-	}
+func (f *fakeSink) Add(v any) error {
+	f.recs = append(f.recs, v.(capture.IngressCapture))
 	return nil
 }
 
-func (p *recordingPublisher) Close() {}
-
-func assertIdenticalTraceHeaders(t *testing.T, tables []amqp.Table) {
-	t.Helper()
-	if len(tables) != 3 {
-		t.Fatalf("got %d publishes, want 3", len(tables))
-	}
-	wantTP := tables[0][trace.HeaderTraceparent]
-	for i, h := range tables {
-		if h[trace.HeaderTraceparent] != wantTP {
-			t.Fatalf("publish %d traceparent = %v, want %v", i, h[trace.HeaderTraceparent], wantTP)
-		}
-	}
-}
-
-func TestHandleDelivery_dropsWithoutTraceparent(t *testing.T) {
+func TestRecordHandleDelivery_dropsWithoutTraceparent(t *testing.T) {
 	t.Parallel()
-	rec := &recordingPublisher{}
-	r := &Runner{publisher: rec, cfg: config.Config{SamplePercentage: 100}}
+	sink := &fakeSink{}
+	r := &RecordRunner{sink: sink, cfg: config.Config{SamplePercentage: 100}}
 	r.handleDelivery(amqp.Delivery{Body: []byte(`{}`), Headers: nil})
-	if len(rec.headers) != 0 {
-		t.Fatalf("got %d publishes, want 0 (tracing required)", len(rec.headers))
-	}
-	r.handleDelivery(amqp.Delivery{Body: []byte(`{}`), Headers: amqp.Table{}})
-	if len(rec.headers) != 0 {
-		t.Fatalf("got %d publishes, want 0", len(rec.headers))
+	if len(sink.recs) != 0 {
+		t.Fatalf("got %d captures, want 0", len(sink.recs))
 	}
 }
 
-func TestHandleDelivery_multicastTraceIdentity_traceparentOnly(t *testing.T) {
+func TestRecordHandleDelivery_capturesWhenSampledIn(t *testing.T) {
 	t.Parallel()
-	inbound := "01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
-	rec := &recordingPublisher{}
-	r := &Runner{publisher: rec, cfg: config.Config{SamplePercentage: 100}}
-	msg := amqp.Delivery{
-		Body:    []byte(`{}`),
-		Headers: amqp.Table{trace.HeaderTraceparent: inbound},
-	}
-	r.handleDelivery(msg)
-	assertIdenticalTraceHeaders(t, rec.headers)
-	if rec.headers[0][trace.HeaderTraceparent] != inbound {
-		t.Fatalf("traceparent = %v", rec.headers[0][trace.HeaderTraceparent])
-	}
-}
-
-func TestHandleDelivery_samplesOutAtTenPercent(t *testing.T) {
-	t.Parallel()
-	// FNV full-id golden drop (V=26) at 10% under (V*100)<(10*256)
-	inbound := "00-000000000000000000000000000000f9-bbbbbbbbbbbbbbbb-01"
-	rec := &recordingPublisher{}
-	r := &Runner{publisher: rec, cfg: config.Config{SamplePercentage: 10}}
-	r.handleDelivery(amqp.Delivery{
-		Body:    []byte(`{}`),
-		Headers: amqp.Table{trace.HeaderTraceparent: inbound},
-	})
-	if len(rec.headers) != 0 {
-		t.Fatalf("got %d publishes, want 0 (sampled out)", len(rec.headers))
-	}
-}
-
-func TestHandleDelivery_samplesInAtTenPercent(t *testing.T) {
-	t.Parallel()
-	// FNV full-id golden keep (V=0) at 10%
 	inbound := "00-00000000000000000000000000000087-bbbbbbbbbbbbbbbb-01"
-	rec := &recordingPublisher{}
-	r := &Runner{publisher: rec, cfg: config.Config{SamplePercentage: 10}}
+	sink := &fakeSink{}
+	r := &RecordRunner{
+		sink: sink,
+		cfg: config.Config{
+			SamplePercentage:      10,
+			ShadowPublishExchange: "orders",
+		},
+	}
+	r.handleDelivery(amqp.Delivery{
+		Body:         []byte(`{"ok":true}`),
+		RoutingKey:   "order.created",
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent,
+		Headers:      amqp.Table{trace.HeaderTraceparent: inbound},
+	})
+	if len(sink.recs) != 1 {
+		t.Fatalf("got %d captures, want 1", len(sink.recs))
+	}
+	rec := sink.recs[0]
+	if rec.Traceparent != inbound || rec.RoutingKey != "order.created" || rec.Exchange != "orders" {
+		t.Fatalf("%+v", rec)
+	}
+	if string(rec.Body) != `{"ok":true}` {
+		t.Fatalf("body=%q", rec.Body)
+	}
+}
+
+func TestRecordHandleDelivery_samplesOut(t *testing.T) {
+	t.Parallel()
+	inbound := "00-000000000000000000000000000000f9-bbbbbbbbbbbbbbbb-01"
+	sink := &fakeSink{}
+	r := &RecordRunner{sink: sink, cfg: config.Config{SamplePercentage: 10}}
 	r.handleDelivery(amqp.Delivery{
 		Body:    []byte(`{}`),
 		Headers: amqp.Table{trace.HeaderTraceparent: inbound},
 	})
-	assertIdenticalTraceHeaders(t, rec.headers)
+	if len(sink.recs) != 0 {
+		t.Fatalf("got %d captures, want 0 (sampled out)", len(sink.recs))
+	}
 }
+
+func TestPublishCapture_roundTrip(t *testing.T) {
+	t.Parallel()
+	p := &recordingPub{}
+	rec := capture.IngressCapture{
+		Traceparent:  "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+		RoutingKey:   "k",
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent,
+		Body:         []byte(`x`),
+	}
+	if err := p.PublishCapture(rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.recs) != 1 {
+		t.Fatalf("%d", len(p.recs))
+	}
+}
+
+type recordingPub struct {
+	recs []capture.IngressCapture
+}
+
+func (p *recordingPub) PublishCapture(rec capture.IngressCapture) error {
+	p.recs = append(p.recs, rec)
+	return nil
+}
+func (p *recordingPub) Close() {}

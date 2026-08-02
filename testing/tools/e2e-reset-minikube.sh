@@ -21,6 +21,12 @@
 #   ./testing/tools/e2e-reset-minikube.sh --no-reset      # deploy/upgrade only (no deletes; reuses running minikube)
 #   ./testing/tools/e2e-reset-minikube.sh --skip-load --skip-build --no-reset  # fastest: cluster already up + images present
 #
+# A PostgreSQL fixture is always deployed to monarch-system. The manager always
+# gets BERU_DB_SECRET=monarch-system/beru-postgres so beru-local uses Postgres +
+# a disk WAL EmptyDir. Reach Postgres from the host (Go conformance) on NodePort:
+#   export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@$(minikube ip):30432/beru?sslmode=disable"
+#   go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection' -v
+#
 set -euo pipefail
 
 # testing/tools/<script> → repo root is ../..
@@ -37,6 +43,8 @@ BERU_IMG="${BERU_IMG:-beru:dev}"
 SHOP_IMG="${SHOP_IMG:-shop:dev}"
 IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
 KAISEL_IMG="${KAISEL_IMG:-kaisel:dev}"
+TUSK_IMG="${TUSK_IMG:-tusk:dev}"
+THE_SYSTEM_IMG="${THE_SYSTEM_IMG:-the-system:dev}"
 
 SHADOWTEST="${SHADOWTEST:-my-app-shadow}"
 SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
@@ -47,7 +55,7 @@ NO_RESET=0
 
 usage() {
   # Comment header only (through the blank line before set -euo).
-  sed -n '2,25p' "$0"
+  sed -n '2,31p' "$0"
   echo "Flags: --skip-build --skip-load --no-reset -h"
 }
 
@@ -64,7 +72,7 @@ done
 
 export SKIP_BUILD SKIP_LOAD NO_RESET
 
-export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG SHOP_IMG IGRIS_IMG KAISEL_IMG
+export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG SHOP_IMG IGRIS_IMG KAISEL_IMG TUSK_IMG THE_SYSTEM_IMG
 
 need() {
   command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing command: $1" >&2; exit 1; }
@@ -97,7 +105,7 @@ fi
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   echo "==> Build container images (minikube docker daemon)"
   if [[ "${MONARCH_NO_CACHE:-0}" == "1" ]]; then
-    docker build --no-cache -t "$MONARCH_IMG" "$REPO/pipeline/monarch"
+    docker build --no-cache -f "$REPO/pipeline/monarch/Dockerfile" -t "$MONARCH_IMG" "$REPO/pipeline"
   else
     make -C pipeline/monarch docker-build IMG="$MONARCH_IMG"
   fi
@@ -105,11 +113,13 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   make shop-docker-build SHOP_IMG="$SHOP_IMG"
   make igris-docker-build IGRIS_IMG="$IGRIS_IMG"
   make kaisel-docker-build KAISEL_IMG="$KAISEL_IMG"
+  make tusk-docker-build TUSK_IMG="$TUSK_IMG"
+  make the-system-docker-build THE_SYSTEM_IMG="$THE_SYSTEM_IMG"
 fi
 
 if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
   echo "==> Sync local images into containerd (none driver)"
-  load_minikube_images "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$KAISEL_IMG"
+  load_minikube_images "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$KAISEL_IMG" "$TUSK_IMG" "$THE_SYSTEM_IMG"
 fi
 
 if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
@@ -131,20 +141,38 @@ e2e_reset_deploy_stack() {
 
   echo "==> Monarch operator"
   make -C pipeline/monarch deploy IMG="$MONARCH_IMG"
-  kubectl set env deployment/monarch-controller-manager -n monarch-system \
-    MONARCH_MODE=dev BERU_IMAGE="$BERU_IMG" SHOP_IMAGE="$SHOP_IMG"
+
+  # Local PostgreSQL fixture for Beru's durable backend (BYO-Postgres). Not
+  # managed by Monarch. Applied here because `make deploy` creates monarch-system,
+  # and the Secret must exist before the manager reconciles a ShadowTest.
+  echo "==> PostgreSQL (monarch-system, BYO-Postgres local fixture)"
+  kubectl apply -f "$REPO/testing/bats/manifests/postgres/deployment.yaml"
+  kubectl apply -f "$REPO/testing/bats/manifests/postgres/service.yaml"
+  kubectl rollout status deployment/postgres -n monarch-system --timeout=180s
+
+  # BERU_DB_SECRET: Monarch replicates the Secret into each shadow namespace;
+  # beru-local mounts it via envFrom and keeps a disk WAL at /data.
+  echo "    beru-local storage: postgres (BERU_DB_SECRET=monarch-system/beru-postgres)"
+  manager_env=(MONARCH_MODE=dev BERU_IMAGE="$BERU_IMG" SHOP_IMAGE="$SHOP_IMG"
+    BERU_DB_SECRET=monarch-system/beru-postgres)
+  kubectl set env deployment/monarch-controller-manager -n monarch-system "${manager_env[@]}"
+
   if [[ "${SKIP_LOAD:-0}" -eq 0 ]]; then
     echo "==> Restart Monarch manager (pick up re-loaded ${MONARCH_IMG})"
     kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
   fi
   kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
 
-  # beru-system is optional for ShadowTests (beru-local), but bats platform health
-  # expects the Deployment; deploy YAML defaults to beru:latest — pin to BERU_IMG.
-  echo "==> Beru (beru-system image=${BERU_IMG})"
-  kubectl apply -f "$REPO/pipeline/beru/deploy/"
-  kubectl set image deployment/beru -n beru-system beru="$BERU_IMG"
-  kubectl rollout status deployment/beru -n beru-system --timeout=180s
+  # Local MinIO fixture for ShadowTest.spec.storage (BYOB). Not managed by Monarch.
+  echo "==> MinIO (monarch-system, BYOB local fixture)"
+  kubectl apply -f "$REPO/testing/bats/manifests/minio/deployment.yaml"
+  kubectl apply -f "$REPO/testing/bats/manifests/minio/service.yaml"
+  kubectl apply -f "$REPO/testing/bats/manifests/minio/credentials-secret.yaml"
+  kubectl rollout status deployment/minio -n monarch-system --timeout=180s
+  # Job name is fixed; delete any prior run so apply can recreate.
+  kubectl delete job minio-create-bucket -n monarch-system --ignore-not-found --wait=true
+  kubectl apply -f "$REPO/testing/bats/manifests/minio/bucket-job.yaml"
+  kubectl wait --for=condition=complete job/minio-create-bucket -n monarch-system --timeout=120s
 
   # Kaisel: cluster-wide HTTP ingress capture (Monarch writes KaiselRule per ShadowTest).
   # shellcheck source=testing/bats/lib/kaisel.bash
@@ -153,6 +181,22 @@ e2e_reset_deploy_stack() {
   kaisel_daemonset_deploy
   kaisel_daemonset_wait_ready 120
 
+  # Tusk: cluster-wide BFF — Monarch :9090 → topology WS, and shared Postgres
+  # (beru-postgres Secret via envFrom) → ShadowDiff REST/WS for The System.
+  echo "==> Tusk BFF (monarch-system image=${TUSK_IMG})"
+  if ! kubectl get secret beru-postgres -n monarch-system >/dev/null 2>&1; then
+    echo "ERROR: secret/beru-postgres missing in monarch-system (required for Tusk ShadowDiff)" >&2
+    exit 1
+  fi
+  kubectl apply -k "$REPO/pipeline/tusk/deploy"
+  kubectl set image deployment/tusk -n monarch-system "tusk=${TUSK_IMG}"
+  kubectl rollout status deployment/tusk -n monarch-system --timeout=120s
+
+  # The System: cluster-wide topology / ShadowTest editor UI (Nginx :80).
+  echo "==> The System UI (monarch-system image=${THE_SYSTEM_IMG})"
+  kubectl apply -k "$REPO/pipeline/the-system/deploy"
+  kubectl set image deployment/the-system -n monarch-system "the-system=${THE_SYSTEM_IMG}"
+  kubectl rollout status deployment/the-system -n monarch-system --timeout=120s
 
   echo "==> Production app (echo on :80, memory limits)"
   kubectl apply -f "$REPO/testing/bats/manifests/e2e-prod-app.yaml"
@@ -212,6 +256,11 @@ PHASE:.status.phase,KAISEL:.status.kaiselPhase,NS:.status.shadowNamespace,CAPTUR
   echo "  Kaisel DaemonSet: kaisel-system (image ${KAISEL_IMG})"
   echo "  Kaisel ingress:   KaiselRule kaisel-${SHADOWTEST} -> igris in ${SHADOW_NS}"
   echo "  Beru (local):     beru-local.${SHADOW_NS}.svc.cluster.local:50051"
+  echo "  MinIO (local):    minio-service.monarch-system.svc.cluster.local:9000 (bucket shadow-diff-local)"
+  echo "  Postgres (local): postgres.monarch-system.svc.cluster.local:5432 (db/user/pass: beru)"
+  local node_ip
+  node_ip=$(minikube ip -p "${MINIKUBE_PROFILE}" 2>/dev/null || echo '<minikube ip>')
+  echo "    from host:      postgres://beru:beru@${node_ip}:30432/beru?sslmode=disable"
   echo ""
   echo "Run bats tests:     make test-bats-e2e"
   echo "  Kaisel route E2E: make test-bats-kaisel"

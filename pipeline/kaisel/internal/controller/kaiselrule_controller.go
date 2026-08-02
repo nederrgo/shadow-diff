@@ -123,9 +123,16 @@ func stateFrom(spec enginev1alpha1.KaiselRuleSpec) ruleState {
 
 func diff(prev, next ruleState) capture.MapUpdate {
 	var upd capture.MapUpdate
+	// The kernel map value is the sample percentage, so an edit that changes
+	// only samplePercentage still has to be written -- re-emitting every IP is
+	// the whole fix, since Put is idempotent.
+	repct := prev.samplePercentage != next.samplePercentage
 	for ip := range next.ips {
-		if !prev.ips[ip] {
-			upd.AddIPs = append(upd.AddIPs, net.ParseIP(ip))
+		if repct || !prev.ips[ip] {
+			upd.AddIPs = append(upd.AddIPs, capture.TargetIP{
+				IP:               net.ParseIP(ip),
+				SamplePercentage: next.samplePercentage,
+			})
 		}
 	}
 	for ip := range prev.ips {

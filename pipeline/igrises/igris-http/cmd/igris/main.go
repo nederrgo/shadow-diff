@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,7 +13,9 @@ import (
 	"github.com/shadow-diff/igris/internal/core"
 	"github.com/shadow-diff/igris/internal/driver"
 	httpdriver "github.com/shadow-diff/igris/internal/driver/http"
-	tcpdriver "github.com/shadow-diff/igris/internal/driver/tcpstream"
+	"github.com/shadow-diff/igris/internal/payload"
+	"github.com/shadow-diff/igris/internal/replay"
+	"github.com/shadow-diff/s3utils"
 )
 
 func main() {
@@ -20,12 +23,75 @@ func main() {
 	log := slog.Default()
 	hub := core.NewHub(cfg, log)
 
+	var uploader *s3utils.BatchUploader
+	var engine *replay.Engine
+	var adminSrv *http.Server
+
+	switch cfg.OperatingMode {
+	case s3utils.ModeRecord:
+		scfg, err := s3utils.ConfigFromEnv(s3utils.DataTypeIngress)
+		if err != nil {
+			slog.Error("record mode S3 config", "err", err)
+			os.Exit(1)
+		}
+		uploader, err = s3utils.NewBatchUploader(context.Background(), scfg, log)
+		if err != nil {
+			slog.Error("record mode S3 uploader", "err", err)
+			os.Exit(1)
+		}
+		hub.Uploader = uploader
+		log.Info("Igris operating mode: record", "bucket", scfg.Bucket, "prefix", scfg.ObjectKeyPrefix())
+
+	case s3utils.ModeReplay:
+		scfg, err := s3utils.ConfigFromEnv(s3utils.DataTypeIngress)
+		if err != nil {
+			slog.Error("replay mode S3 config", "err", err)
+			os.Exit(1)
+		}
+		reader, err := s3utils.NewS3Reader(context.Background(), scfg)
+		if err != nil {
+			slog.Error("replay mode S3 reader", "err", err)
+			os.Exit(1)
+		}
+		ctxLoad, cancelLoad := context.WithTimeout(context.Background(), 5*time.Minute)
+		records, err := replay.LoadIngress(ctxLoad, reader, log)
+		cancelLoad()
+		if err != nil {
+			slog.Error("replay ingress preload failed", "err", err)
+			os.Exit(1)
+		}
+		log.Info("Loaded ingress records from S3",
+			"count", len(records),
+			"session", scfg.SessionID,
+			"prefix", scfg.ObjectKeyPrefix(),
+		)
+		targets := make([]payload.Target, 0, 3)
+		for _, t := range cfg.Targets() {
+			targets = append(targets, payload.Target{Name: t.Name, BaseURL: t.BaseURL})
+		}
+		engine = replay.NewEngine(records, targets, &http.Client{}, log)
+		mux := http.NewServeMux()
+		(&replay.Handler{Engine: engine}).Mount(mux)
+		adminSrv = &http.Server{Addr: cfg.AdminAddr, Handler: mux}
+		go func() {
+			log.Info("Igris admin listening", "addr", cfg.AdminAddr)
+			if err := adminSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("admin server stopped", "err", err)
+				os.Exit(1)
+			}
+		}()
+		log.Info("Igris operating mode: replay")
+
+	default:
+		slog.Error("OPERATING_MODE must be record or replay", "got", cfg.OperatingMode)
+		os.Exit(1)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	factories := map[string]func() driver.InputDriver{
-		"http_request": func() driver.InputDriver { return httpdriver.New(cfg.MaxBodySize) },
-		"tcp_stream":   func() driver.InputDriver { return tcpdriver.New() },
+		"http_request": func() driver.InputDriver { return httpdriver.New(cfg.MaxBodySize, cfg.MaxConcurrency) },
 	}
 
 	runDone := make(chan struct{})
@@ -51,6 +117,13 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
+	if adminSrv != nil {
+		_ = adminSrv.Shutdown(shutdownCtx)
+	}
+	if engine != nil {
+		engine.Wait()
+	}
+
 	for _, d := range drivers {
 		if err := d.StopAccepting(shutdownCtx); err != nil {
 			slog.Error("driver shutdown failed", "driver", d.Type(), "err", err)
@@ -62,5 +135,10 @@ func main() {
 	slog.Info("waiting for pending TCP streams")
 	hub.WaitPendingStreams()
 	hub.Shutdown()
+	if uploader != nil {
+		if err := uploader.Close(shutdownCtx); err != nil {
+			slog.Error("S3 uploader close", "err", err)
+		}
+	}
 	slog.Info("Igris stopped")
 }

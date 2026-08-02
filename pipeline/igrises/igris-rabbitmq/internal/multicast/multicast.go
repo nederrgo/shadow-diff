@@ -8,13 +8,15 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
+	"github.com/shadow-diff/igris-rabbitmq/internal/amqptrace"
+	"github.com/shadow-diff/igris-rabbitmq/internal/capture"
 	"github.com/shadow-diff/igris-rabbitmq/internal/config"
-	"github.com/shadow-diff/igris-rabbitmq/internal/trace"
 	"github.com/shadow-diff/sample"
+	"github.com/shadow-diff/trace"
 )
 
 type multicastPublisher interface {
-	PublishAll(msg amqp.Delivery, headers amqp.Table) error
+	PublishCapture(rec capture.IngressCapture) error
 	Close()
 }
 
@@ -75,43 +77,54 @@ func (p *ShadowPublisher) Close() {
 	p.conns = nil
 }
 
-func (p *ShadowPublisher) PublishAll(msg amqp.Delivery, headers amqp.Table) error {
+// shadowPublishExpirationMs bounds how long a mirrored message sits in a shadow queue.
+const shadowPublishExpirationMs = "10000"
+
+func (p *ShadowPublisher) PublishCapture(rec capture.IngressCapture) error {
+	headers := amqptrace.StringMapToTable(rec.Headers)
+	if tp := rec.Traceparent; tp != "" {
+		if headers == nil {
+			headers = amqp.Table{}
+		}
+		headers[trace.HeaderTraceparent] = tp
+	}
+	exchange := rec.Exchange
+	if exchange == "" {
+		exchange = p.exchange
+	}
 	pub := amqp.Publishing{
 		Headers:      headers,
-		ContentType:  msg.ContentType,
-		Body:         msg.Body,
-		DeliveryMode: msg.DeliveryMode,
+		ContentType:  rec.ContentType,
+		Body:         rec.Body,
+		DeliveryMode: rec.DeliveryMode,
+		Expiration:   shadowPublishExpirationMs,
 	}
 	for i, ch := range p.channels {
-		if err := ch.Publish(p.exchange, msg.RoutingKey, false, false, pub); err != nil {
+		if err := ch.Publish(exchange, rec.RoutingKey, false, false, pub); err != nil {
 			return fmt.Errorf("publish shadow broker %d: %w", i, err)
 		}
 	}
 	return nil
 }
 
-type Runner struct {
-	cfg       config.Config
-	publisher multicastPublisher
-	wg        sync.WaitGroup
+type recordSink interface {
+	Add(any) error
 }
 
-func NewRunner(cfg config.Config) (*Runner, error) {
-	pub, err := NewShadowPublisher(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &Runner{cfg: cfg, publisher: pub}, nil
+// RecordRunner consumes the prod shadow queue and buffers captures to S3.
+type RecordRunner struct {
+	cfg    config.Config
+	sink   recordSink
+	wg     sync.WaitGroup
 }
 
-func (r *Runner) Close() {
-	if r.publisher != nil {
-		r.publisher.Close()
-	}
-	r.wg.Wait()
+func NewRecordRunner(cfg config.Config, sink recordSink) *RecordRunner {
+	return &RecordRunner{cfg: cfg, sink: sink}
 }
 
-func (r *Runner) Run(ctx context.Context) error {
+func (r *RecordRunner) Close() { r.wg.Wait() }
+
+func (r *RecordRunner) Run(ctx context.Context) error {
 	conn, err := amqp.Dial(r.cfg.ProdURL)
 	if err != nil {
 		return fmt.Errorf("dial prod: %w", err)
@@ -132,8 +145,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("consume %q: %w", r.cfg.ShadowQueueName, err)
 	}
-
-	log.Printf("consuming queue %s, publishing to exchange %s", r.cfg.ShadowQueueName, r.cfg.ShadowPublishExchange)
+	log.Printf("record: consuming queue %s → S3", r.cfg.ShadowQueueName)
 
 	for {
 		select {
@@ -152,29 +164,56 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 }
 
-func (r *Runner) handleDelivery(msg amqp.Delivery) {
-	// Tracing is a prerequisite: no valid inbound traceparent → drop (do not mint).
-	resolved, ok := trace.TryInbound(msg.Headers)
+func (r *RecordRunner) handleDelivery(msg amqp.Delivery) {
+	resolved, ok := amqptrace.TryInbound(msg.Headers)
 	if !ok {
-		if err := msg.Ack(false); err != nil {
-			log.Printf("ack (no traceparent) failed: %v", err)
-		}
+		_ = msg.Ack(false)
 		return
 	}
 	if !sample.SampledIn(resolved.TraceID, r.cfg.SamplePercentage) {
-		// Sampled out at prod gate — do not forward to shadow brokers.
-		if err := msg.Ack(false); err != nil {
-			log.Printf("ack (sampled out) failed: %v", err)
-		}
+		_ = msg.Ack(false)
 		return
 	}
-	headers := trace.StampHeaders(msg.Headers, resolved)
-	if err := r.publisher.PublishAll(msg, headers); err != nil {
-		log.Printf("multicast failed: %v", err)
+	headers := amqptrace.StampHeaders(msg.Headers, resolved)
+	rec := capture.IngressCapture{
+		Traceparent:  resolved.Traceparent,
+		TraceID:      resolved.TraceID,
+		RoutingKey:   msg.RoutingKey,
+		Exchange:     r.cfg.ShadowPublishExchange,
+		ContentType:  msg.ContentType,
+		DeliveryMode: msg.DeliveryMode,
+		Headers:      amqptrace.TableToStringMap(headers),
+		Body:         msg.Body,
+	}
+	if err := r.sink.Add(rec); err != nil {
+		log.Printf("s3 capture failed: %v", err)
 		_ = msg.Nack(false, true)
 		return
 	}
-	if err := msg.Ack(false); err != nil {
-		log.Printf("ack failed: %v", err)
+	_ = msg.Ack(false)
+}
+
+// ReplayPublisher is the fan-out surface used by the replay engine.
+type ReplayPublisher struct {
+	pub multicastPublisher
+}
+
+func NewReplayPublisher(cfg config.Config) (*ReplayPublisher, error) {
+	pub, err := NewShadowPublisher(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &ReplayPublisher{pub: pub}, nil
+}
+
+func (r *ReplayPublisher) Close() {
+	if r.pub != nil {
+		r.pub.Close()
+	}
+}
+
+func (r *ReplayPublisher) Dispatch(_ context.Context, rec capture.IngressCapture) {
+	if err := r.pub.PublishCapture(rec); err != nil {
+		log.Printf("replay publish failed: %v", err)
 	}
 }

@@ -43,7 +43,7 @@ type RawReport struct {
 	CapturedAt     time.Time        `json:"captured_at"`
 }
 
-// TraceSummary is one dashboard row: a trace plus protocol with diff status.
+// TraceSummary is one list row: a trace plus protocol with diff status.
 type TraceSummary struct {
 	TraceID        string           `json:"trace_id"`
 	Protocol       string           `json:"protocol"`
@@ -89,6 +89,13 @@ type BaselineFailure struct {
 	Detail    string `json:"detail,omitempty"`
 	ControlA  string `json:"control_a,omitempty"`
 	ControlB  string `json:"control_b,omitempty"`
+}
+
+// TraceGroup is one (trace_id, protocol) pair for listing.
+type TraceGroup struct {
+	TraceID        string
+	Protocol       string
+	LastCapturedAt string
 }
 
 // StaleIncompleteTrace is a reaper candidate: incomplete roles past the timeout.

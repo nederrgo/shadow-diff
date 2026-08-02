@@ -1,0 +1,19 @@
+# ShadowTest — record mode lifecycle / stack shape.
+# Expect: KaiselRule + igris + shop (+ beru-local); no ABC roles.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-monarch-lifecycle-record
+  namespace: default
+spec:
+  targetDeployment: monarch-lifecycle-target
+  newImage: nginx:alpine
+  mode: record
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain

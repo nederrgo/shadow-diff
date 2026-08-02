@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	"github.com/gopacket/gopacket"
+	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -25,6 +26,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/shadow-diff/kaisel/internal/capture"
 	kaiselcontroller "github.com/shadow-diff/kaisel/internal/controller"
@@ -35,13 +38,24 @@ import (
 
 var scheme = runtime.NewScheme()
 
+// gateTier reports which build of the eBPF program this node's kernel accepted,
+// so a degraded fleet is visible without grepping per-node logs. Set once, after
+// the program loads; the mode label carries the meaning, the value is always 1.
+var gateTier = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Name: "kaisel_ebpf_gate_tier",
+	Help: "Which eBPF program build loaded: 1 = in-kernel trace gate (bpf_loop, kernel >= 5.17), 2 = flow filters only with sampling in user space.",
+}, []string{"mode"})
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(enginev1alpha1.AddToScheme(scheme))
+	metrics.Registry.MustRegister(gateTier)
 }
 
-// targets collects repeatable -target flags for manual/test runs.
-type targets []net.IP
+// targets collects repeatable -target flags for manual/test runs. Percentage
+// is left at 0 (unset, so no kernel gate); real sampling arrives per-rule from
+// KaiselRule.
+type targets []capture.TargetIP
 
 func (t *targets) String() string { return "" }
 func (t *targets) Set(v string) error {
@@ -50,7 +64,7 @@ func (t *targets) Set(v string) error {
 		if ip == nil || ip.To4() == nil {
 			return &net.ParseError{Type: "IPv4 address", Text: s}
 		}
-		*t = append(*t, ip)
+		*t = append(*t, capture.TargetIP{IP: ip})
 	}
 	return nil
 }
@@ -78,6 +92,7 @@ func main() {
 	flag.Var(&prts, "port", "TCP port to capture (repeatable, comma-separated; empty = all ports)")
 	l2Off := flag.Int("l2-off", -1, "link-layer header size: -1 autodetect, 0 raw L3, 14 Ethernet")
 	perCPU := flag.Int("percpu-buffer", 0, "per-CPU perf ring bytes (0 = default)")
+	admitted := flag.Int("admitted-entries", 0, "kernel LRU size for sampled-in connections (0 = default 32768)")
 	logBodies := flag.Bool("log-bodies", false, "include request body content (truncated to 4KB) in logs; captured bodies are real production data")
 	// Some k8s packages register -kubeconfig in init(); look it up rather than
 	// re-registering to avoid the "flag redefined" panic.
@@ -85,6 +100,9 @@ func main() {
 		flag.String("kubeconfig", "", "path to kubeconfig (empty = in-cluster)")
 	}
 	namespace := flag.String("namespace", "", "namespace to scope KaiselRule watch (empty = all namespaces)")
+	// Off by default: the DaemonSet runs with hostNetwork, so a listener here
+	// binds a real port on every node. Opt in when you want the gauge.
+	metricsAddr := flag.String("metrics-bind-address", "0", "address to serve Prometheus metrics on (\"0\" disables; DaemonSet is hostNetwork, so this binds a node port)")
 	flag.Parse()
 	kubeconfig := flag.Lookup("kubeconfig").Value.String()
 
@@ -111,7 +129,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	mgrOpts := ctrl.Options{Scheme: scheme}
+	mgrOpts := ctrl.Options{
+		Scheme:  scheme,
+		Metrics: metricsserver.Options{BindAddress: *metricsAddr},
+	}
 	if *namespace != "" {
 		mgrOpts.Cache = ctrl.Options{}.Cache
 		mgrOpts.Cache.DefaultNamespaces = map[string]cache.Config{*namespace: {}}
@@ -138,9 +159,13 @@ func main() {
 		Ports:           prts,
 		Framing:         framing,
 		PerCPUBuffer:    *perCPU,
+		AdmittedEntries: *admitted,
 		Log:             log,
 		LogBodies:       *logBodies,
 		Updates:         updates,
+		OnTier: func(t capture.Tier) {
+			gateTier.WithLabelValues(t.String()).Set(float64(t))
+		},
 		OnTransaction:   exporter.HandleTransaction,
 		WantTransaction: exporter.WantTransaction,
 		OnRequest: func(netFlow, transportFlow gopacket.Flow, req *http.Request) {

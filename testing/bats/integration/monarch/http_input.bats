@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Monarch integration: HTTP input — verifies that Monarch correctly reconciles a
-# ShadowTest with driver: http_request, bringing up the igris-http multicast
-# hub and KaiselRule (ingress capture) alongside the three shadow app roles.
+# replay-mode ShadowTest with igris-http, Shop, ABC roles, and per-role deps.
+# KaiselRule is absent in replay (kaiselPhase=Disabled).
 #
 # Testing pyramid layer: integration (no traffic, no Beru data flow).
 # shellcheck shell=bash
@@ -13,6 +13,7 @@ FIXTURE_DIR="${BATS_TEST_DIRNAME}/../../fixtures/integration/monarch-http-input"
 setup_file() {
   bats_begin_suite "bats-monarch-http-input" "default"
   ensure_platform_ready
+  minio_ensure
 
   # Prod target must exist before ShadowTest CR so Monarch can read its container
   # ports during the HTTP ingress capture port-match check.
@@ -23,11 +24,22 @@ setup_file() {
   bats_suite_mark PROD_DEPLOYED 1
 
   bats_prepare_shadowtest_slot "$SHADOWTEST" "$SHADOWTEST_NS"
+
+  # Replay + rabbitmq/mongo deps need egress-relay + shadow-soldier. Platform
+  # "already healthy" skips image load — build into minikube docker if missing.
+  bats_ensure_dev_image \
+    "${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:dev}" \
+    "${REPO}/pipeline/egress-relay-rabbitmq" \
+    "EGRESS_RELAY_RABBITMQ_IMG"
+  bats_ensure_dev_image \
+    "${SHADOW_SOLDIER_IMG:-shadow-soldier:dev}" \
+    "${REPO}/pipeline/shadow-soldier" \
+    "SHADOW_SOLDIER_IMG"
+
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
 
-  # --require-kaisel: wait until status.kaiselPhase=Ready (KaiselRule reconciled).
-  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-kaisel
+  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-mongo
 
   SHADOW_NS="$(shadow_namespace)"
   export SHADOW_NS
@@ -48,11 +60,11 @@ setup() {
   monarch_wait_all_roles_running "$SHADOW_NS" "$SHADOWTEST"
 }
 
-@test "kaisel: KaiselRule has targetIPs" {
-  monarch_wait_kaisel_rule_ready "kaisel-${SHADOWTEST}" "$SHADOWTEST_NS"
+@test "kaisel: replay disables KaiselRule" {
+  monarch_assert_no_kaisel_rule "$SHADOWTEST" "$SHADOWTEST_NS"
 }
 
-@test "ShadowTest CR: status fields reflect a fully reconciled HTTP input stack" {
+@test "ShadowTest CR: status fields reflect a fully reconciled HTTP replay stack" {
   local phase shadow_ns kaisel_phase igris_ep igris_rmq_phase
   phase=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
     -o jsonpath='{.status.phase}' 2>/dev/null || true)
@@ -67,21 +79,9 @@ setup() {
 
   [[ "$phase" == "Ready" ]] || { echo "phase=${phase}, want Ready" >&2; return 1; }
   [[ "$shadow_ns" == "$SHADOW_NS" ]] || { echo "shadowNamespace=${shadow_ns}, want ${SHADOW_NS}" >&2; return 1; }
-  [[ "$kaisel_phase" == "Ready" ]] || { echo "kaiselPhase=${kaisel_phase}, want Ready" >&2; return 1; }
+  [[ "$kaisel_phase" == "Disabled" ]] || { echo "kaiselPhase=${kaisel_phase}, want Disabled" >&2; return 1; }
   [[ -n "$igris_ep" ]] || { echo "igrisEndpoint is empty" >&2; return 1; }
   [[ -z "$igris_rmq_phase" ]] || { echo "igrisRabbitMQPhase=${igris_rmq_phase}, want empty for HTTP input" >&2; return 1; }
-}
-
-@test "KaiselRule: igris and egress URLs are wired for the shadow namespace" {
-  local igris_url egress_url
-  igris_url=$(kubectl get kaiselrule "kaisel-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
-    -o jsonpath='{.spec.igrisBaseURL}' 2>/dev/null || true)
-  egress_url=$(kubectl get kaiselrule "kaisel-${SHADOWTEST}" -n "$SHADOWTEST_NS" \
-    -o jsonpath='{.spec.egressBaseURL}' 2>/dev/null || true)
-
-  [[ "$igris_url" == *igris* ]] || { echo "igrisBaseURL=${igris_url}, want an igris URL" >&2; return 1; }
-  [[ "$egress_url" == http://shop.* ]] || { echo "egressBaseURL=${egress_url}, want the shadow Shop" >&2; return 1; }
-  [[ "$egress_url" == *"${SHADOW_NS}"* ]] || { echo "egressBaseURL not in ${SHADOW_NS}: ${egress_url}" >&2; return 1; }
 }
 
 @test "igris-rabbitmq: not deployed for HTTP input" {

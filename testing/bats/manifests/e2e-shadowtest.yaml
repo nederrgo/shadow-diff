@@ -1,6 +1,7 @@
-# ShadowTest tuned for Minikube E2E: prod (port 80) -> Kaisel -> Igris:80 -> Envoy:8888 -> echo:80 -> Beru
+# ShadowTest tuned for Minikube E2E: prod (port 80) -> Kaisel -> Igris:80 -> S3 (record).
 #
-# Shop is always-on (no spec.recordAndReplay).
+# mode=record: Kaisel + Igris + Shop (+ beru-local); no ABC shadow pods.
+# storage is required (BYOB). Local MinIO is provisioned by e2e-reset-minikube.sh.
 #
 # Apply:
 #   kubectl apply -f testing/bats/manifests/e2e-shadowtest.yaml
@@ -14,20 +15,32 @@ metadata:
 spec:
   targetDeployment: my-prod-app
 
-  # Shadow pods (control-a, control-b, candidate)
+  mode: record
+  # sessionID: optional pin; Monarch mints status.currentSessionID when unset
+
+  # Required BYOB S3. Secret shadow-diff-s3 is created in this namespace by
+  # testing/tools/e2e-reset-minikube.sh (copied into the shadow ns by Monarch).
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain
+
+  # Shadow pods (control-a, control-b, candidate) — used when mode=replay
   oldImage: mendhak/http-https-echo:latest
   newImage: mendhak/http-https-echo:latest
 
-  # Envoy ingress on shadow pods; Igris multicasts to control-* at this port
+  # Envoy ingress on shadow pods; Igris multicasts to control-* at this port (replay)
   servicePort: 8888
   # Must match the app listen port after Monarch copies prod env (HTTP_PORT=80 on echo)
   applicationPort: 80
 
   # Igris listen ports:
-  #   80  — Kaisel/Igris replays captured prod traffic (prod pod dst port 80)
+  #   80  — Kaisel/Igris captures (record) or replays (replay) prod traffic on dst port 80
   #   8888 — optional manual tests: curl igris:8888/get
   inputs:
-    - port: 80
-      driver: http_request
     - port: 8888
       driver: http_request

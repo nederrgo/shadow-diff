@@ -4,7 +4,7 @@ title: Beru Trace Analysis Engine
 description: Single-trace correctness pipeline for Beru v2 — completeness timeout, baseline void guard, and compound candidate diffing with structured verdict details.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2
 tags: [data-plane, beru, diff, analysis, verdict, baseline]
-timestamp: 2026-07-24T08:00:00Z
+timestamp: 2026-08-02T06:40:00Z
 ---
 
 # Beru Trace Analysis Engine
@@ -42,9 +42,9 @@ Status comparison runs **only** for HTTP ingress. Empty `status_code` on MongoDB
 
 Signature-bucket pairing accumulates **all** findings without short-circuit:
 
-* `MISMATCH_PAYLOAD` — residual value diffs after natural noise (`Diff(A,B)`) and user `noise_filters`. Each JSON leaf emits a step with `noise_path` (dashboard **Ignore path**). Non-JSON body mismatches have no `noise_path`.
-* `MISMATCH_COUNT` — `UNEXPECTED_EXTRA_EGRESS` / `MISSING_EGRESS` (no Ignore button — counts are not field filters)
-* `MISMATCH_SIGNATURE` — candidate-only operation signature (no Ignore button)
+* `MISMATCH_PAYLOAD` — residual value diffs after natural noise (`Diff(A,B)`) and user `noise_filters`. Each JSON leaf emits a step with `noise_path` (eligible for a `noise_filters` row). Non-JSON body mismatches have no `noise_path`.
+* `MISMATCH_COUNT` — `UNEXPECTED_EXTRA_EGRESS` / `MISSING_EGRESS` (counts are not field filters)
+* `MISMATCH_SIGNATURE` — candidate-only operation signature
 
 `summary_details` stores JSON `VerdictDetails` (`flags`, `steps`, optional `baseline` / `missing_roles`).
 
@@ -60,9 +60,9 @@ Signature-bucket pairing accumulates **all** findings without short-circuit:
 
 ## UI seed (bats / debug)
 
-`POST /api/v1/debug/seed-reports` accepts a `reports` array of RawReport-shaped JSON (`trace_id`, `shadow_role`, `protocol`, `direction`, `signature`, `status_code`, `payload`, optional `captured_at`) and routes each into the TraceRouter — same evaluation path as live ingest.
+`POST /api/v1/debug/seed-reports` accepts a `reports` array of RawReport-shaped JSON (`trace_id`, `shadow_role`, `protocol`, `direction`, `signature`, `status_code`, `payload`, optional `captured_at`) and routes each into the TraceRouter — same evaluation path as live ingest (WAL → Postgres flush → evaluate).
 
-Bats suite: `testing/bats/integration/beru/verdict_ui.bats` (mirrors unit-test histories; waits for beru-local only, asserts status after seed — no full Ready / quiescence). Leave the stack up with `BATS_KEEP=1` and port-forward `svc/beru-local:8080` to inspect the dashboard.
+Bats suite: `testing/bats/integration/beru/postgres_verdict.bats` — standalone `beru-verdict` Deployment in `monarch-system` against the bats Postgres fixture (no ShadowTest). Mirrors unit-test histories; asserts via `GET /api/v1/traces/{id}` after seed; deletes Postgres rows per test / suite. Includes a poison-pill case (Postgres scale-to-0 → `/data/dead_letters.jsonl` after 3 WAL flush failures → restore + beru remigrate + MATCH). Browse live history in The System `/diffs` (Tusk + Postgres).
 
 ## Citations
 

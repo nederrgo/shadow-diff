@@ -19,6 +19,7 @@ bats_init_env() {
   export BERU_IMG="${BERU_IMG:-beru:dev}"
   export SHOP_IMG="${SHOP_IMG:-shop:dev}"
   export SHADOW_SOLDIER_IMG="${SHADOW_SOLDIER_IMG:-shadow-soldier:dev}"
+  export TUSK_IMG="${TUSK_IMG:-tusk:dev}"
   export IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
   export PYTHON_TEST_WORKER_IMG="${PYTHON_TEST_WORKER_IMG:-python-test-worker:dev}"
   export NODEJS_HYBRID_WORKER_IMG="${NODEJS_HYBRID_WORKER_IMG:-nodejs-hybrid-worker:dev}"
@@ -63,6 +64,8 @@ bats_write_suite_state() {
 SHADOWTEST=${SHADOWTEST:-}
 SHADOWTEST_NS=${SHADOWTEST_NS:-default}
 SHADOW_NS=${SHADOW_NS:-}
+BERU_NS=${BERU_NS:-}
+BERU_SVC=${BERU_SVC:-}
 PROD_DEPLOYED=${PROD_DEPLOYED:-0}
 SHADOWTEST_APPLIED=${SHADOWTEST_APPLIED:-0}
 SETUP_COMPLETE=${SETUP_COMPLETE:-0}
@@ -76,6 +79,8 @@ bats_begin_suite() {
   export SHADOWTEST="$name"
   export SHADOWTEST_NS="$ns"
   export SHADOW_NS=""
+  export BERU_NS=""
+  export BERU_SVC=""
   export PROD_DEPLOYED=0
   export SHADOWTEST_APPLIED=0
   export SETUP_COMPLETE=0
@@ -97,7 +102,7 @@ bats_suite_mark() {
 
 bats_load_suite_state() {
   bats_read_suite_state 2>/dev/null || return 1
-  export SHADOWTEST SHADOWTEST_NS SHADOW_NS PROD_DEPLOYED SHADOWTEST_APPLIED SETUP_COMPLETE
+  export SHADOWTEST SHADOWTEST_NS SHADOW_NS BERU_NS BERU_SVC PROD_DEPLOYED SHADOWTEST_APPLIED SETUP_COMPLETE
   return 0
 }
 

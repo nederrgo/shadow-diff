@@ -38,6 +38,7 @@ import (
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 	"github.com/shadow-diff/monarch/internal/controller"
+	statusgrpc "github.com/shadow-diff/monarch/pkg/grpc"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -56,6 +57,7 @@ func init() {
 // nolint:gocyclo
 func main() {
 	var metricsAddr string
+	var grpcAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
 	var enableLeaderElection bool
@@ -66,6 +68,8 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.StringVar(&grpcAddr, "grpc-bind-address", ":9090",
+		"The address the ShadowTest status gRPC stream binds to. Set to 0 to disable.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -179,9 +183,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	// statusHub is nil when the gRPC stream is disabled, which leaves the
+	// reconciler's StatusPublisher nil and makes publishing a no-op.
+	var statusPublisher controller.StatusPublisher
+	if grpcAddr != "" && grpcAddr != "0" {
+		hub := statusgrpc.NewHub(mgr.GetClient())
+		statusPublisher = hub
+		if err := mgr.Add(&statusgrpc.Server{Addr: grpcAddr, Hub: hub}); err != nil {
+			setupLog.Error(err, "Failed to add status gRPC server")
+			os.Exit(1)
+		}
+	}
+
 	if err := (&controller.ShadowTestReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		Recorder:        mgr.GetEventRecorderFor("shadowtest"),
+		StatusPublisher: statusPublisher,
 	}).SetupWithManager(mgr, ctrlcontroller.Options{MaxConcurrentReconciles: 2}); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "shadowtest")
 		os.Exit(1)

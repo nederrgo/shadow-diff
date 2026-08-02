@@ -11,21 +11,6 @@ import (
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
-func TestUsesLocalBeru(t *testing.T) {
-	t.Parallel()
-	if !usesLocalBeru(&enginev1alpha1.ShadowTest{}) {
-		t.Fatal("expected local Beru when spec.beruGRPCAddress empty")
-	}
-	st := &enginev1alpha1.ShadowTest{
-		Spec: enginev1alpha1.ShadowTestSpec{
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
-		},
-	}
-	if usesLocalBeru(st) {
-		t.Fatal("expected external Beru when spec override set")
-	}
-}
-
 func TestLocalBeruAddressHelpers(t *testing.T) {
 	t.Parallel()
 	const shadowNS = "shadow-default-http-otel-rmq-nodejs-shadow"
@@ -51,12 +36,6 @@ func TestLocalBeruAddressHelpers(t *testing.T) {
 		t.Fatalf("beruHTTPHostFor = %q, want %q", httpHost, wantHTTP)
 	}
 
-	ingest := beruIngestAddressFor(st, shadowNS)
-	wantIngest := "beru-local.shadow-default-http-otel-rmq-nodejs-shadow.svc.cluster.local:8080"
-	if ingest != wantIngest {
-		t.Fatalf("beruIngestAddressFor = %q, want %q", ingest, wantIngest)
-	}
-
 	// Sidecars report on the ingest port, not 8080: the shadow pod's iptables
 	// rules REDIRECT outbound 8080 into Envoy's egress listener.
 	ingestURL := beruIngestURLFor(st, shadowNS)
@@ -68,24 +47,6 @@ func TestLocalBeruAddressHelpers(t *testing.T) {
 	recorderURL := "http://" + httpHost
 	if strings.Contains(recorderURL, "http://http://") {
 		t.Fatalf("double http prefix: %q", recorderURL)
-	}
-}
-
-func TestLocalBeruAddressHelpers_externalOverride(t *testing.T) {
-	t.Parallel()
-	st := &enginev1alpha1.ShadowTest{
-		Spec: enginev1alpha1.ShadowTestSpec{
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
-		},
-	}
-	if got := beruGRPCAddressFor(st, "shadow-default-x"); got != st.Spec.BeruGRPCAddress {
-		t.Fatalf("override grpc = %q", got)
-	}
-	if got := beruHTTPHostFor(st, "shadow-default-x"); got != "beru.beru-system.svc.cluster.local:8080" {
-		t.Fatalf("override http host = %q", got)
-	}
-	if got := beruIngestURLFor(st, "shadow-default-x"); got != "http://beru.beru-system.svc.cluster.local:8080" {
-		t.Fatalf("override ingest url = %q", got)
 	}
 }
 
@@ -105,7 +66,7 @@ func TestPodTerminalReason_imagePullBackOff(t *testing.T) {
 			}},
 		},
 	}
-	reason := podTerminalReason(pod)
+	reason := podTerminalReason(pod, localBeruName)
 	if !reason.terminal {
 		t.Fatal("expected terminal reason for ImagePullBackOff")
 	}

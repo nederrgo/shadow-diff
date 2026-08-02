@@ -129,10 +129,10 @@ if [[ "$SKIP_PORT_FORWARD" != "1" ]]; then
   echo "==> Port-forward control-a for orphan traces (${ORPHAN_PF_PORT} -> svc :8888)"
   PF_ORPHAN_PID=$(start_port_forward "$SHADOW_NS" "${SHADOWTEST}-control-a" "$ORPHAN_PF_PORT" "$IGRIS_PF_PORT")
 
-  echo "==> Port-forward Beru HTTP (${BERU_HTTP_PF_PORT})"
-  kubectl wait -n beru-system --for=condition=Ready pod \
-    -l app.kubernetes.io/name=beru --timeout=60s >/dev/null
-  PF_BERU_PID=$(start_port_forward beru-system beru "$BERU_HTTP_PF_PORT" 8080)
+  echo "==> Port-forward beru-local HTTP (${BERU_HTTP_PF_PORT})"
+  kubectl wait -n "$SHADOW_NS" --for=condition=Ready pod \
+    -l app=beru-local --timeout=60s >/dev/null
+  PF_BERU_PID=$(start_port_forward "$SHADOW_NS" beru-local "$BERU_HTTP_PF_PORT" 8080)
 else
   echo "SKIP_PORT_FORWARD=1 — assuming localhost:${IGRIS_PF_PORT}, :${ORPHAN_PF_PORT}, :${BERU_HTTP_PF_PORT} are already forwarded."
 fi
@@ -151,10 +151,10 @@ health_code=$(echo "$health_out" | sed -n 's/.*__HTTP_CODE__\([0-9]*\)$/\1/p')
 health_body=$(echo "$health_out" | sed '/__HTTP_CODE__/d')
 
 if [[ "$health_code" != "200" && "$SKIP_PORT_FORWARD" != "1" ]]; then
-  echo "    Beru /healthz probe failed — retrying port-forward to Beru..."
+  echo "    Beru /healthz probe failed — retrying port-forward to beru-local..."
   kill_port_listener "$BERU_HTTP_PF_PORT"
   [[ -n "$PF_BERU_PID" ]] && kill "$PF_BERU_PID" 2>/dev/null || true
-  PF_BERU_PID=$(start_port_forward beru-system beru "$BERU_HTTP_PF_PORT" 8080)
+  PF_BERU_PID=$(start_port_forward "$SHADOW_NS" beru-local "$BERU_HTTP_PF_PORT" 8080)
   health_out=$(curl_beru_health)
   health_code=$(echo "$health_out" | sed -n 's/.*__HTTP_CODE__\([0-9]*\)$/\1/p')
   health_body=$(echo "$health_out" | sed '/__HTTP_CODE__/d')
@@ -164,16 +164,15 @@ if [[ "$health_code" == "200" ]]; then
   echo "    Beru /healthz OK"
 elif [[ "$health_code" == "404" ]]; then
   echo "ERROR: Beru returned HTTP 404 for ${BERU_HEALTH_URL}" >&2
-  echo "       The running pod is an old image (no /healthz). Rebuild is not enough — reload into Kind and restart:" >&2
-  echo "         make beru-docker-build BERU_IMG=beru:dev" >&2
-  echo "         kind load docker-image beru:dev --name \$(kind get clusters | head -1)" >&2
-  echo "         kubectl rollout restart deployment/beru -n beru-system" >&2
-  echo "         kubectl rollout status deployment/beru -n beru-system" >&2
+  echo "       The running pod is an old image (no /healthz). Rebuild, reload, then restart beru-local:" >&2
+  echo "         eval \$(minikube docker-env) && make beru-docker-build BERU_IMG=beru:dev" >&2
+  echo "         kubectl rollout restart deployment/beru-local -n ${SHADOW_NS}" >&2
+  echo "         kubectl rollout status deployment/beru-local -n ${SHADOW_NS}" >&2
   exit 1
 elif [[ "$health_code" == "" ]]; then
   echo "ERROR: Beru health check failed at ${BERU_HEALTH_URL} (connection refused or timeout)" >&2
   echo "       curl output: ${health_out}" >&2
-  echo "       Tip: after 'kubectl rollout restart deployment/beru', stale port-forwards break." >&2
+  echo "       Tip: after 'kubectl rollout restart deployment/beru-local', stale port-forwards break." >&2
   echo "            Kill manually: pkill -f 'port-forward.*:8080'" >&2
   exit 1
 else

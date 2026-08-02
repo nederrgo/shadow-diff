@@ -12,12 +12,15 @@ import (
 )
 
 const (
-	defaultListenersFile   = "/etc/igris/listeners.json"
-	defaultMaxTCPConns     = 1024
+	defaultListenersFile = "/etc/igris/listeners.json"
+	defaultMaxTCPConns   = 1024
 	// 512KiB ingress cap — echo shadows buffer ~2× body in JSON responses; Envoy ext_proc default is 1MiB.
-	defaultMaxBodySize = 512 * 1024
-	defaultTCPDialTimeout  = 5 * time.Second
-	defaultTCPIdleTimeout  = 5 * time.Minute
+	defaultMaxBodySize    = 512 * 1024
+	defaultTCPDialTimeout = 5 * time.Second
+	defaultTCPIdleTimeout = 5 * time.Minute
+	// defaultMaxConcurrency caps in-flight HTTP requests forwarded per igris pod. Negative
+	// values (via IGRIS_MAX_CONCURRENCY) disable the limit.
+	defaultMaxConcurrency = 50
 )
 
 // Listener binds a port to an input driver.
@@ -35,26 +38,29 @@ type TargetHost struct {
 
 // Config holds Igris process configuration.
 type Config struct {
-	Listeners        []Listener
-	ControlAURL      string
-	ControlBURL      string
-	CandidateURL     string
-	ControlAAddr     string
-	ControlBAddr     string
-	CandidateAddr    string
-	WorkerPoolSize   int
-	MaxTCPConns      int
-	MaxBodySize      int64
-	TCPDialTimeout   time.Duration
-	TCPIdleTimeout   time.Duration
+	Listeners      []Listener
+	ControlAURL    string
+	ControlBURL    string
+	CandidateURL   string
+	ControlAAddr   string
+	ControlBAddr   string
+	CandidateAddr  string
+	WorkerPoolSize int
+	MaxTCPConns    int
+	MaxBodySize    int64
+	MaxConcurrency int
+	TCPDialTimeout time.Duration
+	TCPIdleTimeout time.Duration
+	OperatingMode  string // record | replay
+	AdminAddr      string // HTTP admin (replay trigger); default :9090
 }
 
 // Load reads configuration from the environment, validates it, and exits on failure.
 func Load() Config {
 	cfg := Config{
-		ControlAURL:    os.Getenv("CONTROL_A_URL"),
-		ControlBURL:    os.Getenv("CONTROL_B_URL"),
-		CandidateURL:   os.Getenv("CANDIDATE_URL"),
+		ControlAURL:    firstEnv("SHADOW_CONTROL_A_URL", "CONTROL_A_URL"),
+		ControlBURL:    firstEnv("SHADOW_CONTROL_B_URL", "CONTROL_B_URL"),
+		CandidateURL:   firstEnv("SHADOW_CANDIDATE_URL", "CANDIDATE_URL"),
 		ControlAAddr:   os.Getenv("CONTROL_A_ADDR"),
 		ControlBAddr:   os.Getenv("CONTROL_B_ADDR"),
 		CandidateAddr:  os.Getenv("CANDIDATE_ADDR"),
@@ -62,10 +68,13 @@ func Load() Config {
 		MaxBodySize:    defaultMaxBodySize,
 		TCPDialTimeout: defaultTCPDialTimeout,
 		TCPIdleTimeout: defaultTCPIdleTimeout,
+		OperatingMode:  operatingModeFromEnv(),
+		AdminAddr:      envOr("IGRIS_ADMIN_ADDR", ":9090"),
 	}
 	cfg.WorkerPoolSize = workerPoolSizeFromEnv()
 	cfg.MaxTCPConns = intFromEnv("IGRIS_MAX_TCP_CONNS", defaultMaxTCPConns)
 	cfg.MaxBodySize = int64FromEnv("IGRIS_MAX_BODY_SIZE", defaultMaxBodySize)
+	cfg.MaxConcurrency = intFromEnvSigned("IGRIS_MAX_CONCURRENCY", defaultMaxConcurrency)
 	if d, ok := durationFromEnv("IGRIS_TCP_DIAL_TIMEOUT"); ok {
 		cfg.TCPDialTimeout = d
 	}
@@ -116,6 +125,20 @@ func intFromEnv(key string, def int) int {
 	}
 	var n int
 	if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+		return n
+	}
+	return def
+}
+
+// intFromEnvSigned parses key as an int, unlike intFromEnv it allows negative values
+// through (callers treat negative as "unlimited"); only unset or zero fall back to def.
+func intFromEnvSigned(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	var n int
+	if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n != 0 {
 		return n
 	}
 	return def
@@ -185,8 +208,6 @@ func normalizeDriver(driver, addon string) string {
 	switch d {
 	case "", "http", "http_request":
 		return "http_request"
-	case "tcp_stream":
-		return "tcp_stream"
 	default:
 		return d
 	}
@@ -194,38 +215,32 @@ func normalizeDriver(driver, addon string) string {
 
 // Validate checks target URLs, hosts, and listener definitions.
 func (c Config) Validate() error {
-	targets := []struct {
-		name string
-		raw  string
-	}{
-		{"CONTROL_A_URL", c.ControlAURL},
-		{"CONTROL_B_URL", c.ControlBURL},
-		{"CANDIDATE_URL", c.CandidateURL},
-	}
-	for _, t := range targets {
-		if err := validateTargetURL(t.name, t.raw); err != nil {
-			return err
+	switch c.OperatingMode {
+	case "record":
+		// Record mode does not multicast; shadow targets optional.
+	case "replay":
+		targets := []struct {
+			name string
+			raw  string
+		}{
+			{"SHADOW_CONTROL_A_URL/CONTROL_A_URL", c.ControlAURL},
+			{"SHADOW_CONTROL_B_URL/CONTROL_B_URL", c.ControlBURL},
+			{"SHADOW_CANDIDATE_URL/CANDIDATE_URL", c.CandidateURL},
 		}
-	}
-	addrs := []struct {
-		name string
-		raw  string
-	}{
-		{"CONTROL_A_ADDR", c.ControlAAddr},
-		{"CONTROL_B_ADDR", c.ControlBAddr},
-		{"CANDIDATE_ADDR", c.CandidateAddr},
-	}
-	for _, t := range addrs {
-		if err := validateTargetHost(t.name, t.raw); err != nil {
-			return err
+		for _, t := range targets {
+			if err := validateTargetURL(t.name, t.raw); err != nil {
+				return err
+			}
 		}
+	default:
+		return fmt.Errorf("OPERATING_MODE must be record or replay, got %q", c.OperatingMode)
 	}
 	for _, l := range c.Listeners {
 		if l.Port < 1 || l.Port > 65535 {
 			return fmt.Errorf("listener port %d out of range", l.Port)
 		}
 		switch l.Driver {
-		case "http_request", "tcp_stream":
+		case "http_request":
 		default:
 			return fmt.Errorf("unknown driver %q for port %d", l.Driver, l.Port)
 		}
@@ -240,6 +255,27 @@ func (c Config) Validate() error {
 		return fmt.Errorf("TCP timeouts must be positive")
 	}
 	return nil
+}
+
+func operatingModeFromEnv() string {
+	m := strings.ToLower(strings.TrimSpace(os.Getenv("OPERATING_MODE")))
+	return m
+}
+
+func firstEnv(keys ...string) string {
+	for _, k := range keys {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func envOr(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func validateTargetURL(name, raw string) error {

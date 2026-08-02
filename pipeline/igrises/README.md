@@ -42,12 +42,6 @@ Pluggable **HTTP and TCP** ingress hub.
 
 Typical shadow target URLs point at each role's Service on **port 8888** (Envoy ingress listener), not the app port directly.
 
-### TCP driver (`tcp_stream`)
-
-- Accepts streaming TCP on configured listener ports.
-- Opens relay connections to three shadow hosts (`CONTROL_A_ADDR`, etc.) on the **same port** as the listener.
-- Used for non-HTTP protocols (e.g. Redis, Mongo wire protocol) where requests are byte streams rather than atomic HTTP messages.
-
 ### Layout
 
 ```
@@ -56,7 +50,6 @@ igris-http/
   internal/
     core/                 Hub, worker pool, multicast dispatch
     driver/http/          HTTP request driver (202 + clone)
-    driver/tcpstream/     TCP stream relay driver
     config/               listeners.json + env validation
     trace/                W3C traceparent + ResolveContext
 ```
@@ -170,7 +163,7 @@ Monarch deploys Igris into the **shadow namespace** created for each `ShadowTest
 
 | Deployment | ShadowTest field | Input driver |
 | ---------- | ---------------- | ------------ |
-| `<name>-igris` | `spec.igris` | `http_request`, `tcp_stream`, etc. |
+| `<name>-igris` | `spec.igris` | `http_request` |
 | `<name>-igris-rabbitmq` | `spec.igrisRabbitmq` | `rabbitmq_message` |
 
 HTTP/TCP and AMQP paths are **mutually exclusive** for a given ShadowTest — AMQP tests skip HTTP Igris and use igris-rabbitmq instead.

@@ -9,8 +9,97 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-08-02]
+### Added
+* 'pipeline/tusk,the-system,beru': Lazy signature occurrence pager — Tusk GET /api/v1/diffs/occurrences from raw_reports (cap 50), Beru idx_raw_reports_trace_sig, PayloadInspector chips with red MISMATCH_PAYLOAD indexes
+* 'testing/bats/integration/beru': BATS_KEEP retains Postgres rows + SESSION_ID for The System /diffs
+* 'pipeline/tusk + the-system/diffs': sessions?with_diffs=true filter; UI defaults to diffs-only
+* 'pipeline/the-system/diffs': SessionPicker searchable filter like Monitor TestPicker
+* 'pipeline/beru': Removed embedded /dashboard/; bats keep GET /api/v1/traces/{id} via internal/api
+* 'pipeline/tusk + the-system/diffs': Tusk Postgres LISTEN/NOTIFY + ShadowDiff UI
+* 'pipeline/the-system Monitor': Searchable picker of live ShadowTests from unfiltered Tusk stream; local includes filter + click to select
+* 'pipeline/kaisel/Dockerfile': COPY pkg/shadowspec so monarch go mod download resolves during kaisel image build
+* 'pipeline/monarch/Dockerfile': COPY pkg/shadowspec into build context so go mod download resolves the replace
+* 'pipeline/the-system editor': Input section is a single driver chooser with swapping fields (no Add list)
+
+## [2026-08-01]
+### Added
+* 'igris-http + monarch + shadowspec': Removed tcp_stream ingress driver; inputs are http_request or rabbitmq_message only
+* 'pipeline/pkg/shadowspec + the-system editor': Shared dependency/input catalog; collapsible Add menus emit spec.dependencies and spec.inputs
+* 'pipeline/the-system': TeardownBanner is a flex strip above React Flow with red System-style NOTIFICATION chrome
+* 'pipeline/the-system': Keep last topology on delete; sticky red TeardownBanner for Deleting/Deleted instead of blank canvas
+* 'pipeline/pkg/monarchpb + monarch/tusk/the-system': ShadowTest delete stream emits PHASE_DELETING then PHASE_DELETED tombstone so Tusk/UI clear the graph
+* 'pipeline/the-system': Run Nginx unprivileged on :8080 with PSA RuntimeDefault seccomp so monarch-system admits the pod
+* 'pipeline/kaisel/Dockerfile': Copy pkg/monarchpb before monarch go mod download
+* 'pipeline/monarch/Dockerfile': Copy pkg/monarchpb into image before go mod download so local replace resolves
+* 'pipeline/the-system': Added The System React dashboard (topology Monitor via Tusk WS, ShadowTest YAML editor), Nginx/K8s deploy, Makefile/e2e wiring; widened Tusk localhost Origin allowlist
+* 'pipeline/pkg/monarchpb + pipeline/monarch/pkg/grpc + pipeline/tusk': Added shared gRPC status contract (monarchpb, enum vocabulary + role keys), Monarch status stream on :9090 with snapshot-then-live semantics, and the Tusk BFF translating it to React Flow topology over WebSockets on :8082
+* 'pipeline/monarch/api/v1alpha1 + internal/controller': Added BootStep, ComponentStatus and Conditions to ShadowTestStatus for the Tusk live topology graph; refactored status writes through patchStatusCore with a DeepEqual no-op guard
+
+## [2026-07-31]
+### Added
+* 'pipeline/beru/internal/storage': concurrent dual-store flush race under pg_advisory_xact_lock
+* 'testing/bats/integration/beru': poison-pill asserts discard log (no kubectl cp on distroless); fail before beru restart; pg connect_timeout=5s
+* 'testing/bats/integration/beru': poison-pill scale-to-0 + kubectl cp DLQ + beru remigrate; BERU_WAL_FLUSH_TIMEOUT=3s in fixture
+* 'testing/bats/integration/beru': poison-pill uses CONNECTION LIMIT 0 + kubectl cp DLQ; BERU_WAL_FLUSH_TIMEOUT for fast retries
+* 'testing/bats/integration/beru': poison-pill DLQ bats (Postgres down → dead_letters.jsonl → recover)
+* 'testing/bats/integration/beru': standalone postgres_verdict suite (no ShadowTest); per-test Postgres cleanup
+* 'pipeline/beru + monarch': Postgres-only Beru with claimed Bbolt WAL flusher, 3-retry dead-letter, advisory-locked evaluate
+* 'pipeline/monarch + pipeline/beru + docs': Removed the shared beru-system Beru in favour of per-ShadowTest beru-local — deleted pipeline/beru/deploy/, spec.beruGRPCAddress and spec.beruIngestAddress, usesLocalBeru and the external-address branches; diff history now shared via BERU_DB_SECRET PostgreSQL. ADR in docs/data-plane/beru-system-removal.md
+* 'pipeline/monarch + pipeline/beru + testing': beru-local durable storage — BERU_DB_SECRET replicated into each shadow namespace and mounted via envFrom, tmpfs SQLite volume dropped when Postgres is active, verdicts.shadow_test_name for shared-database tenancy, Postgres fixture moved to monarch-system, beru go.sum completed for the pgx/pgxpool/puddle chain
+
+## [2026-07-30]
+### Added
+* 'pipeline/beru + monarch + testing': BYO-PostgreSQL storage driver — RunStore interface extraction, PostgresStore satisfying both storage halves, embedded migrations with traces/diff_reports UI projection, DB_DRIVER boot selection, beru-local SESSION_ID plumbing, Beru egress NetworkPolicy, and a local Postgres E2E fixture
+* 'docs/control-plane/shadowtest-teardown-edge-cases.md': ADR for queue delete fail-open + x-expires vs S3 finalizer retry and Failed autopsy
+* 'pipeline/monarch/internal/controller/shadowtest_rabbitmq.go': prod shadow queue x-expires 10m idle TTL leak fail-safe
+* 'testing/bats/integration/monarch/amqp_queue_failure.bats': drop flaky QueueBind integration case; declare autopsy remains; bind covered by unit tests
+* 'pipeline/pkg/{trace,replay},igris-rabbitmq,monarch,bats': igris-rabbitmq dual-mode S3 (record|replay); shared trace/replay pkgs; Monarch storageEnv+admin:9090; replay skips prod queue; AMQP bats record→replay
+* 'pipeline/monarch + bats + docs/control-plane': AMQP queue declare/bind failures use markBootFailed autopsy path; integration coverage
+* 'testing/bats/integration/monarch/spike_guard.bats': Spike Guard burst test asserts 429 shedding without requiring every concurrent response
+* 'pipeline/monarch + docs/control-plane': Record-mode bottom-up reconcile (sinks → KaiselRule → AMQP bind); split queue declare/bind
+* 'docs/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md': Added replay-mode reconcile create order
+* 'docs/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md': Added record-mode reconcile create order
+* 'docs/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md': Rewrote for record/replay lifecycle; beru-local dies with shadow namespace; removed Vizier/Gate leftovers
+
+## [2026-07-29]
+### Added
+* 'testing/bats': http_input ensures egress-relay+shadow-soldier images when platform skip-load would leave them missing
+* 'testing/bats': Fix deps_update/http_input/spike_guard for record/replay — mode=replay + sessionID; http_input expects Kaisel Disabled'
+* 'testing/bats/fixtures/integration': Add required spec.storage (+ minio_ensure) to ShadowTest fixtures missing it after CRD storage required'
+* 'testing/bats': Add monarch boot_failure integration suite — Failed autopsy, KaiselRule/NS/AMQP queue teardown, sticky Failed, kubectl apply status ignored
+* 'pipeline/monarch': Boot failure gates — terminal CrashLoop/ImagePull/90s timeout marks ShadowTest Failed, tears down KaiselRule+shadow NS+AMQP queue, sticky Failed prevents recreate; docs updated
+* 'testing/bats/lib': Poll status.replayState=started after mode switch (fix hybrid flake)
+* 'testing/bats/e2e/kaisel-capture': Migrate suite to record setup + mid-test replay switch for hybrid ABC/Beru tests
+
+## [2026-07-28]
+### Added
+* 'docs/architecture/ARCHITECTURE.md': New record/replay system architecture; index hub; ARCHITECTURE-OLD remains historical
+* 'testing/bats/lib/minio.bash': Strip kubectl run --rm noise so empty-prefix checks work for S3 Delete retention
+* 'testing/bats/integration/monarch/lifecycle_s3_retention.bats': Add Retain vs Delete S3 prefix tests on ShadowTest delete
+* 'testing/bats/integration/monarch/lifecycle_mode_switch.bats': Add record↔replay mode-switch GC tests (KaiselRule vs ABC)
+* 'testing/bats/lib/platform.bash': Heal Kaisel DaemonSet without full image rebuild when Monarch is already healthy
+* 'testing/bats/integration/monarch': Split lifecycle into lifecycle_record.bats + lifecycle_replay.bats (mode stack shape)
+* 'pipeline/shop/internal/api': Return mock hash on record-mode POST /v1/record_egress so Kaisel can log Envoy keys
+* 'testing/bats/e2e/record,lib/minio.bash': Add record-mode S3 bats suite (MinIO ingress/egress object asserts) + make test-bats-record
+* 'testing/bats/manifests/e2e-shadowtest.yaml': Add required mode=record and MinIO storage so e2e-reset ShadowTest applies under S3 CRD
+* 'pipeline/monarch,pipeline/pkg/s3utils': Phase 4 complete — auto POST Igris :9090/v1/replay/start → replayState=started; shadow-diff.io/s3-cleanup deletes shadow-diff/<ns>/<name>/ prefix when retentionPolicy=Delete (BYOB bucket retained)
+* 'pipeline/monarch + docs': Phase 4 Steps 1-2 — spec.mode record|replay, required storage, S3 env/secret sync for Igris/Shop, Igris admin :9090, mode GC (record drops ABC; replay drops KaiselRule)
+* 'pipeline/igrises/igris-http,pipeline/pkg/s3utils': Phase 3 complete — igris-http ingress replay engine (S3 preload + POST /v1/replay/start multicast)
+* 'pipeline/pkg/s3utils,pipeline/shop': Phase 3 partial — S3Reader + Shop OPERATING_MODE=replay egress preload with Ready-gated /healthz
+* 'pipeline/pkg/s3utils,pipeline/shop,pipeline/igrises/igris-http': Phase 2 record-mode S3 BatchUploader; Shop egress + igris-http ingress writers
+* 'pipeline/monarch/api/v1alpha1,testing/bats/manifests/minio': Add ShadowTest spec.storage (S3 BYOB), validateStorage, and MinIO via e2e-reset-minikube.sh
+* '/docs/refactor/async-record-replay.md': Added accepted ADR for asynchronous S3-backed Record & Replay pivot; added /docs/refactor/index.md mapping
+* 'pipeline/kaisel': Tiered eBPF trace gate — bpf_loop gate on kernel 5.17+, ungated build with user-space sampling on 5.2+, explicit refusal below; tier chosen by load attempt not version string; added kernel-compatibility guide and opt-in kaisel_ebpf_gate_tier gauge
+
+## [2026-07-27]
+### Added
+* 'pipeline/kaisel': In-kernel W3C traceparent sampling — bpf_loop 768-byte header scan, FNV-1a gate matching pkg/sample exactly, LRU 5-tuple admission for continuation and response segments, SYN invalidation, fail-open on any undecidable parse
+
 ## [2026-07-26]
 ### Added
+* 'testing/bats': Added Spike Guard integration test — igris-http 429 load shedding under concurrent traffic
+* 'pipeline/monarch,pipeline/igrises': Added Spike Guard — IGRIS_MAX_CONCURRENCY load shedding, AMQP message TTL, dynamic capacity calc
 * 'pipeline/pkg/sample': shared FNV full-trace-ID SampledIn for Kaisel + igris-rabbitmq
 * 'testing/bats/e2e/rabbitmq-ingress/rmq_sampling_hybrid.bats': RMQ ingress + Shop egress sampling E2E at 10%
 * 'testing/example-apps/http-rmq-go-worker': Stop logging trace IDs in app logs to match Node/Python fixtures for assert_worker_trace_absent

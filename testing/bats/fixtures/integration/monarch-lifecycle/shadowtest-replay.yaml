@@ -1,0 +1,21 @@
+# ShadowTest — replay mode lifecycle / stack shape.
+# Expect: ABC roles + igris + shop; no KaiselRule; replayState=started.
+# sessionID pins an empty session (preload loads 0 JSONL lines).
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-monarch-lifecycle-replay
+  namespace: default
+spec:
+  targetDeployment: monarch-lifecycle-target
+  newImage: nginx:alpine
+  mode: replay
+  sessionID: session-lifecycle-empty
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain

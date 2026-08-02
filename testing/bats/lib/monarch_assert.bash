@@ -98,12 +98,30 @@ monarch_wait_all_roles_running() {
   done
 }
 
-# Wait for the igris-http Deployment (${shadowtest}-igris) to be Available.
+# Wait for the ingress hub Deployment to be Available (igris-http or igris-rabbitmq).
 monarch_wait_igris_running() {
   local shadow_ns="$1" shadowtest="$2" timeout="${3:-120}"
-  echo "==> [monarch] wait igris Available: ${shadowtest}-igris in ${shadow_ns}"
-  kubectl wait --for=condition=Available "deployment/${shadowtest}-igris" \
-    -n "$shadow_ns" --timeout="${timeout}s"
+  local http_name="${shadowtest}-igris" rmq_name="${shadowtest}-igris-rabbitmq"
+  echo "==> [monarch] wait igris hub Available: ${http_name} or ${rmq_name} in ${shadow_ns}"
+  local elapsed=0
+  while true; do
+    if kubectl get "deployment/${http_name}" -n "$shadow_ns" >/dev/null 2>&1; then
+      kubectl wait --for=condition=Available "deployment/${http_name}" \
+        -n "$shadow_ns" --timeout="${timeout}s"
+      return $?
+    fi
+    if kubectl get "deployment/${rmq_name}" -n "$shadow_ns" >/dev/null 2>&1; then
+      kubectl wait --for=condition=Available "deployment/${rmq_name}" \
+        -n "$shadow_ns" --timeout="${timeout}s"
+      return $?
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "FAIL: neither ${http_name} nor ${rmq_name} found in ${shadow_ns}" >&2
+      return 1
+    fi
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
 }
 
 # Wait for KaiselRule to have at least one target IP (ingress capture wired).
@@ -292,4 +310,272 @@ monarch_dump_diagnostics() {
     fi
   done < <(kubectl get pods -n "$shadow_ns" \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+}
+
+# Assert no control-a / control-b / candidate Deployments exist (record mode).
+# Usage: monarch_assert_no_abc_roles <shadow_ns>
+monarch_assert_no_abc_roles() {
+  local shadow_ns="$1"
+  local abc
+  abc=$(kubectl get deploy -n "$shadow_ns" -o name 2>/dev/null \
+    | grep -E 'control-a|control-b|candidate' || true)
+  if [[ -n "$abc" ]]; then
+    echo "FAIL: unexpected ABC Deployments in ${shadow_ns}:" >&2
+    echo "$abc" | sed 's/^/  /' >&2
+    return 1
+  fi
+  return 0
+}
+
+# Assert KaiselRule is absent (replay mode GC).
+# Usage: monarch_assert_no_kaisel_rule <shadowtest_name> [namespace]
+monarch_assert_no_kaisel_rule() {
+  local name="$1" ns="${2:-default}"
+  if kubectl get kaiselrule "kaisel-${name}" -n "$ns" >/dev/null 2>&1; then
+    echo "FAIL: KaiselRule kaisel-${name} still present in ${ns} (want absent)" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Assert Shop + Igris Deployments have OPERATING_MODE=<mode>.
+# Usage: monarch_assert_operating_mode <shadow_ns> <shadowtest_name> <record|replay>
+monarch_assert_operating_mode() {
+  local shadow_ns="$1" shadowtest="$2" want="$3"
+  local op_igris op_shop hub
+  if kubectl get deploy "${shadowtest}-igris" -n "$shadow_ns" >/dev/null 2>&1; then
+    hub="${shadowtest}-igris"
+  elif kubectl get deploy "${shadowtest}-igris-rabbitmq" -n "$shadow_ns" >/dev/null 2>&1; then
+    hub="${shadowtest}-igris-rabbitmq"
+  else
+    echo "FAIL: no igris or igris-rabbitmq Deployment in ${shadow_ns}" >&2
+    return 1
+  fi
+  op_igris=$(kubectl get deploy "$hub" -n "$shadow_ns" \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="OPERATING_MODE")].value}')
+  op_shop=$(kubectl get deploy shop -n "$shadow_ns" \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="OPERATING_MODE")].value}')
+  [[ "$op_igris" == "$want" ]] || {
+    echo "FAIL: ${hub} OPERATING_MODE=${op_igris}, want ${want}" >&2
+    return 1
+  }
+  [[ "$op_shop" == "$want" ]] || {
+    echo "FAIL: shop OPERATING_MODE=${op_shop}, want ${want}" >&2
+    return 1
+  }
+  return 0
+}
+
+# Patch ShadowTest.spec.mode (and optional sessionID for replay).
+# Usage: monarch_patch_mode <name> <ns> <record|replay> [session_id]
+monarch_patch_mode() {
+  local name="$1" ns="$2" mode="$3" session="${4:-}"
+  local patch
+  if [[ "$mode" == "replay" ]]; then
+    [[ -n "$session" ]] || {
+      echo "monarch_patch_mode: session_id required for replay" >&2
+      return 1
+    }
+    patch=$(printf '{"spec":{"mode":"replay","sessionID":"%s"}}' "$session")
+  else
+    patch='{"spec":{"mode":"record"}}'
+  fi
+  echo "==> [monarch] patch ${ns}/${name} mode=${mode}${session:+ session=${session}}"
+  kubectl patch shadowtest "$name" -n "$ns" --type=merge -p "$patch"
+}
+
+# Wait until KaiselRule is gone (replay GC).
+# Usage: monarch_wait_no_kaisel_rule <shadowtest_name> [namespace] [timeout_seconds]
+monarch_wait_no_kaisel_rule() {
+  local name="$1" ns="${2:-default}" timeout="${3:-120}"
+  local elapsed=0
+  echo "==> [monarch] wait KaiselRule kaisel-${name} absent"
+  while true; do
+    if ! kubectl get kaiselrule "kaisel-${name}" -n "$ns" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "FAIL: KaiselRule kaisel-${name} still present after ${timeout}s" >&2
+      return 1
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+}
+
+# Wait until no ABC Deployments remain (record GC).
+# Usage: monarch_wait_no_abc_roles <shadow_ns> [timeout_seconds]
+monarch_wait_no_abc_roles() {
+  local shadow_ns="$1" timeout="${2:-120}"
+  local elapsed=0 abc
+  echo "==> [monarch] wait ABC roles gone in ${shadow_ns}"
+  while true; do
+    abc=$(kubectl get deploy -n "$shadow_ns" -o name 2>/dev/null \
+      | grep -E 'control-a|control-b|candidate' || true)
+    if [[ -z "$abc" ]]; then
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "FAIL: ABC Deployments still present after ${timeout}s:" >&2
+      echo "$abc" | sed 's/^/  /' >&2
+      return 1
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+}
+
+# Wait until Shop + Igris Deployments show OPERATING_MODE=<mode>.
+# Usage: monarch_wait_operating_mode <shadow_ns> <shadowtest> <record|replay> [timeout]
+monarch_wait_operating_mode() {
+  local shadow_ns="$1" shadowtest="$2" want="$3" timeout="${4:-180}"
+  local elapsed=0
+  echo "==> [monarch] wait OPERATING_MODE=${want} on igris+shop"
+  while true; do
+    if monarch_assert_operating_mode "$shadow_ns" "$shadowtest" "$want" 2>/dev/null; then
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      monarch_assert_operating_mode "$shadow_ns" "$shadowtest" "$want"
+      return 1
+    fi
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+}
+
+# Wait until Monarch has triggered Igris replay (status.replayState=started).
+# OPERATING_MODE=replay on the Deployment spec is not enough — maybeTriggerReplay
+# runs on a later reconcile after roll-ready.
+# Usage: monarch_wait_replay_started <name> [namespace] [timeout_seconds]
+monarch_wait_replay_started() {
+  local name="$1" ns="${2:-default}" timeout="${3:-180}"
+  local elapsed=0 replay
+  echo "==> [monarch] wait replayState=started on ${ns}/${name}"
+  while true; do
+    replay=$(kubectl get shadowtest "$name" -n "$ns" \
+      -o jsonpath='{.status.replayState}' 2>/dev/null || true)
+    if [[ "$replay" == "started" ]]; then
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "FAIL: replayState=${replay:-<empty>}, want started after ${timeout}s" >&2
+      kubectl get shadowtest "$name" -n "$ns" \
+        -o jsonpath='phase={.status.phase} kaisel={.status.kaiselPhase} replay={.status.replayState} msg={.status.message}{"\n"}' >&2 || true
+      return 1
+    fi
+    echo "    waiting replayState (got=${replay:-<empty>}) (${elapsed}s/${timeout}s)..."
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+}
+
+
+# Poll until ShadowTest status.amqpQueueName is set (prod shadow queue declared).
+# On success exports BOOT_FAIL_AMQP_QUEUE. Falls back to shadow-diff-<uid> if status
+# is empty but the CR has a UID (Monarch naming convention).
+monarch_wait_amqp_queue_name() {
+  local name="$1" ns="${2:-default}" timeout="${3:-60}"
+  local elapsed=0 queue uid
+
+  echo "==> [monarch] wait amqpQueueName: ${ns}/${name} (timeout=${timeout}s)"
+  while true; do
+    queue=$(kubectl get shadowtest "$name" -n "$ns" \
+      -o jsonpath='{.status.amqpQueueName}' 2>/dev/null || true)
+    if [[ -n "$queue" ]]; then
+      echo "    amqpQueueName=${queue}"
+      export BOOT_FAIL_AMQP_QUEUE="$queue"
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      uid=$(kubectl get shadowtest "$name" -n "$ns" \
+        -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+      if [[ -n "$uid" ]]; then
+        queue="shadow-diff-$(echo "$uid" | tr '[:upper:]' '[:lower:]')"
+        echo "    amqpQueueName unset; using convention ${queue}"
+        export BOOT_FAIL_AMQP_QUEUE="$queue"
+        return 0
+      fi
+      echo "FAIL: timed out waiting for amqpQueueName on ${ns}/${name}" >&2
+      return 1
+    fi
+    echo "    wait amqpQueueName (${elapsed}/${timeout}s)"
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+}
+
+# Assert the named queue is absent on rmq-prod-broker (rabbitmqadmin).
+monarch_assert_prod_queue_absent() {
+  local queue="$1"
+  local broker_pod listing
+  [[ -n "$queue" ]] || {
+    echo "monarch_assert_prod_queue_absent: empty queue name" >&2
+    return 1
+  }
+  broker_pod=$(kubectl get pods -n default -l app=rmq-prod-broker \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  if [[ -z "$broker_pod" ]]; then
+    echo "monarch_assert_prod_queue_absent: rmq-prod-broker pod not found" >&2
+    return 1
+  fi
+  listing=$(kubectl exec -n default "$broker_pod" -- \
+    rabbitmqadmin list queues name 2>/dev/null || true)
+  if echo "$listing" | grep -F "$queue" >/dev/null 2>&1; then
+    echo "FAIL: prod queue ${queue} still present on rmq-prod-broker" >&2
+    echo "$listing" >&2
+    return 1
+  fi
+  echo "    prod queue ${queue} absent"
+  return 0
+}
+
+# Return the rmq-prod-broker pod name (default ns).
+monarch_prod_broker_pod() {
+  local broker_pod
+  broker_pod=$(kubectl get pods -n default -l app=rmq-prod-broker \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  if [[ -z "$broker_pod" ]]; then
+    echo "monarch_prod_broker_pod: rmq-prod-broker pod not found" >&2
+    return 1
+  fi
+  echo "$broker_pod"
+}
+
+# Declare a durable queue with args that conflict with Monarch's prodShadowQueueArgs
+# (x-max-length: 500) so the controller's QueueDeclare returns PRECONDITION_FAILED.
+monarch_declare_conflicting_prod_queue() {
+  local queue="$1"
+  local broker_pod
+  [[ -n "$queue" ]] || {
+    echo "monarch_declare_conflicting_prod_queue: empty queue name" >&2
+    return 1
+  }
+  broker_pod=$(monarch_prod_broker_pod) || return 1
+  echo "==> [monarch] declare conflicting prod queue ${queue}"
+  kubectl exec -n default "$broker_pod" -- \
+    rabbitmqadmin declare queue name="$queue" durable=true \
+    arguments='{"x-max-length":1,"x-overflow":"drop-head"}'
+}
+
+# Scale monarch-controller-manager and wait for the desired replica state.
+monarch_scale_controller() {
+  local replicas="$1"
+  echo "==> [monarch] scale controller-manager to ${replicas}"
+  kubectl scale deployment/monarch-controller-manager -n monarch-system --replicas="$replicas"
+  if [[ "$replicas" -eq 0 ]]; then
+    local elapsed=0
+    while kubectl get pods -n monarch-system -l control-plane=controller-manager \
+      --no-headers 2>/dev/null | grep -q .; do
+      if [[ "$elapsed" -ge 120 ]]; then
+        echo "FAIL: controller pods still present after scale to 0" >&2
+        return 1
+      fi
+      sleep 2
+      elapsed=$((elapsed + 2))
+    done
+    echo "    controller scaled to 0"
+    return 0
+  fi
+  kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
 }

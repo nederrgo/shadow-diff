@@ -484,3 +484,77 @@ wait_kaisel_egress_seed() {
   echo "    kaisel egress seed not observed for: ${pattern}" >&2
   return 1
 }
+
+# Ensure ShadowTest is in record mode with KaiselRule ready (hybrid tests may
+# leave the CR in replay).
+# Usage: kaisel_ensure_record_mode
+kaisel_ensure_record_mode() {
+  local name="${SHADOWTEST:?SHADOWTEST unset}"
+  local ns="${SHADOWTEST_NS:-default}"
+  local shadow_ns="${SHADOW_NS:?SHADOW_NS unset}"
+  local mode
+
+  mode=$(kubectl get shadowtest "$name" -n "$ns" -o jsonpath='{.spec.mode}')
+  if [[ "$mode" != "record" ]]; then
+    echo "==> [kaisel] switching ${ns}/${name} back to record"
+    monarch_patch_mode "$name" "$ns" record
+  fi
+
+  wait_shadowtest_ready "$name" "$ns" --require-kaisel
+  SHADOW_NS="$(shadow_namespace)"
+  export SHADOW_NS
+  bats_suite_mark SHADOW_NS "$SHADOW_NS" 2>/dev/null || true
+
+  wait_kaiselrule_ready "kaisel-${name}" "$ns"
+  monarch_wait_igris_running "$SHADOW_NS" "$name" 180
+  kubectl wait --for=condition=Available deployment/shop \
+    -n "$SHADOW_NS" --timeout=180s
+  monarch_wait_operating_mode "$SHADOW_NS" "$name" record 180
+  monarch_wait_no_abc_roles "$SHADOW_NS" 120
+  # BPF map sync after KaiselRule recreate
+  sleep 3
+}
+
+# After traffic has been recorded: wait for S3 objects, then switch to replay
+# and wait for ABC + OPERATING_MODE=replay + replayState=started.
+# Usage: kaisel_switch_to_replay [ingress|egress|both]
+kaisel_switch_to_replay() {
+  local kind="${1:-both}"
+  local name="${SHADOWTEST:?SHADOWTEST unset}"
+  local ns="${SHADOWTEST_NS:-default}"
+  local shadow_ns="${SHADOW_NS:?SHADOW_NS unset}"
+  local session prefix
+
+  session=$(kubectl get shadowtest "$name" -n "$ns" \
+    -o jsonpath='{.status.currentSessionID}')
+  [[ -n "$session" ]] || {
+    echo "kaisel_switch_to_replay: currentSessionID empty" >&2
+    return 1
+  }
+
+  if [[ "$kind" == "ingress" || "$kind" == "both" ]]; then
+    prefix="$(minio_session_prefix "$ns" "$name" "$session" ingress)"
+    minio_wait_objects "$prefix" 45 || return 1
+  fi
+  if [[ "$kind" == "egress" || "$kind" == "both" ]]; then
+    prefix="$(minio_session_prefix "$ns" "$name" "$session" egress)"
+    minio_wait_objects "$prefix" 45 || return 1
+  fi
+
+  monarch_patch_mode "$name" "$ns" replay "$session"
+
+  wait_shadowtest_ready "$name" "$ns"
+  SHADOW_NS="$(shadow_namespace)"
+  export SHADOW_NS
+  bats_suite_mark SHADOW_NS "$SHADOW_NS" 2>/dev/null || true
+
+  monarch_wait_no_kaisel_rule "$name" "$ns" 120
+  monarch_wait_igris_running "$SHADOW_NS" "$name" 180
+  kubectl wait --for=condition=Available deployment/shop \
+    -n "$SHADOW_NS" --timeout=180s
+  monarch_wait_all_roles_running "$SHADOW_NS" "$name" 180
+  monarch_wait_operating_mode "$SHADOW_NS" "$name" replay 180
+  monarch_wait_replay_started "$name" "$ns" 180
+
+  echo "==> [kaisel] replay ready session=${session} ns=${SHADOW_NS}"
+}

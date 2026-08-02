@@ -36,7 +36,6 @@ func TestEgressRelayRabbitMQEnv(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
 		Spec: enginev1alpha1.ShadowTestSpec{
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			Inputs: []enginev1alpha1.InputSpec{{
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
@@ -60,7 +59,7 @@ func TestEgressRelayRabbitMQEnv(t *testing.T) {
 	if byName[envControlAAMQPURL] == "" || byName[envControlBAMQPURL] == "" || byName[envCandidateAMQPURL] == "" {
 		t.Fatalf("missing AMQP URLs: %#v", byName)
 	}
-	if byName[envBeruHTTPURL] != "http://beru.beru-system.svc.cluster.local:8080" {
+	if byName[envBeruHTTPURL] != "http://beru-local.shadow-default-rmq-test.svc.cluster.local:8080" {
 		t.Fatalf("BERU_HTTP_URL = %q", byName[envBeruHTTPURL])
 	}
 }
@@ -99,7 +98,6 @@ func TestEgressRelayRabbitMQEnv_HTTPIngressOnly(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "http-rmq-test", Namespace: "default"},
 		Spec: enginev1alpha1.ShadowTestSpec{
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			Inputs: []enginev1alpha1.InputSpec{{
 				Port:   8888,
 				Driver: "http_request",
@@ -130,7 +128,6 @@ func TestEgressRelayRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
 		Spec: enginev1alpha1.ShadowTestSpec{
-			BeruGRPCAddress: "beru.beru-system.svc.cluster.local:50051",
 			Inputs: []enginev1alpha1.InputSpec{{
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
@@ -154,12 +151,16 @@ func TestEgressRelayRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
 	}
 }
 
-func TestIgrisRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
+func TestIgrisRabbitMQEnv_RecordOmitsShadowURLs(t *testing.T) {
 	r := &ShadowTestReconciler{}
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
-		Status:     enginev1alpha1.ShadowTestStatus{AmqpQueueName: "shadow-diff-test"},
+		Status: enginev1alpha1.ShadowTestStatus{
+			AmqpQueueName:    "shadow-diff-test",
+			CurrentSessionID: "session-1",
+		},
 		Spec: enginev1alpha1.ShadowTestSpec{
+			Mode: modeRecord,
 			Inputs: []enginev1alpha1.InputSpec{{
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
@@ -170,6 +171,7 @@ func TestIgrisRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
 			Dependencies: []enginev1alpha1.DependencySpec{{
 				Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL",
 			}},
+			Storage: &enginev1alpha1.StorageConfig{Type: "s3", BucketName: "b"},
 		},
 	}
 	env, err := r.igrisRabbitMQEnv(st, "shadow-default-rmq-test")
@@ -179,12 +181,64 @@ func TestIgrisRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
 	byName := map[string]string{}
 	for _, e := range env {
 		byName[e.Name] = e.Value
-		if e.Name == envControlAAMQPURL && !strings.Contains(e.Value, ":5672/") {
-			t.Fatalf("CONTROL_A_AMQP_URL = %q, want port 5672", e.Value)
-		}
 	}
 	if byName[envSamplePercentage] != "100" {
 		t.Fatalf("IGRIS_RMQ_SAMPLE_PERCENTAGE = %q, want default 100", byName[envSamplePercentage])
+	}
+	if byName[envProdURL] != "amqp://prod:5672" {
+		t.Fatalf("PROD_URL = %q", byName[envProdURL])
+	}
+	if byName[envShadowQueueName] != "shadow-diff-test" {
+		t.Fatalf("SHADOW_QUEUE_NAME = %q", byName[envShadowQueueName])
+	}
+	if byName[envOperatingMode] != modeRecord {
+		t.Fatalf("OPERATING_MODE = %q", byName[envOperatingMode])
+	}
+	if byName[envControlAAMQPURL] != "" || byName[envControlBAMQPURL] != "" || byName[envCandidateAMQPURL] != "" {
+		t.Fatalf("record must omit shadow AMQP URLs, got %#v", byName)
+	}
+}
+
+func TestIgrisRabbitMQEnv_ReplayIncludesShadowURLs(t *testing.T) {
+	r := &ShadowTestReconciler{}
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
+		Status:     enginev1alpha1.ShadowTestStatus{CurrentSessionID: "session-1"},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			Mode:      modeReplay,
+			SessionID: "session-1",
+			Inputs: []enginev1alpha1.InputSpec{{
+				Driver: "rabbitmq_message",
+				AMQP: &enginev1alpha1.AMQPInputSpec{
+					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
+					TargetDependency: "rabbitmq",
+				},
+			}},
+			Dependencies: []enginev1alpha1.DependencySpec{{
+				Name: "rabbitmq", Type: "rabbitmq", EnvVarInjection: "AMQP_URL",
+			}},
+			Storage: &enginev1alpha1.StorageConfig{Type: "s3", BucketName: "b"},
+		},
+	}
+	env, err := r.igrisRabbitMQEnv(st, "shadow-default-rmq-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]string{}
+	for _, e := range env {
+		byName[e.Name] = e.Value
+	}
+	if byName[envControlAAMQPURL] == "" || byName[envControlBAMQPURL] == "" || byName[envCandidateAMQPURL] == "" {
+		t.Fatalf("replay missing shadow AMQP URLs: %#v", byName)
+	}
+	if !strings.Contains(byName[envControlAAMQPURL], ":5672/") {
+		t.Fatalf("CONTROL_A_AMQP_URL = %q, want port 5672", byName[envControlAAMQPURL])
+	}
+	if byName[envProdURL] != "" || byName[envShadowQueueName] != "" {
+		t.Fatalf("replay must omit prod queue env, got %#v", byName)
+	}
+	if byName[envOperatingMode] != modeReplay {
+		t.Fatalf("OPERATING_MODE = %q", byName[envOperatingMode])
 	}
 }
 

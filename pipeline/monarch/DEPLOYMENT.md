@@ -32,7 +32,6 @@ Each shadow app pod (when egress is enabled) gets `HTTP_PROXY` / `HTTPS_PROXY` �
 3. **Container images** pullable by the cluster:
    - Shadow apps: `oldImage`, `newImage`
    - Helper images (Igris, Shop, AMQP relays): resolved by Monarch — see **Helper image resolution** below. Optional CR overrides (`spec.igris`, etc.) or operator env vars still work.
-4. **Beru** deployed (e.g. `kubectl apply -f pipeline/beru/deploy/`) in `beru-system`.
 5. **Kaisel DaemonSet** (once per cluster):
    ```bash
    kubectl apply -k pipeline/kaisel/deploy/
@@ -108,16 +107,11 @@ kubectl api-resources | grep shadowtest   # short name: st
 
 ---
 
-## Step 2 — Deploy Beru
+## Step 2 — Beru
 
-Monarch does not install Beru. Apply the Beru manifest and ensure `spec.beruGRPCAddress` on the ShadowTest matches the Service DNS name:
+Monarch deploys Beru itself: one `beru-local` Deployment and Service per shadow namespace, reachable at `beru-local.<shadow-ns>.svc.cluster.local:50051`. Nothing to install — only make sure the image is resolvable (`BERU_IMAGE` on the manager, or `spec.beru.image`).
 
-```bash
-kubectl apply -f pipeline/beru/deploy/
-kubectl rollout status deployment/beru -n beru-system
-```
-
-Default gRPC address: `beru.beru-system.svc.cluster.local:50051`.
+For diff history that outlives the ShadowTest, point every beru-local at a shared PostgreSQL with `BERU_DB_SECRET` — see [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md).
 
 ---
 
@@ -153,7 +147,6 @@ spec:
   newImage: ghcr.io/org/app:v2
   servicePort: 8888          # Envoy ingress listener in shadow pods
   applicationPort: 8080      # App container port (Envoy forwards here)
-  beruGRPCAddress: beru.beru-system.svc.cluster.local:50051
 ```
 
 ### Full HTTP + Kaisel + egress example
@@ -182,7 +175,6 @@ When `inputs[].driver` is `rabbitmq_message`, Monarch skips HTTP Igris and deplo
 | `newImage` | yes | Image for **candidate** |
 | `servicePort` | no | TCP port for Envoy **ingress** listener (default **8888**) |
 | `applicationPort` | no | App listen port (default **8080** for HTTP/TCP; AMQP-only uses `servicePort+1`) |
-| `beruGRPCAddress` | no | Beru ext_proc gRPC `host:port`; default `beru.beru-system.svc.cluster.local:50051` |
 | `beruGRPCTimeout` | no | ext_proc timeout (e.g. `2s`) |
 
 ### Ingress — `inputs`, `igris`
@@ -191,7 +183,7 @@ When `inputs[].driver` is `rabbitmq_message`, Monarch skips HTTP Igris and deplo
 |-------|-------------|
 | `inputs[]` | Igris listener ports and drivers. Empty → single HTTP listener on `servicePort`. |
 | `inputs[].port` | TCP port Igris binds (omit for `rabbitmq_message`) |
-| `inputs[].driver` | `http_request`, `tcp_stream`, or `rabbitmq_message` |
+| `inputs[].driver` | `http_request` or `rabbitmq_message` |
 | `inputs[].amqp` | Required for `rabbitmq_message`: `prodUrl`, `exchange`, `routingKey`, `targetDependency` |
 | `inputs[].amqp.exchangeType` | `topic` (default), `direct`, `fanout`, `headers` |
 | `inputs[].addon` | Deprecated; use `driver` (`http` → `http_request`) |
@@ -222,6 +214,14 @@ Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`** and se
 | `samplePercentage` | Shared prod gate for all input types (`V = FNV-1a-64(full 16-byte trace id) & 0xFF`; keep iff `(V*100)<(N*256)`, 1–100; default `100`). HTTP → Kaisel (ingress and egress); `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). Empty `traceparent` dropped. RabbitMQ does not use Kaisel. |
 
 Monarch reconciles `KaiselRule` for both HTTP ingress and HTTP egress. **`status.kaiselPhase`**: `Ready` or `Degraded`.
+
+### Spike Guard — ingress load shedding
+
+| Field | Description |
+|-------|-------------|
+| `maxQPSPerPod` | Requests/sec Igris forwards per shadow pod replica (default `50`). Monarch multiplies by the shadow role replica count (currently `1`) and passes the result to igris-http as `IGRIS_MAX_CONCURRENCY`. Requests over the cap get HTTP `429` immediately — never forwarded to shadow pods. |
+
+igris-rabbitmq also sets a 10s `Expiration` on every message it republishes to the shadow brokers, and Monarch declares the prod shadow queue with `x-max-length: 500` / `x-overflow: drop-head` — both bound how much stale traffic can pile up ahead of a stuck shadow consumer.
 
 ### Egress — Shop (always-on)
 
@@ -278,6 +278,8 @@ While progressing, common `status.message` values include:
 - `waiting for shadow dependencies`
 - `waiting for igris-rabbitmq` / `waiting for egress-relay-rabbitmq`
 - `waiting for shadow Deployments` / `waiting for Igris` / `waiting for Shop`
+
+**Boot failure:** if a managed pod hits CrashLoop/ImagePull (or stays not Ready for 90s), Monarch sets `phase: Failed` with the reason, deletes the KaiselRule + shadow namespace (and AMQP shadow queue if any), and stops recreating the stack. Inspect `status.message` / `kubectl describe shadowtest`. Retry with delete + re-apply.
 
 ---
 
@@ -346,10 +348,9 @@ See `testing/tools/e2e-reset-minikube.sh` and `testing/bats/manifests/e2e-shadow
 ## End-to-end checklist
 
 - [ ] Cluster reachable; target Deployment exists
-- [ ] Beru running in `beru-system`
 - [ ] `pipeline/kaisel/deploy/` applied (Kaisel DaemonSet)
 - [ ] Monarch installed (`make -C pipeline/monarch deploy IMG=...`)
-- [ ] ShadowTest applied with correct images, ports, and `beruGRPCAddress`
+- [ ] ShadowTest applied with correct images and ports
 - [ ] `kubectl get st` shows `phase: Ready` and `shadowNamespace`
 - [ ] Three shadow Deployments (+ Igris/Shop as configured) are Ready
 - [ ] `status.kaiselPhase: Ready` for HTTP ingress ShadowTests
@@ -370,7 +371,8 @@ See `testing/tools/e2e-reset-minikube.sh` and `testing/bats/manifests/e2e-shadow
 
 | Symptom | Likely cause | What to do |
 |---------|----------------|------------|
-| `phase: Failed`, target not found | Wrong `targetDeployment` / `targetNamespace` | Fix spec; ensure Deployment exists |
+| `phase: Failed`, target not found | Wrong `targetDeployment` / `targetNamespace` | Fix spec; ensure Deployment exists; delete+re-apply ShadowTest |
+| `phase: Failed`, CrashLoop/ImagePull in message | Shadow/Shop/Igris/beru-local (or dep) will not start | Fix image/config; `kubectl delete shadowtest` + re-apply (stack already torn down) |
 | `waiting for egress-relay-rabbitmq` | Image not loaded (Kind) | Build/load `egress-relay-rabbitmq:dev`; ensure `MONARCH_MODE=dev` on operator |
 | Stale `monarch:dev` (Docker cache) after controller changes | Pod still on old image digest | `docker build --no-cache` + `kubectl rollout restart` manager |
 | `kaiselPhase: Degraded` | KaiselRule reconcile failed | Check Monarch logs; `kubectl get kaiselrule` |

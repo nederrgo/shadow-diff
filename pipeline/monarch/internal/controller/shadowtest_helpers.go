@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
+	"github.com/shadow-diff/shadowspec"
 )
 
 func targetNamespaceFor(st *enginev1alpha1.ShadowTest) string {
@@ -171,34 +172,18 @@ func resolveSpecDefaults(st *enginev1alpha1.ShadowTest, target *appsv1.Deploymen
 	return nil
 }
 
-func beruGRPCAddressFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	if st.Spec.BeruGRPCAddress != "" {
-		return st.Spec.BeruGRPCAddress
-	}
+// Beru always runs as beru-local inside the shadow namespace, one per ShadowTest.
+func beruGRPCAddressFor(_ *enginev1alpha1.ShadowTest, shadowNS string) string {
 	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruGRPCPort)
 }
 
-func beruHTTPHostFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	if st.Spec.BeruGRPCAddress != "" {
-		host, _, err := parseBeruHostPort(st.Spec.BeruGRPCAddress)
-		if err != nil || host == "" {
-			return defaultBeruHTTPAddress
-		}
-		return fmt.Sprintf("%s:8080", host)
-	}
+func beruHTTPHostFor(_ *enginev1alpha1.ShadowTest, shadowNS string) string {
 	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
 }
 
 // beruIngestURLFor is the base URL a shadow-pod sidecar posts egress reports to.
 // It uses the ingest port rather than 8080 — see localBeruIngestPort.
-func beruIngestURLFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	if st.Spec.BeruGRPCAddress != "" {
-		host, _, err := parseBeruHostPort(st.Spec.BeruGRPCAddress)
-		if err != nil || host == "" {
-			return "http://" + defaultBeruHTTPAddress
-		}
-		return fmt.Sprintf("http://%s:8080", host)
-	}
+func beruIngestURLFor(_ *enginev1alpha1.ShadowTest, shadowNS string) string {
 	return fmt.Sprintf("http://%s:%d", localBeruDNSHost(shadowNS), localBeruIngestPort)
 }
 
@@ -207,16 +192,6 @@ func beruGRPCTimeoutFor(st *enginev1alpha1.ShadowTest) string {
 		return st.Spec.BeruGRPCTimeout
 	}
 	return defaultBeruGRPCTimeout
-}
-
-func beruIngestAddressFor(st *enginev1alpha1.ShadowTest, shadowNS string) string {
-	if st.Spec.BeruIngestAddress != "" {
-		return st.Spec.BeruIngestAddress
-	}
-	if st.Spec.BeruGRPCAddress != "" {
-		return defaultBeruIngestAddress
-	}
-	return fmt.Sprintf("%s:%d", localBeruDNSHost(shadowNS), localBeruHTTPPort)
 }
 
 func parseBeruHostPort(address string) (host string, port int32, err error) {
@@ -236,39 +211,7 @@ func parseBeruHostPort(address string) (host string, port int32, err error) {
 }
 
 func resolveDependencyDefaults(dep enginev1alpha1.DependencySpec) (image string, port int32) {
-	image = dep.Image
-	port = dep.Port
-	switch strings.ToLower(dep.Type) {
-	case "rabbitmq":
-		if image == "" {
-			image = "rabbitmq:3-management-alpine"
-		}
-		if port == 0 {
-			port = 5672
-		}
-	case "mongodb", "mongo":
-		if image == "" {
-			image = "mongo:6.0"
-		}
-		if port == 0 {
-			port = 27017
-		}
-	case "redis":
-		if image == "" {
-			image = "redis:7-alpine"
-		}
-		if port == 0 {
-			port = 6379
-		}
-	case "postgres", "postgresql":
-		if image == "" {
-			image = "postgres:16-alpine"
-		}
-		if port == 0 {
-			port = 5432
-		}
-	}
-	return
+	return shadowspec.ResolveDependencyDefaults(dep.Type, dep.Image, dep.Port)
 }
 
 // dependencyContainerEnv returns the environment a dependency image needs to

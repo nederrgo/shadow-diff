@@ -16,7 +16,17 @@ spec:
     singular: shadowtest
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.bootStep
+      name: Boot Step
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: ShadowTest is the Schema for the shadowtests API.
@@ -51,23 +61,15 @@ spec:
                 minimum: 1
                 type: integer
               beru:
-                description: Beru overrides the beru-local image when spec.beruGRPCAddress
-                  is unset.
+                description: Beru overrides the beru-local analytics image (one per
+                  shadow namespace).
                 properties:
                   image:
                     description: Image overrides the default Beru container image.
                     type: string
                 type: object
-              beruGRPCAddress:
-                description: BeruGRPCAddress is the host:port of the Beru ext_proc
-                  gRPC service.
-                type: string
               beruGRPCTimeout:
                 description: BeruGRPCTimeout is the ext_proc gRPC timeout (e.g. "2s").
-                type: string
-              beruIngestAddress:
-                description: BeruIngestAddress is the host:port of the Beru wire-payload
-                  ingest service (HTTP).
                 type: string
               dependencies:
                 description: Dependencies lists ephemeral backing services (e.g. Redis)
@@ -326,7 +328,7 @@ spec:
                   Inputs defines Igris listener ports and drivers. When empty, Monarch defaults to
                   a single HTTP listener on servicePort.
                 items:
-                  description: 'InputSpec declares an ingress driver: HTTP/TCP listeners
+                  description: 'InputSpec declares an ingress driver: HTTP listeners
                     or RabbitMQ message capture.'
                   properties:
                     addon:
@@ -369,15 +371,14 @@ spec:
                       type: object
                     driver:
                       description: |-
-                        Driver selects the ingress path (http_request, tcp_stream, or rabbitmq_message).
-                        When empty on a port-based input, Monarch infers from the port.
+                        Driver selects the ingress path (http_request or rabbitmq_message).
+                        When empty on a port-based input, Monarch defaults to http_request.
                       enum:
                       - http_request
-                      - tcp_stream
                       - rabbitmq_message
                       type: string
                     port:
-                      description: Port is the TCP port Igris binds for HTTP/TCP inputs.
+                      description: Port is the TCP port Igris binds for HTTP inputs.
                         Omit for rabbitmq_message.
                       format: int32
                       maximum: 65535
@@ -385,6 +386,21 @@ spec:
                       type: integer
                   type: object
                 type: array
+              maxQPSPerPod:
+                description: |-
+                  MaxQPSPerPod caps requests/sec Igris will forward per shadow pod replica (default 50).
+                  Monarch multiplies this by the shadow role replica count to compute IGRIS_MAX_CONCURRENCY,
+                  the ingress load-shedding threshold that protects shadow pods from traffic spikes.
+                minimum: 1
+                type: integer
+              mode:
+                default: record
+                description: Mode selects record (capture to S3) or replay (ABC +
+                  S3 readers). Defaults to record.
+                enum:
+                - record
+                - replay
+                type: string
               newImage:
                 description: NewImage is the container image for the Candidate pod.
                 type: string
@@ -396,7 +412,8 @@ spec:
               samplePercentage:
                 description: |-
                   SamplePercentage is the shared prod sampling gate (1-100, default 100) for
-                  all input types. Uses (V*100)<(N*256) on the W3C trace id; empty/missing
+                  all input types. Uses github.com/shadow-diff/sample: V = FNV-1a-64(decoded
+                  16-byte W3C trace id) & 0xFF; keep iff (V*100)<(N*256). Empty/missing
                   traceparent is always dropped. Monarch seeds it by inputs[].driver: HTTP →
                   KaiselRule (ingress and egress); rabbitmq_message → igris-rabbitmq
                   (IGRIS_RMQ_SAMPLE_PERCENTAGE). RabbitMQ does not use Kaisel.
@@ -412,6 +429,11 @@ spec:
                 maximum: 65535
                 minimum: 1
                 type: integer
+              sessionID:
+                description: |-
+                  SessionID pins the S3 session folder for replay (and optionally for record).
+                  When unset in record mode, Monarch mints status.currentSessionID.
+                type: string
               shadowSoldier:
                 description: ShadowSoldier overrides the database egress capture sidecar
                   image.
@@ -429,6 +451,57 @@ spec:
                     description: Image overrides the default Shop container image.
                     type: string
                 type: object
+              storage:
+                description: Storage configures required BYOB S3-compatible object
+                  storage for this ShadowTest.
+                properties:
+                  bucketName:
+                    description: BucketName is the S3 bucket that holds recorded traffic
+                      for this ShadowTest.
+                    type: string
+                  credentialsSecretRef:
+                    description: |-
+                      CredentialsSecretRef names a Secret in the ShadowTest CR namespace with
+                      AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. Monarch copies it into the
+                      shadow namespace (same name) before injecting secretKeyRef into pods.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  endpoint:
+                    description: Endpoint is an optional custom S3 API URL (MinIO
+                      / on-prem).
+                    type: string
+                  region:
+                    description: Region is the AWS region (also used as a MinIO region
+                      label).
+                    type: string
+                  retentionPolicy:
+                    default: Retain
+                    description: RetentionPolicy controls whether Monarch deletes
+                      the ShadowTest's S3 prefix on CR deletion.
+                    enum:
+                    - Retain
+                    - Delete
+                    type: string
+                  type:
+                    default: s3
+                    description: Type selects the object-storage backend.
+                    enum:
+                    - s3
+                    type: string
+                required:
+                - bucketName
+                - type
+                type: object
               targetDeployment:
                 description: |-
                   TargetDeployment is the name of the production Deployment whose pod template
@@ -441,6 +514,7 @@ spec:
                 type: string
             required:
             - newImage
+            - storage
             - targetDeployment
             type: object
           status:
@@ -450,12 +524,119 @@ spec:
                 description: AmqpQueueName is the production broker queue Monarch
                   declared (shadow-diff-<uid>).
                 type: string
+              bootStep:
+                description: BootStep is the current position in the Monarch boot
+                  sequence.
+                type: string
               captureTargets:
                 description: CaptureTargets lists discovered prod pod template labels
                   (key=value, sorted).
                 items:
                   type: string
                 type: array
+              components:
+                description: Components reports per-component readiness for the topology
+                  graph.
+                properties:
+                  amqpBound:
+                    description: |-
+                      AMQPBound is true once the prod shadow queue is bound, or when the ShadowTest
+                      declares no AMQP ingress at all.
+                    type: boolean
+                  beruReady:
+                    description: BeruReady is true when the beru-local analysis sink
+                      is Available.
+                    type: boolean
+                  igrisReady:
+                    description: IgrisReady is true when the ingress hub (igris or
+                      igris-rabbitmq) is Available.
+                    type: boolean
+                  kaiselRuleActive:
+                    description: KaiselRuleActive is true when the eBPF capture rule
+                      reconciled cleanly (record mode).
+                    type: boolean
+                  shadowRolesReady:
+                    additionalProperties:
+                      type: boolean
+                    description: |-
+                      ShadowRolesReady maps control-a/control-b/candidate to Deployment readiness.
+                      Empty in record mode, where no shadow roles are provisioned.
+                    type: object
+                  shopReady:
+                    description: ShopReady is true when the per-ShadowTest egress
+                      mock store is Available.
+                    type: boolean
+                  targetDeployment:
+                    description: TargetDeployment is the production Deployment this
+                      ShadowTest shadows.
+                    type: string
+                type: object
+              conditions:
+                description: |-
+                  Conditions follow the standard Kubernetes condition contract.
+                  Types: Ready, Progressing, Degraded.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              currentSessionID:
+                description: CurrentSessionID is the active S3 session folder for
+                  this ShadowTest.
+                type: string
               igrisEndpoint:
                 description: IgrisEndpoint is the DNS host:port Monarch configured
                   for capture forwarding.
@@ -475,6 +656,10 @@ spec:
               phase:
                 description: Phase is a high-level summary of reconciliation (e.g.
                   Ready, Progressing, Failed).
+                type: string
+              replayState:
+                description: ReplayState tracks automated replay trigger progress
+                  ("" | started | completed).
                 type: string
               shadowNamespace:
                 description: ShadowNamespace is the dedicated namespace where control/candidate

@@ -7,8 +7,14 @@ use (
 	./pipeline/igrises/igris-rabbitmq
 	./pipeline/kaisel
 	./pipeline/monarch
+	./pipeline/pkg/monarchpb
 	./pipeline/pkg/sample
+	./pipeline/pkg/s3utils
+	./pipeline/pkg/shadowspec
+	./pipeline/pkg/trace
+	./pipeline/pkg/replay
 	./pipeline/shadow-soldier
 	./pipeline/shop
+	./pipeline/tusk
 	./testing/example-apps/db-test-app
 )

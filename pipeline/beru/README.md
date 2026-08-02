@@ -1,8 +1,8 @@
 # Beru
 
-Beru is the **L5 — analysis sink** for Shadow-Diff. It correlates traffic from the three shadow roles (control-a, control-b, candidate), runs **diff-of-diffs** to separate noise from regressions, serves **egress mock responses** for strict downstream replay, and exposes a **web dashboard** for inspecting traces.
+Beru is the **L5 — analysis sink** for Shadow-Diff. It correlates traffic from the three shadow roles (control-a, control-b, candidate), runs **diff-of-diffs** to separate noise from regressions, and serves **egress mock responses** for strict downstream replay. Trace inspection UI lives in [The System](../../docs/control-plane/the-system.md) (ShadowDiff via Tusk + Postgres).
 
-Monarch provisions Beru automatically. When `spec.beruGRPCAddress` is unset, Monarch deploys a per-ShadowTest **`beru-local`** pod inside the shadow namespace (SQLite on an in-memory EmptyDir — state is lost on pod restart). To use a persistent, shared Beru instance instead, set `spec.beruGRPCAddress` on the `ShadowTest` CR and point it at a separately deployed Beru (e.g. `beru.beru-system.svc.cluster.local:50051`). See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) for how Beru fits in the full pipeline.
+Monarch provisions Beru automatically: one **`beru-local`** pod per ShadowTest, inside that ShadowTest's shadow namespace. It runs on SQLite over an in-memory EmptyDir, so state is lost on pod restart and with the namespace. Setting `BERU_DB_SECRET` on the Monarch manager points every beru-local at a shared PostgreSQL instead, and diff history then outlives the ShadowTest — see [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md). For how Beru fits in the full pipeline see [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md).
 
 ---
 
@@ -61,65 +61,73 @@ make test
 # gRPC :50051, HTTP :8080 (defaults)
 ```
 
-Open the dashboard at [http://localhost:8080/dashboard/](http://localhost:8080/dashboard/).
+Inspect diffs in The System at `/diffs` (Tusk reads Beru's Postgres projection tables).
 
-### Deploy to Kubernetes
+### In Kubernetes
+
+Beru ships no manifests. Build the image and let Monarch place it:
 
 ```sh
 make docker-build BERU_IMG=beru:dev
-# Kind: load the image into your cluster, then:
-kubectl apply -f deploy/
+kubectl set env deployment/monarch-controller-manager -n monarch-system BERU_IMAGE=beru:dev
 ```
 
-This creates namespace `**beru-system**`, Deployment `**beru**`, and Service `**beru**`:
+Monarch creates Deployment and Service `beru-local` in each shadow namespace:
 
 
 | Port      | Protocol | Purpose                                                       |
 | --------- | -------- | ------------------------------------------------------------- |
 | **50051** | gRPC     | `TrafficReporter`, Envoy `ext_proc`                           |
-| **8080**  | HTTP     | Egress diff ingest, dashboard                                 |
+| **8080**  | HTTP     | Egress/wire ingest, seed, slim trace detail API               |
+| **8081**  | HTTP     | Egress ingest for in-pod sidecars (Service port → container 8080) |
 
 
-Point Monarch / ShadowTest at `beru.beru-system.svc.cluster.local:50051` (gRPC). shadow-soldier and egress-relay-rabbitmq post egress diffs to `:8080/api/v1/egress/diff`.
+In-pod sidecars post to `:8081` rather than `:8080`, because the shadow pod's iptables rules REDIRECT outbound 8080 into Envoy's egress listener.
+
+History outlives the ShadowTest in shared Postgres. Browse it in The System `/diffs` (Tusk connects to the same database).
 
 ---
 
 ## Configuration
 
 
-| Variable                  | Default                                                                                         | Description                                            |
-| ------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `BERU_GRPC_ADDR`          | `:50051`                                                                                        | gRPC listen address (ext_proc, TrafficReporter)        |
-| `BERU_HTTP_ADDR`          | `:8080`                                                                                         | HTTP listen address (egress diff ingest, dashboard)             |
-| `BERU_DB_PATH`            | `/var/lib/beru/shadow_diff.db` (falls back to `./shadow_diff.db` if parent dir is not writable) | SQLite path (`raw_reports`, `verdicts`, `shadow_tests`, `noise_filters`) |
-| `BERU_DB_RETENTION_DAYS`  | `7`                                                                                             | Purge `raw_reports` older than N days; orphan `verdicts` removed        |
-| `BERU_SHADOW_TEST_NAME`   | `default`                                                                                       | Default shadow test name when ingest metadata omits `shadow_test_name`  |
-| `BERU_TRACE_TIMEOUT`      | `10s`                                                                                           | Incomplete traces older than this become `WAITING_FOR_ROLES`            |
+| Variable                  | Default                    | Description                                            |
+| ------------------------- | -------------------------- | ------------------------------------------------------ |
+| `BERU_GRPC_ADDR`          | `:50051`                   | gRPC listen address (ext_proc, TrafficReporter)        |
+| `BERU_HTTP_ADDR`          | `:8080`                    | HTTP listen address (ingest, seed, trace detail)       |
+| `DB_HOST` / `DB_USER` / `DB_NAME` | —                   | Required Postgres connection (boot fails if missing)   |
+| `DB_PORT` / `DB_PASSWORD` / `DB_SSLMODE` | `5432` / — / `require` | Postgres connection details                    |
+| `BERU_WAL_PATH`           | `/data/beru_wal.db`        | Bbolt disk WAL for ingest buffering                    |
+| `BERU_DEAD_LETTER_PATH`   | `/data/dead_letters.jsonl` | Poison-pill DLQ after 3 flush failures                 |
+| `BERU_WAL_FLUSH_TIMEOUT`  | `30s`                      | Per-attempt Postgres flush context bound               |
+| `BERU_DB_RETENTION_DAYS`  | `7`                        | Purge `raw_reports` older than N days; orphan `verdicts` removed |
+| `BERU_SHADOW_TEST_NAME`   | `default`                  | Default shadow test name when ingest metadata omits it |
+| `BERU_TRACE_TIMEOUT`      | `10s`                      | Incomplete traces older than this become `WAITING_FOR_ROLES` |
 
 
 ---
 
 ## Storage and lifecycle
 
-Beru uses **two persistence layers** plus an in-memory mock store.
+Beru uses **PostgreSQL** as the sole database, fronted by a **Bbolt disk WAL** so ingest never blocks on DB blips. See [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md).
 
 ### Overview
 
 | Layer | What it holds | Where | Survives restart? |
 | ----- | ------------- | ----- | ----------------- |
-| **State engine** | Every report + latest verdict per trace | SQLite `raw_reports`, `verdicts` | Yes |
-| **Shadow test runs** | Run names for dashboard filter + noise filter scope | SQLite `shadow_tests`, `noise_filters` | Yes |
+| **Disk WAL** | Unflushed `append_report` ops | Bbolt `/data/beru_wal.db` | No (EmptyDir) |
+| **State engine** | Every report + latest verdict per trace | Postgres `raw_reports`, `verdicts` | Yes |
+| **Shadow test runs** | Run names + noise filter scope | Postgres `shadow_tests`, `noise_filters` | Yes |
 
-### State engine (`internal/v2/`)
+### State engine (`internal/v2/` + `internal/storage/`)
 
 All ingress and egress sources normalize to a `RawReport` and hit the **TraceRouter**:
 
 ```
 Handler → TraceRouter (FNV-sharded worker)
-       → AppendReport (SQLite raw_reports)
-       → EvaluateTraceHistory (signature-based diff)
-       → SaveDiffVerdict (SQLite verdicts, upsert per trace_id)
-       → mirrorLegacyLogs (E2E log strings)
+       → AppendReport (Bbolt WAL, returns immediately)
+       → WAL flusher (8 workers, inFlight claim, pg_advisory_xact_lock)
+       → INSERT raw_reports → EvaluateTraceHistory → UPSERT verdicts
 ```
 
 | Table | Write model | Contents |
@@ -131,13 +139,7 @@ Late-arriving spans **re-open** the timeline and overwrite the verdict — inclu
 
 `shadow_test_name` is set from ingest metadata (`shadow_test_name` on gRPC/HTTP, `x-shadow-test-name` on ext_proc) or falls back to `BERU_SHADOW_TEST_NAME`.
 
-### Dashboard
-
-The web UI reads **v2 tables only** — no duplicate legacy projection. Trace list shows one row per `(trace_id, protocol)` with signatures from stored `raw_reports`. Detail URLs: `/dashboard/traces/{traceID}?protocol=mongodb`.
-
-Match/mismatch stats on the index page are **computed on load** from v2 data (not stored counters on `shadow_tests`).
-
-### SQLite retention
+### Retention
 
 A background job runs **every hour** and deletes `raw_reports` rows older than `BERU_DB_RETENTION_DAYS` (default 7), then removes `verdicts` whose `trace_id` no longer appears in `raw_reports`. Noise filters are **not** auto-deleted.
 
@@ -165,12 +167,9 @@ Protobuf: `[api/proto/beru/v1/traffic.proto](api/proto/beru/v1/traffic.proto)` (
 | ----------------------------------------------- | ----------------------------------------------------------------------- |
 | `GET /healthz`                                  | Liveness                                                                |
 | `POST /api/v1/egress/diff`                      | Egress diff ingest — used by **shadow-soldier** and **egress-relay-rabbitmq** (optional `signature`, `shadow_test_name`) |
-| `POST /api/v1/debug/seed-reports`               | Inject RawReport histories for UI/bats (no live traffic)                            |
-| `GET /dashboard/`                               | Web UI — trace list, diff detail, egress sequence, noise filter management |
-| `GET /api/v1/traces?shadow_test_id=`            | Dashboard JSON — trace summaries (`trace_id`, `protocol`, `status`, `signatures`) |
-| `GET /api/v1/traces/{traceID}?protocol=`        | Trace detail — `raw_reports`, `verdict`, `sequence_steps`               |
-| `GET /api/v1/shadow-tests`                      | Shadow test run list (for dashboard run selector)                       |
-| `POST /api/v1/noise/filters`                    | Save a noise filter path for a shadow test name                         |
+| `POST /api/v1/ingest/wire`                      | Envoy Lua wire-protocol HTTP egress ingest                              |
+| `POST /api/v1/debug/seed-reports`               | Inject RawReport histories for bats (no live traffic)                   |
+| `GET /api/v1/traces/{traceID}?protocol=`        | Slim trace detail — `reports` + `verdict` (optional `direction=` for HTTP) |
 
 
 ### Trace correlation
@@ -206,12 +205,10 @@ internal/
     report/            RawReport builders (ingress, egress, signatures)
   envoyextproc/        Envoy ext_proc (ingress observe → TraceRouter)
   diff/                JSON diff-of-diffs (ingress noise paths; noise filter tests)
-  api/                 HTTP handlers (egress diff, wire ingest, seed)
-  dashboard/           Embedded web UI + REST API (reads v2 tables)
-  storage/             SQLite shadow_tests + noise_filters + retention
+  api/                 HTTP handlers (egress/wire ingest, seed, slim traces)
+  storage/             Postgres + WAL (raw_reports, verdicts, noise_filters)
   server/              gRPC TrafficReporter
 api/proto/beru/v1/     Protobuf definitions
-deploy/                Kubernetes Deployment + Service
 pkg/api/beru/v1/       Generated protobuf Go code
 ```
 
@@ -244,6 +241,7 @@ RabbitMQ egress-relay deduplicates duplicate Firehose publishes (by trace+span+p
 ## Related reading
 
 - [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md) — layers, data flow, Envoy sidecar roles
-- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — ShadowTest `beruGRPCAddress`; always-on Shop egress replay
+- [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — ShadowTest deployment; always-on Shop egress replay
+- [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md) — storage backends and durable diff history
 - [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) — end-to-end verification steps
 

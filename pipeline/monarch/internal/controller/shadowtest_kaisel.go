@@ -43,7 +43,7 @@ func httpIngressCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Dep
 	svcPort := servicePortFor(st)
 	for _, in := range resolvedInputs(st) {
 		d := strings.TrimSpace(strings.ToLower(in.Driver))
-		if d != "http_request" && d != "tcp_stream" {
+		if d != "http_request" {
 			continue
 		}
 		if targetPorts[in.Port] || in.Port == appPort || in.Port == svcPort {
@@ -87,7 +87,7 @@ func kaiselIngressPorts(st *enginev1alpha1.ShadowTest) []int32 {
 	seen := map[int32]bool{}
 	for _, in := range resolvedInputs(st) {
 		d := strings.TrimSpace(strings.ToLower(in.Driver))
-		if d != "http_request" && d != "tcp_stream" {
+		if d != "http_request" {
 			continue
 		}
 		if in.Port <= 0 || seen[in.Port] {
@@ -284,9 +284,9 @@ func (r *ShadowTestReconciler) reconcileKaiselCapture(
 	labels := copyStringMap(target.Spec.Template.Labels)
 
 	if err := r.reconcileKaiselRule(ctx, st, shadowNS, target); err != nil {
-		return formatCaptureTargets(labels), "Degraded", err
+		return formatCaptureTargets(labels), capturePhaseDegraded, err
 	}
-	return formatCaptureTargets(labels), "Ready", nil
+	return formatCaptureTargets(labels), capturePhaseReady, nil
 }
 
 // ── Deployment→ShadowTest watch mapper ────────────────────────────────────

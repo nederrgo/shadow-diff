@@ -52,6 +52,18 @@ platform_health_matrix() {
   [[ "$ok" == "1" ]]
 }
 
+# Monarch CRD + controller only (used to decide Kaisel-only heal vs full rebuild).
+_platform_monarch_healthy() {
+  kubectl get crd shadowtests.engine.shadow-diff.io >/dev/null 2>&1 || return 1
+  kubectl get deploy monarch-controller-manager -n monarch-system >/dev/null 2>&1 || return 1
+  kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=30s >/dev/null 2>&1
+}
+
+_platform_kaisel_healthy() {
+  kubectl get daemonset kaisel -n kaisel-system >/dev/null 2>&1 || return 1
+  kubectl rollout status daemonset/kaisel -n kaisel-system --timeout=30s >/dev/null 2>&1
+}
+
 platform_bootstrap_install() {
   echo "==> [bats] platform bootstrap"
   bats_source_e2e_helpers
@@ -78,11 +90,30 @@ platform_bootstrap_install() {
   kaisel_daemonset_wait_ready 120
 }
 
+# Redeploy Kaisel only (e.g. after record/kaisel-capture teardown_file).
+_platform_heal_kaisel() {
+  # shellcheck source=testing/bats/lib/kaisel.bash
+  source "${REPO}/testing/bats/lib/kaisel.bash"
+  echo "==> [bats] heal Kaisel DaemonSet only (${KAISEL_IMG:-kaisel:dev})"
+  kaisel_daemonset_deploy
+  kaisel_daemonset_wait_ready 120
+}
+
 _ensure_platform_ready_body() {
   if bats_platform_state_valid && platform_health_matrix; then
     echo "==> [bats] platform already healthy (skip install)"
     return 0
   fi
+
+  # Suites that tear down Kaisel (record/kaisel-capture) leave Monarch healthy.
+  # Rebuilding every image is unnecessary and often times out setup_file.
+  if bats_platform_state_valid && _platform_monarch_healthy && ! _platform_kaisel_healthy; then
+    _platform_heal_kaisel || return 1
+    platform_health_matrix || return 1
+    date +%s >"${BATS_STATE_DIR}/platform.health"
+    return 0
+  fi
+
   build_test_images_if_needed || return 1
   load_test_images_if_needed || return 1
   platform_bootstrap_install || return 1
@@ -94,6 +125,30 @@ _ensure_platform_ready_body() {
 ensure_platform_ready() {
   bats_init_env
   bats_platform_with_flock _ensure_platform_ready_body
+}
+
+# Ensure a :dev image exists in the docker daemon used by the cluster (minikube
+# docker-env when driver != none). Builds via make if missing. Fails hard if
+# still absent — do not swallow errors (ImagePullBackOff fails ShadowTests).
+# Usage: bats_ensure_dev_image <image:tag> <makefile-dir> <MAKE_VAR>
+bats_ensure_dev_image() {
+  local img="$1" dir="$2" make_var="$3"
+  bats_init_env
+  bats_source_e2e_helpers
+  bats_source_cluster_helpers
+  e2e_prepare_docker_build
+  require_docker || return 1
+
+  if docker image inspect "$img" >/dev/null 2>&1; then
+    echo "==> [bats] image present: ${img}"
+    return 0
+  fi
+  echo "==> [bats] build missing image ${img}"
+  make -C "$dir" docker-build "${make_var}=${img}" || return 1
+  docker image inspect "$img" >/dev/null 2>&1 || {
+    echo "FAIL: ${img} still missing after docker-build in ${dir}" >&2
+    return 1
+  }
 }
 
 build_test_images_if_needed() {
@@ -115,6 +170,7 @@ build_test_images_if_needed() {
   make -C "${REPO}/pipeline/beru" docker-build BERU_IMG="${BERU_IMG}"
   make -C "${REPO}/pipeline/shop" docker-build SHOP_IMG="${SHOP_IMG}"
   make -C "${REPO}/pipeline/shadow-soldier" docker-build SHADOW_SOLDIER_IMG="${SHADOW_SOLDIER_IMG}"
+  make -C "${REPO}/pipeline/tusk" docker-build TUSK_IMG="${TUSK_IMG}"
   make -C "${REPO}/pipeline/igrises/igris-http" docker-build IGRIS_IMG="${IGRIS_IMG}"
   make -C "${REPO}/pipeline/kaisel" docker-build KAISEL_IMG="${KAISEL_IMG:-kaisel:dev}" 2>/dev/null || true
   make -C "${REPO}/pipeline/igrises/igris-rabbitmq" docker-build IGRIS_RABBITMQ_IMG="${IGRIS_RABBITMQ_IMG}"
@@ -134,7 +190,7 @@ load_test_images_if_needed() {
   if [[ "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
     use_minikube_docker_env
   fi
-  for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$SHADOW_SOLDIER_IMG" "$IGRIS_IMG" "${KAISEL_IMG:-kaisel:dev}" \
+  for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$SHADOW_SOLDIER_IMG" "$TUSK_IMG" "$IGRIS_IMG" "${KAISEL_IMG:-kaisel:dev}" \
     "$IGRIS_RABBITMQ_IMG" "$EGRESS_RELAY_RABBITMQ_IMG" "$PYTHON_TEST_WORKER_IMG" \
     "$NODEJS_HYBRID_WORKER_IMG" "$HTTP_RMQ_PYTHON_WORKER_IMG" "$HTTP_RMQ_NODEJS_WORKER_IMG" "$HTTP_RMQ_GO_WORKER_IMG" \
     "$MONGO_IMAGE"; do

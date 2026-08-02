@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/shadow-diff/beru/internal/dashboard"
 	"github.com/shadow-diff/beru/internal/roles"
 	"github.com/shadow-diff/beru/internal/storage"
 	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
@@ -15,12 +14,12 @@ import (
 	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
-// Server exposes HTTP endpoints for egress diff ingest and the dashboard.
+// Server exposes HTTP ingest, seed, and slim trace-detail endpoints.
 type Server struct {
-	Log       *slog.Logger
-	Router    *v2engine.TraceRouter
-	DB        *storage.DB
-	Dashboard *dashboard.Handler
+	Log    *slog.Logger
+	Router *v2engine.TraceRouter
+	DB     storage.RunStore
+	Repo   v2storage.TraceRepository
 }
 
 type egressDiffRequest struct {
@@ -41,16 +40,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("/api/v1/egress/diff", s.handleEgressDiff)
 	mux.HandleFunc("/api/v1/ingest/wire", s.handleWireIngest)
 	mux.HandleFunc("/api/v1/debug/seed-reports", s.handleSeedReports)
-	if s.Dashboard != nil {
-		s.Dashboard.Register(mux)
-	}
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		http.Redirect(w, r, "/dashboard/", http.StatusTemporaryRedirect)
-	})
+	mux.HandleFunc("/api/v1/traces/", s.handleGetTrace)
 	s.Log.Info("Beru HTTP API listening", "addr", addr)
 	return http.ListenAndServe(addr, mux)
 }
@@ -150,7 +140,7 @@ func (s *Server) handleWireIngest(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]struct{}{})
 }
 
-// seedReportRequest mirrors RawReport fields for UI/bats history injection.
+// seedReportRequest mirrors RawReport fields for bats history injection.
 type seedReportRequest struct {
 	TraceID        string          `json:"trace_id"`
 	ShadowRole     string          `json:"shadow_role"`
@@ -167,8 +157,7 @@ type seedReportsBody struct {
 	Reports []seedReportRequest `json:"reports"`
 }
 
-// handleSeedReports injects RawReports into the TraceRouter for dashboard/UI debugging.
-// Used by bats verdict scenarios to mirror unit-test histories without live traffic.
+// handleSeedReports injects RawReports into the TraceRouter for bats / debugging.
 func (s *Server) handleSeedReports(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)

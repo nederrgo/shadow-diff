@@ -1,0 +1,21 @@
+# Exposes the ShadowTest status stream (monarch.v1.MonarchStatusService) consumed
+# by Tusk. With the default namePrefix this resolves as
+# monarch-status-grpc.monarch-system.svc.cluster.local:9090.
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/managed-by: kustomize
+  name: status-grpc
+  namespace: system
+spec:
+  ports:
+  - name: grpc
+    port: 9090
+    protocol: TCP
+    targetPort: grpc
+  selector:
+    control-plane: controller-manager
+    app.kubernetes.io/name: monarch

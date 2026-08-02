@@ -33,7 +33,7 @@ See [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md)
 | **L3 Shadow stack** | Three app Deployments + Envoy sidecars + Services; iptables init → Envoy `:10001`; ephemeral **dependencies** per role |
 | **L4a Analysis ingest** | Envoy ConfigMaps → Beru gRPC / wire ingest; egress-relay-rabbitmq for AMQP tests |
 | **L4b Egress record/replay** | Always-on Shop (seeded by Kaisel); Envoy `shop_ext_proc` |
-| **L5 Beru** | Shared Beru via `spec.beruGRPCAddress`, or per-shadow **beru-local** when that field is unset |
+| **L5 Beru** | Per-shadow **beru-local**, one per ShadowTest |
 
 Shadow namespace name is deterministic: **`shadow-<crNamespace>-<crName>`** (see `shadowtest_helpers.go`).
 
@@ -48,9 +48,8 @@ One namespaced **`ShadowTest`** (`engine.shadow-diff.io/v1alpha1`) drives the fu
 | `targetDeployment` / `targetNamespace` | Prod Deployment to mirror (env copied from first container) |
 | `oldImage` / `newImage` | control-a & control-b vs candidate; `oldImage` defaults from target when unset |
 | `servicePort` / `applicationPort` | Envoy ingress → app; both optional (Monarch derives conflict-free values) |
-| `beruGRPCAddress` / `beruGRPCTimeout` | Beru gRPC for Envoy `ext_proc` (omit address → beru-local) |
-| `beruIngestAddress` | Beru HTTP wire-ingest target (defaults with Beru resolution) |
-| `inputs[]` | Ingress drivers: `http_request`, `tcp_stream`, `rabbitmq_message` |
+| `beruGRPCTimeout` | Envoy `ext_proc` timeout; the target is always beru-local |
+| `inputs[]` | Ingress drivers: `http_request`, `rabbitmq_message` |
 | `dependencies[]` | Ephemeral Redis, RabbitMQ, MongoDB, etc. per role + env injection |
 | `samplePercentage` | Shared prod sampling gate (1–100, default 100): HTTP → Kaisel; rabbitmq → igris-rabbitmq |
 | `shop` / `igris` / `igrisRabbitmq` / `egressRelayRabbitmq` | Optional component image/resource overrides (defaults via `MONARCH_MODE`) |
@@ -147,7 +146,7 @@ Recommend **8GB+ Minikube memory** for the hybrid test (six dependency pods + th
 
 | Component | Who installs | Monarch's role |
 | --------- | ------------ | -------------- |
-| **Beru** | You (`pipeline/beru/deploy/`), or omit `beruGRPCAddress` | Wire Envoy `ext_proc` / ingest; or provision **beru-local** |
+| **Beru** | Monarch (always) | Provisions **beru-local** per shadow namespace and wires Envoy `ext_proc` / ingest |
 | **Kaisel DaemonSet** | You (`kubectl apply -k pipeline/kaisel/deploy/`) | Reconciles `KaiselRule` targeting prod pod IPs |
 | **Kaisel DaemonSet** | You (`pipeline/kaisel/deploy/`) | Monarch writes `KaiselRule` (target IPs, `igrisBaseURL`, `samplePercentage`) |
 | **Shop** | Monarch (always) | Mock store seeded by Kaisel via `POST /v1/record_egress` |

@@ -1,0 +1,22 @@
+# HTTP record ShadowTest used only to prove kubectl apply ignores status.
+# status.phase/message in this file must not be stored via the main object endpoint.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-monarch-boot-failure-apply
+  namespace: default
+spec:
+  targetDeployment: monarch-boot-fail-target
+  newImage: nginx:alpine
+  mode: record
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain
+status:
+  phase: Failed
+  message: injected-by-kubectl-apply

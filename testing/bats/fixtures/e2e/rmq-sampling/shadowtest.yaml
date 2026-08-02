@@ -1,4 +1,5 @@
 # RMQ sampling proof — samplePercentage: 10 (igris-rabbitmq)
+# setup_file stays in record; tests that need ABC call kaisel_switch_to_replay.
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest
 metadata:
@@ -7,7 +8,16 @@ metadata:
 spec:
   targetDeployment: nodejs-prod-worker
   newImage: nodejs-hybrid-worker:dev
+  mode: record
   samplePercentage: 10
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain
 
   inputs:
     - driver: rabbitmq_message

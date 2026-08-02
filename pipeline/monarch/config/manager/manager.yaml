@@ -71,6 +71,9 @@ spec:
         - containerPort: 8081
           name: health
           protocol: TCP
+        - containerPort: 9090
+          name: grpc
+          protocol: TCP
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false

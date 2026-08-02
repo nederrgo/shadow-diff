@@ -59,6 +59,42 @@ multicast_igris_write() {
   publish_igris_http "$1" "$2" "/publish"
 }
 
+# Fires `count` truly concurrent POSTs at igris from one debug pod using curl's
+# --parallel transfer engine (a backgrounded shell loop of separate `curl`
+# processes does NOT reliably overlap — fork/exec + connect latency spreads
+# requests out enough that the concurrency gate's tiny occupied-window per
+# request rarely overlaps; libcurl's multi-interface dispatches all connects
+# from one process, which does). Prints one HTTP status code per line.
+spike_guard_fire_concurrent() {
+  local count="$1"
+  local path="${2:-/spike}"
+  local shadowtest="${SHADOWTEST}"
+  local shadow_ns="${SHADOW_NS}"
+  local url="http://${shadowtest}-igris.${shadow_ns}.svc.cluster.local:8888${path}"
+
+  if ! kubectl get svc "${shadowtest}-igris" -n "$shadow_ns" >/dev/null 2>&1; then
+    echo "spike_guard_fire_concurrent: no ${shadowtest}-igris service in ${shadow_ns}" >&2
+    return 2
+  fi
+  bats_source_e2e_helpers
+  # igris-http requires a valid inbound traceparent (ResolveContext rejects
+  # missing/invalid ones with 400 before the concurrency gate); a shared
+  # static value is fine here since only the shed-vs-accepted status code
+  # counts, not per-trace correlation.
+  local trace_tp="00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+  local urls="" i
+  for ((i = 0; i < count; i++)); do
+    urls+="${url} "
+  done
+  local out
+  out=$(kubectl run "bats-spike-${RANDOM}" --rm -i --restart=Never -n default \
+    --image=curlimages/curl:latest -- \
+    sh -c "curl -sS --parallel --parallel-immediate --parallel-max ${count} -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' -H 'traceparent: ${trace_tp}' -d '{}' ${urls}" \
+    2>&1) || true
+  out=$(e2e_strip_kubectl_run_output "$out")
+  echo "$out"
+}
+
 publish_prod_http() {
   local trace_id="${1:-${BATS_TRACE_ID}}"
   local body="${2:-{\"e2e\":\"bats-http-otel\"}}"

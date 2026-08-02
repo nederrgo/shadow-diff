@@ -152,6 +152,104 @@ func TestEgressDiff_derivesSignatureWhenAbsent(t *testing.T) {
 	}
 }
 
+type memTraceRepo struct {
+	reports []v2storage.RawReport
+	verdict *v2storage.VerdictState
+}
+
+func (m *memTraceRepo) AppendReport(context.Context, *v2storage.RawReport) ([]v2storage.RawReport, error) {
+	return nil, nil
+}
+func (m *memTraceRepo) SaveDiffVerdict(context.Context, string, *v2storage.VerdictState) error {
+	return nil
+}
+func (m *memTraceRepo) ListReports(_ context.Context, traceID, protocol string) ([]v2storage.RawReport, error) {
+	var out []v2storage.RawReport
+	for _, r := range m.reports {
+		if r.TraceID == traceID && (protocol == "" || r.Protocol == protocol) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+func (m *memTraceRepo) ListTraceGroups(context.Context, string, int) ([]v2storage.TraceGroup, error) {
+	return nil, nil
+}
+func (m *memTraceRepo) GetVerdict(context.Context, string) (*v2storage.VerdictState, error) {
+	return m.verdict, nil
+}
+func (m *memTraceRepo) ListStaleIncompleteTraces(context.Context, time.Time) ([]v2storage.StaleIncompleteTrace, error) {
+	return nil, nil
+}
+
+func TestGetTrace_returnsReportsAndVerdict(t *testing.T) {
+	repo := &memTraceRepo{
+		reports: []v2storage.RawReport{{
+			TraceID: "t1", Protocol: "mongodb", Direction: v2storage.DirectionEgress,
+			ShadowRole: "control-a", Signature: "mongodb:insert:orders",
+		}},
+		verdict: &v2storage.VerdictState{Status: v2storage.StatusMatch},
+	}
+	s := &Server{Log: slog.Default(), Repo: repo}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/t1?protocol=mongodb", nil)
+	rr := httptest.NewRecorder()
+	s.handleGetTrace(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		TraceID  string                   `json:"trace_id"`
+		Protocol string                   `json:"protocol"`
+		Reports  []v2storage.RawReport    `json:"reports"`
+		Verdict  *v2storage.VerdictState  `json:"verdict"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.TraceID != "t1" || out.Protocol != "mongodb" || len(out.Reports) != 1 {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+	if out.Verdict == nil || out.Verdict.Status != v2storage.StatusMatch {
+		t.Fatalf("verdict = %+v", out.Verdict)
+	}
+}
+
+func TestGetTrace_filtersHTTPDirection(t *testing.T) {
+	repo := &memTraceRepo{
+		reports: []v2storage.RawReport{
+			{TraceID: "t1", Protocol: "http", Direction: v2storage.DirectionIngress, ShadowRole: "control-a", Signature: "http:POST:/a"},
+			{TraceID: "t1", Protocol: "http", Direction: v2storage.DirectionEgress, ShadowRole: "control-a", Signature: "http:GET:/ext"},
+		},
+	}
+	s := &Server{Log: slog.Default(), Repo: repo}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/t1?protocol=http&direction=egress", nil)
+	rr := httptest.NewRecorder()
+	s.handleGetTrace(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		Direction string                `json:"direction"`
+		Reports   []v2storage.RawReport `json:"reports"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Direction != "egress" || len(out.Reports) != 1 || out.Reports[0].Signature != "http:GET:/ext" {
+		t.Fatalf("unexpected: %+v", out)
+	}
+}
+
+func TestGetTrace_requiresProtocol(t *testing.T) {
+	s := &Server{Log: slog.Default(), Repo: &memTraceRepo{}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/t1", nil)
+	rr := httptest.NewRecorder()
+	s.handleGetTrace(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", rr.Code)
+	}
+}
+
 func TestSeedReports_acceptsBatch(t *testing.T) {
 	routeRec := &egressRouteRecorder{}
 	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(1, routeRec, nil)}

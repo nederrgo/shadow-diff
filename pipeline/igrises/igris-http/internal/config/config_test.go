@@ -9,6 +9,7 @@ import (
 
 func validCfg() Config {
 	return Config{
+		OperatingMode:  "replay",
 		ControlAURL:    "http://a:8080",
 		ControlBURL:    "https://b:8443",
 		CandidateURL:   "http://c:8080",
@@ -32,6 +33,44 @@ func TestValidate(t *testing.T) {
 	}{
 		{name: "valid", cfg: validCfg()},
 		{
+			name: "record mode without targets",
+			cfg: func() Config {
+				c := validCfg()
+				c.OperatingMode = "record"
+				c.ControlAURL = ""
+				c.ControlBURL = ""
+				c.CandidateURL = ""
+				c.ControlAAddr = ""
+				c.ControlBAddr = ""
+				c.CandidateAddr = ""
+				return c
+			}(),
+		},
+		{
+			name: "replay mode without addrs",
+			cfg: func() Config {
+				c := validCfg()
+				c.OperatingMode = "replay"
+				c.ControlAAddr = ""
+				c.ControlBAddr = ""
+				c.CandidateAddr = ""
+				return c
+			}(),
+		},
+		{
+			name: "replay mode missing url",
+			cfg: func() Config {
+				c := validCfg()
+				c.OperatingMode = "replay"
+				c.ControlAURL = ""
+				c.ControlAAddr = ""
+				c.ControlBAddr = ""
+				c.CandidateAddr = ""
+				return c
+			}(),
+			wantErr: true,
+		},
+		{
 			name: "missing url",
 			cfg: func() Config {
 				c := validCfg()
@@ -41,19 +80,18 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "missing addr",
+			name: "replay ignores missing addr",
 			cfg: func() Config {
 				c := validCfg()
 				c.ControlAAddr = ""
 				return c
 			}(),
-			wantErr: true,
 		},
 		{
-			name: "addr with port",
+			name: "invalid operating mode",
 			cfg: func() Config {
 				c := validCfg()
-				c.ControlAAddr = "host:27017"
+				c.OperatingMode = "live"
 				return c
 			}(),
 			wantErr: true,
@@ -63,6 +101,15 @@ func TestValidate(t *testing.T) {
 			cfg: func() Config {
 				c := validCfg()
 				c.ControlAURL = "ftp://a"
+				return c
+			}(),
+			wantErr: true,
+		},
+		{
+			name: "tcp_stream driver rejected",
+			cfg: func() Config {
+				c := validCfg()
+				c.Listeners = []Listener{{Port: 9090, Driver: "tcp_stream"}}
 				return c
 			}(),
 			wantErr: true,
@@ -85,7 +132,7 @@ func TestLoadListenersFromFile(t *testing.T) {
 	path := filepath.Join(dir, "listeners.json")
 	data, _ := json.Marshal([]listenerFileEntry{
 		{Port: 80, Driver: "http_request"},
-		{Port: 9090, Driver: "tcp_stream"},
+		{Port: 8080, Driver: "http_request"},
 	})
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
@@ -94,7 +141,7 @@ func TestLoadListenersFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listeners) != 2 || listeners[0].Driver != "http_request" {
+	if len(listeners) != 2 || listeners[0].Driver != "http_request" || listeners[1].Driver != "http_request" {
 		t.Fatalf("got %+v", listeners)
 	}
 }
@@ -139,6 +186,33 @@ func TestTargetAddrsForPort(t *testing.T) {
 	}
 }
 
+func TestIntFromEnvSigned(t *testing.T) {
+	const key = "IGRIS_TEST_MAX_CONCURRENCY"
+	tests := []struct {
+		name string
+		val  string
+		def  int
+		want int
+	}{
+		{name: "unset", val: "", def: 50, want: 50},
+		{name: "zero falls back to default", val: "0", def: 50, want: 50},
+		{name: "negative means unlimited", val: "-1", def: 50, want: -1},
+		{name: "positive passthrough", val: "10", def: 50, want: 10},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.val == "" {
+				os.Unsetenv(key)
+			} else {
+				t.Setenv(key, tt.val)
+			}
+			if got := intFromEnvSigned(key, tt.def); got != tt.want {
+				t.Fatalf("intFromEnvSigned(%q, %d) = %d want %d", tt.val, tt.def, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeDriver(t *testing.T) {
 	t.Parallel()
 	if got := normalizeDriver("http", ""); got != "http_request" {
@@ -148,6 +222,19 @@ func TestNormalizeDriver(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	if got := normalizeDriver("tcp_stream", ""); got != "tcp_stream" {
+		// Unknown drivers are left as-is so Validate can reject them.
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestFirstEnvPrefersShadowURL(t *testing.T) {
+	t.Setenv("SHADOW_CONTROL_A_URL", "http://shadow-a:8888")
+	t.Setenv("CONTROL_A_URL", "http://control-a:8888")
+	if got := firstEnv("SHADOW_CONTROL_A_URL", "CONTROL_A_URL"); got != "http://shadow-a:8888" {
+		t.Fatalf("got %q", got)
+	}
+	t.Setenv("SHADOW_CONTROL_A_URL", "")
+	if got := firstEnv("SHADOW_CONTROL_A_URL", "CONTROL_A_URL"); got != "http://control-a:8888" {
+		t.Fatalf("fallback got %q", got)
 	}
 }

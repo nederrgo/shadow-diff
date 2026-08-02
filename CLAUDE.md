@@ -43,8 +43,8 @@ make deploy IMG=monarch:dev   # deploy controller to current kube context
 make proto        # regenerate protobuf (requires protoc + plugins)
 make test
 make docker-build BERU_IMG=beru:dev
-kubectl apply -f deploy/   # creates beru-system ns + Deployment + Service
 ```
+Beru has no manifests of its own — Monarch deploys `beru-local` into each shadow namespace.
 
 ### Single Go test
 ```bash
@@ -71,7 +71,8 @@ L3  Shadow stack            3× app Deployment + Envoy sidecar + ephemeral deps 
 L4a AMQP egress             egress-relay-rabbitmq (Firehose → Beru)
 L4b HTTP egress             Kaisel (request/response pairing → Shop mock store)
 L4c DB egress               shadow-soldier (TCP proxy sidecar → Beru egress diff)
-L5  Analysis sink           Beru (diff-of-diffs, SQLite, dashboard) + Shop (per-ShadowTest HTTP egress mock store)
+L5  Analysis sink           Beru (diff-of-diffs, Postgres + disk WAL) + Shop (per-ShadowTest HTTP egress mock store)
+L6  Topology feed           Monarch gRPC :9090 → Tusk BFF (React Flow graph over WebSockets :8082)
 ```
 
 ### Key components
@@ -82,9 +83,9 @@ Shadow namespace is always `shadow-<crNamespace>-<crName>`.
 Key files: `internal/controller/shadowtest_controller.go` (main loop), `shadowtest_envoy.go` (Envoy YAML rendering), `shadowtest_dependencies.go` (dep env injection), `shadowtest_kaisel.go` (KaiselRule), `shadowtest_beru_local.go` (per-ShadowTest beru-local pod).
 
 **`pipeline/beru/`** — L5 analysis sink (`github.com/shadow-diff/beru`)  
-Two ports: gRPC `:50051` (Envoy ext_proc + TrafficReporter), HTTP `:8080` (REST API, dashboard, egress diff).  
-State engine: `internal/v2/engine/` — `TraceRouter` FNV-shards reports by trace ID → single goroutine per trace → `AppendReport` (SQLite) → `EvaluateTraceHistory` → `SaveDiffVerdict` → `mirrorLegacyLogs`.  
-SQLite models in `internal/v2/storage/`. Protocol-specific report builders in `internal/v2/report/`.  
+Two ports: gRPC `:50051` (Envoy ext_proc + TrafficReporter), HTTP `:8080` (egress/wire ingest, seed, slim trace detail).  
+State engine: `internal/v2/engine/` — `TraceRouter` FNV-shards reports by trace ID → `AppendReport` to Bbolt WAL → claimed 8-worker flusher under `pg_advisory_xact_lock` → insert + `EvaluateTraceHistory` + verdict upsert.  
+Models in `internal/v2/storage/`; Postgres + WAL in `internal/storage/`. Protocol-specific report builders in `internal/v2/report/`.  
 Egress diff ingest: `internal/api/http.go` `handleEgressDiff()` → `FromEgressWithSignature` → `Router.Route`. Producers may supply their own `protocol:operation:target` signature.
 
 **`pipeline/igrises/igris-http/`** — HTTP/TCP multicast hub  
@@ -99,6 +100,9 @@ AF_PACKET + socket filter → TCP reassembly → admit/sample. Ingress: HTTP POS
 **`pipeline/shadow-soldier/`** — Database egress capture sidecar (`github.com/shadow-diff/shadow-soldier`)  
 Plain-text TCP proxy injected into each shadow role pod alongside Envoy. Monarch rewrites the app's dependency connection strings to `127.0.0.1:<port>`; the sidecar forwards to the real per-role dependency Service and decodes MongoDB / PostgreSQL / Redis / MSSQL wire protocols in passing, POSTing each query to beru-local `/api/v1/egress/diff` on port **8081** (not 8080 — the pod's iptables rules redirect 8080 into Envoy's egress listener). Fail-open: parser errors never break the socket. Only injected when a proxied dependency is declared; RabbitMQ is excluded (covered by egress-relay-rabbitmq).
 
+**`pipeline/tusk/`** — Topology BFF (`github.com/shadow-diff/tusk`)  
+Consumes Monarch's `monarch.v1.MonarchStatusService` stream on `:9090`, converts each `ShadowTestStatusUpdate` into a React Flow graph (`pkg/topology`), and fans it out to browsers on `:8082` via `GET /ws/monitor?test=&namespace=`. One upstream gRPC stream serves all clients; the latest graph per ShadowTest is cached so a browser attaching to a converged test renders immediately. Cluster-wide singleton — ships its own manifests in `deploy/`, like Kaisel. The shared wire contract lives in `pipeline/pkg/monarchpb` so Tusk never imports Monarch's operator module.
+
 **`pipeline/shop/`** — Per-ShadowTest HTTP egress mock store  
 In-memory mock store deployed by Monarch into each shadow namespace. gRPC ext_proc on `:50051` (Envoy egress replay), HTTP `:8080` (`POST /v1/record_egress` seeding). Mocks keyed by `trace:<traceID>:<METHOD>:<host>:<path>`.
 
@@ -107,7 +111,7 @@ Subscribes to Firehose on each shadow broker, deduplicates (OTel pika double-pub
 
 ### Beru-local
 
-When `spec.beruGRPCAddress` is unset, Monarch provisions a per-ShadowTest `beru-local` pod inside the shadow namespace. It uses an **in-memory EmptyDir** for SQLite — all diff state is lost on pod restart. The prod Beru in `beru-system` uses a persistent volume.
+Monarch provisions a `beru-local` pod per ShadowTest inside the shadow namespace — this is the only Beru. It always mounts a disk EmptyDir at `/data` for the Bbolt WAL and dead-letter file. `BERU_DB_SECRET` on the manager names the Postgres Secret; Monarch replicates it into each shadow namespace and mounts it via `envFrom`. Diff history in PostgreSQL outlives the ShadowTest; the WAL does not survive pod restart. See `docs/data-plane/beru-postgres-storage.md`.
 
 ### Key design patterns
 
@@ -120,7 +124,7 @@ When `spec.beruGRPCAddress` is unset, Monarch provisions a per-ShadowTest `beru-
 
 ### Go workspace
 
-`go.work` ties together 10 modules (8 pipeline services + shared `pipeline/pkg/sample` + the db-test-app fixture). Run `go build ./...` or `go test ./...` from a module directory, not the repo root. The workspace requires Go 1.26; local toolchains running 1.23 produce `go.work requires go >= 1.26.0` warnings from LSP — these are harmless and do not affect `go build` or `go test`.
+`go.work` ties together 16 modules (9 pipeline services + the shared `pipeline/pkg/*` libraries — `sample`, `s3utils`, `trace`, `replay`, `monarchpb`, `shadowspec` — plus the db-test-app fixture). Run `go build ./...` or `go test ./...` from a module directory, not the repo root. The workspace requires Go 1.26; local toolchains running 1.23 produce `go.work requires go >= 1.26.0` warnings from LSP — these are harmless and do not affect `go build` or `go test`.
 
 ### CRD types
 

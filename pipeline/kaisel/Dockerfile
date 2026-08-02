@@ -6,14 +6,17 @@ ARG TARGETARCH
 
 WORKDIR /workspace
 
+# Shared modules monarch replace-points at (must exist before go mod download).
+COPY pipeline/pkg/s3utils/ ./pkg/s3utils/
+COPY pipeline/pkg/sample/ ./pkg/sample/
+COPY pipeline/pkg/monarchpb/ ./pkg/monarchpb/
+COPY pipeline/pkg/shadowspec/ ./pkg/shadowspec/
+
 # Download monarch deps first (layer-cache friendly: rarely changes)
 COPY pipeline/monarch/go.mod pipeline/monarch/go.sum ./monarch/
 RUN cd monarch && go mod download
 
-# Shared sample module (replace target for kaisel)
-COPY pipeline/pkg/sample/ ./pkg/sample/
-
-# Download kaisel deps (monarch + sample source present for replace paths)
+# Download kaisel deps (monarch + sample + s3utils present for replace paths)
 COPY pipeline/kaisel/go.mod pipeline/kaisel/go.sum ./kaisel/
 RUN cd kaisel && go mod download
 

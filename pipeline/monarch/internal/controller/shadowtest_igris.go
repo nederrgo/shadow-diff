@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -11,7 +13,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
@@ -59,6 +60,17 @@ func igrisReplicasFor(st *enginev1alpha1.ShadowTest) int32 {
 		return *st.Spec.Igris.Replicas
 	}
 	return 1
+}
+
+func maxQPSPerPodFor(st *enginev1alpha1.ShadowTest) int {
+	if st.Spec.MaxQPSPerPod > 0 {
+		return st.Spec.MaxQPSPerPod
+	}
+	return defaultMaxQPSPerPod
+}
+
+func igrisMaxConcurrencyFor(st *enginev1alpha1.ShadowTest) int {
+	return int(shadowRoleReplicas) * maxQPSPerPodFor(st)
 }
 
 func (r *ShadowTestReconciler) reconcileShadowService(
@@ -146,9 +158,15 @@ func (r *ShadowTestReconciler) reconcileIgrisDeployment(
 			Protocol:      corev1.ProtocolTCP,
 		})
 	}
+	containerPorts = append(containerPorts, corev1.ContainerPort{
+		Name:          "admin",
+		ContainerPort: igrisAdminPort,
+		Protocol:      corev1.ProtocolTCP,
+	})
 
 	controlAURL, controlBURL, candidateURL := igrisControlURLs(st, shadowNS)
 	controlAAddr, controlBAddr, candidateAddr := igrisControlHosts(st, shadowNS)
+	sessionID := strings.TrimSpace(st.Status.CurrentSessionID)
 
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -165,20 +183,25 @@ func (r *ShadowTestReconciler) reconcileIgrisDeployment(
 		termination := igrisTerminationGraceSeconds
 		deploy.Spec.Template.Spec.TerminationGracePeriodSeconds = &termination
 
+		env := []corev1.EnvVar{
+			{Name: envControlAURL, Value: controlAURL},
+			{Name: envControlBURL, Value: controlBURL},
+			{Name: envCandidateURL, Value: candidateURL},
+			{Name: envControlAAddr, Value: controlAAddr},
+			{Name: envControlBAddr, Value: controlBAddr},
+			{Name: envCandidateAddr, Value: candidateAddr},
+			{Name: envIgrisListenersFile, Value: defaultIgrisListenersPath},
+			{Name: envIgrisMaxConcurrency, Value: strconv.Itoa(igrisMaxConcurrencyFor(st))},
+			{Name: envIgrisAdminAddr, Value: defaultIgrisAdminAddr},
+		}
+		env = append(env, storageEnvVars(st, sessionID)...)
+
 		container := corev1.Container{
 			Name:            containerIgris,
 			Image:           igrisHTTPImageFor(st),
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			Ports:           containerPorts,
-			Env: []corev1.EnvVar{
-				{Name: envControlAURL, Value: controlAURL},
-				{Name: envControlBURL, Value: controlBURL},
-				{Name: envCandidateURL, Value: candidateURL},
-				{Name: envControlAAddr, Value: controlAAddr},
-				{Name: envControlBAddr, Value: controlBAddr},
-				{Name: envCandidateAddr, Value: candidateAddr},
-				{Name: envIgrisListenersFile, Value: defaultIgrisListenersPath},
-			},
+			Env:             env,
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: volumeNameIgrisConfig, MountPath: "/etc/igris", ReadOnly: true},
 			},
@@ -235,6 +258,12 @@ func (r *ShadowTestReconciler) reconcileIgrisService(
 			Protocol:   corev1.ProtocolTCP,
 		})
 	}
+	ports = append(ports, corev1.ServicePort{
+		Name:       "admin",
+		Port:       igrisAdminPort,
+		TargetPort: intstr.FromInt32(igrisAdminPort),
+		Protocol:   corev1.ProtocolTCP,
+	})
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: shadowNS,
@@ -250,35 +279,48 @@ func (r *ShadowTestReconciler) reconcileIgrisService(
 	return err
 }
 
+// shadowDeploymentsReady probes every shadow role and reports readiness per role so the
+// topology graph can colour control-a/control-b/candidate independently. The returned
+// wait reason is the first terminal or pending one encountered.
 func (r *ShadowTestReconciler) shadowDeploymentsReady(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
-) (bool, error) {
+) (map[string]bool, workloadWaitReason, error) {
+	roles := map[string]bool{}
+	var firstNotReady workloadWaitReason
 	for _, role := range []string{roleControlA, roleControlB, roleCandidate} {
-		var deploy appsv1.Deployment
-		key := client.ObjectKey{Namespace: shadowNS, Name: shadowDeploymentName(st, role)}
-		if err := r.Get(ctx, key, &deploy); err != nil {
-			return false, err
+		name := shadowDeploymentName(st, role)
+		component := fmt.Sprintf("shadow deployment %s", name)
+		ready, reason, err := r.deploymentBootReady(ctx, shadowNS, name, component)
+		if err != nil {
+			return nil, workloadWaitReason{}, err
 		}
-		if deploy.Status.AvailableReplicas < 1 {
-			return false, nil
+		roles[role] = ready
+		// Prefer a terminal reason over a plain pending one so boot failures surface.
+		if !ready && (firstNotReady.message == "" || (reason.terminal && !firstNotReady.terminal)) {
+			firstNotReady = reason
 		}
 	}
-	return true, nil
+	return roles, firstNotReady, nil
+}
+
+// allRolesReady reports whether every shadow role in the map is ready.
+func allRolesReady(roles map[string]bool) bool {
+	for _, ready := range roles {
+		if !ready {
+			return false
+		}
+	}
+	return len(roles) > 0
 }
 
 func (r *ShadowTestReconciler) igrisDeploymentReady(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
-) (bool, error) {
-	var deploy appsv1.Deployment
-	key := client.ObjectKey{Namespace: shadowNS, Name: igrisDeploymentName(st)}
-	if err := r.Get(ctx, key, &deploy); err != nil {
-		return false, err
-	}
-	return deploy.Status.AvailableReplicas > 0, nil
+) (bool, workloadWaitReason, error) {
+	return r.deploymentBootReady(ctx, shadowNS, igrisDeploymentName(st), "Igris")
 }
 
 func igrisControlURLs(st *enginev1alpha1.ShadowTest, shadowNS string) (string, string, string) {

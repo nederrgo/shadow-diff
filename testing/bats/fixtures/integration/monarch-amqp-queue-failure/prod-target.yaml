@@ -1,0 +1,33 @@
+# Minimal prod target for Monarch AMQP queue declare/bind failure tests.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amqp-qfail-target
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: amqp-qfail-target
+  template:
+    metadata:
+      labels:
+        app: amqp-qfail-target
+    spec:
+      containers:
+        - name: app
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amqp-qfail-target
+  namespace: default
+spec:
+  selector:
+    app: amqp-qfail-target
+  ports:
+    - port: 8888
+      targetPort: 80

@@ -21,7 +21,7 @@ func renderEnvoyYAML(st *enginev1alpha1.ShadowTest, shadowNS, role string) (stri
 	beruAddr := beruGRPCAddressFor(st, shadowNS)
 	beruHost, beruPort, err := parseBeruHostPort(beruAddr)
 	if err != nil {
-		return "", fmt.Errorf("invalid beruGRPCAddress %q: %w", beruAddr, err)
+		return "", fmt.Errorf("invalid beru-local address %q: %w", beruAddr, err)
 	}
 	appPort := applicationPortFor(st)
 	ingressPort := servicePortFor(st)

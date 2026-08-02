@@ -10,20 +10,10 @@ func TestInferDriver(t *testing.T) {
 	t.Parallel()
 	st := &enginev1alpha1.ShadowTest{Spec: enginev1alpha1.ShadowTestSpec{ServicePort: 3000}}
 
-	cases := []struct {
-		port int32
-		want string
-	}{
-		{3000, "http_request"},
-		{80, "http_request"},
-		{443, "http_request"},
-		{8080, "http_request"},
-		{27017, "tcp_stream"},
-		{6379, "tcp_stream"},
-	}
-	for _, tc := range cases {
-		if got := inferDriver(st, tc.port); got != tc.want {
-			t.Fatalf("port %d: got %q want %q", tc.port, got, tc.want)
+	cases := []int32{3000, 80, 443, 8080, 27017, 6379}
+	for _, port := range cases {
+		if got := inferDriver(st, port); got != "http_request" {
+			t.Fatalf("port %d: got %q want http_request", port, got)
 		}
 	}
 }
@@ -40,7 +30,7 @@ func TestResolvedInputsInfersDriver(t *testing.T) {
 		},
 	}
 	inputs := resolvedInputs(st)
-	if inputs[0].Driver != "http_request" || inputs[1].Driver != "tcp_stream" {
+	if inputs[0].Driver != "http_request" || inputs[1].Driver != "http_request" {
 		t.Fatalf("got %+v", inputs)
 	}
 }
@@ -65,7 +55,7 @@ func TestShadowServicePorts(t *testing.T) {
 			ServicePort: 80,
 			Inputs: []enginev1alpha1.InputSpec{
 				{Port: 80, Driver: "http_request"},
-				{Port: 27017, Driver: "tcp_stream"},
+				{Port: 8080, Driver: "http_request"},
 			},
 		},
 	}
@@ -76,11 +66,11 @@ func TestShadowServicePorts(t *testing.T) {
 	names := map[string]bool{}
 	for _, p := range ports {
 		names[p.Name] = true
-		if p.Port == 27017 && p.TargetPort.IntVal != 27017 {
-			t.Fatalf("27017 target port %+v", p.TargetPort)
+		if p.Port == 8080 && p.TargetPort.IntVal != 8080 {
+			t.Fatalf("8080 target port %+v", p.TargetPort)
 		}
 	}
-	if !names["ingress"] || !names[inputPortName("tcp_stream", 27017)] {
+	if !names["ingress"] || !names[inputPortName("http_request", 8080)] {
 		t.Fatalf("names %v", names)
 	}
 }
@@ -124,6 +114,21 @@ func TestValidateInputsMixedDriversRejected(t *testing.T) {
 	}
 	if err := validateInputs(st); err == nil {
 		t.Fatal("expected error for mixed drivers")
+	}
+}
+
+func TestValidateInputsRejectsTCPStream(t *testing.T) {
+	t.Parallel()
+	st := &enginev1alpha1.ShadowTest{
+		Spec: enginev1alpha1.ShadowTestSpec{
+			ServicePort: 80,
+			Inputs: []enginev1alpha1.InputSpec{
+				{Port: 27017, Driver: "tcp_stream"},
+			},
+		},
+	}
+	if err := validateInputs(st); err == nil {
+		t.Fatal("expected error for tcp_stream")
 	}
 }
 

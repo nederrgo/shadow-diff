@@ -34,7 +34,7 @@ monarch/                          # repo root (Shadow-Diff monorepo)
 │   ├── kaisel/                   # L1 eBPF HTTP ingress capture
 │   ├── recorder/                 # L4b prod egress HTTP → Beru mock store
 │   ├── egress-relay-rabbitmq/    # L4a shadow AMQP publish → Beru egress diff
-│   └── beru/                     # L5 analysis sink — diff, mocks, dashboard
+│   └── beru/                     # L5 analysis sink — diff, mocks, ingest API
 ├── docs/
 │   ├── architecture/             # System design (start here after this README)
 │   └── verification/             # Manual and E2E verification procedures
@@ -56,7 +56,7 @@ monarch/                          # repo root (Shadow-Diff monorepo)
 
 ## Pipeline services
 
-Each service has its own README with layer role, build commands, and Monarch wiring. **Monarch** orchestrates L0–L5 from a `ShadowTest` CR; **Beru** is installed separately (cluster-wide) and referenced via `spec.beruGRPCAddress`.
+Each service has its own README with layer role, build commands, and Monarch wiring. **Monarch** orchestrates L0–L5 from a `ShadowTest` CR, including a **Beru** analysis pod per shadow namespace.
 
 | Layer | Service | README |
 | ----- | ------- | ------ |

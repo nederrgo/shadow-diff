@@ -9,23 +9,29 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/shadow-diff/igris/internal/driver"
 	"github.com/shadow-diff/igris/internal/payload"
-	"github.com/shadow-diff/igris/internal/trace"
+	"github.com/shadow-diff/trace"
 )
 
 const driverName = "http_request"
 
 // Driver implements the HTTP request input driver.
 type Driver struct {
-	Client      *http.Client
-	Log         *slog.Logger
-	maxBodySize int64
+	Client         *http.Client
+	Log            *slog.Logger
+	maxBodySize    int64
+	maxConcurrency int
+	activeRequests int64
 }
 
-func New(maxBodySize int64) *Driver {
-	return &Driver{Client: &http.Client{}, maxBodySize: maxBodySize}
+// New builds an HTTP driver. maxConcurrency caps in-flight requests forwarded to shadow
+// targets; requests over the limit are shed with 429 before any trace/multicast work.
+// A negative maxConcurrency disables the limit.
+func New(maxBodySize int64, maxConcurrency int) *Driver {
+	return &Driver{Client: &http.Client{}, maxBodySize: maxBodySize, maxConcurrency: maxConcurrency}
 }
 
 func (d *Driver) Type() driver.Type { return driver.HTTPRequest }
@@ -119,6 +125,14 @@ func (d *Driver) Listen(ctx context.Context, port int, h driver.Handler) error {
 
 func (d *Driver) handler(h driver.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if d.maxConcurrency >= 0 {
+			if atomic.AddInt64(&d.activeRequests, 1) > int64(d.maxConcurrency) {
+				atomic.AddInt64(&d.activeRequests, -1)
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			defer atomic.AddInt64(&d.activeRequests, -1)
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, d.maxBodySize)
 		body, err := io.ReadAll(r.Body)
 		_ = r.Body.Close()
@@ -155,7 +169,7 @@ func (d *Driver) ParseMetadata(sess driver.Session) (driver.Metadata, error) {
 	if !ok {
 		return driver.Metadata{}, fmt.Errorf("invalid HTTP session type")
 	}
-	resolved, err := trace.ResolveContext(s.Request.Header)
+	resolved, err := trace.ResolveHTTP(s.Request.Header)
 	if err != nil {
 		return driver.Metadata{}, err
 	}
@@ -199,4 +213,37 @@ func (d *Driver) RespondEarly(meta driver.Metadata) (driver.EarlyResponse, bool)
 	}, true
 }
 
+func (d *Driver) CaptureIngress(sess driver.Session, meta driver.Metadata) (driver.IngressCapture, error) {
+	s, ok := sess.(*Session)
+	if !ok {
+		return driver.IngressCapture{}, fmt.Errorf("invalid HTTP session type")
+	}
+	headers := flattenHeaders(s.Request.Header)
+	delete(headers, "Authorization")
+	delete(headers, "Cookie")
+	delete(headers, "Proxy-Authorization")
+	headers[trace.HeaderTraceparent] = meta.Traceparent
+	return driver.IngressCapture{
+		Traceparent: meta.Traceparent,
+		TraceID:     meta.TraceID,
+		Method:      s.Request.Method,
+		Path:        s.Request.URL.Path,
+		RequestURI:  s.Request.URL.RequestURI(),
+		Headers:     headers,
+		Body:        s.Body,
+	}, nil
+}
+
+func flattenHeaders(h http.Header) map[string]string {
+	out := make(map[string]string, len(h))
+	for k, vals := range h {
+		if len(vals) == 0 {
+			continue
+		}
+		out[k] = vals[0]
+	}
+	return out
+}
+
 var _ driver.AtomicDriver = (*Driver)(nil)
+var _ driver.IngressCapturer = (*Driver)(nil)
