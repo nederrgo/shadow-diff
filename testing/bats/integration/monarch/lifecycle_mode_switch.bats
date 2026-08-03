@@ -94,16 +94,63 @@ setup() {
   monarch_wait_kaisel_rule_ready "kaisel-${SHADOWTEST}" "$SHADOWTEST_NS"
   monarch_wait_operating_mode "$SHADOW_NS" "$SHADOWTEST" record 180
 
-  local kaisel replay mode
+  local kaisel replay mode exec_id
   mode=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
     -o jsonpath='{.spec.mode}')
   kaisel=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
     -o jsonpath='{.status.kaiselPhase}')
   replay=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
     -o jsonpath='{.status.replayState}')
+  exec_id=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
+    -o jsonpath='{.status.currentReplayExecutionID}')
   [[ "$mode" == "record" ]] || fail "mode=${mode}, want record"
   [[ "$kaisel" == "Ready" ]] || fail "kaiselPhase=${kaisel}, want Ready"
   [[ -z "$replay" ]] || fail "replayState=${replay}, want empty"
+  [[ -z "$exec_id" ]] || fail "currentReplayExecutionID=${exec_id}, want empty in record"
+
+  kubectl delete shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --wait=false
+  monarch_wait_shadowtest_cleaned "$SHADOWTEST" "$SHADOWTEST_NS"
+  bats_suite_mark SHADOWTEST_APPLIED 0
+}
+
+@test "unpinned record→replay→record remints session; replay mints execution id" {
+  apply_shadowtest "$SWITCH_MANIFEST"
+  bats_suite_mark SHADOWTEST_APPLIED 1
+  bats_write_suite_state
+
+  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-kaisel
+  SHADOW_NS="$(shadow_namespace)"
+  export SHADOW_NS
+
+  local session1 session2 exec1
+  session1=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
+    -o jsonpath='{.status.currentSessionID}')
+  [[ -n "$session1" ]] || fail "currentSessionID empty after first record"
+
+  # Replay without pinning spec.sessionID — reuse status.currentSessionID.
+  monarch_patch_mode "$SHADOWTEST" "$SHADOWTEST_NS" replay "$session1"
+  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS"
+  monarch_wait_replay_started "$SHADOWTEST" "$SHADOWTEST_NS" 180
+
+  exec1=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
+    -o jsonpath='{.status.currentReplayExecutionID}')
+  [[ "$exec1" == exec-* ]] || fail "currentReplayExecutionID=${exec1}, want exec-*"
+
+  # Back to record without pinning — must mint a fresh S3 session folder.
+  # JSON patch: merge patch cannot clear string fields with "".
+  kubectl patch shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --type=json \
+    -p '[{"op":"replace","path":"/spec/mode","value":"record"},{"op":"remove","path":"/spec/sessionID"}]'
+  wait_shadowtest_ready "$SHADOWTEST" "$SHADOWTEST_NS" --require-kaisel
+
+  session2=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
+    -o jsonpath='{.status.currentSessionID}')
+  [[ -n "$session2" ]] || fail "currentSessionID empty after second record"
+  [[ "$session2" != "$session1" ]] || fail "session was not reminted: ${session1}"
+  [[ "$session2" == sess-* ]] || fail "currentSessionID=${session2}, want sess-*"
+
+  exec1=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
+    -o jsonpath='{.status.currentReplayExecutionID}')
+  [[ -z "$exec1" ]] || fail "execution id should clear on record, got ${exec1}"
 
   kubectl delete shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" --wait=false
   monarch_wait_shadowtest_cleaned "$SHADOWTEST" "$SHADOWTEST_NS"

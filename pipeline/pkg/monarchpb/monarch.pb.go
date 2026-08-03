@@ -412,19 +412,20 @@ func (x *ComponentStatus) GetIngressDrivers() []string {
 }
 
 type ShadowTestStatusUpdate struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	TestName         string                 `protobuf:"bytes,1,opt,name=test_name,json=testName,proto3" json:"test_name,omitempty"`
-	Namespace        string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	Phase            Phase                  `protobuf:"varint,3,opt,name=phase,proto3,enum=monarch.v1.Phase" json:"phase,omitempty"`
-	BootStep         BootStep               `protobuf:"varint,4,opt,name=boot_step,json=bootStep,proto3,enum=monarch.v1.BootStep" json:"boot_step,omitempty"`
-	CurrentSessionId string                 `protobuf:"bytes,5,opt,name=current_session_id,json=currentSessionId,proto3" json:"current_session_id,omitempty"`
-	ReplayState      string                 `protobuf:"bytes,6,opt,name=replay_state,json=replayState,proto3" json:"replay_state,omitempty"`
-	Components       *ComponentStatus       `protobuf:"bytes,7,opt,name=components,proto3" json:"components,omitempty"`
-	Mode             Mode                   `protobuf:"varint,8,opt,name=mode,proto3,enum=monarch.v1.Mode" json:"mode,omitempty"`
-	Message          string                 `protobuf:"bytes,9,opt,name=message,proto3" json:"message,omitempty"`
-	KaiselPhase      CapturePhase           `protobuf:"varint,10,opt,name=kaisel_phase,json=kaiselPhase,proto3,enum=monarch.v1.CapturePhase" json:"kaisel_phase,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	TestName                 string                 `protobuf:"bytes,1,opt,name=test_name,json=testName,proto3" json:"test_name,omitempty"`
+	Namespace                string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Phase                    Phase                  `protobuf:"varint,3,opt,name=phase,proto3,enum=monarch.v1.Phase" json:"phase,omitempty"`
+	BootStep                 BootStep               `protobuf:"varint,4,opt,name=boot_step,json=bootStep,proto3,enum=monarch.v1.BootStep" json:"boot_step,omitempty"`
+	CurrentSessionId         string                 `protobuf:"bytes,5,opt,name=current_session_id,json=currentSessionId,proto3" json:"current_session_id,omitempty"`
+	ReplayState              string                 `protobuf:"bytes,6,opt,name=replay_state,json=replayState,proto3" json:"replay_state,omitempty"`
+	Components               *ComponentStatus       `protobuf:"bytes,7,opt,name=components,proto3" json:"components,omitempty"`
+	Mode                     Mode                   `protobuf:"varint,8,opt,name=mode,proto3,enum=monarch.v1.Mode" json:"mode,omitempty"`
+	Message                  string                 `protobuf:"bytes,9,opt,name=message,proto3" json:"message,omitempty"`
+	KaiselPhase              CapturePhase           `protobuf:"varint,10,opt,name=kaisel_phase,json=kaiselPhase,proto3,enum=monarch.v1.CapturePhase" json:"kaisel_phase,omitempty"`
+	CurrentReplayExecutionId string                 `protobuf:"bytes,11,opt,name=current_replay_execution_id,json=currentReplayExecutionId,proto3" json:"current_replay_execution_id,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *ShadowTestStatusUpdate) Reset() {
@@ -527,6 +528,13 @@ func (x *ShadowTestStatusUpdate) GetKaiselPhase() CapturePhase {
 	return CapturePhase_CAPTURE_PHASE_UNSPECIFIED
 }
 
+func (x *ShadowTestStatusUpdate) GetCurrentReplayExecutionId() string {
+	if x != nil {
+		return x.CurrentReplayExecutionId
+	}
+	return ""
+}
+
 var File_monarch_proto protoreflect.FileDescriptor
 
 const file_monarch_proto_rawDesc = "" +
@@ -551,7 +559,7 @@ const file_monarch_proto_rawDesc = "" +
 	"\x0fingress_drivers\x18\b \x03(\tR\x0eingressDrivers\x1aC\n" +
 	"\x15ShadowRolesReadyEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\bR\x05value:\x028\x01\"\xba\x03\n" +
+	"\x05value\x18\x02 \x01(\bR\x05value:\x028\x01\"\xf9\x03\n" +
 	"\x16ShadowTestStatusUpdate\x12\x1b\n" +
 	"\ttest_name\x18\x01 \x01(\tR\btestName\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12'\n" +
@@ -565,7 +573,8 @@ const file_monarch_proto_rawDesc = "" +
 	"\x04mode\x18\b \x01(\x0e2\x10.monarch.v1.ModeR\x04mode\x12\x18\n" +
 	"\amessage\x18\t \x01(\tR\amessage\x12;\n" +
 	"\fkaisel_phase\x18\n" +
-	" \x01(\x0e2\x18.monarch.v1.CapturePhaseR\vkaiselPhase*\x7f\n" +
+	" \x01(\x0e2\x18.monarch.v1.CapturePhaseR\vkaiselPhase\x12=\n" +
+	"\x1bcurrent_replay_execution_id\x18\v \x01(\tR\x18currentReplayExecutionId*\x7f\n" +
 	"\x05Phase\x12\x15\n" +
 	"\x11PHASE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11PHASE_PROGRESSING\x10\x01\x12\x0f\n" +

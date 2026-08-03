@@ -290,7 +290,8 @@ type ShadowTestSpec struct {
 	Mode string `json:"mode,omitempty"`
 
 	// SessionID pins the S3 session folder for replay (and optionally for record).
-	// When unset in record mode, Monarch mints status.currentSessionID.
+	// When unset in record mode, Monarch mints status.currentSessionID (and remints
+	// on each replay→record transition so capture does not append into the prior folder).
 	// +optional
 	SessionID string `json:"sessionID,omitempty"`
 
@@ -443,6 +444,11 @@ type ShadowTestStatus struct {
 	// CurrentSessionID is the active S3 session folder for this ShadowTest.
 	// +optional
 	CurrentSessionID string `json:"currentSessionID,omitempty"`
+
+	// CurrentReplayExecutionID scopes Postgres diffs for one replay run of CurrentSessionID.
+	// Minted when entering replay; injected as REPLAY_EXECUTION_ID on beru-local.
+	// +optional
+	CurrentReplayExecutionID string `json:"currentReplayExecutionID,omitempty"`
 
 	// ReplayState tracks automated replay trigger progress ("" | started | completed).
 	// +optional

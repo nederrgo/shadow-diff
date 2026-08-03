@@ -17,9 +17,11 @@ import (
 type fakeStore struct {
 	sessions      []db.Session
 	withDiffsOnly []db.Session // returned when opts.WithDiffsOnly
+	executions    map[string][]db.ReplayExecution
 	diffs         map[string][]db.SessionDiff
 	occurrences   map[string]db.SignatureOccurrences // key: traceID\0signature
 	summary       map[string]db.SessionSummary
+	latestExec    map[string]string
 	err           error
 	lastOpts      db.ListSessionsOpts
 }
@@ -38,14 +40,34 @@ func (f *fakeStore) ListSessions(_ context.Context, opts db.ListSessionsOpts) ([
 	return f.sessions, nil
 }
 
-func (f *fakeStore) GetSessionDiffs(_ context.Context, sessionID string) ([]db.SessionDiff, error) {
+func (f *fakeStore) ListExecutions(_ context.Context, sessionID string) ([]db.ReplayExecution, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if e, ok := f.executions[sessionID]; ok {
+		return e, nil
+	}
+	return []db.ReplayExecution{}, nil
+}
+
+func (f *fakeStore) ResolveExecutionID(_ context.Context, sessionID, execID string) (string, error) {
+	if execID != "" {
+		return execID, nil
+	}
+	if f.latestExec != nil {
+		return f.latestExec[sessionID], nil
+	}
+	return "exec-latest", nil
+}
+
+func (f *fakeStore) GetSessionDiffs(_ context.Context, sessionID, _ string) ([]db.SessionDiff, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.diffs[sessionID], nil
 }
 
-func (f *fakeStore) GetSignatureOccurrences(_ context.Context, traceID, signature string) (db.SignatureOccurrences, error) {
+func (f *fakeStore) GetSignatureOccurrences(_ context.Context, traceID, signature, _ string) (db.SignatureOccurrences, error) {
 	if f.err != nil {
 		return db.SignatureOccurrences{}, f.err
 	}
@@ -59,14 +81,24 @@ func (f *fakeStore) GetSignatureOccurrences(_ context.Context, traceID, signatur
 	}, nil
 }
 
-func (f *fakeStore) SessionSummary(_ context.Context, sessionID string) (db.SessionSummary, error) {
+func (f *fakeStore) SessionSummary(_ context.Context, sessionID, execID string) (db.SessionSummary, error) {
 	if f.err != nil {
 		return db.SessionSummary{}, f.err
 	}
-	if s, ok := f.summary[sessionID]; ok {
+	key := sessionID
+	if execID != "" {
+		key = sessionID + "\x00" + execID
+	}
+	if s, ok := f.summary[key]; ok {
 		return s, nil
 	}
-	return db.SessionSummary{SessionID: sessionID}, nil
+	if s, ok := f.summary[sessionID]; ok {
+		if s.ReplayExecutionID == "" {
+			s.ReplayExecutionID = execID
+		}
+		return s, nil
+	}
+	return db.SessionSummary{SessionID: sessionID, ReplayExecutionID: execID}, nil
 }
 
 func diffTestServer(t *testing.T, store SessionStore) (*DiffHub, string) {
@@ -239,14 +271,18 @@ func TestDiffsAPI_GetOccurrences(t *testing.T) {
 
 func TestDiffHub_SnapshotAndLive(t *testing.T) {
 	store := &fakeStore{
+		latestExec: map[string]string{"session-1": "exec-1"},
 		summary: map[string]db.SessionSummary{
-			"session-1": {SessionID: "session-1", Total: 3, Match: 2, Mismatch: 1},
+			"session-1": {
+				SessionID: "session-1", ReplayExecutionID: "exec-1",
+				Total: 3, Match: 2, Mismatch: 1,
+			},
 		},
 	}
 	diffHub, base := diffTestServer(t, store)
 	wsURL := "ws" + strings.TrimPrefix(base, "http")
 
-	conn := dial(t, wsURL+"/ws/diffs?session_id=session-1")
+	conn := dial(t, wsURL+"/ws/diffs?session_id=session-1&replay_execution_id=exec-1")
 	got := readDiffFrame(t, conn)
 	if got.Type != "summary" || got.Total != 3 || got.Mismatch != 1 {
 		t.Fatalf("snapshot = %+v", got)
@@ -254,9 +290,10 @@ func TestDiffHub_SnapshotAndLive(t *testing.T) {
 
 	waitForDiffClients(t, diffHub, 1)
 	diffHub.BroadcastVerdict(db.VerdictEvent{
-		SessionID: "session-1",
-		TraceID:   "t-new",
-		Verdict:   "MISMATCH",
+		SessionID:         "session-1",
+		ReplayExecutionID: "exec-1",
+		TraceID:           "t-new",
+		Verdict:           "MISMATCH",
 	})
 	live := readDiffFrame(t, conn)
 	if live.Type != "verdict" || live.TraceID != "t-new" {
@@ -269,7 +306,7 @@ func TestDiffHub_FiltersBySession(t *testing.T) {
 	hub.CacheSummary(db.SessionSummary{SessionID: "a", Total: 1})
 	hub.CacheSummary(db.SessionSummary{SessionID: "b", Total: 2})
 
-	ch, snap, unsub := hub.Subscribe("a")
+	ch, snap, unsub := hub.Subscribe("a", "")
 	defer unsub()
 	if len(snap) != 1 || snap[0].SessionID != "a" {
 		t.Fatalf("snapshot = %+v", snap)
@@ -290,6 +327,34 @@ func TestDiffHub_FiltersBySession(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("missing frame for subscribed session")
+	}
+}
+
+func TestDiffsAPI_ListExecutions(t *testing.T) {
+	store := &fakeStore{
+		executions: map[string][]db.ReplayExecution{
+			"session-1": {{
+				ReplayExecutionID: "exec-2",
+				SessionID:         "session-1",
+				CreatedAt:         time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC),
+			}},
+		},
+	}
+	_, base := diffTestServer(t, store)
+	resp, err := http.Get(base + "/api/v1/sessions/session-1/executions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var got []db.ReplayExecution
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ReplayExecutionID != "exec-2" {
+		t.Fatalf("executions = %+v", got)
 	}
 }
 

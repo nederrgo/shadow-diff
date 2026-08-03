@@ -11,6 +11,8 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-08-03]
 ### Added
+* 'pipeline/monarch/egress-relay': Roll egress-relay on REPLAY_EXECUTION_ID and wait before replay start so Firehose reconnect backoff cannot miss ABC publishes
+* 'pipeline/{beru,monarch,tusk,the-system},docs/control-plane/replay-execution-isolation.md': Session remint + replay_execution_id isolation — beru-local REPLAY_EXECUTION_ID env, Postgres scoped by execution, Tusk/UI Replay Run picker
 * 'pipeline/tusk,the-system': fix AMQP record topology — target→prod-amqp→igris; Kaisel→Shop only (no kaisel→queue)
 * 'pipeline/shadow-soldier,monarch,igris-http': soldier GET /healthz on :19191 + Monarch readinessProbe; igris-http replay dial retries 1s/3s/5s
 * 'pipeline/monarch': drop shadow-soldier TCP readinessProbe (loopback-only; was blocking ABC Ready)

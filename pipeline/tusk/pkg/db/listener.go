@@ -19,9 +19,10 @@ const (
 
 // VerdictEvent is the JSON payload Beru puts on pg_notify('verdict_events', …).
 type VerdictEvent struct {
-	SessionID string `json:"session_id"`
-	TraceID   string `json:"trace_id"`
-	Verdict   string `json:"verdict"`
+	SessionID         string `json:"session_id"`
+	ReplayExecutionID string `json:"replay_execution_id"`
+	TraceID           string `json:"trace_id"`
+	Verdict           string `json:"verdict"`
 }
 
 // EventHandler receives parsed NOTIFY payloads.

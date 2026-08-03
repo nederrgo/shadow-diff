@@ -48,10 +48,11 @@ func main() {
 			log.Info("Postgres connected", "host", cfg.Host, "db", cfg.Name)
 			go func() {
 				if err := db.Listen(ctx, cfg.DSN(), log, func(ev db.VerdictEvent) {
-					if sum, err := pgStore.SessionSummary(ctx, ev.SessionID); err == nil {
+					if sum, err := pgStore.SessionSummary(ctx, ev.SessionID, ev.ReplayExecutionID); err == nil {
 						diffHub.BroadcastSummary(sum)
 					} else {
-						log.Warn("SessionSummary after NOTIFY failed", "err", err, "session_id", ev.SessionID)
+						log.Warn("SessionSummary after NOTIFY failed", "err", err,
+							"session_id", ev.SessionID, "replay_execution_id", ev.ReplayExecutionID)
 					}
 					diffHub.BroadcastVerdict(ev)
 				}); err != nil && !errors.Is(err, context.Canceled) {

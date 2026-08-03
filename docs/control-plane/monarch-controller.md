@@ -17,8 +17,8 @@ Every ShadowTest is either `record` or `replay` (`spec.mode`; default `record`).
 
 | Mode | Provisions | Garbage collects |
 |------|------------|------------------|
-| `record` | Bottom-up: unbound AMQP queue (if any) + Shop + Igris → Ready gate → KaiselRule → AMQP bind; (+ beru-local); mints `status.currentSessionID` when unset | ABC Deployments/Services; clears `status.replayState` |
-| `replay` | Shop → Igris → ABC (+ deps); requires `spec.sessionID` or existing `status.currentSessionID` | KaiselRule |
+| `record` | Bottom-up: unbound AMQP queue (if any) + Shop + Igris → Ready gate → KaiselRule → AMQP bind; (+ beru-local); mints `status.currentSessionID` when unset (and remints on replay→record when unpinned) | ABC Deployments/Services; clears `status.replayState` + `currentReplayExecutionID` |
+| `replay` | Shop → Igris → ABC (+ deps); requires `spec.sessionID` or existing `status.currentSessionID`; mints `status.currentReplayExecutionID` and injects `REPLAY_EXECUTION_ID` on beru-local | KaiselRule |
 
 Record mode opens eBPF (`KaiselRule`) only after Shop/Igris are Available, and binds the prod AMQP shadow queue only after KaiselRule exists — see [platform bootstrap lifecycle](/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md).
 
@@ -26,7 +26,7 @@ Monarch copies `storage.credentialsSecretRef` from the CR namespace into the sha
 
 ### Replay trigger
 
-After Shop, the ingress hub (HTTP `*-igris` or AMQP `*-igris-rabbitmq`), and ABC Deployments are roll-ready (`ReadyReplicas >= desired` and `UpdatedReplicas == Replicas`), if `status.replayState` is empty Monarch `POST`s `http://<hub>.<shadow-ns>.svc:9090/v1/replay/start` (10s timeout). HTTP 202 or 409 sets `status.replayState=started`.
+After beru-local (so `REPLAY_EXECUTION_ID` is live), Shop, the ingress hub (HTTP `*-igris` or AMQP `*-igris-rabbitmq`), and ABC Deployments are roll-ready (`ReadyReplicas >= desired` and `UpdatedReplicas == Replicas`), if `status.replayState` is empty Monarch `POST`s `http://<hub>.<shadow-ns>.svc:9090/v1/replay/start` (10s timeout, body-less). HTTP 202 or 409 sets `status.replayState=started`. See [/control-plane/replay-execution-isolation.md](/control-plane/replay-execution-isolation.md).
 
 ABC role pods expose two readiness probes so kube Ready means the data plane can accept traffic: a TCP probe on Envoy for `servicePortFor` (default 8888), and when shadow-soldier is injected, an HTTP GET `/healthz` on soldier port `19191` (`0.0.0.0`; 200 after all DB proxy listeners bind). DB proxy routes stay on `127.0.0.1`. igris-http replay delivery also retries dial failures (1s/3s/5s) so a brief post-Ready race does not drop a role.
 

@@ -118,6 +118,9 @@ func localBeruPodSpec(st *enginev1alpha1.ShadowTest) (corev1.Container, []corev1
 			// Session identity for durable storage: the same session folder
 			// as the S3 layout, so diff rows join to recorded artifacts.
 			{Name: envSessionID, Value: st.Status.CurrentSessionID},
+			// Replay run identity: scopes Postgres diffs so re-playing the same
+			// S3 session does not inflate occurrence counts. Empty in record.
+			{Name: envReplayExecutionID, Value: st.Status.CurrentReplayExecutionID},
 			{Name: "SHADOW_NAMESPACE", Value: st.Namespace},
 			{Name: "SHADOW_MODE", Value: st.Spec.Mode},
 		},

@@ -175,6 +175,10 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{}, err
 		}
 		kaiselPhase = capturePhaseDisabled
+		// Mint execution id before beru-local so REPLAY_EXECUTION_ID is on the pod.
+		if _, err := r.ensureReplayExecutionID(ctx, &shadowTest); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	if err := r.reconcileLocalBeru(ctx, &shadowTest, shadowNS); err != nil {

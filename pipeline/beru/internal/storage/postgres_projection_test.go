@@ -268,15 +268,17 @@ SELECT shadow_test_name, namespace, mode FROM shadow_sessions WHERE session_id =
 		select {
 		case payload := <-got:
 			var ev struct {
-				SessionID string `json:"session_id"`
-				TraceID   string `json:"trace_id"`
-				Verdict   string `json:"verdict"`
+				SessionID          string `json:"session_id"`
+				ReplayExecutionID  string `json:"replay_execution_id"`
+				TraceID            string `json:"trace_id"`
+				Verdict            string `json:"verdict"`
 			}
 			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 				t.Fatalf("payload %q: %v", payload, err)
 			}
-			if ev.SessionID != "conformance-session" || ev.TraceID != trace || ev.Verdict != v2storage.StatusMismatch {
-				t.Fatalf("notify = %+v, want session/trace/MISMATCH", ev)
+			if ev.SessionID != "conformance-session" || ev.ReplayExecutionID != "exec-conformance" ||
+				ev.TraceID != trace || ev.Verdict != v2storage.StatusMismatch {
+				t.Fatalf("notify = %+v, want session/exec/trace/MISMATCH", ev)
 			}
 		case <-notifyCtx.Done():
 			t.Fatal("timed out waiting for verdict_events NOTIFY")

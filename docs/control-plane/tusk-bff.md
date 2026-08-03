@@ -4,12 +4,12 @@ title: Tusk — Topology and Diff BFF
 description: The Go gateway that fans Monarch topology over WebSockets and serves ShadowDiff REST/WS from shared Postgres LISTEN/NOTIFY, including lazy raw_reports occurrence payloads.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/tusk
 tags: [architecture, control-plane, tusk, websocket, grpc, topology, ui, postgres, diffs]
-timestamp: 2026-08-03T15:45:00Z
+timestamp: 2026-08-03T14:00:00Z
 ---
 
 # Tusk — Topology and Diff BFF
 
-Tusk sits between Monarch's status stream, shared Beru Postgres, and [The System](/control-plane/the-system.md) dashboard. It converts `monarch.v1.MonarchStatusService` updates into React Flow graphs, and reads Beru's UI projection tables (`shadow_sessions`, `traces`, `diff_reports`) plus `raw_reports` for the ShadowDiff occurrence pager.
+Tusk sits between Monarch's status stream, shared Beru Postgres, and [The System](/control-plane/the-system.md) dashboard. It converts `monarch.v1.MonarchStatusService` updates into React Flow graphs, and reads Beru's UI projection tables (`shadow_sessions`, `replay_executions`, `traces`, `diff_reports`) plus `raw_reports` for the ShadowDiff occurrence pager.
 
 Tusk is a **cluster-wide singleton** in `monarch-system`, deployed from `pipeline/tusk/deploy/`. Like Kaisel, and unlike the per-ShadowTest workloads Monarch provisions, it is not scoped to any one test.
 
@@ -22,9 +22,10 @@ Tusk is a **cluster-wide singleton** in `monarch-system`, deployed from `pipelin
 | Postgres | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE` (same keys as beru-local) |
 | `GET /ws/monitor?test=&namespace=` | streams topology graphs; omit both params to watch every ShadowTest |
 | `GET /api/v1/sessions?with_diffs=` | lists `shadow_sessions` (newest first); `with_diffs=true` keeps only sessions that have at least one `traces` row |
-| `GET /api/v1/diffs?session_id=` | joined `diff_reports` + `traces` for one session (first payload per signature) |
-| `GET /api/v1/diffs/occurrences?trace_id=&signature=` | aligned per-index payloads from `raw_reports` (cap 50; `truncated: true` when capped) |
-| `GET /ws/diffs?session_id=` | summary snapshot, then live `{type:summary\|verdict}` frames |
+| `GET /api/v1/sessions/{session_id}/executions` | `replay_executions` for a session (newest first) |
+| `GET /api/v1/diffs?session_id=&replay_execution_id=` | joined `diff_reports` + `traces` for one execution (omit execution → latest) |
+| `GET /api/v1/diffs/occurrences?trace_id=&signature=&replay_execution_id=` | aligned per-index payloads from `raw_reports` scoped to one execution (cap 50) |
+| `GET /ws/diffs?session_id=&replay_execution_id=` | summary snapshot, then live `{type:summary\|verdict}` frames for that execution |
 | `GET /healthz` | 200 `ok` |
 
 CORS and WebSocket `CheckOrigin` allow any `http(s)://localhost[:port]` or `http(s)://127.0.0.1[:port]` Origin so The System works from Vite (`:3000`) and Nginx (`:80`). Plain HTTP routes reflect an allowed request Origin, or default to `http://localhost:3000` when Origin is absent. A request with no `Origin` (probes, `websocat`, tests) is allowed for upgrades.
@@ -48,21 +49,21 @@ Delete lifecycle on the wire:
 
 ## ShadowDiff data path
 
-Beru projects verdicts into Postgres and emits `NOTIFY verdict_events` with `{"session_id","trace_id","verdict"}`. Tusk:
+Beru projects verdicts into Postgres and emits `NOTIFY verdict_events` with `{"session_id","replay_execution_id","trace_id","verdict"}`. Tusk:
 
-1. Queries projection tables for REST hydrate (`GET /api/v1/sessions`, `GET /api/v1/diffs`).
-2. Lazily reads `raw_reports` for `GET /api/v1/diffs/occurrences` — roles aligned by capture order into `occurrences[i].{control_a,control_b,candidate}_payload` (same bucketing as Beru `compareSignature`).
+1. Queries projection tables for REST hydrate (`GET /api/v1/sessions`, executions, `GET /api/v1/diffs`).
+2. Lazily reads `raw_reports` for `GET /api/v1/diffs/occurrences` — roles aligned by capture order into `occurrences[i].{control_a,control_b,candidate}_payload` (same bucketing as Beru `compareSignature`), filtered by `replay_execution_id`.
 3. Holds a dedicated `pgx` connection on `LISTEN verdict_events` (reconnect 1s → 30s).
-4. Refreshes `SessionSummary` and fans frames through `DiffHub` (keyed by `session_id`, same non-blocking buffer policy as the topology hub).
+4. Refreshes `SessionSummary` and fans frames through `DiffHub` (keyed by `(session_id, replay_execution_id)`, same non-blocking buffer policy as the topology hub).
 
 WebSocket frames:
 
 ```json
-{ "type": "summary", "session_id": "…", "total": 10, "match": 7, "mismatch": 2, "voided": 1 }
-{ "type": "verdict", "session_id": "…", "trace_id": "…", "verdict": "MISMATCH" }
+{ "type": "summary", "session_id": "…", "replay_execution_id": "exec-…", "total": 10, "match": 7, "mismatch": 2, "voided": 1 }
+{ "type": "verdict", "session_id": "…", "replay_execution_id": "exec-…", "trace_id": "…", "verdict": "MISMATCH" }
 ```
 
-Session payloads stay on `GET /api/v1/diffs`; the UI refetches that path when a new `verdict` frame arrives. Repeat signatures are loaded only when the inspector opens that signature via `/api/v1/diffs/occurrences`.
+Session payloads stay on `GET /api/v1/diffs`; the UI refetches that path when a new `verdict` frame arrives. Repeat signatures are loaded only when the inspector opens that signature via `/api/v1/diffs/occurrences`. See [/control-plane/replay-execution-isolation.md](/control-plane/replay-execution-isolation.md).
 
 ## Graph model
 

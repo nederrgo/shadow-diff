@@ -8,30 +8,42 @@ import (
 
 // DiffFrame is one WebSocket JSON message for /ws/diffs.
 type DiffFrame struct {
-	Type      string `json:"type"` // "summary" | "verdict"
-	SessionID string `json:"session_id"`
-	TraceID   string `json:"trace_id,omitempty"`
-	Verdict   string `json:"verdict,omitempty"`
-	Total     int    `json:"total,omitempty"`
-	Match     int    `json:"match,omitempty"`
-	Mismatch  int    `json:"mismatch,omitempty"`
-	Voided    int    `json:"voided,omitempty"`
+	Type              string `json:"type"` // "summary" | "verdict"
+	SessionID         string `json:"session_id"`
+	ReplayExecutionID string `json:"replay_execution_id,omitempty"`
+	TraceID           string `json:"trace_id,omitempty"`
+	Verdict           string `json:"verdict,omitempty"`
+	Total             int    `json:"total,omitempty"`
+	Match             int    `json:"match,omitempty"`
+	Mismatch          int    `json:"mismatch,omitempty"`
+	Voided            int    `json:"voided,omitempty"`
 }
 
 type diffClient struct {
-	ch        chan *DiffFrame
-	sessionID string
+	ch                chan *DiffFrame
+	sessionID         string
+	replayExecutionID string
 }
 
-func (c *diffClient) wants(sessionID string) bool {
-	return c.sessionID == "" || c.sessionID == sessionID
+func (c *diffClient) wants(sessionID, execID string) bool {
+	if c.sessionID != "" && c.sessionID != sessionID {
+		return false
+	}
+	if c.replayExecutionID != "" && c.replayExecutionID != execID {
+		return false
+	}
+	return true
 }
 
-// DiffHub caches the latest summary per session and fans verdict/summary frames
+func diffCacheKey(sessionID, execID string) string {
+	return sessionID + "\x00" + execID
+}
+
+// DiffHub caches the latest summary per (session, execution) and fans frames
 // to browsers on /ws/diffs.
 type DiffHub struct {
 	mu      sync.RWMutex
-	latest  map[string]*DiffFrame // session_id → summary
+	latest  map[string]*DiffFrame // session\0exec → summary
 	clients map[int64]*diffClient
 	next    int64
 }
@@ -49,12 +61,13 @@ func (h *DiffHub) BroadcastSummary(sum db.SessionSummary) {
 		return
 	}
 	frame := &DiffFrame{
-		Type:      "summary",
-		SessionID: sum.SessionID,
-		Total:     sum.Total,
-		Match:     sum.Match,
-		Mismatch:  sum.Mismatch,
-		Voided:    sum.Voided,
+		Type:              "summary",
+		SessionID:         sum.SessionID,
+		ReplayExecutionID: sum.ReplayExecutionID,
+		Total:             sum.Total,
+		Match:             sum.Match,
+		Mismatch:          sum.Mismatch,
+		Voided:            sum.Voided,
 	}
 	h.broadcast(frame)
 }
@@ -65,10 +78,11 @@ func (h *DiffHub) BroadcastVerdict(ev db.VerdictEvent) {
 		return
 	}
 	h.broadcast(&DiffFrame{
-		Type:      "verdict",
-		SessionID: ev.SessionID,
-		TraceID:   ev.TraceID,
-		Verdict:   ev.Verdict,
+		Type:              "verdict",
+		SessionID:         ev.SessionID,
+		ReplayExecutionID: ev.ReplayExecutionID,
+		TraceID:           ev.TraceID,
+		Verdict:           ev.Verdict,
 	})
 }
 
@@ -79,24 +93,25 @@ func (h *DiffHub) CacheSummary(sum db.SessionSummary) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.latest[sum.SessionID] = &DiffFrame{
-		Type:      "summary",
-		SessionID: sum.SessionID,
-		Total:     sum.Total,
-		Match:     sum.Match,
-		Mismatch:  sum.Mismatch,
-		Voided:    sum.Voided,
+	h.latest[diffCacheKey(sum.SessionID, sum.ReplayExecutionID)] = &DiffFrame{
+		Type:              "summary",
+		SessionID:         sum.SessionID,
+		ReplayExecutionID: sum.ReplayExecutionID,
+		Total:             sum.Total,
+		Match:             sum.Match,
+		Mismatch:          sum.Mismatch,
+		Voided:            sum.Voided,
 	}
 }
 
 func (h *DiffHub) broadcast(frame *DiffFrame) {
 	h.mu.Lock()
 	if frame.Type == "summary" {
-		h.latest[frame.SessionID] = frame
+		h.latest[diffCacheKey(frame.SessionID, frame.ReplayExecutionID)] = frame
 	}
 	clients := make([]*diffClient, 0, len(h.clients))
 	for _, c := range h.clients {
-		if c.wants(frame.SessionID) {
+		if c.wants(frame.SessionID, frame.ReplayExecutionID) {
 			clients = append(clients, c)
 		}
 	}
@@ -112,11 +127,12 @@ func (h *DiffHub) broadcast(frame *DiffFrame) {
 	}
 }
 
-// Subscribe registers a browser for one session (empty sessionID = all).
-func (h *DiffHub) Subscribe(sessionID string) (<-chan *DiffFrame, []*DiffFrame, func()) {
+// Subscribe registers a browser for one session execution (empty sessionID = all).
+func (h *DiffHub) Subscribe(sessionID, execID string) (<-chan *DiffFrame, []*DiffFrame, func()) {
 	c := &diffClient{
-		ch:        make(chan *DiffFrame, clientBuffer),
-		sessionID: sessionID,
+		ch:                make(chan *DiffFrame, clientBuffer),
+		sessionID:         sessionID,
+		replayExecutionID: execID,
 	}
 
 	h.mu.Lock()
@@ -125,7 +141,7 @@ func (h *DiffHub) Subscribe(sessionID string) (<-chan *DiffFrame, []*DiffFrame, 
 	h.clients[id] = c
 	snapshot := make([]*DiffFrame, 0, 1)
 	if sessionID != "" {
-		if f, ok := h.latest[sessionID]; ok {
+		if f, ok := h.latest[diffCacheKey(sessionID, execID)]; ok {
 			snapshot = append(snapshot, f)
 		}
 	} else {

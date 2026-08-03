@@ -79,6 +79,7 @@ message ShadowTestStatusUpdate {
   Mode mode = 8;
   string message = 9;
   CapturePhase kaisel_phase = 10;
+  string current_replay_execution_id = 11;
 }
 
 service MonarchStatusService {

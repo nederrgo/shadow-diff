@@ -92,12 +92,15 @@ func (c PostgresConfig) DSN() string {
 // PostgresStore is the durable backend. One type satisfies both halves of
 // Beru's persistence: RunStore and v2/storage.TraceRepository.
 type PostgresStore struct {
-	db              *sql.DB
-	log             *slog.Logger
-	retentionDays   int
-	defaultTestName string
-	sessionID       string
+	db                 *sql.DB
+	log                *slog.Logger
+	retentionDays      int
+	defaultTestName    string
+	sessionID          string
+	replayExecutionID  string
 }
+
+const legacyReplayExecutionID = "legacy"
 
 // OpenPostgres connects, migrates, and records the shadow session.
 func OpenPostgres(log *slog.Logger, cfg PostgresConfig) (*PostgresStore, error) {
@@ -120,18 +123,27 @@ func OpenPostgres(log *slog.Logger, cfg PostgresConfig) (*PostgresStore, error) 
 		return nil, fmt.Errorf("ping postgres %s:%s/%s: %w", cfg.Host, cfg.Port, cfg.Name, err)
 	}
 
+	execID := os.Getenv("REPLAY_EXECUTION_ID")
+	if execID == "" {
+		execID = legacyReplayExecutionID
+	}
 	p := &PostgresStore{
-		db:              db,
-		log:             log,
-		retentionDays:   retentionDaysFromEnv(),
-		defaultTestName: shadowTestNameFromEnv(),
-		sessionID:       os.Getenv("SESSION_ID"),
+		db:                db,
+		log:               log,
+		retentionDays:     retentionDaysFromEnv(),
+		defaultTestName:   shadowTestNameFromEnv(),
+		sessionID:         os.Getenv("SESSION_ID"),
+		replayExecutionID: execID,
 	}
 	if err := p.migrate(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}
 	if err := p.ensureSession(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := p.ensureReplayExecution(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -143,7 +155,8 @@ func OpenPostgres(log *slog.Logger, cfg PostgresConfig) (*PostgresStore, error) 
 
 	log.Info("PostgreSQL storage ready",
 		"host", cfg.Host, "port", cfg.Port, "database", cfg.Name, "sslmode", cfg.SSLMode,
-		"retention_days", p.retentionDays, "session_id", p.sessionID)
+		"retention_days", p.retentionDays, "session_id", p.sessionID,
+		"replay_execution_id", p.replayExecutionID)
 	return p, nil
 }
 
@@ -222,6 +235,24 @@ ON CONFLICT (session_id) DO UPDATE SET
 		p.sessionID, p.defaultTestName, os.Getenv("SHADOW_NAMESPACE"), os.Getenv("SHADOW_MODE"))
 	if err != nil {
 		return fmt.Errorf("ensure shadow session: %w", err)
+	}
+	return nil
+}
+
+// ensureReplayExecution registers this beru-local's REPLAY_EXECUTION_ID under
+// the active session. Re-playing the same S3 session mints a new id so Postgres
+// occurrence counts reset per run.
+func (p *PostgresStore) ensureReplayExecution(ctx context.Context) error {
+	if p.sessionID == "" || p.replayExecutionID == "" {
+		return nil
+	}
+	_, err := p.db.ExecContext(ctx, `
+INSERT INTO replay_executions (replay_execution_id, session_id)
+VALUES ($1, $2)
+ON CONFLICT (replay_execution_id) DO NOTHING`,
+		p.replayExecutionID, p.sessionID)
+	if err != nil {
+		return fmt.Errorf("ensure replay execution: %w", err)
 	}
 	return nil
 }
@@ -402,9 +433,18 @@ func (p *PostgresStore) Prune(ctx context.Context) error {
 		return fmt.Errorf("prune raw_reports: %w", err)
 	}
 	for _, stmt := range []string{
-		`DELETE FROM verdicts     WHERE trace_id NOT IN (SELECT DISTINCT trace_id FROM raw_reports)`,
-		`DELETE FROM diff_reports WHERE trace_id NOT IN (SELECT DISTINCT trace_id FROM raw_reports)`,
-		`DELETE FROM traces       WHERE trace_id NOT IN (SELECT DISTINCT trace_id FROM raw_reports)`,
+		`DELETE FROM verdicts v
+		  WHERE NOT EXISTS (
+		    SELECT 1 FROM raw_reports r
+		    WHERE r.replay_execution_id = v.replay_execution_id AND r.trace_id = v.trace_id)`,
+		`DELETE FROM diff_reports d
+		  WHERE NOT EXISTS (
+		    SELECT 1 FROM raw_reports r
+		    WHERE r.replay_execution_id = d.replay_execution_id AND r.trace_id = d.trace_id)`,
+		`DELETE FROM traces t
+		  WHERE NOT EXISTS (
+		    SELECT 1 FROM raw_reports r
+		    WHERE r.replay_execution_id = t.replay_execution_id AND r.trace_id = t.trace_id)`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("prune derived rows: %w", err)

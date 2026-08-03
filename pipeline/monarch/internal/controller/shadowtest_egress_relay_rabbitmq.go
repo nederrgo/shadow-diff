@@ -70,6 +70,9 @@ func (r *ShadowTestReconciler) egressRelayRabbitMQEnv(st *enginev1alpha1.ShadowT
 		{Name: envControlBAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleControlB, port)},
 		{Name: envCandidateAMQPURL, Value: shadowAMQPURL(shadowNS, dep.Name, roleCandidate, port)},
 		{Name: envBeruHTTPURL, Value: fmt.Sprintf("http://%s", beruHTTPHostFor(st, shadowNS))},
+		// Forces a pod roll on each new replay execution so the Firehose consumer
+		// does not sit in a 30s reconnect backoff while brokers/ABC come back.
+		{Name: envReplayExecutionID, Value: st.Status.CurrentReplayExecutionID},
 		// ponytail: default worker egress exchange; skip igris ingress publishes on orders
 		{Name: "EGRESS_EXCHANGE", Value: "egress-events"},
 	}, nil

@@ -432,7 +432,8 @@ spec:
               sessionID:
                 description: |-
                   SessionID pins the S3 session folder for replay (and optionally for record).
-                  When unset in record mode, Monarch mints status.currentSessionID.
+                  When unset in record mode, Monarch mints status.currentSessionID (and remints
+                  on each replay→record transition so capture does not append into the prior folder).
                 type: string
               shadowSoldier:
                 description: ShadowSoldier overrides the database egress capture sidecar
@@ -640,6 +641,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              currentReplayExecutionID:
+                description: |-
+                  CurrentReplayExecutionID scopes Postgres diffs for one replay run of CurrentSessionID.
+                  Minted when entering replay; injected as REPLAY_EXECUTION_ID on beru-local.
+                type: string
               currentSessionID:
                 description: CurrentSessionID is the active S3 session folder for
                   this ShadowTest.

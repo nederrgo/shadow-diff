@@ -46,7 +46,7 @@ For CRD fields and install, see [/control-plane/monarch-controller.md](/control-
 
 ## Two operating modes
 
-Every ShadowTest is `spec.mode: record` or `replay` (default `record`). `spec.storage` is **required** (BYOB S3). Optional `spec.sessionID` pins the session folder; record mints `status.currentSessionID` when unset; replay requires a resolvable session.
+Every ShadowTest is `spec.mode: record` or `replay` (default `record`). `spec.storage` is **required** (BYOB S3). Optional `spec.sessionID` pins the session folder; record mints `status.currentSessionID` when unset (and remints on unpinned replay→record); replay requires a resolvable session and mints `status.currentReplayExecutionID` for Postgres/UI isolation.
 
 ```mermaid
 flowchart TB
@@ -243,9 +243,9 @@ Reconcile (simplified):
 1. Validate `spec.storage` + `spec.mode`
 2. Ensure shadow namespace `shadow-<crNs>-<crName>`
 3. Mint/pin session; sync credentials Secret into shadow ns
-4. **Record:** KaiselRule → Igris → Shop; delete ABC; clear `replayState`
-5. **Replay:** delete KaiselRule; Shop → Igris → deps → ABC; trigger `/v1/replay/start`
-6. Patch status (`phase`, `kaiselPhase`, `currentSessionID`, `replayState`, …)
+4. **Record:** KaiselRule → Igris → Shop; delete ABC; clear `replayState` + `currentReplayExecutionID`
+5. **Replay:** mint `currentReplayExecutionID`; delete KaiselRule; beru-local with `REPLAY_EXECUTION_ID` → Shop → Igris → deps → ABC; trigger `/v1/replay/start`
+6. Patch status (`phase`, `kaiselPhase`, `currentSessionID`, `currentReplayExecutionID`, `replayState`, …)
 
 Shadow namespace layout (replay): three role Deployments (app + Envoy [+ shadow-soldier]), Shop, Igris, **beru-local**, per-role dependency Services.
 

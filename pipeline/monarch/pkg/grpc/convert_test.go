@@ -16,8 +16,9 @@ func TestToStatusUpdate_FullyPopulated(t *testing.T) {
 			Phase:            enginev1alpha1.PhaseReady,
 			Message:          "replay mode ready",
 			BootStep:         enginev1alpha1.BootStepReady,
-			CurrentSessionID: "session-42",
-			ReplayState:      "started",
+			CurrentSessionID:         "session-42",
+			CurrentReplayExecutionID: "exec-99",
+			ReplayState:              "started",
 			KaiselPhase:      enginev1alpha1.CapturePhaseDisabled,
 			Components: enginev1alpha1.ComponentStatus{
 				IgrisReady:       true,
@@ -58,6 +59,9 @@ func TestToStatusUpdate_FullyPopulated(t *testing.T) {
 	}
 	if u.GetCurrentSessionId() != "session-42" || u.GetReplayState() != "started" {
 		t.Errorf("session/replay = %q/%q", u.GetCurrentSessionId(), u.GetReplayState())
+	}
+	if u.GetCurrentReplayExecutionId() != "exec-99" {
+		t.Errorf("currentReplayExecutionId = %q", u.GetCurrentReplayExecutionId())
 	}
 	c := u.GetComponents()
 	if !c.GetIgrisReady() || !c.GetShopReady() || !c.GetBeruReady() || !c.GetAmqpBound() {

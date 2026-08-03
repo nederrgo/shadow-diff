@@ -19,5 +19,6 @@ The control plane layer acts as the centralized automation hub of Shadow-Diff. D
 * [/control-plane/monarch-status-stream.md](/control-plane/monarch-status-stream.md) - The `monarch.v1` gRPC contract on `:9090`: shared `monarchpb` module, enum vocabulary, snapshot-then-live semantics, publish path.
 * [/control-plane/tusk-bff.md](/control-plane/tusk-bff.md) - Tusk BFF: topology from Monarch gRPC, ShadowDiff REST/WS from Postgres LISTEN/NOTIFY, lazy `raw_reports` occurrences.
 * [/control-plane/the-system.md](/control-plane/the-system.md) - The System dashboard: Monitor, ShadowDiff occurrence pager, ShadowTest YAML editor.
+* [/control-plane/replay-execution-isolation.md](/control-plane/replay-execution-isolation.md) - ADR: session remint + `replay_execution_id` on beru-local for Postgres/UI isolation.
 * [/control-plane/shadowspec-catalog.md](/control-plane/shadowspec-catalog.md) - Shared `pipeline/pkg/shadowspec` catalog for dependency kinds and input drivers (Monarch defaults + editor menus).
 * [/control-plane/monarch-security-model.md](/control-plane/monarch-security-model.md) - Deep dive specification regarding role compartmentalization, unprivileged eBPF decoupling boundary rules, and shadow sandboxing network policies.

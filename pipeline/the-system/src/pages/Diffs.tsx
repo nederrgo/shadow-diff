@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { DiffsSummary } from '@/components/DiffsSummary'
+import { ExecutionPicker } from '@/components/ExecutionPicker'
 import { PayloadInspector } from '@/components/PayloadInspector'
 import { SessionPicker } from '@/components/SessionPicker'
 import { useDiffStream } from '@/hooks/useDiffStream'
 import { cn } from '@/lib/cn'
 import { tuskHttpBase } from '@/lib/tuskBase'
-import type { SessionDiff, ShadowSession, TraceGroup, VerdictFilter } from '@/types/diffs'
+import type {
+  ReplayExecution,
+  SessionDiff,
+  ShadowSession,
+  TraceGroup,
+  VerdictFilter,
+} from '@/types/diffs'
 
 const FILTERS: { id: VerdictFilter; label: string }[] = [
   { id: 'ALL', label: 'All' },
@@ -58,9 +65,11 @@ function summaryFromDiffs(sessionId: string, diffs: SessionDiff[]) {
 export default function Diffs() {
   const [params, setParams] = useSearchParams()
   const sessionId = params.get('session_id') ?? ''
+  const executionId = params.get('replay_execution_id') ?? ''
 
   const [sessions, setSessions] = useState<ShadowSession[]>([])
   const [sessionsError, setSessionsError] = useState<string | null>(null)
+  const [executions, setExecutions] = useState<ReplayExecution[]>([])
   const [diffs, setDiffs] = useState<SessionDiff[]>([])
   const [diffsError, setDiffsError] = useState<string | null>(null)
   const [filter, setFilter] = useState<VerdictFilter>('ALL')
@@ -68,7 +77,11 @@ export default function Diffs() {
   // Default on: hide boot-only sessions with no projected traces.
   const [withDiffsOnly, setWithDiffsOnly] = useState(true)
 
-  const { summary: liveSummary, lastVerdictTraceId, connectionStatus } = useDiffStream(sessionId)
+  const resolvedExecId = executionId || executions[0]?.replay_execution_id || ''
+  const { summary: liveSummary, lastVerdictTraceId, connectionStatus } = useDiffStream(
+    sessionId,
+    executionId,
+  )
 
   const loadSessions = useCallback(async () => {
     try {
@@ -88,13 +101,35 @@ export default function Diffs() {
     }
   }, [withDiffsOnly])
 
-  const loadDiffs = useCallback(async (id: string) => {
+  const loadExecutions = useCallback(async (id: string) => {
+    if (!id) {
+      setExecutions([])
+      return
+    }
+    try {
+      const resp = await fetch(
+        `${tuskHttpBase()}/api/v1/sessions/${encodeURIComponent(id)}/executions`,
+      )
+      if (!resp.ok) {
+        setExecutions([])
+        return
+      }
+      const data = (await resp.json()) as ReplayExecution[]
+      setExecutions(Array.isArray(data) ? data : [])
+    } catch {
+      setExecutions([])
+    }
+  }, [])
+
+  const loadDiffs = useCallback(async (id: string, exec: string) => {
     if (!id) {
       setDiffs([])
       return
     }
     try {
-      const resp = await fetch(`${tuskHttpBase()}/api/v1/diffs?session_id=${encodeURIComponent(id)}`)
+      const qs = new URLSearchParams({ session_id: id })
+      if (exec) qs.set('replay_execution_id', exec)
+      const resp = await fetch(`${tuskHttpBase()}/api/v1/diffs?${qs}`)
       if (!resp.ok) {
         setDiffsError(`Diffs HTTP ${resp.status}`)
         setDiffs([])
@@ -114,20 +149,33 @@ export default function Diffs() {
   }, [loadSessions])
 
   useEffect(() => {
-    void loadDiffs(sessionId)
+    void loadExecutions(sessionId)
     setSelectedTraceId(null)
-  }, [sessionId, loadDiffs])
+  }, [sessionId, loadExecutions])
 
-  // Hybrid hydrate: on live verdict, refetch payloads for the session.
+  useEffect(() => {
+    void loadDiffs(sessionId, executionId)
+    setSelectedTraceId(null)
+  }, [sessionId, executionId, loadDiffs])
+
+  // Hybrid hydrate: on live verdict, refetch payloads for the session execution.
   useEffect(() => {
     if (!sessionId || !lastVerdictTraceId) return
-    void loadDiffs(sessionId)
-  }, [lastVerdictTraceId, sessionId, loadDiffs])
+    void loadDiffs(sessionId, executionId)
+  }, [lastVerdictTraceId, sessionId, executionId, loadDiffs])
 
   const selectSession = (id: string) => {
     const next = new URLSearchParams(params)
     if (id) next.set('session_id', id)
     else next.delete('session_id')
+    next.delete('replay_execution_id')
+    setParams(next, { replace: true })
+  }
+
+  const selectExecution = (id: string) => {
+    const next = new URLSearchParams(params)
+    if (id) next.set('replay_execution_id', id)
+    else next.delete('replay_execution_id')
     setParams(next, { replace: true })
   }
 
@@ -148,6 +196,12 @@ export default function Diffs() {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-end gap-3 border-b border-[#1f2937] bg-[#090d16] px-4 py-3">
         <SessionPicker sessions={sessions} sessionId={sessionId} onSelect={selectSession} />
+        <ExecutionPicker
+          executions={executions}
+          executionId={executionId}
+          onSelect={selectExecution}
+          disabled={!sessionId}
+        />
         <label className="flex items-center gap-2 pb-1.5 text-xs text-slate-400">
           <input
             type="checkbox"
@@ -205,6 +259,7 @@ export default function Diffs() {
             traces={filtered}
             selectedTraceId={selectedTraceId}
             onSelectTrace={setSelectedTraceId}
+            executionId={resolvedExecId}
           />
         )}
       </div>

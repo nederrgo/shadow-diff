@@ -38,11 +38,15 @@ type dbQuerier interface {
 
 func (p *PostgresStore) insertReport(ctx context.Context, q dbQuerier, report *v2storage.RawReport) error {
 	_, err := q.ExecContext(ctx, `
-INSERT INTO raw_reports (trace_id, shadow_role, shadow_test_name, protocol, direction, signature, status_code, payload_bytes, captured_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+INSERT INTO raw_reports (
+  trace_id, shadow_role, shadow_test_name, session_id, replay_execution_id,
+  protocol, direction, signature, status_code, payload_bytes, captured_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		report.TraceID,
 		report.ShadowRole,
 		report.ShadowTestName,
+		p.sessionID,
+		p.replayExecutionID,
 		report.Protocol,
 		string(report.Direction),
 		report.Signature,
@@ -54,6 +58,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		return fmt.Errorf("append report insert: %w", err)
 	}
 	return nil
+}
+
+// lockKey scopes the advisory lock to this beru-local's replay execution so
+// concurrent executions of the same capture session do not serialize on each other.
+func (p *PostgresStore) lockKey(traceID string) string {
+	return p.replayExecutionID + ":" + traceID
 }
 
 // flushReportsAndEvaluate inserts WAL-batched reports under an advisory lock,
@@ -74,7 +84,7 @@ func (p *PostgresStore) flushReportsAndEvaluate(
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, traceID); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, p.lockKey(traceID)); err != nil {
 		return fmt.Errorf("advisory lock: %w", err)
 	}
 	for i := range reports {
@@ -108,7 +118,7 @@ func (p *PostgresStore) saveDiffVerdictUnderLock(ctx context.Context, traceID st
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, traceID); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, p.lockKey(traceID)); err != nil {
 		return fmt.Errorf("advisory lock: %w", err)
 	}
 	history, err := p.listReportsQ(ctx, tx, traceID, "")
@@ -136,16 +146,21 @@ func (p *PostgresStore) upsertVerdict(
 		shadowTestName = history[0].ShadowTestName
 	}
 	_, err := q.ExecContext(ctx, `
-INSERT INTO verdicts (trace_id, shadow_test_name, status, has_count_regression, summary_details, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (trace_id) DO UPDATE SET
+INSERT INTO verdicts (
+  replay_execution_id, trace_id, shadow_test_name, session_id,
+  status, has_count_regression, summary_details, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (replay_execution_id, trace_id) DO UPDATE SET
   shadow_test_name     = excluded.shadow_test_name,
+  session_id           = excluded.session_id,
   status               = excluded.status,
   has_count_regression = excluded.has_count_regression,
   summary_details      = excluded.summary_details,
   updated_at           = excluded.updated_at`,
+		p.replayExecutionID,
 		traceID,
 		shadowTestName,
+		p.sessionID,
 		verdict.Status,
 		verdict.HasCountRegression,
 		jsonbValue(verdict.SummaryDetails),
@@ -169,10 +184,10 @@ func (p *PostgresStore) listReportsQ(ctx context.Context, q dbQuerier, traceID, 
 	query := `
 SELECT trace_id, shadow_role, shadow_test_name, protocol, direction, signature, status_code, payload_bytes, captured_at
 FROM raw_reports
-WHERE trace_id = $1`
-	args := []any{traceID}
+WHERE replay_execution_id = $1 AND trace_id = $2`
+	args := []any{p.replayExecutionID, traceID}
 	if protocol != "" {
-		query += ` AND protocol = $2`
+		query += ` AND protocol = $3`
 		args = append(args, protocol)
 	}
 	query += ` ORDER BY captured_at ASC, id ASC`
@@ -213,10 +228,10 @@ func (p *PostgresStore) ListTraceGroups(ctx context.Context, shadowTestName stri
 	rows, err := p.db.QueryContext(ctx, `
 SELECT trace_id, protocol, MAX(captured_at) AS last_at
 FROM raw_reports
-WHERE shadow_test_name = $1
+WHERE shadow_test_name = $1 AND replay_execution_id = $2
 GROUP BY trace_id, protocol
 ORDER BY last_at DESC
-LIMIT $2`, shadowTestName, limit)
+LIMIT $3`, shadowTestName, p.replayExecutionID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list trace groups: %w", err)
 	}
@@ -247,7 +262,8 @@ func (p *PostgresStore) GetVerdict(ctx context.Context, traceID string) (*v2stor
 	)
 	err := p.db.QueryRowContext(ctx, `
 SELECT status, has_count_regression, summary_details, updated_at
-FROM verdicts WHERE trace_id = $1`, traceID,
+FROM verdicts WHERE replay_execution_id = $1 AND trace_id = $2`,
+		p.replayExecutionID, traceID,
 	).Scan(&status, &regression, &details, &updated)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -284,13 +300,17 @@ func (p *PostgresStore) ListStaleIncompleteTraces(ctx context.Context, olderThan
 SELECT r.trace_id, MIN(r.captured_at) AS first_at
 FROM raw_reports r
 WHERE r.shadow_test_name = $5
-  AND NOT EXISTS (SELECT 1 FROM verdicts v WHERE v.trace_id = r.trace_id)
+  AND r.replay_execution_id = $6
+  AND NOT EXISTS (
+    SELECT 1 FROM verdicts v
+    WHERE v.replay_execution_id = r.replay_execution_id AND v.trace_id = r.trace_id)
 GROUP BY r.trace_id
 HAVING MIN(r.captured_at) <= $1
    AND (SUM(CASE WHEN r.shadow_role = $2 THEN 1 ELSE 0 END) = 0
      OR SUM(CASE WHEN r.shadow_role = $3 THEN 1 ELSE 0 END) = 0
      OR SUM(CASE WHEN r.shadow_role = $4 THEN 1 ELSE 0 END) = 0)`,
-		olderThan.UTC(), roles.ControlA, roles.ControlB, roles.Candidate, p.DefaultShadowTestName(),
+		olderThan.UTC(), roles.ControlA, roles.ControlB, roles.Candidate,
+		p.DefaultShadowTestName(), p.replayExecutionID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list stale incomplete traces: %w", err)
@@ -366,10 +386,10 @@ func (p *PostgresStore) projectTraceTx(
 	method, path := httpMethodPath(history)
 
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO traces (trace_id, session_id, shadow_test_name, path, method,
+INSERT INTO traces (replay_execution_id, trace_id, session_id, shadow_test_name, path, method,
                     status_code_a, status_code_b, status_code_candidate, verdict)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT (trace_id) DO UPDATE SET
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+ON CONFLICT (replay_execution_id, trace_id) DO UPDATE SET
   session_id            = excluded.session_id,
   shadow_test_name      = excluded.shadow_test_name,
   path                  = excluded.path,
@@ -378,7 +398,7 @@ ON CONFLICT (trace_id) DO UPDATE SET
   status_code_b         = excluded.status_code_b,
   status_code_candidate = excluded.status_code_candidate,
   verdict               = excluded.verdict`,
-		traceID, sessionID, history[0].ShadowTestName, path, method,
+		p.replayExecutionID, traceID, sessionID, history[0].ShadowTestName, path, method,
 		ingressStatus(history, roles.ControlA),
 		ingressStatus(history, roles.ControlB),
 		ingressStatus(history, roles.Candidate),
@@ -391,11 +411,11 @@ ON CONFLICT (trace_id) DO UPDATE SET
 		bucket := reportsForSignature(history, sig)
 		regressionDiff := jsonOrNil(stepsForSignature(details.Steps, sig))
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO diff_reports (trace_id, session_id, signature, source_type,
+INSERT INTO diff_reports (replay_execution_id, trace_id, session_id, signature, source_type,
                           control_a_payload, control_b_payload, candidate_payload,
                           noise_diff, regression_diff, verdict)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-ON CONFLICT (trace_id, signature) DO UPDATE SET
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+ON CONFLICT (replay_execution_id, trace_id, signature) DO UPDATE SET
   session_id        = excluded.session_id,
   source_type       = excluded.source_type,
   control_a_payload = excluded.control_a_payload,
@@ -404,7 +424,7 @@ ON CONFLICT (trace_id, signature) DO UPDATE SET
   noise_diff        = excluded.noise_diff,
   regression_diff   = excluded.regression_diff,
   verdict           = excluded.verdict`,
-			traceID, sessionID, sig, sourceType(bucket),
+			p.replayExecutionID, traceID, sessionID, sig, sourceType(bucket),
 			payloadJSON(bucket, roles.ControlA),
 			payloadJSON(bucket, roles.ControlB),
 			payloadJSON(bucket, roles.Candidate),
@@ -417,9 +437,10 @@ ON CONFLICT (trace_id, signature) DO UPDATE SET
 	// Fan out to Tusk LISTEN/NOTIFY so The System ShadowDiff page can hydrate
 	// via GET then stream live verdict deltas without polling.
 	notifyPayload, err := json.Marshal(map[string]string{
-		"session_id": p.sessionID,
-		"trace_id":   traceID,
-		"verdict":    verdict.Status,
+		"session_id":           p.sessionID,
+		"replay_execution_id":  p.replayExecutionID,
+		"trace_id":             traceID,
+		"verdict":              verdict.Status,
 	})
 	if err != nil {
 		return fmt.Errorf("project notify payload: %w", err)

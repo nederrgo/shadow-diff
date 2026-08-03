@@ -29,11 +29,16 @@ func replayAdminURL(st *enginev1alpha1.ShadowTest, shadowNS string) string {
 }
 
 func replayWorkloadNames(st *enginev1alpha1.ShadowTest) []string {
-	names := []string{shopServiceName()}
+	// beru-local / egress-relay first: REPLAY_EXECUTION_ID env rolls must finish
+	// before traffic so Firehose capture is subscribed before ABC publish.
+	names := []string{localBeruName, shopServiceName()}
 	if needsAMQPIngress(st) {
 		names = append(names, igrisRabbitMQDeploymentName(st))
 	} else {
 		names = append(names, igrisDeploymentName(st))
+	}
+	if needsEgressRelayRabbitMQ(st) {
+		names = append(names, egressRelayRabbitMQDeploymentName(st))
 	}
 	names = append(names,
 		shadowDeploymentName(st, roleControlA),

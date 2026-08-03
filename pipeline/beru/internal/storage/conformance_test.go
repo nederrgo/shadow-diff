@@ -37,7 +37,7 @@ func newPostgresBackend(t *testing.T) *PostgresStore {
 		t.Fatal(err)
 	}
 	if _, err := raw.Exec(`
-DROP TABLE IF EXISTS diff_reports, traces, shadow_sessions, noise_filters,
+DROP TABLE IF EXISTS diff_reports, traces, replay_executions, shadow_sessions, noise_filters,
                      shadow_tests, verdicts, raw_reports, schema_migrations CASCADE;
 DROP TYPE IF EXISTS verdict_kind;`); err != nil {
 		raw.Close()
@@ -46,6 +46,7 @@ DROP TYPE IF EXISTS verdict_kind;`); err != nil {
 	raw.Close()
 
 	t.Setenv("SESSION_ID", "conformance-session")
+	t.Setenv("REPLAY_EXECUTION_ID", "exec-conformance")
 	t.Setenv("SHADOW_NAMESPACE", "shadow-default-conformance")
 	t.Setenv("SHADOW_MODE", "record")
 

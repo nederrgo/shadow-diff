@@ -47,6 +47,7 @@ func TestEgressRelayRabbitMQEnv(t *testing.T) {
 				Name: "rabbitmq", Type: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
 			}},
 		},
+		Status: enginev1alpha1.ShadowTestStatus{CurrentReplayExecutionID: "exec-relay-1"},
 	}
 	env, err := r.egressRelayRabbitMQEnv(st, "shadow-default-rmq-test")
 	if err != nil {
@@ -61,6 +62,9 @@ func TestEgressRelayRabbitMQEnv(t *testing.T) {
 	}
 	if byName[envBeruHTTPURL] != "http://beru-local.shadow-default-rmq-test.svc.cluster.local:8080" {
 		t.Fatalf("BERU_HTTP_URL = %q", byName[envBeruHTTPURL])
+	}
+	if byName[envReplayExecutionID] != "exec-relay-1" {
+		t.Fatalf("%s = %q, want exec-relay-1", envReplayExecutionID, byName[envReplayExecutionID])
 	}
 }
 

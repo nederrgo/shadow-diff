@@ -110,6 +110,7 @@ type Session struct {
 type SessionDiff struct {
 	TraceID             string          `json:"trace_id"`
 	SessionID           string          `json:"session_id"`
+	ReplayExecutionID   string          `json:"replay_execution_id"`
 	Signature           string          `json:"signature"`
 	SourceType          string          `json:"source_type"`
 	Method              string          `json:"method"`
@@ -126,13 +127,21 @@ type SessionDiff struct {
 	CreatedAt           time.Time       `json:"created_at"`
 }
 
-// SessionSummary is aggregate verdict counts for a session's traces.
+// ReplayExecution is one replay run of an S3 session.
+type ReplayExecution struct {
+	ReplayExecutionID string    `json:"replay_execution_id"`
+	SessionID         string    `json:"session_id"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+// SessionSummary is aggregate verdict counts for one replay execution's traces.
 type SessionSummary struct {
-	SessionID string `json:"session_id"`
-	Total     int    `json:"total"`
-	Match     int    `json:"match"`
-	Mismatch  int    `json:"mismatch"`
-	Voided    int    `json:"voided"`
+	SessionID         string `json:"session_id"`
+	ReplayExecutionID string `json:"replay_execution_id"`
+	Total             int    `json:"total"`
+	Match             int    `json:"match"`
+	Mismatch          int    `json:"mismatch"`
+	Voided            int    `json:"voided"`
 }
 
 // ListSessionsOpts controls which shadow_sessions rows are returned.
@@ -171,10 +180,66 @@ ORDER BY s.created_at DESC`
 	return out, rows.Err()
 }
 
-// GetSessionDiffs returns joined diff_reports + traces for one session.
-func (s *Store) GetSessionDiffs(ctx context.Context, sessionID string) ([]SessionDiff, error) {
+// ListExecutions returns replay runs for a session, newest first.
+func (s *Store) ListExecutions(ctx context.Context, sessionID string) ([]ReplayExecution, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT d.trace_id, COALESCE(d.session_id, ''), d.signature, d.source_type,
+SELECT replay_execution_id, session_id, created_at
+FROM replay_executions
+WHERE session_id = $1
+ORDER BY created_at DESC`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list executions: %w", err)
+	}
+	defer rows.Close()
+
+	out := []ReplayExecution{}
+	for rows.Next() {
+		var e ReplayExecution
+		if err := rows.Scan(&e.ReplayExecutionID, &e.SessionID, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("list executions scan: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// LatestExecutionID returns the newest replay_execution_id for a session, or "".
+func (s *Store) LatestExecutionID(ctx context.Context, sessionID string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `
+SELECT replay_execution_id
+FROM replay_executions
+WHERE session_id = $1
+ORDER BY created_at DESC
+LIMIT 1`, sessionID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("latest execution: %w", err)
+	}
+	return id, nil
+}
+
+// ResolveExecutionID returns execID when non-empty, otherwise the latest for sessionID.
+func (s *Store) ResolveExecutionID(ctx context.Context, sessionID, execID string) (string, error) {
+	if execID != "" {
+		return execID, nil
+	}
+	return s.LatestExecutionID(ctx, sessionID)
+}
+
+// GetSessionDiffs returns joined diff_reports + traces for one session execution.
+func (s *Store) GetSessionDiffs(ctx context.Context, sessionID, execID string) ([]SessionDiff, error) {
+	execID, err := s.ResolveExecutionID(ctx, sessionID, execID)
+	if err != nil {
+		return nil, err
+	}
+	if execID == "" {
+		return []SessionDiff{}, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT d.trace_id, COALESCE(d.session_id, ''), d.replay_execution_id, d.signature, d.source_type,
        COALESCE(t.method, ''), COALESCE(t.path, ''),
        COALESCE(t.status_code_a, ''), COALESCE(t.status_code_b, ''),
        COALESCE(t.status_code_candidate, ''),
@@ -182,9 +247,10 @@ SELECT d.trace_id, COALESCE(d.session_id, ''), d.signature, d.source_type,
        d.noise_diff, d.regression_diff, d.verdict::text,
        COALESCE(t.created_at, d.created_at)
 FROM diff_reports d
-LEFT JOIN traces t ON t.trace_id = d.trace_id
-WHERE d.session_id = $1
-ORDER BY COALESCE(t.created_at, d.created_at) DESC, d.signature`, sessionID)
+LEFT JOIN traces t
+  ON t.trace_id = d.trace_id AND t.replay_execution_id = d.replay_execution_id
+WHERE d.session_id = $1 AND d.replay_execution_id = $2
+ORDER BY COALESCE(t.created_at, d.created_at) DESC, d.signature`, sessionID, execID)
 	if err != nil {
 		return nil, fmt.Errorf("get session diffs: %w", err)
 	}
@@ -195,7 +261,7 @@ ORDER BY COALESCE(t.created_at, d.created_at) DESC, d.signature`, sessionID)
 		var d SessionDiff
 		var controlA, controlB, candidate, noise, regression []byte
 		if err := rows.Scan(
-			&d.TraceID, &d.SessionID, &d.Signature, &d.SourceType,
+			&d.TraceID, &d.SessionID, &d.ReplayExecutionID, &d.Signature, &d.SourceType,
 			&d.Method, &d.Path, &d.StatusCodeA, &d.StatusCodeB, &d.StatusCodeCandidate,
 			&controlA, &controlB, &candidate, &noise, &regression,
 			&d.Verdict, &d.CreatedAt,
@@ -212,17 +278,25 @@ ORDER BY COALESCE(t.created_at, d.created_at) DESC, d.signature`, sessionID)
 	return out, rows.Err()
 }
 
-// SessionSummary counts traces by verdict for one session.
-func (s *Store) SessionSummary(ctx context.Context, sessionID string) (SessionSummary, error) {
-	sum := SessionSummary{SessionID: sessionID}
-	err := s.db.QueryRowContext(ctx, `
+// SessionSummary counts traces by verdict for one session execution.
+func (s *Store) SessionSummary(ctx context.Context, sessionID, execID string) (SessionSummary, error) {
+	execID, err := s.ResolveExecutionID(ctx, sessionID, execID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	sum := SessionSummary{SessionID: sessionID, ReplayExecutionID: execID}
+	if execID == "" {
+		return sum, nil
+	}
+	err = s.db.QueryRowContext(ctx, `
 SELECT
   COUNT(*)::int,
   COUNT(*) FILTER (WHERE verdict = 'MATCH')::int,
   COUNT(*) FILTER (WHERE verdict = 'MISMATCH')::int,
   COUNT(*) FILTER (WHERE verdict = 'VOIDED_BASELINE_DIVERGENCE')::int
 FROM traces
-WHERE session_id = $1`, sessionID).Scan(&sum.Total, &sum.Match, &sum.Mismatch, &sum.Voided)
+WHERE session_id = $1 AND replay_execution_id = $2`, sessionID, execID).
+		Scan(&sum.Total, &sum.Match, &sum.Mismatch, &sum.Voided)
 	if err != nil {
 		return SessionSummary{}, fmt.Errorf("session summary: %w", err)
 	}

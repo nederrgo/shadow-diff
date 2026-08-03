@@ -43,7 +43,10 @@ func TestBeruDBSecretRef(t *testing.T) {
 func beruLocalTestShadowTest() *enginev1alpha1.ShadowTest {
 	return &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"},
-		Status:     enginev1alpha1.ShadowTestStatus{CurrentSessionID: "session-1"},
+		Status: enginev1alpha1.ShadowTestStatus{
+			CurrentSessionID:         "session-1",
+			CurrentReplayExecutionID: "exec-1",
+		},
 	}
 }
 
@@ -100,6 +103,9 @@ func TestLocalBeruPodSpec_postgresKeepsWALVolume(t *testing.T) {
 
 	if v, _ := envValue(container, envSessionID); v != "session-1" {
 		t.Fatalf("%s = %q, want session-1", envSessionID, v)
+	}
+	if v, _ := envValue(container, envReplayExecutionID); v != "exec-1" {
+		t.Fatalf("%s = %q, want exec-1", envReplayExecutionID, v)
 	}
 	if v, _ := envValue(container, "SHADOW_NAMESPACE"); v != "default" {
 		t.Fatalf("SHADOW_NAMESPACE = %q, want default", v)

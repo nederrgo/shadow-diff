@@ -15,9 +15,16 @@ export type ShadowSession = {
   created_at: string
 }
 
+export type ReplayExecution = {
+  replay_execution_id: string
+  session_id: string
+  created_at: string
+}
+
 export type SessionDiff = {
   trace_id: string
   session_id: string
+  replay_execution_id?: string
   signature: string
   source_type: string
   method: string
@@ -36,6 +43,7 @@ export type SessionDiff = {
 
 export type DiffSummary = {
   session_id: string
+  replay_execution_id?: string
   total: number
   match: number
   mismatch: number
@@ -47,6 +55,7 @@ export type DiffWsFrame =
   | {
       type: 'verdict'
       session_id: string
+      replay_execution_id?: string
       trace_id: string
       verdict: Verdict
     }
@@ -85,6 +94,7 @@ export type SignatureOccurrence = {
 export type SignatureOccurrences = {
   trace_id: string
   signature: string
+  replay_execution_id?: string
   occurrences: SignatureOccurrence[]
   truncated: boolean
 }

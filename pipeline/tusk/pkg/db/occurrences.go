@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 )
@@ -18,12 +19,13 @@ type SignatureOccurrence struct {
 	CandidatePayload json.RawMessage `json:"candidate_payload"`
 }
 
-// SignatureOccurrences is the lazy pager payload for one (trace_id, signature).
+// SignatureOccurrences is the lazy pager payload for one (trace_id, signature, execution).
 type SignatureOccurrences struct {
-	TraceID     string                `json:"trace_id"`
-	Signature   string                `json:"signature"`
-	Occurrences []SignatureOccurrence `json:"occurrences"`
-	Truncated   bool                  `json:"truncated"`
+	TraceID           string                `json:"trace_id"`
+	Signature         string                `json:"signature"`
+	ReplayExecutionID string                `json:"replay_execution_id,omitempty"`
+	Occurrences       []SignatureOccurrence `json:"occurrences"`
+	Truncated         bool                  `json:"truncated"`
 }
 
 // rawRolePayload is one raw_reports row used while aligning roles.
@@ -34,17 +36,29 @@ type rawRolePayload struct {
 
 // GetSignatureOccurrences loads raw_reports for a signature and aligns roles by
 // capture order (same bucketing as Beru compareSignature).
-func (s *Store) GetSignatureOccurrences(ctx context.Context, traceID, signature string) (SignatureOccurrences, error) {
+// When execID is empty, the latest execution that contains this trace is used.
+func (s *Store) GetSignatureOccurrences(ctx context.Context, traceID, signature, execID string) (SignatureOccurrences, error) {
 	out := SignatureOccurrences{
 		TraceID:     traceID,
 		Signature:   signature,
 		Occurrences: []SignatureOccurrence{},
 	}
+	if execID == "" {
+		var err error
+		execID, err = s.latestExecutionForTrace(ctx, traceID)
+		if err != nil {
+			return out, err
+		}
+	}
+	out.ReplayExecutionID = execID
+	if execID == "" {
+		return out, nil
+	}
 	rows, err := s.db.QueryContext(ctx, `
 SELECT shadow_role, payload_bytes
 FROM raw_reports
-WHERE trace_id = $1 AND signature = $2
-ORDER BY captured_at ASC, id ASC`, traceID, signature)
+WHERE replay_execution_id = $1 AND trace_id = $2 AND signature = $3
+ORDER BY captured_at ASC, id ASC`, execID, traceID, signature)
 	if err != nil {
 		return out, fmt.Errorf("get signature occurrences: %w", err)
 	}
@@ -65,6 +79,23 @@ ORDER BY captured_at ASC, id ASC`, traceID, signature)
 
 	out.Occurrences, out.Truncated = alignOccurrences(raw, maxOccurrences)
 	return out, nil
+}
+
+func (s *Store) latestExecutionForTrace(ctx context.Context, traceID string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `
+SELECT replay_execution_id
+FROM raw_reports
+WHERE trace_id = $1
+ORDER BY captured_at DESC, id DESC
+LIMIT 1`, traceID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("latest execution for trace: %w", err)
+	}
+	return id, nil
 }
 
 // alignOccurrences groups per-role ordered payloads and zips by index.
