@@ -83,7 +83,7 @@ export default function Diffs() {
       setSessions(Array.isArray(data) ? data : [])
       setSessionsError(null)
     } catch {
-      setSessionsError('Failed to reach Tusk :8082')
+      setSessionsError('Failed to reach Tusk /api')
       setSessions([])
     }
   }, [withDiffsOnly])
@@ -158,7 +158,7 @@ export default function Diffs() {
           With diffs only
         </label>
         <p className="pb-1.5 text-xs text-slate-500">
-          Stream: <code className="text-slate-400">ws://…:8082/ws/diffs</code>
+          Stream: <code className="text-slate-400">/ws/diffs</code>
           {' · '}
           <span
             className={cn(

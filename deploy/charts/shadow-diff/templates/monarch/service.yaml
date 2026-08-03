@@ -1,0 +1,24 @@
+{{- if .Values.monarch.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "shadow-diff.monarchStatusService" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+    control-plane: controller-manager
+spec:
+  type: {{ .Values.monarch.service.type }}
+  ports:
+    - name: grpc
+      port: {{ .Values.monarch.service.port }}
+      protocol: TCP
+      targetPort: grpc
+  selector:
+    {{- include "shadow-diff.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+    control-plane: controller-manager
+{{- end }}

@@ -4,14 +4,14 @@ title: Platform Bootstrap and ShadowTest Lifecycle
 description: One-time Monarch + Kaisel (+ optional shared Beru) install; record then replay ShadowTest lifecycles; teardown of beru-local with the shadow namespace.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [operations, control-plane, monarch, kaisel, kaiselrule, shadowtest, deployment, record-replay, beru, s3]
-timestamp: 2026-07-30T17:20:00Z
+timestamp: 2026-08-02T12:40:00Z
 ---
 
 # Platform Bootstrap and ShadowTest Lifecycle
 
 Shadow-Diff splits **platform install** (once per cluster) from **ShadowTest lifecycle** (on demand). Every ShadowTest is either `record` or `replay` (`spec.mode`; default `record`). `spec.storage` (BYOB S3) is required. There is no live-traffic reconcile path — capture writes sessions to S3; replay loads them later.
 
-Monarch and Kaisel are cluster infrastructure: they survive ShadowTest deletion. Monarch runs **beru-local** inside each shadow namespace, and deleting the ShadowTest deletes that namespace — the pod goes with it. On tmpfs SQLite its verdicts go too; with `BERU_DB_SECRET` they are written to a shared PostgreSQL and outlive the test ([/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md)). Durable artifacts live under the S3 prefix `shadow-diff/<cr-ns>/<cr-name>/`.
+Monarch and Kaisel are cluster infrastructure: they survive ShadowTest deletion. Monarch runs **beru-local** inside each shadow namespace, and deleting the ShadowTest deletes that namespace — the pod goes with it. With `BERU_DB_SECRET` set, verdicts are written to shared PostgreSQL and outlive the test ([/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md)). Durable capture artifacts live under the S3 prefix `shadow-diff/<cr-ns>/<cr-name>/`.
 
 ## Mental model
 
@@ -20,7 +20,7 @@ Monarch and Kaisel are cluster infrastructure: they survive ShadowTest deletion.
 | **Monarch** operator | Once (`monarch-system`) | Survives all ShadowTests |
 | **Kaisel** DaemonSet | Once (`kaisel-system`) | Survives all ShadowTests; watches `KaiselRule` CRs |
 | **Object storage** | BYOB bucket (MinIO in local E2E) | Sessions under `shadow-diff/<ns>/<name>/`; cleaned on delete only if `retentionPolicy: Delete` |
-| **PostgreSQL** (BYO) | Optional | Shared by every beru-local; survives ShadowTest delete |
+| **PostgreSQL** (BYO) | Required for durable verdicts (`BERU_DB_SECRET`) | Shared by every beru-local; survives ShadowTest delete |
 | **beru-local** | Per ShadowTest | Lives in shadow namespace; **gone on teardown** |
 | **ShadowTest** CR | Per test | `record` and/or `replay` → Ready → Delete |
 
@@ -59,7 +59,20 @@ Reconcile contract details: [/control-plane/monarch-controller.md](/control-plan
 
 ## Phase 1 — Platform bootstrap (one time)
 
-Install these **before** any ShadowTest.
+Install these **before** any ShadowTest. Prefer Helm for production clusters; Kustomize remains the path used by local E2E scripts.
+
+### Option A — Helm
+
+```bash
+helm upgrade --install shadow-diff deploy/charts/shadow-diff \
+  --namespace monarch-system --create-namespace
+helm upgrade --install shadow-agent deploy/charts/shadow-agent \
+  --namespace kaisel-system --create-namespace
+```
+
+Chart details and values: [/infrastructure/helm-charts.md](/infrastructure/helm-charts.md). The `shadow-diff` chart installs CRDs, Monarch, Tusk, and the-system; wire Postgres via `postgres.*` / `monarch.beruDbSecret` so beru-local can boot.
+
+### Option B — Kustomize
 
 ### 1. Monarch operator
 
@@ -82,14 +95,9 @@ kubectl apply -k pipeline/kaisel/deploy/
 
 In record mode Monarch creates a `KaiselRule` with target pod IPs, ports, `igrisBaseURL` / egress Shop URL, and `samplePercentage`. Kaisel POSTs admitted ingress to Igris and egress pairs to Shop.
 
-### 4. Beru (choose one)
+### 4. Shared PostgreSQL
 
-| Storage | When | Who installs |
-|---------|------|--------------|
-| **tmpfs SQLite** (default) | `BERU_DB_SECRET` unset | Monarch, per shadow namespace |
-| **Shared PostgreSQL** | `BERU_DB_SECRET` set on the manager | You supply the database and Secret; Monarch replicates it into each shadow namespace |
-
-On tmpfs SQLite, verdicts are lost on pod restart **and** on ShadowTest delete. On PostgreSQL they persist, keyed by `shadow_test_name` and `session_id`.
+Set `BERU_DB_SECRET` on the Monarch manager to a Secret with `DB_*` keys. Monarch replicates it into each shadow namespace for beru-local. Verdicts persist keyed by `shadow_test_name` and `session_id`. See [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md).
 
 ### Bootstrap verification
 

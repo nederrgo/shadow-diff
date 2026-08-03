@@ -1,0 +1,90 @@
+{{- if and .Values.monarch.enabled .Values.monarch.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "shadow-diff.monarchName" . }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, secrets, services]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [create, delete, get, list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [engine.shadow-diff.io]
+    resources: [kaiselrules, shadowtests]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [engine.shadow-diff.io]
+    resources: [kaiselrules/status, shadowtests/status]
+    verbs: [get, patch, update]
+  - apiGroups: [engine.shadow-diff.io]
+    resources: [shadowtests/finalizers]
+    verbs: [update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "shadow-diff.monarchName" . }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "shadow-diff.monarchName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "shadow-diff.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "shadow-diff.monarchName" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "shadow-diff.monarchName" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "shadow-diff.monarchName" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "shadow-diff.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

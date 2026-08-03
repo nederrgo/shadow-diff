@@ -1,0 +1,50 @@
+{{- if and .Values.ingress.enabled .Values.theSystem.enabled }}
+{{- $fullName := include "shadow-diff.theSystemName" . -}}
+{{- $svcPort := .Values.theSystem.service.port -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "shadow-diff.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "shadow-diff.name" . }}
+  annotations:
+    {{- if eq .Values.ingress.className "alb" }}
+    alb.ingress.kubernetes.io/scheme: {{ .Values.ingress.alb.scheme | quote }}
+    alb.ingress.kubernetes.io/target-type: {{ .Values.ingress.alb.targetType | quote }}
+    alb.ingress.kubernetes.io/listen-ports: {{ .Values.ingress.alb.listenPorts | quote }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- range .Values.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ $svcPort }}
+          {{- end }}
+    {{- end }}
+{{- end }}

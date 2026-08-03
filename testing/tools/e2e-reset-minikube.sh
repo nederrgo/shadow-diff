@@ -42,6 +42,9 @@ MONARCH_IMG="${MONARCH_IMG:-monarch:dev}"
 BERU_IMG="${BERU_IMG:-beru:dev}"
 SHOP_IMG="${SHOP_IMG:-shop:dev}"
 IGRIS_IMG="${IGRIS_IMG:-igris-http:dev}"
+IGRIS_RABBITMQ_IMG="${IGRIS_RABBITMQ_IMG:-igris-rabbitmq:dev}"
+EGRESS_RELAY_RABBITMQ_IMG="${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:dev}"
+SHADOW_SOLDIER_IMG="${SHADOW_SOLDIER_IMG:-shadow-soldier:dev}"
 KAISEL_IMG="${KAISEL_IMG:-kaisel:dev}"
 TUSK_IMG="${TUSK_IMG:-tusk:dev}"
 THE_SYSTEM_IMG="${THE_SYSTEM_IMG:-the-system:dev}"
@@ -72,7 +75,9 @@ done
 
 export SKIP_BUILD SKIP_LOAD NO_RESET
 
-export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG SHOP_IMG IGRIS_IMG KAISEL_IMG TUSK_IMG THE_SYSTEM_IMG
+export SHADOWTEST SHADOWTEST_NS MONARCH_IMG BERU_IMG SHOP_IMG IGRIS_IMG \
+  IGRIS_RABBITMQ_IMG EGRESS_RELAY_RABBITMQ_IMG SHADOW_SOLDIER_IMG \
+  KAISEL_IMG TUSK_IMG THE_SYSTEM_IMG
 
 need() {
   command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing command: $1" >&2; exit 1; }
@@ -153,8 +158,17 @@ e2e_reset_deploy_stack() {
   # BERU_DB_SECRET: Monarch replicates the Secret into each shadow namespace;
   # beru-local mounts it via envFrom and keeps a disk WAL at /data.
   echo "    beru-local storage: postgres (BERU_DB_SECRET=monarch-system/beru-postgres)"
-  manager_env=(MONARCH_MODE=dev BERU_IMAGE="$BERU_IMG" SHOP_IMAGE="$SHOP_IMG"
-    BERU_DB_SECRET=monarch-system/beru-postgres)
+  # Env overrides keep bare local tags; unset helpers would default to ghcr.io/shadow-diff/*.
+  manager_env=(
+    MONARCH_MODE=dev
+    BERU_IMAGE="$BERU_IMG"
+    SHOP_IMAGE="$SHOP_IMG"
+    IGRIS_HTTP_IMAGE="$IGRIS_IMG"
+    IGRIS_RABBITMQ_IMAGE="$IGRIS_RABBITMQ_IMG"
+    EGRESS_RELAY_RABBITMQ_IMAGE="$EGRESS_RELAY_RABBITMQ_IMG"
+    SHADOW_SOLDIER_IMAGE="$SHADOW_SOLDIER_IMG"
+    BERU_DB_SECRET=monarch-system/beru-postgres
+  )
   kubectl set env deployment/monarch-controller-manager -n monarch-system "${manager_env[@]}"
 
   if [[ "${SKIP_LOAD:-0}" -eq 0 ]]; then

@@ -64,9 +64,15 @@ kaisel_setup_platform() {
 
   echo "==> [kaisel] deploy Monarch operator (${MONARCH_IMG})"
   make -C "${REPO}/pipeline/monarch" deploy IMG="${MONARCH_IMG}"
-  # MONARCH_MODE=dev resolves helper images to locally-built :dev tags.
+  # Env overrides keep bare local :dev tags (ghcr defaults apply when unset).
   kubectl set env deployment/monarch-controller-manager -n monarch-system \
-    MONARCH_MODE=dev 2>/dev/null || true
+    MONARCH_MODE=dev \
+    BERU_IMAGE="${BERU_IMG:-beru:dev}" \
+    SHOP_IMAGE="${SHOP_IMG:-shop:dev}" \
+    IGRIS_HTTP_IMAGE="${IGRIS_IMG:-igris-http:dev}" \
+    IGRIS_RABBITMQ_IMAGE="${IGRIS_RABBITMQ_IMG:-igris-rabbitmq:dev}" \
+    EGRESS_RELAY_RABBITMQ_IMAGE="${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:dev}" \
+    SHADOW_SOLDIER_IMAGE="${SHADOW_SOLDIER_IMG:-shadow-soldier:dev}" 2>/dev/null || true
   # Force a rollout so the pod picks up a rebuilt image with the same tag.
   kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
   kubectl rollout status deployment/monarch-controller-manager \

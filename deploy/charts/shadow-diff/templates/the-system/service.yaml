@@ -1,0 +1,22 @@
+{{- if .Values.theSystem.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "shadow-diff.theSystemName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: the-system
+    app.kubernetes.io/component: ui
+spec:
+  type: {{ .Values.theSystem.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.theSystem.service.port }}
+      protocol: TCP
+      targetPort: http
+  selector:
+    {{- include "shadow-diff.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/name: the-system
+    app.kubernetes.io/component: ui
+{{- end }}

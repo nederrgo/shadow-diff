@@ -34,7 +34,7 @@ const (
 	envShadowTestName      = "SHADOW_TEST_NAME"
 	envSoldierRoutes       = "SOLDIER_ROUTES"
 	envPodName             = "POD_NAME"
-	envoyImage             = "envoyproxy/envoy:v1.30-latest"
+	// defaultEnvoyImage lives in shadowtest_images.go (overridable via ENVOY_IMAGE).
 	configMapKeyEnvoyYAML  = "envoy.yaml"
 	volumeNameEnvoyConfig  = "envoy-config"
 

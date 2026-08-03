@@ -78,8 +78,9 @@ func TestPodTerminalReason_imagePullBackOff(t *testing.T) {
 func TestBeruImageFor(t *testing.T) {
 	t.Setenv("MONARCH_MODE", "dev")
 	t.Setenv(envBeruImage, "")
-	if got := beruImageFor(&enginev1alpha1.ShadowTest{}); got != "beru:dev" {
-		t.Fatalf("got %q want beru:dev", got)
+	want := imageRegistryDefault + "/beru:dev"
+	if got := beruImageFor(&enginev1alpha1.ShadowTest{}); got != want {
+		t.Fatalf("got %q want %q", got, want)
 	}
 }
 

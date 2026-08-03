@@ -58,8 +58,10 @@ Monarch resolves helper container images at reconcile time:
 
 | `MONARCH_MODE` | Tag suffix | Example defaults |
 |----------------|------------|------------------|
-| `dev` or `development` | `:dev` | `igris-http:dev`, `shop:dev` |
-| unset / `prod` / `production` | `:latest` | `igris-http:latest`, `shop:latest`, … |
+| `dev` or `development` | `:dev` | `ghcr.io/shadow-diff/igris-http:dev`, `ghcr.io/shadow-diff/shop:dev` |
+| unset / `prod` / `production` | `:latest` | `ghcr.io/shadow-diff/igris-http:latest`, `ghcr.io/shadow-diff/shop:latest`, … |
+
+`ENVOY_IMAGE` overrides the Envoy sidecar (default `envoyproxy/envoy:v1.30-latest`).
 
 **Minikube E2E:** `./testing/tools/e2e-reset-minikube.sh` sets `MONARCH_MODE=dev` and rollout-restarts the operator after loading images. Use `MONARCH_NO_CACHE=1` when rebuilding Monarch to avoid stale Docker cache under the same tag.
 

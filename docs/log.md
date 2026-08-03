@@ -11,6 +11,11 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-08-02]
 ### Added
+* 'docs/architecture/ARCHITECTURE.md': Put The System on the right in the L5 observability Mermaid graph
+* 'docs/architecture/ARCHITECTURE.md': Document L5 observability plane — shared Postgres, Tusk BFF, and The System UI in layer stack and dedicated section
+* 'testing/tools + bats platform': set all Monarch helper image env vars for local :dev tags after ghcr defaults
+* 'deploy/charts/, pipeline/monarch, pipeline/tusk, pipeline/the-system, docs/infrastructure': Helm charts shadow-diff + shadow-agent; ghcr image defaults + ENVOY_IMAGE; the-system nginx/Tusk same-origin proxy
+* 'docs/architecture/ARCHITECTURE.md': Clarify analysis sink is per-ShadowTest beru-local (not cluster-wide); drop optional/SQLite wording
 * 'pipeline/tusk,the-system,beru': Lazy signature occurrence pager — Tusk GET /api/v1/diffs/occurrences from raw_reports (cap 50), Beru idx_raw_reports_trace_sig, PayloadInspector chips with red MISMATCH_PAYLOAD indexes
 * 'testing/bats/integration/beru': BATS_KEEP retains Postgres rows + SESSION_ID for The System /diffs
 * 'pipeline/tusk + the-system/diffs': sessions?with_diffs=true filter; UI defaults to diffs-only

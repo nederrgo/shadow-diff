@@ -185,7 +185,7 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 			},
 			{
 				Name:            containerEnvoySidecar,
-				Image:           envoyImage,
+				Image:           envoyImageFor(),
 				ImagePullPolicy: envoyImagePullPolicy,
 				Args:            []string{"-c", "/etc/envoy/envoy.yaml", "--log-level", "info"},
 				Ports:           envoyContainerPorts(st),

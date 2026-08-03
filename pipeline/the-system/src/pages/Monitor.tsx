@@ -44,7 +44,7 @@ export default function Monitor() {
           onSelect={selectTest}
         />
         <p className="pb-1.5 text-xs text-slate-500">
-          Stream: <code className="text-slate-400">ws://…:8082/ws/monitor</code> (all tests)
+          Stream: <code className="text-slate-400">/ws/monitor</code> (all tests)
           {tests.length > 0 ? ` · ${tests.length} live` : null}
         </p>
       </div>

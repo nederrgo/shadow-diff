@@ -21,7 +21,7 @@ func TestEgressRelayRabbitMQImageFor(t *testing.T) {
 	t.Setenv(envEgressRelayRabbitMQImage, "")
 
 	st := &enginev1alpha1.ShadowTest{}
-	if got := egressRelayRabbitMQImageFor(st); got != "egress-relay-rabbitmq:latest" {
+	if got := egressRelayRabbitMQImageFor(st); got != imageRegistryDefault+"/egress-relay-rabbitmq:latest" {
 		t.Fatalf("default image = %q", got)
 	}
 	custom := "egress-relay-rabbitmq:dev"

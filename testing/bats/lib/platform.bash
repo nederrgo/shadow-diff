@@ -78,8 +78,14 @@ platform_bootstrap_install() {
 
   make -C "${REPO}/pipeline/monarch" install
   make -C "${REPO}/pipeline/monarch" deploy IMG="${MONARCH_IMG}"
+  # Env overrides keep bare local tags; unset helpers would default to ghcr.io/shadow-diff/*.
   kubectl set env deployment/monarch-controller-manager -n monarch-system \
-    MONARCH_MODE=dev BERU_IMAGE="${BERU_IMG}" SHOP_IMAGE="${SHOP_IMG}" \
+    MONARCH_MODE=dev \
+    BERU_IMAGE="${BERU_IMG}" \
+    SHOP_IMAGE="${SHOP_IMG}" \
+    IGRIS_HTTP_IMAGE="${IGRIS_IMG}" \
+    IGRIS_RABBITMQ_IMAGE="${IGRIS_RABBITMQ_IMG}" \
+    EGRESS_RELAY_RABBITMQ_IMAGE="${EGRESS_RELAY_RABBITMQ_IMG}" \
     SHADOW_SOLDIER_IMAGE="${SHADOW_SOLDIER_IMG}" >/dev/null 2>&1 || true
   kubectl rollout status deployment/monarch-controller-manager -n monarch-system --timeout=180s
 

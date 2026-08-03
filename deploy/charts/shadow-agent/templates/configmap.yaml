@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "shadow-agent.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "shadow-agent.labels" . | nindent 4 }}
+data:
+  iface: {{ .Values.kaisel.iface | quote }}
+  logBodies: {{ .Values.kaisel.logBodies | quote }}

@@ -151,10 +151,11 @@ func TestSoldierProtocolFor(t *testing.T) {
 }
 
 func TestShadowSoldierImageFor(t *testing.T) {
-	t.Parallel()
+	t.Setenv(envShadowSoldierImage, "")
 	st := soldierShadowTest()
-	if got := shadowSoldierImageFor(st); got != "shadow-soldier"+monarchImageTagSuffix() {
-		t.Fatalf("default image = %q", got)
+	want := imageRegistryDefault + "/shadow-soldier" + monarchImageTagSuffix()
+	if got := shadowSoldierImageFor(st); got != want {
+		t.Fatalf("default image = %q want %q", got, want)
 	}
 	st.Spec.ShadowSoldier = &enginev1alpha1.ShadowSoldierSpec{Image: "ghcr.io/acme/soldier:1.2.3"}
 	if got := shadowSoldierImageFor(st); got != "ghcr.io/acme/soldier:1.2.3" {

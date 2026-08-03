@@ -1,0 +1,41 @@
+global:
+  imageRegistry: ghcr.io/shadow-diff
+  imageTag: latest
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+kaisel:
+  image:
+    repository: kaisel
+    tag: ""
+    pullPolicy: ""
+  # AF_PACKET interface; "any" captures same-node pod traffic via ifindex 0.
+  iface: any
+  # Log truncated request bodies (production data) — leave false in prod.
+  logBodies: "false"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # Tolerate all taints so capture runs on control-plane nodes when needed.
+  tolerations:
+    - operator: Exists
+      effect: NoSchedule
+    - operator: Exists
+      effect: NoExecute
+  nodeSelector: {}
+  affinity: {}

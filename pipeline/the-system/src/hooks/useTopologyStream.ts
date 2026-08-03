@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TeardownState } from '@/components/TeardownBanner'
+import { tuskWsBase } from '@/lib/tuskBase'
 import type { ConnectionStatus, TopologyGraph } from '@/types/topology'
 
 const MIN_BACKOFF_MS = 1000
@@ -17,9 +18,8 @@ function catalogKey(namespace: string, testName: string): string {
 }
 
 function buildWsUrl(): string {
-  const host = window.location.hostname
   // Unfiltered stream: Tusk sends every ShadowTest; the UI picks locally.
-  return `ws://${host}:8082/ws/monitor`
+  return `${tuskWsBase()}/ws/monitor`
 }
 
 /**

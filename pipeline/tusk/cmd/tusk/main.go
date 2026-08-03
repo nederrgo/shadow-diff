@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -23,7 +24,7 @@ const shutdownTimeout = 10 * time.Second
 func main() {
 	log := slog.Default()
 
-	httpAddr := envOr("TUSK_HTTP_ADDR", ":8082")
+	httpAddr := tuskHTTPAddr()
 	monarchAddr := envOr("MONARCH_GRPC_ADDR", "monarch-status-grpc.monarch-system.svc.cluster.local:9090")
 
 	hub := server.NewHub()
@@ -109,4 +110,20 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// tuskHTTPAddr prefers TUSK_HTTP_ADDR; else HTTP_PORT / PORT as ":{port}".
+func tuskHTTPAddr() string {
+	if v := os.Getenv("TUSK_HTTP_ADDR"); v != "" {
+		return v
+	}
+	for _, key := range []string{"HTTP_PORT", "PORT"} {
+		if p := strings.TrimSpace(os.Getenv(key)); p != "" {
+			if strings.HasPrefix(p, ":") {
+				return p
+			}
+			return ":" + p
+		}
+	}
+	return ":8082"
 }

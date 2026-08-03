@@ -8,6 +8,8 @@ import (
 )
 
 const (
+	imageRegistryDefault = "ghcr.io/shadow-diff"
+
 	imageBaseIgrisHTTP           = "igris-http"
 	imageBaseIgrisRabbitMQ       = "igris-rabbitmq"
 	imageBaseEgressRelayRabbitMQ = "egress-relay-rabbitmq"
@@ -15,12 +17,15 @@ const (
 	imageBaseShop                = "shop"
 	imageBaseShadowSoldier       = "shadow-soldier"
 
+	defaultEnvoyImage = "envoyproxy/envoy:v1.30-latest"
+
 	envIgrisHTTPImage           = "IGRIS_HTTP_IMAGE"
 	envIgrisRabbitMQImage       = "IGRIS_RABBITMQ_IMAGE"
 	envEgressRelayRabbitMQImage = "EGRESS_RELAY_RABBITMQ_IMAGE"
 	envBeruImage                = "BERU_IMAGE"
 	envShopImage                = "SHOP_IMAGE"
 	envShadowSoldierImage       = "SHADOW_SOLDIER_IMAGE"
+	envEnvoyImage               = "ENVOY_IMAGE"
 )
 
 func monarchImageTagSuffix() string {
@@ -39,7 +44,15 @@ func resolveHelperImage(base, crOverride, envVar string) string {
 	if v := strings.TrimSpace(os.Getenv(envVar)); v != "" {
 		return v
 	}
-	return base + monarchImageTagSuffix()
+	return imageRegistryDefault + "/" + base + monarchImageTagSuffix()
+}
+
+// envoyImageFor returns ENVOY_IMAGE when set, otherwise the upstream Envoy default.
+func envoyImageFor() string {
+	if v := strings.TrimSpace(os.Getenv(envEnvoyImage)); v != "" {
+		return v
+	}
+	return defaultEnvoyImage
 }
 
 func igrisHTTPImageFor(st *enginev1alpha1.ShadowTest) string {
