@@ -63,6 +63,9 @@ message ComponentStatus {
   // Empty in record mode, where no shadow roles are provisioned.
   map<string, bool> shadow_roles_ready = 6;
   string target_deployment = 7;
+  // Resolved ShadowTest.spec.inputs[].driver values (e.g. http_request,
+  // rabbitmq_message). Tusk gates topology nodes from this list.
+  repeated string ingress_drivers = 8;
 }
 
 message ShadowTestStatusUpdate {

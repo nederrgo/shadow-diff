@@ -160,6 +160,7 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// A ShadowTest with no AMQP ingress is trivially "bound"; record mode flips this
 	// after QueueBind. Replay never taps the prod broker, so it stays false there.
 	boot.AMQPBound = !needsAMQPIngress(&shadowTest)
+	boot.IngressDrivers = ingressDriversFromSpec(&shadowTest)
 
 	if mode == modeRecord {
 		if err := r.clearReplayState(ctx, &shadowTest); err != nil {

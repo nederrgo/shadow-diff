@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
+	"github.com/shadow-diff/shadowspec"
 )
 
 const (
@@ -43,7 +44,7 @@ func httpIngressCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Dep
 	svcPort := servicePortFor(st)
 	for _, in := range resolvedInputs(st) {
 		d := strings.TrimSpace(strings.ToLower(in.Driver))
-		if d != "http_request" {
+		if d != shadowspec.DriverHTTPRequest {
 			continue
 		}
 		if targetPorts[in.Port] || in.Port == appPort || in.Port == svcPort {
@@ -87,7 +88,7 @@ func kaiselIngressPorts(st *enginev1alpha1.ShadowTest) []int32 {
 	seen := map[int32]bool{}
 	for _, in := range resolvedInputs(st) {
 		d := strings.TrimSpace(strings.ToLower(in.Driver))
-		if d != "http_request" {
+		if d != shadowspec.DriverHTTPRequest {
 			continue
 		}
 		if in.Port <= 0 || seen[in.Port] {

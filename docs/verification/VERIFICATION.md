@@ -852,10 +852,7 @@ Proves the same W3C `trace_id` reaches Beru on **both** ingress (Envoy `ext_proc
 make test-bats-e2e   # Express + amqplib / Flask + pika / Go (http-ingress suites)
 ```
 
-See [`docs/verification/http-ingress-e2e-flow.md`](/verification/http-ingress-e2e-flow.md). Expect Beru logs:
-
-- `No regression for Trace <hex>` (ingress)
-- `No egress regression for Trace <hex> (rabbitmq)` (egress)
+See [`docs/verification/http-ingress-e2e-flow.md`](/verification/http-ingress-e2e-flow.md). Suites record to MinIO, switch the CR to replay, then assert Postgres verdicts via `beru_wait_verdict_settled` (`MATCH` for http / rabbitmq / mongodb).
 
 OTel Operator bootstrap (when needed) is covered by the bats platform helpers / hybrid suites — there is no separate `e2e-reset-kind.sh`.
 

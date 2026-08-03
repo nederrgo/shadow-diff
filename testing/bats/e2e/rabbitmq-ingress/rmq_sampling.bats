@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # E2E proof: igris-rabbitmq prod-gate sampling at 10% (shared FNV full-id rule).
-# Record captures in-sample AMQP to S3; replay fans out to A/B/C.
+# Record captures in-sample AMQP to S3; replay fans out to A/B/C; Postgres for keep.
 # Golden keep: V=0; golden drop: V=26 (FNV-1a-64 of full 16-byte trace id).
 
 load '../../test_helper'
@@ -50,7 +50,17 @@ setup_file() {
   bats_write_suite_state
 }
 
-@test "RMQ sampling: in-sample trace reaches all shadow roles" {
+@test "record: in-sample RMQ trace flushes to MinIO" {
+  local oid="keep-rec-${SAMPLE_KEEP_TID:0:8}"
+  run kaisel_ensure_record_mode
+  assert_success
+  publish_rmq_order "$SAMPLE_KEEP_TID" "$oid"
+  sleep 3
+  run e2e_assert_session_objects ingress 60
+  assert_success
+}
+
+@test "replay: in-sample trace reaches all shadow roles" {
   local oid="keep-${SAMPLE_KEEP_TID:0:8}"
   run kaisel_ensure_record_mode
   assert_success
@@ -64,10 +74,11 @@ setup_file() {
   done
 }
 
-@test "RMQ sampling: out-of-sample trace is not forwarded to shadows" {
+@test "replay: out-of-sample trace is not forwarded to shadows" {
   local oid="drop-${SAMPLE_DROP_TID:0:8}"
   run kaisel_ensure_record_mode
   assert_success
+  publish_rmq_order "$SAMPLE_KEEP_TID" "keep-gate-${SAMPLE_KEEP_TID:0:8}"
   publish_rmq_order "$SAMPLE_DROP_TID" "$oid"
   sleep 3
   run kaisel_switch_to_replay ingress

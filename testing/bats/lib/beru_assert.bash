@@ -191,8 +191,8 @@ beru_reports_complete() {
   [[ "${count:-0}" -ge 3 ]]
 }
 
-# Wait until Shop→Beru HTTP egress reports exist for all three roles and
-# mirrorLegacyLogs emits a clean egress match for protocol http.
+# Wait until Shop→Beru HTTP egress reports exist for all three roles and the
+# Postgres-backed verdict settles MATCH (optional signature equality check).
 # Usage: beru_wait_http_egress_match <trace_id> [--timeout=120] [--signature=http:GET:/path]
 beru_wait_http_egress_match() {
   local trace_id="$1"
@@ -230,7 +230,8 @@ beru_wait_http_egress_match() {
 
   local remain=$((timeout - i))
   [[ "$remain" -lt 30 ]] && remain=30
-  beru_wait_log --grep="$(beru_log_no_egress_regression "$trace_id" http)" --timeout="$remain"
+  beru_wait_verdict_settled "$trace_id" http \
+    --expect-status=MATCH --timeout="$remain"
 }
 
 _beru_verdict_snapshot_api() {

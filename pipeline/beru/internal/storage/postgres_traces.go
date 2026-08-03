@@ -272,18 +272,25 @@ FROM verdicts WHERE trace_id = $1`, traceID,
 
 // ListStaleIncompleteTraces returns traces older than olderThan that are still
 // missing at least one of the three required roles.
+//
+// Scoped to this beru-local's shadow test and skips traces that already have a
+// verdict: every beru-local shares one Postgres, and without those guards the
+// reaper would re-project foreign WAITING_FOR_ROLES rows onto the current
+// SESSION_ID (UI "session hopping").
 func (p *PostgresStore) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]v2storage.StaleIncompleteTrace, error) {
 	// Postgres does not allow SELECT aliases in HAVING, so the role counts are
 	// spelled out again rather than referenced as n_a / n_b / n_c.
 	rows, err := p.db.QueryContext(ctx, `
-SELECT trace_id, MIN(captured_at) AS first_at
-FROM raw_reports
-GROUP BY trace_id
-HAVING MIN(captured_at) <= $1
-   AND (SUM(CASE WHEN shadow_role = $2 THEN 1 ELSE 0 END) = 0
-     OR SUM(CASE WHEN shadow_role = $3 THEN 1 ELSE 0 END) = 0
-     OR SUM(CASE WHEN shadow_role = $4 THEN 1 ELSE 0 END) = 0)`,
-		olderThan.UTC(), roles.ControlA, roles.ControlB, roles.Candidate,
+SELECT r.trace_id, MIN(r.captured_at) AS first_at
+FROM raw_reports r
+WHERE r.shadow_test_name = $5
+  AND NOT EXISTS (SELECT 1 FROM verdicts v WHERE v.trace_id = r.trace_id)
+GROUP BY r.trace_id
+HAVING MIN(r.captured_at) <= $1
+   AND (SUM(CASE WHEN r.shadow_role = $2 THEN 1 ELSE 0 END) = 0
+     OR SUM(CASE WHEN r.shadow_role = $3 THEN 1 ELSE 0 END) = 0
+     OR SUM(CASE WHEN r.shadow_role = $4 THEN 1 ELSE 0 END) = 0)`,
+		olderThan.UTC(), roles.ControlA, roles.ControlB, roles.Candidate, p.DefaultShadowTestName(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list stale incomplete traces: %w", err)

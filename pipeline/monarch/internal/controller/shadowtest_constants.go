@@ -35,8 +35,8 @@ const (
 	envSoldierRoutes       = "SOLDIER_ROUTES"
 	envPodName             = "POD_NAME"
 	// defaultEnvoyImage lives in shadowtest_images.go (overridable via ENVOY_IMAGE).
-	configMapKeyEnvoyYAML  = "envoy.yaml"
-	volumeNameEnvoyConfig  = "envoy-config"
+	configMapKeyEnvoyYAML = "envoy.yaml"
+	volumeNameEnvoyConfig = "envoy-config"
 
 	defaultBeruGRPCTimeout = "10s"
 	envBeruGRPCAddress     = "BERU_GRPC_ADDRESS"

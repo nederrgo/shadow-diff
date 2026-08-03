@@ -4,7 +4,7 @@ title: Platform Bootstrap and ShadowTest Lifecycle
 description: One-time Monarch + Kaisel (+ optional shared Beru) install; record then replay ShadowTest lifecycles; teardown of beru-local with the shadow namespace.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [operations, control-plane, monarch, kaisel, kaiselrule, shadowtest, deployment, record-replay, beru, s3]
-timestamp: 2026-08-02T12:40:00Z
+timestamp: 2026-08-03T13:45:00Z
 ---
 
 # Platform Bootstrap and ShadowTest Lifecycle
@@ -188,8 +188,8 @@ From `ShadowTestReconciler.Reconcile` when `spec.mode` is `replay`. Requires a r
 10. Igris / ingress relays — wait until Ready:
     - AMQP: igris-rabbitmq Deployment → Service (admin `:9090`; loads ingress JSONL from S3) → egress-relay-rabbitmq — **no** prod shadow queue
     - HTTP/TCP: Igris ConfigMap → Deployment → Service; egress-relay if RabbitMQ deps need it
-11. Per role (`control-a`, `control-b`, `candidate`): Envoy ConfigMap → Deployment (app + Envoy sidecar [+ shadow-soldier]) → Service — wait until Ready
-12. Replay trigger — if `status.replayState` empty: `POST http://<igris|igris-rabbitmq>.<shadow-ns>.svc:9090/v1/replay/start` → `replayState=started`
+11. Per role (`control-a`, `control-b`, `candidate`): Envoy ConfigMap → Deployment (app + Envoy sidecar [+ shadow-soldier]) → Service — wait until Ready (Envoy TCP readiness on `servicePort`; soldier has no probe — loopback-only listeners)
+12. Replay trigger — if `status.replayState` empty and Shop/hub/ABC are roll-ready (`ReadyReplicas >= desired`): `POST http://<igris|igris-rabbitmq>.<shadow-ns>.svc:9090/v1/replay/start` → `replayState=started`
 13. Status → `Ready`
 
 ### What Monarch provisions (replay)
@@ -201,7 +201,7 @@ From `ShadowTestReconciler.Reconcile` when `spec.mode` is `replay`. Requires a r
 | Shop → Igris → ABC | Shop preloads egress mocks from S3; HTTP Igris or igris-rabbitmq multicasts ingress from S3 |
 | Envoy sidecars | Ingress ext_proc → Beru; egress ext_proc → Shop |
 | Mode GC | Deletes `KaiselRule` |
-| Replay trigger | When Shop/hub/ABC are roll-ready and `status.replayState` empty: `POST …:9090/v1/replay/start` → `replayState=started` |
+| Replay trigger | When Shop/hub/ABC are roll-ready (`ReadyReplicas >= desired`; ABC Envoy TCP probe on ingress port) and `status.replayState` empty: `POST …:9090/v1/replay/start` → `replayState=started` |
 
 Beru (local or shared) runs diff-of-diffs on the three roles. Session JSONL in S3 is the durable input; beru-local SQLite is not.
 

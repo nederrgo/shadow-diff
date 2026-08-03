@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -196,6 +197,16 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 				},
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: volumeNameEnvoyConfig, MountPath: "/etc/envoy", ReadOnly: true},
+				},
+				// Gate replay on Envoy actually accepting ingress (Igris dials this port).
+				ReadinessProbe: &corev1.Probe{
+					ProbeHandler: corev1.ProbeHandler{
+						TCPSocket: &corev1.TCPSocketAction{
+							Port: intstr.FromInt32(servicePortFor(st)),
+						},
+					},
+					InitialDelaySeconds: 2,
+					PeriodSeconds:       5,
 				},
 			},
 		}

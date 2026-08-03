@@ -101,6 +101,9 @@ func TestStatus_ReadyReportsAllComponents(t *testing.T) {
 			t.Errorf("components.%s = false, want true", label)
 		}
 	}
+	if len(comp.IngressDrivers) != 1 || comp.IngressDrivers[0] != "http_request" {
+		t.Errorf("ingressDrivers = %v, want [http_request]", comp.IngressDrivers)
+	}
 	// Record mode never provisions the shadow roles.
 	if len(comp.ShadowRolesReady) != 0 {
 		t.Errorf("shadowRolesReady = %v, want empty in record mode", comp.ShadowRolesReady)

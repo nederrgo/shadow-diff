@@ -15,6 +15,7 @@ import (
 
 	"github.com/shadow-diff/shadow-soldier/internal/beru"
 	"github.com/shadow-diff/shadow-soldier/internal/config"
+	"github.com/shadow-diff/shadow-soldier/internal/health"
 	"github.com/shadow-diff/shadow-soldier/internal/proxy"
 )
 
@@ -43,6 +44,16 @@ func main() {
 	}
 	reporter.Start()
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	hs := &health.Server{Log: log}
+	go func() {
+		if err := hs.ListenAndServe(ctx); err != nil {
+			log.Error("health server stopped", "err", err)
+		}
+	}()
+
 	srv := &proxy.Server{
 		Log:         log,
 		Routes:      cfg.Routes,
@@ -51,14 +62,15 @@ func main() {
 		DialTimeout: cfg.DialTimeout,
 		IdleTimeout: cfg.IdleTimeout,
 		TapChunks:   cfg.TapChunks,
+		OnListenersReady: func() {
+			hs.MarkReady()
+		},
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	log.Info("shadow-soldier starting",
 		"role", cfg.Role, "shadow_test", cfg.ShadowTestName,
-		"routes", len(cfg.Routes), "beru", cfg.BeruURL)
+		"routes", len(cfg.Routes), "beru", cfg.BeruURL,
+		"health", health.Port)
 
 	runErr := srv.Run(ctx)
 

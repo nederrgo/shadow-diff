@@ -4,7 +4,7 @@ title: Tusk — Topology and Diff BFF
 description: The Go gateway that fans Monarch topology over WebSockets and serves ShadowDiff REST/WS from shared Postgres LISTEN/NOTIFY, including lazy raw_reports occurrence payloads.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/tusk
 tags: [architecture, control-plane, tusk, websocket, grpc, topology, ui, postgres, diffs]
-timestamp: 2026-08-02T10:55:00Z
+timestamp: 2026-08-03T15:45:00Z
 ---
 
 # Tusk — Topology and Diff BFF
@@ -72,16 +72,18 @@ Node          { id, type, label, status }
 Edge          { id, source, target, animated }
 ```
 
-Node `status` is one of `Ready`, `Provisioning`, `Failed`, `Disabled`, `Degraded`, resolved in this order: not participating in the current mode → `Disabled`; component flag true → `Ready`; test phase Failed → `Failed`; otherwise `Provisioning`. The Kaisel node reads `kaisel_phase` rather than the boolean so it can render `Degraded`.
+Node `status` is one of `Ready`, `Provisioning`, `Failed`, `Disabled`, `Degraded`, resolved in this order: not participating in the current mode → `Disabled`; component flag true → `Ready`; test phase Failed → `Failed`; otherwise `Provisioning`. The Kaisel node reads `kaisel_phase` rather than the boolean so it can render `Degraded`. The `prod-amqp` node is emitted only when `ingress_drivers` contains `rabbitmq_message` (via `shadowspec.ContainsDriver`); in replay it is `Disabled` because the prod broker is never bound.
 
-Mode selects both the node set and the edge set:
+Mode and ingress drivers select the node set and the edge set:
 
-| Mode | Edges | Roles |
-|------|-------|-------|
-| `record` | `target-app → kaisel`, `kaisel → igris`, `kaisel → shop`, `igris → beru` | rendered `Disabled` |
-| `replay` | `igris → {control-a, control-b, candidate}`, each role `→ beru` and `→ shop` | driven by `shadow_roles_ready` |
+| Mode | Edges | Roles / AMQP |
+|------|-------|--------------|
+| `record` (HTTP) | `target-app → kaisel → igris`, `kaisel → shop`, `igris → beru` | roles `Disabled`; no `prod-amqp` |
+| `record` (RMQ) | `target-app → prod-amqp → igris`, `kaisel → shop`, `igris → beru` | roles `Disabled`; `prod-amqp` from `amqp_bound` |
+| `record` (hybrid) | HTTP path + AMQP path above (no `kaisel → prod-amqp`) | both drivers listed |
+| `replay` | `igris → {control-a, control-b, candidate}`, each role `→ beru` and `→ shop` | driven by `shadow_roles_ready`; `prod-amqp` present but `Disabled` when RMQ driver listed |
 
-Shadow roles are always emitted as nodes, greyed out in record mode, so the canvas keeps a stable shape across a mode switch instead of nodes appearing and vanishing.
+Shadow roles are always emitted as nodes, greyed out in record mode, so the canvas keeps a stable shape across a mode switch instead of nodes appearing and vanishing. The prod AMQP node follows the same idea for RMQ tests across record→replay.
 
 `animated` is true only when both endpoints are `Ready`, so the graph animates exactly the paths where traffic can flow.
 

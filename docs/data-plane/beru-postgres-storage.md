@@ -4,7 +4,7 @@ title: Beru Storage Backends
 description: Beru's Postgres-only persistence behind RunStore and TraceRepository, the Bbolt disk WAL with claimed parallel flushers, advisory-locked evaluate, and 3-retry dead-lettering.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/storage
 tags: [data-plane, beru, storage, postgres, wal, persistence, networking]
-timestamp: 2026-08-02T10:55:00Z
+timestamp: 2026-08-03T08:00:00Z
 ---
 
 # Beru Storage Backends
@@ -66,7 +66,7 @@ Every ShadowTest gets a `beru-local` pod in the shadow namespace.
 | `SHADOW_NAMESPACE` | `""` | Recorded on the session row |
 | `SHADOW_MODE` | `""` | `record` or `replay` |
 
-`BERU_DB_SECRET` is read by Monarch, not Beru. Every beru-local shares one database, partitioned by `shadow_test_name` and `session_id`.
+`BERU_DB_SECRET` is read by Monarch, not Beru. Every beru-local shares one database, partitioned by `shadow_test_name` and `session_id`. The incomplete-trace reaper only lists rows for `BERU_SHADOW_TEST_NAME` that lack a `verdicts` row, so one beru-local cannot re-project another test's `WAITING_FOR_ROLES` onto its own `SESSION_ID`.
 
 ## Schema layers
 

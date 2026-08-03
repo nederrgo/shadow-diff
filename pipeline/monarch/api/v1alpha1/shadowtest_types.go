@@ -391,6 +391,11 @@ type ComponentStatus struct {
 	// +optional
 	AMQPBound bool `json:"amqpBound"`
 
+	// IngressDrivers lists resolved spec.inputs[].driver values
+	// (e.g. http_request, rabbitmq_message). Tusk uses this to gate topology nodes.
+	// +optional
+	IngressDrivers []string `json:"ingressDrivers,omitempty"`
+
 	// ShadowRolesReady maps control-a/control-b/candidate to Deployment readiness.
 	// Empty in record mode, where no shadow roles are provisioned.
 	// +optional

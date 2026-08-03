@@ -43,3 +43,19 @@ func TestGetCatalog_NonEmpty(t *testing.T) {
 		t.Fatal("catalog missing entries")
 	}
 }
+
+func TestContainsDriver(t *testing.T) {
+	drivers := []string{DriverHTTPRequest, DriverRabbitMQMessage}
+	if !ContainsDriver(drivers, DriverRabbitMQMessage) {
+		t.Fatal("expected rabbitmq_message")
+	}
+	if !ContainsDriver(drivers, "  HTTP_REQUEST ") {
+		t.Fatal("expected case-insensitive match")
+	}
+	if ContainsDriver(drivers, "kafka") {
+		t.Fatal("unexpected kafka")
+	}
+	if ContainsDriver(nil, DriverHTTPRequest) {
+		t.Fatal("empty list should miss")
+	}
+}

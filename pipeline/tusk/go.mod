@@ -6,6 +6,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/shadow-diff/monarchpb v0.0.0
+	github.com/shadow-diff/shadowspec v0.0.0
 	google.golang.org/grpc v1.81.1
 )
 
@@ -22,3 +23,5 @@ require (
 )
 
 replace github.com/shadow-diff/monarchpb => ../pkg/monarchpb
+
+replace github.com/shadow-diff/shadowspec => ../pkg/shadowspec

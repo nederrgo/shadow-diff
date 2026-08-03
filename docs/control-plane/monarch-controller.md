@@ -4,7 +4,7 @@ title: Monarch Controller — Envoy-Only Shadow Injection
 description: Reconcile contract for record/replay ShadowTests; status/topology surface; S3 env; replay trigger; S3 prefix finalizer.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [architecture, control-plane, monarch, envoy, shop, beru, record-replay, status, topology]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-03T14:40:00Z
 ---
 
 # Monarch Controller — Envoy-Only Shadow Injection
@@ -26,7 +26,9 @@ Monarch copies `storage.credentialsSecretRef` from the CR namespace into the sha
 
 ### Replay trigger
 
-After Shop, the ingress hub (HTTP `*-igris` or AMQP `*-igris-rabbitmq`), and ABC Deployments are roll-ready (`ReadyReplicas > 0` and `UpdatedReplicas == Replicas`), if `status.replayState` is empty Monarch `POST`s `http://<hub>.<shadow-ns>.svc:9090/v1/replay/start` (10s timeout). HTTP 202 or 409 sets `status.replayState=started`.
+After Shop, the ingress hub (HTTP `*-igris` or AMQP `*-igris-rabbitmq`), and ABC Deployments are roll-ready (`ReadyReplicas >= desired` and `UpdatedReplicas == Replicas`), if `status.replayState` is empty Monarch `POST`s `http://<hub>.<shadow-ns>.svc:9090/v1/replay/start` (10s timeout). HTTP 202 or 409 sets `status.replayState=started`.
+
+ABC role pods expose two readiness probes so kube Ready means the data plane can accept traffic: a TCP probe on Envoy for `servicePortFor` (default 8888), and when shadow-soldier is injected, an HTTP GET `/healthz` on soldier port `19191` (`0.0.0.0`; 200 after all DB proxy listeners bind). DB proxy routes stay on `127.0.0.1`. igris-http replay delivery also retries dial failures (1s/3s/5s) so a brief post-Ready race does not drop a role.
 
 ### S3 retention finalizer
 
@@ -120,6 +122,7 @@ Coarse position in the boot sequence. Record and replay walk **disjoint sub-path
 | `igrisReady` | ingress hub (`*-igris` or `*-igris-rabbitmq`) Available |
 | `kaiselRuleActive` | KaiselRule reconciled with capture phase `Ready` |
 | `amqpBound` | prod shadow queue bound, or the ShadowTest declares no AMQP ingress |
+| `ingressDrivers` | resolved `spec.inputs[].driver` values (e.g. `http_request`, `rabbitmq_message`); Tusk gates broker-tap nodes from this list |
 | `shadowRolesReady` | map of `control-a`/`control-b`/`candidate` → Deployment readiness; empty in record mode |
 | `targetDeployment` | resolved from `spec.targetDeployment` |
 

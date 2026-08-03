@@ -1,12 +1,16 @@
 // Package topology turns a Monarch status update into a React Flow graph.
 //
-// The node set and edge set are driven entirely by the ShadowTest's mode: record
-// captures production traffic through Kaisel and never provisions shadow roles,
-// while replay drives the three roles from Igris and never opens the eBPF tap.
-// Both tables live as package-level data so the shape of the graph is one edit.
+// The node set and edge set are driven by the ShadowTest's mode and ingress
+// drivers: record captures production traffic through Kaisel (HTTP) and/or a
+// prod AMQP shadow queue (target→queue→igris; Kaisel only seeds Shop), while
+// replay drives the three roles from Igris and never opens the eBPF tap or
+// prod broker bind.
 package topology
 
-import "github.com/shadow-diff/monarchpb"
+import (
+	"github.com/shadow-diff/monarchpb"
+	"github.com/shadow-diff/shadowspec"
+)
 
 // Node statuses rendered by the UI.
 const (
@@ -21,6 +25,7 @@ const (
 const (
 	NodeTargetApp = "target-app"
 	NodeKaisel    = "kaisel"
+	NodeProdAMQP  = "prod-amqp"
 	NodeIgris     = "igris"
 	NodeShop      = "shop"
 	NodeBeru      = "beru"
@@ -54,11 +59,26 @@ type TopologyGraph struct {
 // edge is an unresolved edge; Animated is computed from endpoint status.
 type edge struct{ source, target string }
 
-var recordEdges = []edge{
-	{NodeTargetApp, NodeKaisel},
-	{NodeKaisel, NodeIgris},
-	{NodeKaisel, NodeShop},
-	{NodeIgris, NodeBeru},
+// recordEdges: HTTP ingress is target→kaisel→igris; AMQP ingress is
+// target→prod-amqp→igris. Kaisel never feeds the broker queue — its only
+// record-mode sink is Shop (egress seed), plus igris when HTTP is also present.
+func recordEdges(drivers []string) []edge {
+	hasAMQP := shadowspec.ContainsDriver(drivers, shadowspec.DriverRabbitMQMessage)
+	hasHTTP := shadowspec.ContainsDriver(drivers, shadowspec.DriverHTTPRequest)
+	edges := []edge{{NodeIgris, NodeBeru}, {NodeKaisel, NodeShop}}
+	if hasHTTP || !hasAMQP {
+		edges = append(edges,
+			edge{NodeTargetApp, NodeKaisel},
+			edge{NodeKaisel, NodeIgris},
+		)
+	}
+	if hasAMQP {
+		edges = append(edges,
+			edge{NodeTargetApp, NodeProdAMQP},
+			edge{NodeProdAMQP, NodeIgris},
+		)
+	}
+	return edges
 }
 
 // replayEdges is built from the role list so adding a fourth role is one change.
@@ -77,6 +97,7 @@ func replayEdges() []edge {
 var nodeLabels = map[string]string{
 	NodeTargetApp:           "Target App",
 	NodeKaisel:              "Kaisel (eBPF)",
+	NodeProdAMQP:            "Prod AMQP queue",
 	NodeIgris:               "Igris (ingress hub)",
 	NodeShop:                "Shop (egress mocks)",
 	NodeBeru:                "Beru (analysis)",
@@ -103,6 +124,7 @@ func BuildTopologyGraph(u *monarchpb.ShadowTestStatusUpdate) *TopologyGraph {
 	replay := u.GetMode() == monarchpb.Mode_MODE_REPLAY
 	failed := u.GetPhase() == monarchpb.Phase_PHASE_FAILED
 	c := u.GetComponents()
+	hasAMQP := shadowspec.ContainsDriver(c.GetIngressDrivers(), shadowspec.DriverRabbitMQMessage)
 
 	status := func(ready bool) string {
 		switch {
@@ -124,6 +146,13 @@ func BuildTopologyGraph(u *monarchpb.ShadowTestStatusUpdate) *TopologyGraph {
 		{ID: NodeBeru, Type: "sink", Status: status(c.GetBeruReady())},
 		{ID: NodeKaisel, Type: "capture", Status: kaiselStatus(u, replay, failed)},
 	}
+	if hasAMQP {
+		nodes = append(nodes, Node{
+			ID:     NodeProdAMQP,
+			Type:   "amqp",
+			Status: amqpStatus(c.GetAmqpBound(), replay, failed),
+		})
+	}
 
 	// Shadow roles exist only in replay; in record they render greyed out so the
 	// graph keeps a stable shape across a mode switch.
@@ -142,7 +171,7 @@ func BuildTopologyGraph(u *monarchpb.ShadowTestStatusUpdate) *TopologyGraph {
 		}
 	}
 
-	shape := recordEdges
+	shape := recordEdges(c.GetIngressDrivers())
 	if replay {
 		shape = replayEdges()
 	}
@@ -171,6 +200,20 @@ func BuildTopologyGraph(u *monarchpb.ShadowTestStatusUpdate) *TopologyGraph {
 		Nodes:     nodes,
 		Edges:     edges,
 	}
+}
+
+// amqpStatus: replay never binds the prod broker; otherwise amqp_bound drives Ready.
+func amqpStatus(bound, replay, failed bool) string {
+	if replay {
+		return StatusDisabled
+	}
+	if bound {
+		return StatusReady
+	}
+	if failed {
+		return StatusFailed
+	}
+	return StatusProvisioning
 }
 
 // kaiselStatus prefers the capture phase over the bool, so a tap that reconciled

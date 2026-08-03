@@ -318,8 +318,11 @@ type ComponentStatus struct {
 	// Empty in record mode, where no shadow roles are provisioned.
 	ShadowRolesReady map[string]bool `protobuf:"bytes,6,rep,name=shadow_roles_ready,json=shadowRolesReady,proto3" json:"shadow_roles_ready,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	TargetDeployment string          `protobuf:"bytes,7,opt,name=target_deployment,json=targetDeployment,proto3" json:"target_deployment,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Resolved ShadowTest.spec.inputs[].driver values (e.g. http_request,
+	// rabbitmq_message). Tusk gates topology nodes from this list.
+	IngressDrivers []string `protobuf:"bytes,8,rep,name=ingress_drivers,json=ingressDrivers,proto3" json:"ingress_drivers,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ComponentStatus) Reset() {
@@ -399,6 +402,13 @@ func (x *ComponentStatus) GetTargetDeployment() string {
 		return x.TargetDeployment
 	}
 	return ""
+}
+
+func (x *ComponentStatus) GetIngressDrivers() []string {
+	if x != nil {
+		return x.IngressDrivers
+	}
+	return nil
 }
 
 type ShadowTestStatusUpdate struct {
@@ -525,7 +535,7 @@ const file_monarch_proto_rawDesc = "" +
 	"monarch.v1\"J\n" +
 	"\rStatusRequest\x12\x1b\n" +
 	"\ttest_name\x18\x01 \x01(\tR\btestName\x12\x1c\n" +
-	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"\x90\x03\n" +
+	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"\xb9\x03\n" +
 	"\x0fComponentStatus\x12\x1f\n" +
 	"\vigris_ready\x18\x01 \x01(\bR\n" +
 	"igrisReady\x12\x1d\n" +
@@ -537,7 +547,8 @@ const file_monarch_proto_rawDesc = "" +
 	"\n" +
 	"amqp_bound\x18\x05 \x01(\bR\tamqpBound\x12_\n" +
 	"\x12shadow_roles_ready\x18\x06 \x03(\v21.monarch.v1.ComponentStatus.ShadowRolesReadyEntryR\x10shadowRolesReady\x12+\n" +
-	"\x11target_deployment\x18\a \x01(\tR\x10targetDeployment\x1aC\n" +
+	"\x11target_deployment\x18\a \x01(\tR\x10targetDeployment\x12'\n" +
+	"\x0fingress_drivers\x18\b \x03(\tR\x0eingressDrivers\x1aC\n" +
 	"\x15ShadowRolesReadyEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\bR\x05value:\x028\x01\"\xba\x03\n" +

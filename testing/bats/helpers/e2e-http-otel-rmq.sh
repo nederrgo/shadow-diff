@@ -18,8 +18,8 @@ http_otel_rmq_load_image() {
   local img="$1"
   [[ "${SKIP_LOAD:-0}" == "1" ]] && return 0
   docker image inspect "$img" >/dev/null 2>&1 || {
-    log_fail "missing image ${img} in minikube docker — build or unset SKIP_LOAD"
-    exit 1
+    echo "missing image ${img} in minikube docker" >&2
+    return 1
   }
 }
 

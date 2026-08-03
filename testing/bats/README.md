@@ -37,7 +37,7 @@ done
 |------|-------|
 | `setup_file` | Platform bootstrap + suite stack (ShadowTest, or standalone beru+Postgres) |
 | `setup` | Fresh trace UUID per `@test` (`isolate_test_state`) |
-| `@test` | Traffic / seed + `beru_wait_log` / `beru_assert_verdict_status` |
+| `@test` | Record: MinIO objects; replay: CR switch + `beru_wait_verdict_settled`; seed: `beru_assert_verdict_status` |
 | `teardown_file` | Tear down suite stack (once); skipped when `BATS_KEEP=1` |
 
 The Kaisel DaemonSet runs continuously — tests never `pkill` or restart it.
@@ -117,17 +117,19 @@ Beru only emits final `mirrorLegacyLogs` lines after all three roles report. Pre
 ```bash
 # Built-in patterns (match logs.go wording)
 beru_wait_log --grep="$(beru_log_egress_count_regression "$BATS_TRACE_ID" rabbitmq)"
-beru_wait_log --grep="$(beru_log_no_egress_regression "$BATS_TRACE_ID" mongodb)"
+# E2E pipeline end (Postgres via beru-local API)
+beru_wait_verdict_settled "$BATS_TRACE_ID" mongodb --expect-status=MATCH
+beru_wait_verdict_settled "$BATS_TRACE_ID" rabbitmq \
+  --expect-status=MISMATCH --expect-count-regression=1
 
-# Shop → Beru HTTP egress (kaisel-capture E2E)
+# Record-phase MinIO
+e2e_assert_session_objects both 60
+
+# Shop → Beru HTTP egress (kaisel-capture E2E) — settles MATCH
 beru_wait_http_egress_match "$trace_id" --signature="http:GET:/dep/echo?beru=…"
-
-# Any custom substring
-beru_wait_log --grep="Egress regression for Trace ${BATS_TRACE_ID} (http): Field"
 ```
 
-For API verdict rows use `beru_wait_verdict_settled` (completeness + quiescence) or seed-only `beru_assert_verdict_status`.
-HTTP egress API queries need `?protocol=http&direction=egress` (`beru_http_get_trace`).
+Seed-only: `beru_assert_verdict_status`. HTTP egress API queries need `?protocol=http&direction=egress`.
 Postgres cleanup: `beru_cleanup_trace_postgres` / `beru_cleanup_shadow_test_postgres`.
 
 See [docs/infrastructure/bats-testing-framework.md](/infrastructure/bats-testing-framework.md).

@@ -9,6 +9,17 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-08-03]
+### Added
+* 'pipeline/tusk,the-system': fix AMQP record topology — target→prod-amqp→igris; Kaisel→Shop only (no kaisel→queue)
+* 'pipeline/shadow-soldier,monarch,igris-http': soldier GET /healthz on :19191 + Monarch readinessProbe; igris-http replay dial retries 1s/3s/5s
+* 'pipeline/monarch': drop shadow-soldier TCP readinessProbe (loopback-only; was blocking ABC Ready)
+* 'pipeline/monarch': TCP readiness probes on Envoy + shadow-soldier; ReadyReplicas >= desired for replay gate
+* 'pipeline/tusk/Dockerfile': COPY pkg/shadowspec so replace resolves in docker build
+* 'shadowspec + monarchpb + tusk + the-system': ingressDrivers status + Prod AMQP topology node
+* 'pipeline/beru/internal/storage': Scope ListStaleIncompleteTraces to BERU_SHADOW_TEST_NAME and skip already-verdicted traces so WAITING_FOR_ROLES cannot hop between UI sessions
+* 'testing/bats/e2e': Migrate E2E suites to record→replay on one CR; assert Postgres verdicts via beru_wait_verdict_settled; fold record suite into test-bats-e2e
+
 ## [2026-08-02]
 ### Added
 * 'docs/architecture/ARCHITECTURE.md': Put The System on the right in the L5 observability Mermaid graph

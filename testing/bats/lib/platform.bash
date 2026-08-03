@@ -196,11 +196,19 @@ load_test_images_if_needed() {
   if [[ "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
     use_minikube_docker_env
   fi
+  echo "==> [bats] ensure images present in cluster docker"
+  local img
   for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$SHADOW_SOLDIER_IMG" "$TUSK_IMG" "$IGRIS_IMG" "${KAISEL_IMG:-kaisel:dev}" \
     "$IGRIS_RABBITMQ_IMG" "$EGRESS_RELAY_RABBITMQ_IMG" "$PYTHON_TEST_WORKER_IMG" \
     "$NODEJS_HYBRID_WORKER_IMG" "$HTTP_RMQ_PYTHON_WORKER_IMG" "$HTTP_RMQ_NODEJS_WORKER_IMG" "$HTTP_RMQ_GO_WORKER_IMG" \
-    "$MONGO_IMAGE"; do
-    e2e_load_image "$img" 2>/dev/null || docker pull "$img" 2>/dev/null || true
+    "$MONGO_IMAGE" rabbitmq:3-management-alpine; do
+    if e2e_load_image "$img" 2>/dev/null; then
+      continue
+    fi
+    echo "    pulling ${img}"
+    docker pull "$img" || {
+      echo "FAIL: could not load or pull ${img}" >&2
+      return 1
+    }
   done
-  docker pull rabbitmq:3-management-alpine 2>/dev/null || true
 }

@@ -164,7 +164,7 @@ test-bats-kaisel: ## Kaisel eBPF capture E2E test (requires root + cluster + pip
 	@chmod +x testing/bats/run-one.sh
 	@./testing/bats/run-one.sh e2e/kaisel-capture/kaisel_capture.bats
 
-test-bats-record: ## Record-mode S3 capture E2E (MinIO + Kaisel; not in test-bats-e2e until fixtures gain storage).
+test-bats-record: ## Record-mode S3 capture E2E (also included in test-bats-e2e).
 	@chmod +x testing/bats/run-one.sh
 	@./testing/bats/run-one.sh e2e/record/record_http.bats
 

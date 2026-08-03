@@ -246,6 +246,22 @@ func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository)
 				t.Fatal(err)
 			}
 		}
+		// Foreign shadow test + already-verdicted incomplete must not be reaped
+		// (would re-stamp SESSION_ID onto another beru-local's UI session).
+		if _, err := repo.AppendReport(ctx, reportForTest("conf-foreign", "other-test",
+			roles.ControlA, "mongodb", v2storage.DirectionEgress, "mongodb:x:y", `{}`, "", old)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.AppendReport(ctx, report("conf-verdicted", roles.ControlA, "mongodb",
+			v2storage.DirectionEgress, "mongodb:x:y", `{}`, "", old)); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.SaveDiffVerdict(ctx, "conf-verdicted", &v2storage.VerdictState{
+			Status:    v2storage.StatusWaitingForRoles,
+			UpdatedAt: time.Now().UTC(),
+		}); err != nil {
+			t.Fatal(err)
+		}
 
 		stale, err := repo.ListStaleIncompleteTraces(ctx, time.Now().UTC().Add(-10*time.Second))
 		if err != nil {
@@ -263,6 +279,12 @@ func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository)
 		}
 		if seen["conf-complete"] {
 			t.Fatal("complete trace reported as stale")
+		}
+		if seen["conf-foreign"] {
+			t.Fatal("foreign shadow test reported as stale")
+		}
+		if seen["conf-verdicted"] {
+			t.Fatal("already-verdicted incomplete reported as stale")
 		}
 	})
 

@@ -4,7 +4,7 @@ title: The System — Shadow-Diff Dashboard UI
 description: React SPA for live ShadowTest topology, ShadowDiff verdict inspection via Tusk, and interactive ShadowTest YAML authoring.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/the-system
 tags: [architecture, control-plane, the-system, ui, react, topology, websocket, diffs]
-timestamp: 2026-08-02T10:55:00Z
+timestamp: 2026-08-03T11:50:00Z
 ---
 
 # The System — Dashboard UI
@@ -45,6 +45,7 @@ React Flow custom nodes map from Tusk semantic `type` strings:
 |-------------|--------------|
 | `target` | TargetAppNode |
 | `capture` | KaiselNode |
+| `amqp` | ProdAmqpNode (prod shadow queue; only when `ingress_drivers` includes `rabbitmq_message`) |
 | `ingress` | IgrisNode |
 | `egress` | ShopNode |
 | `sink` | BeruNode |

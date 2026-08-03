@@ -1,4 +1,4 @@
-# HTTP OTel RMQ Node.js E2E fixture.
+# HTTP OTel RMQ Node.js E2E fixture — record → replay.
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest
 metadata:
@@ -6,8 +6,16 @@ metadata:
   namespace: default
 spec:
   targetDeployment: http-rmq-nodejs-prod
-
   newImage: http-rmq-test-app:dev
+  mode: record
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain
 
   inputs:
     - port: 8888

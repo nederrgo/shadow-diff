@@ -1,6 +1,6 @@
 export type NodeStatus = 'Ready' | 'Provisioning' | 'Failed' | 'Disabled' | 'Degraded'
 
-export type NodeType = 'target' | 'capture' | 'ingress' | 'egress' | 'sink' | 'role'
+export type NodeType = 'target' | 'capture' | 'amqp' | 'ingress' | 'egress' | 'sink' | 'role'
 
 export type ConnectionStatus = 'connected' | 'reconnecting' | 'disconnected'
 

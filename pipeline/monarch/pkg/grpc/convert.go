@@ -33,6 +33,7 @@ func ToStatusUpdate(st *enginev1alpha1.ShadowTest) *monarchpb.ShadowTestStatusUp
 			AmqpBound:        c.AMQPBound,
 			ShadowRolesReady: c.ShadowRolesReady,
 			TargetDeployment: c.TargetDeployment,
+			IngressDrivers:   c.IngressDrivers,
 		},
 	}
 }

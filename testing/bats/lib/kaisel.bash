@@ -55,7 +55,10 @@ kaisel_setup_platform() {
     fi
     for img in "${MONARCH_IMG}" "${KAISEL_IMG}" "${BERU_IMG}" "${SHOP_IMG}" \
       "${IGRIS_IMG}" "${EGRESS_TEST_IMG}" nginx:alpine; do
-      e2e_load_image "${img}"
+      e2e_load_image "${img}" || {
+        echo "FAIL: ${img} missing in minikube docker" >&2
+        return 1
+      }
     done
   fi
 
@@ -563,4 +566,60 @@ kaisel_switch_to_replay() {
   monarch_wait_replay_started "$name" "$ns" 180
 
   echo "==> [kaisel] replay ready session=${session} ns=${SHADOW_NS}"
+}
+
+# Assert MinIO has objects for the CR's current session under ingress and/or egress.
+# Usage: e2e_assert_session_objects [ingress|egress|both] [timeout_seconds]
+e2e_assert_session_objects() {
+  local kind="${1:-both}" timeout="${2:-45}"
+  local name="${SHADOWTEST:?SHADOWTEST unset}"
+  local ns="${SHADOWTEST_NS:-default}"
+  local session prefix
+
+  session=$(kubectl get shadowtest "$name" -n "$ns" \
+    -o jsonpath='{.status.currentSessionID}')
+  [[ -n "$session" ]] || {
+    echo "e2e_assert_session_objects: currentSessionID empty" >&2
+    return 1
+  }
+
+  if [[ "$kind" == "ingress" || "$kind" == "both" ]]; then
+    prefix="$(minio_session_prefix "$ns" "$name" "$session" ingress)"
+    minio_wait_objects "$prefix" "$timeout" || return 1
+  fi
+  if [[ "$kind" == "egress" || "$kind" == "both" ]]; then
+    prefix="$(minio_session_prefix "$ns" "$name" "$session" egress)"
+    minio_wait_objects "$prefix" "$timeout" || return 1
+  fi
+  echo "==> [e2e] session objects ok session=${session} kind=${kind}"
+}
+
+# Record-mode HTTP publish then switch the same CR to replay (ingress-only S3 gate).
+# Usage: e2e_http_record_then_replay [trace_id]
+e2e_http_record_then_replay() {
+  local tid="${1:-${BATS_TRACE_ID:?BATS_TRACE_ID unset}}"
+  kaisel_ensure_record_mode || return 1
+  publish_prod_http "$tid" || return 1
+  kaisel_switch_to_replay ingress || return 1
+}
+
+# Record-mode RMQ publish (+ optional Kaisel egress seed) then switch to replay.
+# Usage: e2e_rmq_record_then_replay [ingress|egress|both] [--require-egress-seed]
+e2e_rmq_record_then_replay() {
+  local kind="${1:-both}"
+  local require_seed=0
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --require-egress-seed) require_seed=1; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  kaisel_ensure_record_mode || return 1
+  publish_rmq_order "${BATS_TRACE_ID:?}" "${BATS_ORDER_ID:?}" || return 1
+  if [[ "$require_seed" == "1" ]]; then
+    wait_kaisel_egress_seed || return 1
+  fi
+  kaisel_switch_to_replay "$kind" || return 1
 }

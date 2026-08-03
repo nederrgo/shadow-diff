@@ -130,9 +130,10 @@ e2e_load_image() {
     load_minikube_image "$img"
   else
     use_minikube_docker_env
+    # return (not exit): load_test_images_if_needed falls back to docker pull
     docker image inspect "$img" >/dev/null 2>&1 || {
-      log_fail "missing image ${img} in minikube docker — build or unset SKIP_LOAD"
-      exit 1
+      echo "missing image ${img} in minikube docker" >&2
+      return 1
     }
   fi
 }

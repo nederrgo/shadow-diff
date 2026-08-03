@@ -63,8 +63,8 @@ var dependencyKinds = []DependencyKind{
 }
 
 var inputDrivers = []InputDriver{
-	{Driver: "http_request", Label: "HTTP request", NeedsPort: true},
-	{Driver: "rabbitmq_message", Label: "RabbitMQ message", NeedsAMQP: true},
+	{Driver: DriverHTTPRequest, Label: "HTTP request", NeedsPort: true},
+	{Driver: DriverRabbitMQMessage, Label: "RabbitMQ message", NeedsAMQP: true},
 }
 
 // DependencyKinds returns every dependency type the editor may offer.

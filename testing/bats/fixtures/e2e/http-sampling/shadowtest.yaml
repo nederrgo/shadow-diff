@@ -1,4 +1,4 @@
-# HTTP sampling proof — samplePercentage: 10 (Kaisel ingress + egress)
+# HTTP sampling proof — samplePercentage: 10 (Kaisel ingress + egress); record → replay.
 apiVersion: engine.shadow-diff.io/v1alpha1
 kind: ShadowTest
 metadata:
@@ -7,8 +7,16 @@ metadata:
 spec:
   targetDeployment: http-rmq-go-prod
   newImage: http-rmq-go-worker:dev
-
+  mode: record
   samplePercentage: 10
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain
 
   inputs:
     - port: 8888

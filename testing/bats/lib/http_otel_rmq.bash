@@ -2,6 +2,7 @@
 # shellcheck shell=bash
 
 bats_source_http_otel_helpers() {
+  bats_source_e2e_helpers
   # shellcheck source=testing/bats/helpers/e2e-http-otel-rmq.sh
   source "${REPO}/testing/bats/helpers/e2e-http-otel-rmq.sh"
 }

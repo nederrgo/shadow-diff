@@ -26,6 +26,7 @@ func TestToStatusUpdate_FullyPopulated(t *testing.T) {
 				KaiselRuleActive: false,
 				AMQPBound:        true,
 				TargetDeployment: "checkout-api",
+				IngressDrivers:   []string{"http_request", "rabbitmq_message"},
 				ShadowRolesReady: map[string]bool{
 					monarchpb.RoleControlA:  true,
 					monarchpb.RoleControlB:  true,
@@ -64,6 +65,10 @@ func TestToStatusUpdate_FullyPopulated(t *testing.T) {
 	}
 	if c.GetTargetDeployment() != "checkout-api" {
 		t.Errorf("targetDeployment = %q", c.GetTargetDeployment())
+	}
+	gotDrivers := c.GetIngressDrivers()
+	if len(gotDrivers) != 2 || gotDrivers[0] != "http_request" || gotDrivers[1] != "rabbitmq_message" {
+		t.Errorf("ingressDrivers = %v", gotDrivers)
 	}
 	roles := c.GetShadowRolesReady()
 	if !roles[monarchpb.RoleControlA] || !roles[monarchpb.RoleControlB] || roles[monarchpb.RoleCandidate] {

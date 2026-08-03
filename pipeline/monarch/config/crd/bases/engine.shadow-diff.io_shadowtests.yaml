@@ -551,6 +551,13 @@ spec:
                     description: IgrisReady is true when the ingress hub (igris or
                       igris-rabbitmq) is Available.
                     type: boolean
+                  ingressDrivers:
+                    description: |-
+                      IngressDrivers lists resolved spec.inputs[].driver values
+                      (e.g. http_request, rabbitmq_message). Tusk uses this to gate topology nodes.
+                    items:
+                      type: string
+                    type: array
                   kaiselRuleActive:
                     description: KaiselRuleActive is true when the eBPF capture rule
                       reconciled cleanly (record mode).

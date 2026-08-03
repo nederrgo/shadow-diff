@@ -62,6 +62,10 @@ type Server struct {
 	// iptables rules explicitly exempt from Envoy's egress redirect.
 	ListenHost string
 
+	// OnListenersReady is called once after every route listener is bound.
+	// Used to flip the HTTP /healthz readiness probe.
+	OnListenersReady func()
+
 	sem   chan struct{}
 	conns sync.WaitGroup
 }
@@ -98,6 +102,10 @@ func (s *Server) Run(ctx context.Context) error {
 			defer wg.Done()
 			s.accept(ctx, ln, route)
 		}(ln, route)
+	}
+
+	if s.OnListenersReady != nil {
+		s.OnListenersReady()
 	}
 
 	<-ctx.Done()

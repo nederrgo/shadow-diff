@@ -7,8 +7,16 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
+)
+
+// soldierHealthPort / soldierHealthPath must match shadow-soldier/internal/health
+// (GET /healthz on 0.0.0.0:19191). DB proxy routes stay on 127.0.0.1.
+const (
+	soldierHealthPort int32 = 19191
+	soldierHealthPath       = "/healthz"
 )
 
 // soldierProtocols maps a dependency type to the wire protocol shadow-soldier
@@ -73,34 +81,37 @@ func soldierRoutesFor(st *enginev1alpha1.ShadowTest, shadowNS, role string) []so
 	return routes
 }
 
-func soldierRoutesJSON(st *enginev1alpha1.ShadowTest, shadowNS, role string) (string, error) {
-	routes := soldierRoutesFor(st, shadowNS, role)
-	if len(routes) == 0 {
-		return "", nil
-	}
-	raw, err := json.Marshal(routes)
-	if err != nil {
-		return "", fmt.Errorf("render shadow-soldier routes: %w", err)
-	}
-	return string(raw), nil
-}
-
 // shadowSoldierContainer builds the sidecar for one shadow role, or nil when the
 // ShadowTest declares no proxied dependency.
 func shadowSoldierContainer(st *enginev1alpha1.ShadowTest, shadowNS, role string) (*corev1.Container, error) {
-	routes, err := soldierRoutesJSON(st, shadowNS, role)
-	if err != nil {
-		return nil, err
-	}
-	if routes == "" {
+	routeList := soldierRoutesFor(st, shadowNS, role)
+	if len(routeList) == 0 {
 		return nil, nil
+	}
+	raw, err := json.Marshal(routeList)
+	if err != nil {
+		return nil, fmt.Errorf("render shadow-soldier routes: %w", err)
+	}
+	ports := make([]corev1.ContainerPort, 0, len(routeList)+1)
+	ports = append(ports, corev1.ContainerPort{
+		Name:          "health",
+		ContainerPort: soldierHealthPort,
+		Protocol:      corev1.ProtocolTCP,
+	})
+	for _, rt := range routeList {
+		ports = append(ports, corev1.ContainerPort{
+			Name:          sanitizeForDNS(rt.Protocol),
+			ContainerPort: rt.Listen,
+			Protocol:      corev1.ProtocolTCP,
+		})
 	}
 	return &corev1.Container{
 		Name:            containerShadowSoldier,
 		Image:           shadowSoldierImageFor(st),
 		ImagePullPolicy: corev1.PullIfNotPresent,
+		Ports:           ports,
 		Env: []corev1.EnvVar{
-			{Name: envSoldierRoutes, Value: routes},
+			{Name: envSoldierRoutes, Value: string(raw)},
 			{Name: envShadowRole, Value: role},
 			{Name: envShadowTestName, Value: st.Name},
 			// Reports go to the ingest port, not 8080: the pod's iptables rules
@@ -115,6 +126,17 @@ func shadowSoldierContainer(st *enginev1alpha1.ShadowTest, shadowNS, role string
 					FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
 				},
 			},
+		},
+		// HTTP /healthz on a non-loopback port (DB proxies stay on 127.0.0.1).
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: soldierHealthPath,
+					Port: intstr.FromInt32(soldierHealthPort),
+				},
+			},
+			InitialDelaySeconds: 2,
+			PeriodSeconds:       5,
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{

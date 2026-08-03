@@ -14,7 +14,7 @@ usage() {
 Usage: $(basename "$0") [integration|e2e|all]
 
   integration  Run testing/bats/integration/*.bats
-  e2e          Run testing/bats/e2e/http-ingress/*.bats + rabbitmq-ingress/*.bats
+  e2e          Run testing/bats/e2e/{http-ingress,rabbitmq-ingress,record}/*.bats
   all          Run both (default)
 
 Jest-like output (tap-mocha-reporter) only when BATS_PARALLEL_JOBS=1.
@@ -41,12 +41,12 @@ trap cleanup_on_exit EXIT
 run_e2e_suite() {
   local jobs="${BATS_PARALLEL_JOBS:-1}"
   if [[ "$jobs" -le 1 ]]; then
-    bats_invoke "${BATS_DIR}/e2e/http-ingress" "${BATS_DIR}/e2e/rabbitmq-ingress"
+    bats_invoke "${BATS_DIR}/e2e/http-ingress" "${BATS_DIR}/e2e/rabbitmq-ingress" "${BATS_DIR}/e2e/record"
     return
   fi
   # Multi-process: interleaved TAP — never pipe to tap-mocha-reporter (bats_invoke enforces this).
   local rc=0 p
-  local files=("${BATS_DIR}/e2e/http-ingress"/*.bats "${BATS_DIR}/e2e/rabbitmq-ingress"/*.bats)
+  local files=("${BATS_DIR}/e2e/http-ingress"/*.bats "${BATS_DIR}/e2e/rabbitmq-ingress"/*.bats "${BATS_DIR}/e2e/record"/*.bats)
   local i=0
   local -a pids=()
 

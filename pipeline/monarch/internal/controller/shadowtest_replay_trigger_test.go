@@ -103,3 +103,33 @@ func rollReadyDeploy(ns, name, uid string) *appsv1.Deployment {
 		},
 	}
 }
+
+func TestDeploymentsRollReady_RequiresAllReplicas(t *testing.T) {
+	scheme := deleteLifecycleScheme(t)
+	ns := "shadow-roll-ready"
+	replicas := int32(2)
+	partial := rollReadyDeploy(ns, "shop", "uid")
+	partial.Spec.Replicas = &replicas
+	partial.Status.Replicas = 2
+	partial.Status.UpdatedReplicas = 2
+	partial.Status.ReadyReplicas = 1 // one of two Ready — not enough
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(partial).Build()
+	rec := &ShadowTestReconciler{Client: c, Scheme: scheme}
+	ready, err := rec.deploymentsRollReady(context.Background(), ns, []string{"shop"})
+	if err != nil {
+		t.Fatalf("deploymentsRollReady: %v", err)
+	}
+	if ready {
+		t.Fatal("ReadyReplicas=1 of 2 must not be roll-ready")
+	}
+
+	partial.Status.ReadyReplicas = 2
+	if err := c.Status().Update(context.Background(), partial); err != nil {
+		t.Fatalf("status update: %v", err)
+	}
+	ready, err = rec.deploymentsRollReady(context.Background(), ns, []string{"shop"})
+	if err != nil || !ready {
+		t.Fatalf("ReadyReplicas=2 of 2: ready=%v err=%v", ready, err)
+	}
+}

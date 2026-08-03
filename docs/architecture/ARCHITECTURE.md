@@ -1,11 +1,11 @@
 ---
-
-## type: Architecture Specification
+type: Architecture Specification
 title: Shadow-Diff Architecture
 description: Asynchronous record/replay architecture — S3-backed capture, on-demand A/B/C differential testing, Monarch orchestration, shared Postgres, Tusk BFF, and The System UI.
-resource: [https://github.com/shadow-diff/monarch](https://github.com/shadow-diff/monarch)
+resource: https://github.com/shadow-diff/monarch
 tags: [architecture, record-replay, s3, monarch, beru, shop, kaisel, igris, postgres, tusk, the-system]
-timestamp: 2026-08-02T17:45:00Z
+timestamp: 2026-08-03T14:40:00Z
+---
 
 # Shadow-Diff — Architecture
 
@@ -175,7 +175,7 @@ Monarch provisions Shop → Igris → A/B/C. Shop preloads egress JSONL before b
 
 | Step | Component       | What happens                                                                                                            |
 | ---- | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 1    | **Igris**       | Replay loop: reconstruct HTTP requests FIFO; stamp preserved `traceparent`; fan-out to three roles with `x-shadow-role` |
+| 1    | **Igris**       | Replay loop: reconstruct HTTP requests FIFO; stamp preserved `traceparent`; fan-out to three roles with `x-shadow-role`; dial failures retry up to 3 times (1s/3s/5s) |
 | 2    | **Shadow apps** | Handle ingress; outbound HTTP redirected (iptables → Envoy `:10001`)                                                    |
 | 3    | **Shop**        | ext_proc ImmediateResponse from preloaded mock, or **599** on miss                                                      |
 | 4    | **beru-local**  | Ingress ext_proc + Shop async `POST /api/v1/egress/diff` → diff-of-diffs                                                |
@@ -318,10 +318,11 @@ Wire details: [/control-plane/tusk-bff.md](/control-plane/tusk-bff.md), [/contro
 
 | Goal                   | Command / doc                                                             |
 | ---------------------- | ------------------------------------------------------------------------- |
-| Record → MinIO objects | `make test-bats-record`                                                   |
-| Mode stack + switch GC | `make test-bats-one FILE=integration/monarch/lifecycle_*.bats`            |
-| S3 Retain vs Delete    | `make test-bats-one FILE=integration/monarch/lifecycle_s3_retention.bats` |
-| Step-by-step           | [/verification/VERIFICATION.md](/verification/VERIFICATION.md)            |
+| Record → replay → Postgres | `make test-bats-e2e` (http-ingress + rabbitmq-ingress + record)        |
+| Record-only MinIO proof    | `make test-bats-record`                                                |
+| Mode stack + switch GC     | `make test-bats-one FILE=integration/monarch/lifecycle_*.bats`         |
+| S3 Retain vs Delete        | `make test-bats-one FILE=integration/monarch/lifecycle_s3_retention.bats` |
+| Step-by-step               | [/verification/VERIFICATION.md](/verification/VERIFICATION.md)         |
 
 
 ---

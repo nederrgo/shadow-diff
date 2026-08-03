@@ -43,7 +43,7 @@ func replayWorkloadNames(st *enginev1alpha1.ShadowTest) []string {
 	return names
 }
 
-// deploymentsRollReady reports ReadyReplicas > 0 and UpdatedReplicas == Replicas.
+// deploymentsRollReady reports ReadyReplicas >= desired and UpdatedReplicas == Replicas.
 func (r *ShadowTestReconciler) deploymentsRollReady(
 	ctx context.Context,
 	shadowNS string,
@@ -61,7 +61,7 @@ func (r *ShadowTestReconciler) deploymentsRollReady(
 		if replicas < 1 {
 			replicas = 1
 		}
-		if deploy.Status.ReadyReplicas < 1 {
+		if deploy.Status.ReadyReplicas < replicas {
 			return false, nil
 		}
 		if deploy.Status.UpdatedReplicas != deploy.Status.Replicas || deploy.Status.Replicas < replicas {

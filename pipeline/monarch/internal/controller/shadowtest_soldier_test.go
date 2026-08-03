@@ -76,6 +76,22 @@ func TestShadowSoldierContainer(t *testing.T) {
 			t.Fatalf("route %+v want %+v", got, want[got.Protocol])
 		}
 	}
+
+	if c.ReadinessProbe == nil || c.ReadinessProbe.HTTPGet == nil {
+		t.Fatal("expected HTTP readinessProbe on /healthz")
+	}
+	if c.ReadinessProbe.HTTPGet.Path != soldierHealthPath {
+		t.Fatalf("probe path = %q want %q", c.ReadinessProbe.HTTPGet.Path, soldierHealthPath)
+	}
+	if got := int32(c.ReadinessProbe.HTTPGet.Port.IntValue()); got != soldierHealthPort {
+		t.Fatalf("probe port = %d want %d", got, soldierHealthPort)
+	}
+	if len(c.Ports) != 3 { // health + mongodb + redis
+		t.Fatalf("Ports = %d, want 3", len(c.Ports))
+	}
+	if c.Ports[0].ContainerPort != soldierHealthPort || c.Ports[0].Name != "health" {
+		t.Fatalf("first port = %+v, want health:%d", c.Ports[0], soldierHealthPort)
+	}
 }
 
 // POD_NAME must come from the downward API — a literal value would be identical

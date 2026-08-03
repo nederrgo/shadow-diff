@@ -8,16 +8,17 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
+	"github.com/shadow-diff/shadowspec"
 )
 
 func inferDriver(_ *enginev1alpha1.ShadowTest, _ int32) string {
-	return "http_request"
+	return shadowspec.DriverHTTPRequest
 }
 
 func hasRabbitMQInput(st *enginev1alpha1.ShadowTest) bool {
 	for _, in := range st.Spec.Inputs {
 		d := strings.TrimSpace(strings.ToLower(in.Driver))
-		if d == "rabbitmq_message" {
+		if d == shadowspec.DriverRabbitMQMessage {
 			return true
 		}
 	}
@@ -29,7 +30,7 @@ func isAMQPOnlyShadowTest(st *enginev1alpha1.ShadowTest) bool {
 		return false
 	}
 	for _, in := range st.Spec.Inputs {
-		if strings.TrimSpace(strings.ToLower(in.Driver)) != "rabbitmq_message" {
+		if strings.TrimSpace(strings.ToLower(in.Driver)) != shadowspec.DriverRabbitMQMessage {
 			return false
 		}
 	}
@@ -38,14 +39,29 @@ func isAMQPOnlyShadowTest(st *enginev1alpha1.ShadowTest) bool {
 
 func firstAMQPInput(st *enginev1alpha1.ShadowTest) (*enginev1alpha1.AMQPInputSpec, error) {
 	for _, in := range st.Spec.Inputs {
-		if strings.TrimSpace(strings.ToLower(in.Driver)) == "rabbitmq_message" {
+		if strings.TrimSpace(strings.ToLower(in.Driver)) == shadowspec.DriverRabbitMQMessage {
 			if in.AMQP == nil {
-				return nil, fmt.Errorf("rabbitmq_message input requires amqp configuration")
+				return nil, fmt.Errorf("%s input requires amqp configuration", shadowspec.DriverRabbitMQMessage)
 			}
 			return in.AMQP, nil
 		}
 	}
-	return nil, fmt.Errorf("no rabbitmq_message input found")
+	return nil, fmt.Errorf("no %s input found", shadowspec.DriverRabbitMQMessage)
+}
+
+// ingressDriversFromSpec returns unique resolved driver names for status/topology.
+func ingressDriversFromSpec(st *enginev1alpha1.ShadowTest) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, in := range resolvedInputs(st) {
+		d := strings.TrimSpace(in.Driver)
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	return out
 }
 
 func dependencyByName(st *enginev1alpha1.ShadowTest, name string) (*enginev1alpha1.DependencySpec, bool) {
@@ -63,13 +79,13 @@ func normalizeInputSpec(st *enginev1alpha1.ShadowTest, in enginev1alpha1.InputSp
 	if d == "" {
 		a := strings.TrimSpace(strings.ToLower(in.Addon))
 		switch a {
-		case "http", "http_request":
-			d = "http_request"
-		case "rabbitmq_message":
-			d = "rabbitmq_message"
+		case "http", shadowspec.DriverHTTPRequest:
+			d = shadowspec.DriverHTTPRequest
+		case shadowspec.DriverRabbitMQMessage:
+			d = shadowspec.DriverRabbitMQMessage
 		}
 	}
-	if d == "rabbitmq_message" {
+	if d == shadowspec.DriverRabbitMQMessage {
 		return enginev1alpha1.InputSpec{Driver: d, AMQP: in.AMQP}
 	}
 	if d == "" && in.Port > 0 {
@@ -88,7 +104,7 @@ func resolvedInputs(st *enginev1alpha1.ShadowTest) []enginev1alpha1.InputSpec {
 	}
 	if len(st.Spec.Inputs) == 0 {
 		return []enginev1alpha1.InputSpec{
-			{Port: servicePortFor(st), Driver: "http_request"},
+			{Port: servicePortFor(st), Driver: shadowspec.DriverHTTPRequest},
 		}
 	}
 	out := make([]enginev1alpha1.InputSpec, len(st.Spec.Inputs))
@@ -107,19 +123,19 @@ func validateInputs(st *enginev1alpha1.ShadowTest) error {
 	nonRabbit := false
 	for _, in := range st.Spec.Inputs {
 		d := strings.TrimSpace(strings.ToLower(in.Driver))
-		if d == "rabbitmq_message" {
+		if d == shadowspec.DriverRabbitMQMessage {
 			rabbit = true
 		} else if d != "" || in.Port > 0 {
 			nonRabbit = true
 		}
 	}
 	if rabbit && nonRabbit {
-		return fmt.Errorf("ShadowTest cannot mix rabbitmq_message inputs with HTTP inputs")
+		return fmt.Errorf("ShadowTest cannot mix %s inputs with HTTP inputs", shadowspec.DriverRabbitMQMessage)
 	}
 	if isAMQPOnlyShadowTest(st) {
 		for _, in := range st.Spec.Inputs {
 			if in.AMQP == nil {
-				return fmt.Errorf("rabbitmq_message input requires amqp block")
+				return fmt.Errorf("%s input requires amqp block", shadowspec.DriverRabbitMQMessage)
 			}
 			a := in.AMQP
 			if strings.TrimSpace(a.ProdURL) == "" {
@@ -157,7 +173,7 @@ func validateInputs(st *enginev1alpha1.ShadowTest) error {
 
 	for _, in := range resolvedInputs(st) {
 		switch in.Driver {
-		case "http_request":
+		case shadowspec.DriverHTTPRequest:
 		default:
 			return fmt.Errorf("unsupported Igris driver %q for port %d", in.Driver, in.Port)
 		}
@@ -274,9 +290,9 @@ func listenersSummary(st *enginev1alpha1.ShadowTest) string {
 	if isAMQPOnlyShadowTest(st) {
 		amqp, err := firstAMQPInput(st)
 		if err != nil {
-			return "rabbitmq_message"
+			return shadowspec.DriverRabbitMQMessage
 		}
-		return fmt.Sprintf("rabbitmq_message exchange=%s", amqp.Exchange)
+		return fmt.Sprintf("%s exchange=%s", shadowspec.DriverRabbitMQMessage, amqp.Exchange)
 	}
 	var parts []string
 	for _, in := range resolvedInputs(st) {

@@ -1,6 +1,7 @@
 import type { NodeTypes } from '@xyflow/react'
 import { TargetAppNode } from './TargetAppNode'
 import { KaiselNode } from './KaiselNode'
+import { ProdAmqpNode } from './ProdAmqpNode'
 import { IgrisNode } from './IgrisNode'
 import { ShopNode } from './ShopNode'
 import { BeruNode } from './BeruNode'
@@ -10,6 +11,7 @@ import { ShadowRoleNode } from './ShadowRoleNode'
 export const topologyNodeTypes: NodeTypes = {
   target: TargetAppNode,
   capture: KaiselNode,
+  amqp: ProdAmqpNode,
   ingress: IgrisNode,
   egress: ShopNode,
   sink: BeruNode,

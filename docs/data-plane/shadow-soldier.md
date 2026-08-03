@@ -4,7 +4,7 @@ title: shadow-soldier Database Egress Capture
 description: Plain-text TCP proxy sidecar that decodes MongoDB, PostgreSQL, Redis and MSSQL wire protocols inside each shadow pod and reports every query to Beru for diffing.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/shadow-soldier
 tags: [data-plane, shadow-soldier, egress, database, mongodb, postgresql, redis, mssql, proxy]
-timestamp: 2026-07-26T17:05:00Z
+timestamp: 2026-08-03T14:40:00Z
 ---
 
 # shadow-soldier — Database Egress Capture
@@ -33,6 +33,7 @@ shadow-<crNamespace>-<crName>, one pod per role
 ├────────────────────────────────────────────┼───────────────────┤
 │ shadow-soldier                             ▼                   │
 │   listens 127.0.0.1:{27017,6379,5432,1433}                     │
+│   health 0.0.0.0:19191 GET /healthz                            │
 │   dials mongodb-control-a.<shadowNS>.svc.cluster.local:27017   │
 ├────────────────────────────────────────────────────────────────┤
 │ envoy-sidecar (unchanged)                                      │
@@ -40,6 +41,10 @@ shadow-<crNamespace>-<crName>, one pod per role
          │ POST /api/v1/egress/diff
          ▼ beru-local.<shadowNS>.svc.cluster.local:8081
 ```
+
+## Readiness
+
+DB proxies bind `127.0.0.1` only so the app talks to the sidecar without leaving the pod. For kubelet, soldier also serves `GET /healthz` on **`0.0.0.0:19191`**: **503** until every route `Listen` succeeds, then **200**. Monarch sets an HTTP readiness probe on that port (same timing style as Envoy/deps).
 
 ## Which dependencies are proxied
 
