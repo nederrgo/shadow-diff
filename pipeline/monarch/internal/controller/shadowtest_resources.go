@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -20,6 +21,11 @@ import (
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
+
+// ErrNamespaceCollision is returned when a shadow namespace name is already owned
+// by a different ShadowTest (or an unlabeled foreign Namespace). Callers should
+// sticky-fail; do not tear down the foreign namespace.
+var ErrNamespaceCollision = errors.New("namespace collision")
 
 func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.NamespacedName, shadowNS string) (ctrl.Result, error) {
 	var shadowTest enginev1alpha1.ShadowTest
@@ -82,6 +88,9 @@ func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.Nam
 	}
 
 	if ns.DeletionTimestamp == nil {
+		if err := validateShadowNamespaceName(shadowNS); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := r.Delete(ctx, &ns); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
@@ -102,24 +111,58 @@ func (r *ShadowTestReconciler) publishDeleted(st *enginev1alpha1.ShadowTest) {
 	r.StatusPublisher.Publish(tomb)
 }
 
+func validateExistingNamespace(ns *corev1.Namespace, st *enginev1alpha1.ShadowTest) error {
+	if !ns.DeletionTimestamp.IsZero() {
+		return fmt.Errorf("namespace %s is currently terminating, waiting for deletion", ns.Name)
+	}
+	if ns.Labels[labelShadowTestUID] != string(st.UID) {
+		return fmt.Errorf("%w: '%s' is already in use by another ShadowTest. Please rename.", ErrNamespaceCollision, ns.Name)
+	}
+	return nil
+}
+
 func (r *ShadowTestReconciler) ensureShadowNamespace(ctx context.Context, st *enginev1alpha1.ShadowTest, name string) error {
+	if err := validateShadowNamespaceName(name); err != nil {
+		return err
+	}
 	var ns corev1.Namespace
 	err := r.Get(ctx, types.NamespacedName{Name: name}, &ns)
-	if apierrors.IsNotFound(err) {
-		ns = corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name,
-				Labels: map[string]string{
-					labelManagedBy:      valueManagedBy,
-					labelShadowTestName: st.Name,
-					labelShadowTestCRNS: st.Namespace,
-					labelShadowTestUID:  string(st.UID),
-				},
-			},
+	if err == nil {
+		if err := validateExistingNamespace(&ns, st); err != nil {
+			return err
 		}
-		return r.Create(ctx, &ns)
+		return r.ensureShadowNamespaceRBAC(ctx, st, name)
 	}
-	return err
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	ns = corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				labelManagedBy:      valueManagedBy,
+				labelShadowTestName: st.Name,
+				labelShadowTestCRNS: st.Namespace,
+				labelShadowTestUID:  string(st.UID),
+			},
+		},
+	}
+	err = r.Create(ctx, &ns)
+	if err == nil {
+		return r.ensureShadowNamespaceRBAC(ctx, st, name)
+	}
+	if !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+
+	if err := r.Get(ctx, types.NamespacedName{Name: name}, &ns); err != nil {
+		return err
+	}
+	if err := validateExistingNamespace(&ns, st); err != nil {
+		return err
+	}
+	return r.ensureShadowNamespaceRBAC(ctx, st, name)
 }
 
 func (r *ShadowTestReconciler) reconcileShadowDeployment(

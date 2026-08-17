@@ -117,7 +117,7 @@ teardown_file() {
   session=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
     -o jsonpath='{.status.currentSessionID}')
   [[ -n "$session" ]] || fail "status.currentSessionID empty"
-  [[ "$session" == session-* ]] || fail "unexpected session id: ${session}"
+  [[ "$session" == sess-* ]] || fail "unexpected session id: ${session}"
 }
 
 @test "record: traced ingress flushes JSONL under sessions/<id>/ingress/" {

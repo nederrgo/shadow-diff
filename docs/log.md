@@ -9,6 +9,28 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-08-12]
+### Added
+* 'pipeline/monarch + docs/control-plane/monarch-controller.md': persist spec.oldImage on first reconcile; etcd is source of truth for control-a/b baseline image
+* 'testing/bats, pipeline/monarch/internal/controller/shadowtest_workload_ready.go': Align record session assert to sess-* mint; expect Mongo MONGO_URL on 127.0.0.1 plus soldier sidecar; raise workload boot timeout to 7m for RabbitMQ startup probe
+* 'pipeline/monarch/config/rbac/role.yaml': Restore cluster-wide get/list/watch on ConfigMaps and Services for the controller-runtime cache; writes stay on shadow-workload-role
+* 'pipeline/monarch/config/default/manager_bind_patch.yaml, config/admission': Grant bind on shadow-workload-role so RoleBinding create is not privilege-escalation; VAP also denies RoleBindings outside shadow-*'
+* 'pipeline/monarch/config/admission/namespace_guard_policy.yaml': Fix matchConditions placement under spec (not matchConstraints) for VAP v1 deploy
+* 'pipeline/monarch/config/admission, internal/controller': ValidatingAdmissionPolicy namespace-guard blocks Monarch from creating/deleting non-shadow-* namespaces; controller validateShadowNamespaceName guard
+* 'pipeline/monarch/config/rbac, internal/controller/shadowtest_rbac.go': Scope workload RBAC to shadow namespaces via shadow-workload-role ClusterRole and per-ns RoleBinding; narrow manager-role to read-only on prod
+* 'pipeline/monarch/internal/controller': C2 Kaisel target pods via Deployment→ReplicaSet ownership only (no label matching)
+
+## [2026-08-11]
+### Added
+* 'docs/control-plane/monarch-bug-audit.md': add per-finding fix checklists and C1/M2 resolution notes
+* 'pipeline/monarch/internal/controller': C1 shadow NS length reject + UID ownership checks (no truncation, sticky Failed on collision)
+* 'docs/control-plane/monarch-bug-audit.md': Consolidated Monarch correctness and security audit (C/H/M/L findings)
+
+## [2026-08-10]
+### Added
+* 'docs/data-plane/kaisel-ebpf.md': Document AF_PACKET vs eBPF roles, clone vs perf copy, request-head heuristic, admitted LRU capacity, gate-before-GSO-chunk order, and TCP-split re-admit edge case
+
+
 ## [2026-08-03]
 ### Added
 * 'pipeline/monarch/egress-relay': Roll egress-relay on REPLAY_EXECUTION_ID and wait before replay start so Firehose reconnect backoff cannot miss ABC publishes

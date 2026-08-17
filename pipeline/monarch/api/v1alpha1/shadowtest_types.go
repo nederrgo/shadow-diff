@@ -205,7 +205,8 @@ type ShadowTestSpec struct {
 	TargetNamespace string `json:"targetNamespace,omitempty"`
 
 	// OldImage is the container image for Control-A and Control-B pods.
-	// When unset, Monarch derives it from the target Deployment's current running image.
+	// When unset, Monarch pins it from the target Deployment on first reconcile
+	// and persists it on the CR. It is not overwritten on later reconciles.
 	// +optional
 	OldImage string `json:"oldImage,omitempty"`
 

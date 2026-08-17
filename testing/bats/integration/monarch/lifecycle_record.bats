@@ -57,7 +57,7 @@ setup() {
   [[ "$mode" == "record" ]] || fail "mode=${mode}, want record"
   [[ "$kaisel" == "Ready" ]] || fail "kaiselPhase=${kaisel}, want Ready"
   [[ -n "$session" ]] || fail "currentSessionID empty"
-  [[ "$session" == session-* ]] || fail "unexpected session: ${session}"
+  [[ "$session" == sess-* ]] || fail "unexpected session: ${session}"
 }
 
 @test "record: KaiselRule present with igris + shop egress URLs" {

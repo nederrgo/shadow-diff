@@ -8,15 +8,12 @@ rules:
   - ""
   resources:
   - configmaps
+  - pods
   - secrets
   - services
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - ""
@@ -36,24 +33,13 @@ rules:
   - list
   - watch
 - apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
   - apps
   resources:
   - deployments
+  - replicasets
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - engine.shadow-diff.io
@@ -83,3 +69,15 @@ rules:
   - shadowtests/finalizers
   verbs:
   - update
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

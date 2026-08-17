@@ -4,7 +4,7 @@ title: Data Plane Hub
 description: Index for Shadow-Diff data-plane specifications covering eBPF capture, diff analysis, and egress mock replay.
 resource: https://github.com/shadow-diff/monarch/tree/main/docs/data-plane
 tags: [index, data-plane, beru, shop, kaisel, ebpf, siphon, shadow-soldier]
-timestamp: 2026-08-02T10:55:00Z
+timestamp: 2026-08-10T17:00:00Z
 ---
 
 # Data Plane
@@ -13,7 +13,7 @@ Specifications for the Shadow-Diff data-plane pipeline: traffic capture, diff an
 
 ## Document Map
 
-* [/data-plane/kaisel-ebpf.md](/data-plane/kaisel-ebpf.md) — Self-hosted eBPF ingress and egress capture: AF_PACKET socket filter, kernel-side filtering, chunked perf transport, and per-connection request/response pairing for egress mocks.
+* [/data-plane/kaisel-ebpf.md](/data-plane/kaisel-ebpf.md) — Self-hosted eBPF ingress and egress capture: AF_PACKET + socket-filter roles, clone vs perf byte-copy, trace gate (request-head heuristic, `admitted` LRU), GSO chunking after sampling, and per-connection request/response pairing for egress mocks.
 * [/data-plane/kernel-sampling-adr.md](/data-plane/kernel-sampling-adr.md) — ADR: Kaisel decides traceparent sampling inside the eBPF filter; user space stays authoritative, the gate fails open, and the gate gains a 5.17 kernel floor.
 * [/data-plane/kernel-compatibility.md](/data-plane/kernel-compatibility.md) — Which eBPF build a node's kernel accepts: gated on 5.17+, ungated with user-space sampling on 5.2+, refusal below; tier selection by load attempt, and what each tier costs.
 * [/data-plane/siphon-audit.md](/data-plane/siphon-audit.md) — Historical ADR: Siphon removed; Kaisel owns HTTP ingress admit/sample/forward.

@@ -1,20 +1,25 @@
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=create;delete;get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests/finalizers,verbs=update
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=kaiselrules,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=kaiselrules/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps;services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=create;delete;get;list;patch;update;watch
+// Bind on shadow-workload-role is added by config/default/manager_bind_patch.yaml
+// (resourceNames must match the kustomize namePrefix). Kubernetes privilege-escalation
+// prevention otherwise forbids creating a RoleBinding for permissions the SA does not hold.
 
 package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -127,13 +132,37 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
+	patched, err := r.ensureOldImage(ctx, &shadowTest, &target)
+	if err != nil {
+		msg := fmt.Sprintf("cannot pin spec.oldImage from target: %s", err)
+		log.Info(msg)
+		_ = r.patchBootStatus(ctx, &shadowTest, phaseFailed, msg, shadowNS,
+			enginev1alpha1.BootStepValidating, boot)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	if patched {
+		return ctrl.Result{Requeue: true}, nil
+	}
+
 	if len(shadowTest.Spec.Inputs) == 0 && shadowTest.Spec.TargetDeployment != "" && !httpIngressCaptureEnabled(&shadowTest, &target) {
 		log.Info("live capture inactive: no HTTP/TCP ingress input matched target ports",
 			"level", "warn",
 			"shadowtest", fmt.Sprintf("%s/%s", shadowTest.Namespace, shadowTest.Name))
 	}
 
+	if len(shadowNS) > 63 {
+		msg := "Shadow namespace name exceeds 63 characters. Please use a shorter ShadowTest name."
+		_ = r.patchBootStatus(ctx, &shadowTest, phaseFailed, msg, shadowNS,
+			enginev1alpha1.BootStepValidating, boot)
+		return ctrl.Result{}, nil
+	}
+
 	if err := r.ensureShadowNamespace(ctx, &shadowTest, shadowNS); err != nil {
+		if errors.Is(err, ErrNamespaceCollision) {
+			_ = r.patchBootStatus(ctx, &shadowTest, phaseFailed, err.Error(), shadowNS,
+				enginev1alpha1.BootStepValidating, boot)
+			return ctrl.Result{}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -422,6 +451,9 @@ func (r *ShadowTestReconciler) reconcileShadowWorkloads(
 	env []corev1.EnvVar,
 	target *appsv1.Deployment,
 ) (map[string]bool, workloadWaitReason, error) {
+	if st.Spec.OldImage == "" {
+		return nil, workloadWaitReason{}, fmt.Errorf("spec.oldImage is empty; control-a/b require a baseline image")
+	}
 	for _, step := range []struct {
 		role  string
 		image string
@@ -483,7 +515,6 @@ func (r *ShadowTestReconciler) mapPodToShadowTests(ctx context.Context, obj clie
 		if targetNamespaceFor(&st) != pod.Namespace {
 			continue
 		}
-		// Fetch the target Deployment to get its pod template labels.
 		var dep appsv1.Deployment
 		if err := r.Get(ctx, types.NamespacedName{
 			Namespace: targetNamespaceFor(&st),
@@ -491,23 +522,15 @@ func (r *ShadowTestReconciler) mapPodToShadowTests(ctx context.Context, obj clie
 		}, &dep); err != nil {
 			continue
 		}
-		if labelsMatch(dep.Spec.Template.Labels, pod.Labels) {
-			out = append(out, reconcile.Request{
-				NamespacedName: types.NamespacedName{Namespace: st.Namespace, Name: st.Name},
-			})
+		owned, err := r.podOwnedByDeployment(ctx, pod, &dep)
+		if err != nil || !owned {
+			continue
 		}
+		out = append(out, reconcile.Request{
+			NamespacedName: types.NamespacedName{Namespace: st.Namespace, Name: st.Name},
+		})
 	}
 	return out
-}
-
-// labelsMatch reports whether all key-value pairs in selector are present in labels.
-func labelsMatch(selector, labels map[string]string) bool {
-	for k, v := range selector {
-		if labels[k] != v {
-			return false
-		}
-	}
-	return true
 }
 
 func (r *ShadowTestReconciler) SetupWithManager(mgr ctrl.Manager, opts controller.Options) error {

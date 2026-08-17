@@ -1,0 +1,15 @@
+# Allow the manager SA to bind shadow-workload-role without holding those verbs
+# cluster-wide. Kubernetes privilege-escalation prevention rejects RoleBinding
+# create unless the creator already has the granted verbs or has `bind` on the
+# referenced ClusterRole. resourceNames is the post-namePrefix ClusterRole.
+- op: add
+  path: /rules/-
+  value:
+    apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    resourceNames:
+    - monarch-shadow-workload-role
+    verbs:
+    - bind

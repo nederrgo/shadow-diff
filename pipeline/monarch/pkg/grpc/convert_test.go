@@ -13,13 +13,13 @@ func TestToStatusUpdate_FullyPopulated(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "alpha", Namespace: "default"},
 		Spec:       enginev1alpha1.ShadowTestSpec{Mode: enginev1alpha1.ModeReplay},
 		Status: enginev1alpha1.ShadowTestStatus{
-			Phase:            enginev1alpha1.PhaseReady,
-			Message:          "replay mode ready",
-			BootStep:         enginev1alpha1.BootStepReady,
+			Phase:                    enginev1alpha1.PhaseReady,
+			Message:                  "replay mode ready",
+			BootStep:                 enginev1alpha1.BootStepReady,
 			CurrentSessionID:         "session-42",
 			CurrentReplayExecutionID: "exec-99",
 			ReplayState:              "started",
-			KaiselPhase:      enginev1alpha1.CapturePhaseDisabled,
+			KaiselPhase:              enginev1alpha1.CapturePhaseDisabled,
 			Components: enginev1alpha1.ComponentStatus{
 				IgrisReady:       true,
 				ShopReady:        true,

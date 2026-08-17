@@ -69,7 +69,7 @@ func TestDeploymentBootReady_timeout(t *testing.T) {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = enginev1alpha1.AddToScheme(scheme)
 
-	old := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+	old := metav1.NewTime(time.Now().Add(-8 * time.Minute))
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "shop",

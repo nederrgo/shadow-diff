@@ -1,0 +1,3 @@
+resources:
+- namespace_guard_policy.yaml
+- namespace_guard_binding.yaml

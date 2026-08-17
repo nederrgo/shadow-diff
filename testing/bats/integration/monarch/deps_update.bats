@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Monarch integration: live dependency update — adding spec.dependencies to a
 # Ready ShadowTest creates per-role dep Deployments and rolls shadow app pods
-# with the injected env (MONGO_URL).
+# with MONGO_URL pointed at loopback (shadow-soldier) plus the soldier sidecar.
 #
 # Testing pyramid layer: integration (real cluster CreateOrPatch + rollout).
 # shellcheck shell=bash
@@ -66,11 +66,11 @@ setup() {
     echo "==> wait ${deploy} MONGO_URL + rollout"
     local elapsed=0
     while true; do
-      if monarch_assert_shadow_app_env "$SHADOW_NS" "$SHADOWTEST" "$role" "MONGO_URL" "mongodb-${role}" 2>/dev/null; then
+      if monarch_assert_shadow_app_env "$SHADOW_NS" "$SHADOWTEST" "$role" "MONGO_URL" "127.0.0.1" 2>/dev/null; then
         break
       fi
       if [[ "$elapsed" -ge 120 ]]; then
-        monarch_assert_shadow_app_env "$SHADOW_NS" "$SHADOWTEST" "$role" "MONGO_URL" "mongodb-${role}"
+        monarch_assert_shadow_app_env "$SHADOW_NS" "$SHADOWTEST" "$role" "MONGO_URL" "127.0.0.1"
         return 1
       fi
       sleep 5
@@ -98,7 +98,8 @@ setup() {
 
   for role in control-a control-b candidate; do
     monarch_assert_shadow_app_env "$SHADOW_NS" "$SHADOWTEST" "$role" \
-      "MONGO_URL" "mongodb-${role}"
+      "MONGO_URL" "127.0.0.1"
+    monarch_assert_shadow_has_soldier "$SHADOW_NS" "$SHADOWTEST" "$role"
   done
 }
 

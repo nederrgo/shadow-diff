@@ -72,6 +72,9 @@ func (r *ShadowTestReconciler) finishBootFailedCleanup(
 		return ctrl.Result{}, err
 	}
 	if ns.DeletionTimestamp == nil {
+		if err := validateShadowNamespaceName(shadowNS); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := r.Delete(ctx, &ns); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}

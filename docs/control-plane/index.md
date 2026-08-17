@@ -4,7 +4,7 @@ title: Control Plane Hub
 description: High-level overview map for Shadow-Diff control plane specifications and operators.
 resource: https://github.com/your-org/shadow-diff/tree/main/docs/control-plane
 tags: [index, control-plane, monarch]
-timestamp: 2026-08-02T10:55:00Z
+timestamp: 2026-08-11T12:00:00Z
 ---
 
 # Control Plane Architecture
@@ -22,3 +22,4 @@ The control plane layer acts as the centralized automation hub of Shadow-Diff. D
 * [/control-plane/replay-execution-isolation.md](/control-plane/replay-execution-isolation.md) - ADR: session remint + `replay_execution_id` on beru-local for Postgres/UI isolation.
 * [/control-plane/shadowspec-catalog.md](/control-plane/shadowspec-catalog.md) - Shared `pipeline/pkg/shadowspec` catalog for dependency kinds and input drivers (Monarch defaults + editor menus).
 * [/control-plane/monarch-security-model.md](/control-plane/monarch-security-model.md) - Deep dive specification regarding role compartmentalization, unprivileged eBPF decoupling boundary rules, and shadow sandboxing network policies.
+* [/control-plane/monarch-bug-audit.md](/control-plane/monarch-bug-audit.md) - Severity-ranked correctness and security audit of `pipeline/monarch` (isolation, Kaisel selection, RBAC/secrets, prod AMQP, sticky Failed).

@@ -4,7 +4,7 @@ title: Monarch Control Plane Security Model
 description: Deep dive into the least-privilege boundaries, RBAC constraints, and workload isolation mechanics governing the Monarch controller.
 resource: https://github.com/your-org/shadow-diff/tree/main/pipeline/monarch
 tags: [architecture, security, monarch, kubernetes, sandboxing]
-timestamp: 2026-06-27T19:30:00Z
+timestamp: 2026-08-12T07:15:00Z
 ---
 
 # Monarch Control Plane Security Model
@@ -20,10 +20,10 @@ Crucially, Monarch avoids high-privilege cluster operations: it does **not** man
 Monarch avoids a blanket `ClusterAdmin` role. Instead, its access is compartmentalized to limit the radius of potential exploitation.
 
 ### RBAC Permission Boundaries
-* **Workload Mutation (Cluster-Wide)**: Monarch is granted `get`, `list`, `watch`, and `patch` operations over standard Kubernetes workloads (`Deployments`, `StatefulSets`) strictly to process matching injection selectors via its Mutating Admission Webhook.
-* **Control Plane Discovery**: Reads access permissions for core Kubernetes service objects and infrastructure mapping to discover production target workloads.
-* **Shadow Boundary (Namespace-Scoped)**: Monarch acts with full operational permissions (`apps/*`, `core/*`) **exclusively inside designated shadow namespaces** (`shadow-<crNamespace>-<crName>`). It cannot write, edit, or delete non-shadow deployments.
-* **Secret Restrictions**: Monarch **cannot read production application secrets**. If a shadow pod requires configuration tokens, a synthetic/mock secret placeholder is generated dynamically within the shadow space.
+* **Cluster-wide (manager-role)**: Namespace lifecycle (`create`/`delete` on `namespaces` — **enforced to `shadow-*` only** by `ValidatingAdmissionPolicy/namespace-guard`; not expressible as a native RBAC name prefix), ShadowTest/KaiselRule CRD reconciliation, read-only discovery of target `Deployments`/`ReplicaSets`/`Pods`, read-only `get`/`list`/`watch` on `ConfigMaps`/`Services`/`Secrets` (controller-runtime's cluster-wide informer cache; **no create/update/delete** on those types outside shadow namespaces), `RoleBinding` create plus `bind` on ClusterRole `shadow-workload-role` only (so Monarch can grant itself shadow writes without holding those verbs cluster-wide), and Kubernetes `Events`. The same admission policy also denies RoleBinding writes outside `shadow-*`.
+* **Shadow namespace only (shadow-workload-role)**: Full `create`/`update`/`patch`/`delete` on `ConfigMaps`, `Secrets`, `Services`, and `Deployments` **only where a per-namespace `RoleBinding` exists**. Monarch reconciles `RoleBinding/monarch-shadow-workload` into each `shadow-<crNamespace>-<crName>` namespace at boot; Kubernetes scopes the bound ClusterRole to that namespace.
+* **Production / target namespace**: Read-only `get`/`list`/`watch` on the target Deployment and its Pods (for `KaiselRule` IP discovery). No writes to prod `ConfigMaps`, `Services`, or `Secrets`.
+* **Secret write path**: Production application Secrets are never mutated. Monarch copies only explicitly referenced creds (`storage.credentialsSecretRef`, `BERU_DB_SECRET`) into the isolated shadow namespace.
 
 ---
 

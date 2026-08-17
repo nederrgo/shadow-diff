@@ -4,7 +4,7 @@ title: Monarch Controller — Envoy-Only Shadow Injection
 description: Reconcile contract for record/replay ShadowTests; status/topology surface; S3 env; replay trigger; S3 prefix finalizer.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [architecture, control-plane, monarch, envoy, shop, beru, record-replay, status, topology]
-timestamp: 2026-08-03T14:40:00Z
+timestamp: 2026-08-12T12:55:00Z
 ---
 
 # Monarch Controller — Envoy-Only Shadow Injection
@@ -39,7 +39,27 @@ Finalizer `shadow-diff.io/s3-cleanup` (alongside `shadowtest.finalizers.shadow-d
 
 See [async record/replay ADR](/refactor/async-record-replay.md).
 
+## Shadow namespace naming and ownership
+
+Each ShadowTest gets an isolated namespace `shadow-<crNamespace>-<crName>` (DNS-sanitized: lowercase, invalid chars → `-`). The name is **never truncated**. If the projected name exceeds Kubernetes’ 63-character DNS label limit, reconcile sticky-fails at `ValidatingInputs` (`phase=Failed`) and asks the user to shorten the ShadowTest name.
+
+On create, Monarch labels the namespace with `shadow-diff.io/shadowtest-uid=<ShadowTest.metadata.uid>` (plus managed-by / name / CR-namespace labels). `ensureShadowNamespace` refuses to adopt an existing namespace unless that UID matches; a mismatch sticky-fails with a rename message and does **not** delete the foreign namespace. A namespace with `DeletionTimestamp` set returns a requeue error until deletion finishes.
+
+Immediately after the namespace exists, Monarch reconciles `RoleBinding/monarch-shadow-workload` in that namespace, binding the manager ServiceAccount to ClusterRole `shadow-workload-role`. Kubernetes privilege-escalation prevention requires the creator to already hold the granted verbs **or** have `bind` on that ClusterRole; `manager-role` therefore includes `bind` on `resourceNames: [monarch-shadow-workload-role]` only. Workload mutations (`ConfigMap`/`Secret`/`Service`/`Deployment`) are authorized only through that binding, so the manager's cluster-wide RBAC stays read-only on prod namespaces.
+
+`ValidatingAdmissionPolicy/namespace-guard` (deployed with Monarch) denies the manager ServiceAccount from creating or deleting any `Namespace` whose name does not start with `shadow-`, and from creating/updating/deleting `RoleBinding` objects outside `shadow-*` namespaces. Native Kubernetes RBAC cannot express name-prefix rules on cluster-scoped `Namespace` objects; admission policy closes that gap.
+
+## Kaisel capture targets
+
+In record mode, Monarch provisions a `KaiselRule` whose `spec.targetIPs` are the Running pod IPs of `spec.targetDeployment`. Pods are resolved **only** via ownerReferences: Deployment → ReplicaSet → Pod. Label or selector matching is not used, so shared labels (e.g. two Deployments both using `app=api`) cannot widen capture to unrelated workloads. The pod watch path uses the same ownership chain to requeue the ShadowTest when target pod IPs change.
+
 ## Reconcile contract
+
+### `spec.oldImage` pinning
+
+When `spec.oldImage` is omitted, Monarch copies the target Deployment's primary container image on **first reconcile** (record or replay) and **persists it on the CR**. Later reconciles read `spec.oldImage` from etcd only; Monarch does not re-sync from the target. Users may override the baseline later via `kubectl patch spec.oldImage`; the next reconcile rolls control-a/b in replay mode.
+
+Control-a and control-b always use `spec.oldImage`; candidate uses `spec.newImage`. Replay refuses to create ABC when `spec.oldImage` is still empty after pinning.
 
 For each shadow role (`control-a`, `control-b`, `candidate`) in **replay** mode, Monarch `CreateOrPatch`es:
 
@@ -79,6 +99,7 @@ Shop Deployment env includes `BERU_HTTP_URL` (same host resolution as egress-rel
 - `spec.beru.image` — overrides the beru-local container image
 - `spec.samplePercentage` — shared prod sampling gate (1-100, default 100) for all input types. Rule (package `github.com/shadow-diff/sample`): decode the 32-hex W3C trace id to 16 bytes, `V = FNV-1a-64(bytes) & 0xFF`, keep iff `(V*100)<(N*256)`; empty/missing `traceparent` always dropped. Monarch seeds by `inputs[].driver`: HTTP → KaiselRule (ingress and egress); `rabbitmq_message` → igris-rabbitmq (`IGRIS_RMQ_SAMPLE_PERCENTAGE`). RabbitMQ does not use Kaisel.
 - `spec.maxQPSPerPod` — requests/sec Igris forwards per shadow pod replica (default 50). See Spike Guard below.
+- `spec.oldImage` — control-a/b baseline image; pinned from target on first reconcile when unset (see above)
 - `spec.mode` — `record` \| `replay` (default `record`)
 - `spec.sessionID` — pin S3 session folder (required resolvable on replay)
 - `spec.storage` — **required** BYOB S3 config (`type`, `bucketName`, `endpoint`, `region`, `credentialsSecretRef`, `retentionPolicy`)
@@ -105,7 +126,7 @@ Coarse position in the boot sequence. Record and replay walk **disjoint sub-path
 
 | Value | Covers | Modes |
 |-------|--------|-------|
-| `ValidatingInputs` | spec validation, target Deployment lookup, session/secret sync | both |
+| `ValidatingInputs` | spec validation, shadow NS length/ownership, target Deployment lookup, session/secret sync | both |
 | `ProvisioningSinks` | beru-local, Shop, ingress hub, replay dependencies | both |
 | `ActivatingEgressTap` | KaiselRule eBPF capture | record |
 | `BindingAMQP` | prod shadow queue `QueueBind` | record |
@@ -141,8 +162,9 @@ While any Monarch-managed Deployment is not Available, Monarch requeues every 5s
 - a pod (app or init) reports `CrashLoopBackOff`, `ImagePullBackOff`, `ErrImagePull`, `CreateContainerConfigError`, `InvalidImageName`, or `ErrImageNeverPull`
 - a container exits non-zero
 - Deployment `ProgressDeadlineExceeded`
-- the Deployment is still not Available after **90s** from creation
+- the Deployment is still not Available after **7m** from creation (covers RabbitMQ `trace_on` startup-probe budget; CrashLoop/ImagePull still fail immediately)
 - prod AMQP shadow queue `QueueDeclare` or `QueueBind` fails (record Phase 1 / Phase 3)
+- projected shadow namespace name exceeds 63 characters, or the name is already owned by another ShadowTest UID (sticky Failed via status patch only — the foreign namespace is not deleted)
 
 On terminal failure Monarch:
 
