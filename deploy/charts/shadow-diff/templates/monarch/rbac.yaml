@@ -9,20 +9,17 @@ metadata:
     app.kubernetes.io/component: controller
 rules:
   - apiGroups: [""]
-    resources: [configmaps, secrets, services]
-    verbs: [create, delete, get, list, patch, update, watch]
+    resources: [configmaps, pods, services]
+    verbs: [get, list, watch]
   - apiGroups: [""]
     resources: [events]
     verbs: [create, patch]
   - apiGroups: [""]
     resources: [namespaces]
     verbs: [create, delete, get, list, watch]
-  - apiGroups: [""]
-    resources: [pods]
-    verbs: [get, list, watch]
   - apiGroups: [apps]
-    resources: [deployments]
-    verbs: [create, delete, get, list, patch, update, watch]
+    resources: [deployments, replicasets]
+    verbs: [get, list, watch]
   - apiGroups: [engine.shadow-diff.io]
     resources: [kaiselrules, shadowtests]
     verbs: [create, delete, get, list, patch, update, watch]
@@ -32,6 +29,14 @@ rules:
   - apiGroups: [engine.shadow-diff.io]
     resources: [shadowtests/finalizers]
     verbs: [update]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    resourceNames:
+      - {{ include "shadow-diff.shadowWorkloadClusterRole" . | quote }}
+    verbs: [bind]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -49,6 +54,92 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "shadow-diff.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "shadow-diff.shadowWorkloadClusterRole" . }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, secrets, services]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [create, delete, get, list, patch, update, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "shadow-diff.secretSourceReaderClusterRole" . }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "shadow-diff.monarchName" . }}-beru-db-secret
+  namespace: {{ include "shadow-diff.beruDbSecretNamespace" . }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames:
+      - {{ include "shadow-diff.beruDbSecretName" . | quote }}
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "shadow-diff.monarchName" . }}-beru-db-secret
+  namespace: {{ include "shadow-diff.beruDbSecretNamespace" . }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "shadow-diff.monarchName" . }}-beru-db-secret
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "shadow-diff.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- range $ns := .Values.monarch.secretSourceNamespaces | default (list) | uniq }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "shadow-diff.monarchName" $ }}-secret-source
+  namespace: {{ $ns }}
+  labels:
+    {{- include "shadow-diff.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "shadow-diff.secretSourceReaderClusterRole" $ }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "shadow-diff.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

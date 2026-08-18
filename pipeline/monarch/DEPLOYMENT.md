@@ -113,7 +113,7 @@ kubectl api-resources | grep shadowtest   # short name: st
 
 Monarch deploys Beru itself: one `beru-local` Deployment and Service per shadow namespace, reachable at `beru-local.<shadow-ns>.svc.cluster.local:50051`. Nothing to install — only make sure the image is resolvable (`BERU_IMAGE` on the manager, or `spec.beru.image`).
 
-For diff history that outlives the ShadowTest, point every beru-local at a shared PostgreSQL with `BERU_DB_SECRET` — see [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md).
+Point the manager at a Secret with Beru's `DB_*` keys via `BERU_DB_SECRET` (`namespace/name` or a bare name in `monarch-system`). Monarch replicates it into each shadow namespace; a missing env or Secret fails the ShadowTest. The manager SA may `get` that Secret only through a namespaced Role (`resourceNames`). `storage.credentialsSecretRef` additionally requires an install-time RoleBinding of ClusterRole `secret-source-reader` in the ShadowTest CR namespace (Helm `monarch.secretSourceNamespaces`, default `default`; Kustomize e2e: `kubectl apply -f testing/bats/manifests/monarch-secret-source-rbac.yaml`). See [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md).
 
 ---
 
@@ -187,7 +187,7 @@ When `inputs[].driver` is `rabbitmq_message`, Monarch skips HTTP Igris and deplo
 | `inputs[].port` | TCP port Igris binds (omit for `rabbitmq_message`) |
 | `inputs[].driver` | `http_request` or `rabbitmq_message` |
 | `inputs[].amqp` | Required for `rabbitmq_message`: `prodUrl`, `exchange`, `routingKey`, `targetDependency` |
-| `inputs[].amqp.exchangeType` | `topic` (default), `direct`, `fanout`, `headers` |
+| `inputs[].amqp.exchangeType` | Exchange type igris-rabbitmq declares on **shadow** brokers (`topic` default; `direct`, `fanout`, `headers`). The production exchange named by `exchange` must already exist. |
 | `inputs[].addon` | Deprecated; use `driver` (`http` → `http_request`) |
 | `igris` | Optional override for **igris-http** image, replicas, resources (HTTP/TCP path) |
 | `igris.image` | Container image (default `igris-http:latest`, or `igris-http:dev` when `MONARCH_MODE=dev`) |
@@ -206,7 +206,7 @@ Used when any input has `driver: rabbitmq_message`.
 | `egressRelayRabbitmq.image` | Default `egress-relay-rabbitmq:latest` |
 | `egressRelayRabbitmq.replicas` | Default `1` |
 
-Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`** and sets `status.amqpQueueName`.
+Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`**, binds it to the existing `amqp.exchange`, and sets `status.amqpQueueName`. Prod writes are queue declare / bind / delete only.
 
 ### Capture — Kaisel / sampling
 

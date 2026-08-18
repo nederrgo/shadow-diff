@@ -4,7 +4,7 @@ title: Helm Charts for Platform Install
 description: Install Shadow-Diff control plane (Monarch, Tusk, the-system) and Kaisel via Helm charts under deploy/charts/.
 resource: https://github.com/shadow-diff/monarch/tree/main/deploy/charts
 tags: [operations, infrastructure, helm, monarch, tusk, the-system, kaisel, deployment]
-timestamp: 2026-08-02T12:40:00Z
+timestamp: 2026-08-18T18:40:00Z
 ---
 
 # Helm Charts for Platform Install
@@ -16,7 +16,7 @@ Shadow-Diff ships two Helm charts under [`deploy/charts/`](https://github.com/sh
 | `shadow-diff` | CRDs (ShadowTest, KaiselRule), Monarch operator, Tusk BFF, the-system UI, optional S3/Postgres Secrets, Ingress | `monarch-system` |
 | `shadow-agent` | Kaisel DaemonSet + RBAC | `kaisel-system` |
 
-There is no cluster-wide Beru Deployment. Set `BERU_DB_SECRET` (via chart values) so each beru-local mounts shared PostgreSQL credentials. See [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md).
+There is no cluster-wide Beru Deployment. The chart always sets `BERU_DB_SECRET` on the manager (from `monarch.beruDbSecret`, default `<release-ns>/<postgres secret>`) so each beru-local mounts shared PostgreSQL credentials. A namespaced Role grants `get` on that Secret only. ShadowTest CR namespaces that hold `credentialsSecretRef` must appear in `monarch.secretSourceNamespaces` (default `default`). See [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md) and [/control-plane/monarch-security-model.md](/control-plane/monarch-security-model.md).
 
 ## Install order
 
@@ -55,6 +55,7 @@ kubectl apply -k pipeline/the-system/deploy/
 | `global.imageTag` | Default `latest` |
 | `monarch.helperImages.*` | Full image refs injected as `IGRIS_HTTP_IMAGE`, `SHOP_IMAGE`, `BERU_IMAGE`, `ENVOY_IMAGE`, … |
 | `monarch.beruDbSecret` | `namespace/secret` for Postgres; default `<release-ns>/<postgres secret>` |
+| `monarch.secretSourceNamespaces` | CR namespaces where the manager may `get` `credentialsSecretRef` (default `["default"]`; namespaces must exist) |
 | `postgres.createSecret` / `existingSecret` | Secret must expose `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`, `DB_SSLMODE` |
 | `aws.createSecret` / `existingSecret` | BYOB S3 credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) for ShadowTest `credentialsSecretRef` |
 | `tusk.monarchGrpcAddr` | Default points at chart Service `*-monarch-status-grpc:9090` |

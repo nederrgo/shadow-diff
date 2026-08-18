@@ -1,17 +1,17 @@
 ---
 type: Operations Guide
 title: Platform Bootstrap and ShadowTest Lifecycle
-description: One-time Monarch + Kaisel (+ optional shared Beru) install; record then replay ShadowTest lifecycles; teardown of beru-local with the shadow namespace.
+description: One-time Monarch + Kaisel + shared PostgreSQL install; record then replay ShadowTest lifecycles; teardown of beru-local with the shadow namespace.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [operations, control-plane, monarch, kaisel, kaiselrule, shadowtest, deployment, record-replay, beru, s3]
-timestamp: 2026-08-03T13:45:00Z
+timestamp: 2026-08-17T18:48:00Z
 ---
 
 # Platform Bootstrap and ShadowTest Lifecycle
 
 Shadow-Diff splits **platform install** (once per cluster) from **ShadowTest lifecycle** (on demand). Every ShadowTest is either `record` or `replay` (`spec.mode`; default `record`). `spec.storage` (BYOB S3) is required. There is no live-traffic reconcile path — capture writes sessions to S3; replay loads them later.
 
-Monarch and Kaisel are cluster infrastructure: they survive ShadowTest deletion. Monarch runs **beru-local** inside each shadow namespace, and deleting the ShadowTest deletes that namespace — the pod goes with it. With `BERU_DB_SECRET` set, verdicts are written to shared PostgreSQL and outlive the test ([/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md)). Durable capture artifacts live under the S3 prefix `shadow-diff/<cr-ns>/<cr-name>/`.
+Monarch and Kaisel are cluster infrastructure: they survive ShadowTest deletion. Monarch runs **beru-local** inside each shadow namespace, and deleting the ShadowTest deletes that namespace — the pod goes with it. Verdicts are written to shared PostgreSQL (`BERU_DB_SECRET` on the manager) and outlive the test ([/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md)). Durable capture artifacts live under the S3 prefix `shadow-diff/<cr-ns>/<cr-name>/`.
 
 ## Mental model
 
@@ -20,7 +20,7 @@ Monarch and Kaisel are cluster infrastructure: they survive ShadowTest deletion.
 | **Monarch** operator | Once (`monarch-system`) | Survives all ShadowTests |
 | **Kaisel** DaemonSet | Once (`kaisel-system`) | Survives all ShadowTests; watches `KaiselRule` CRs |
 | **Object storage** | BYOB bucket (MinIO in local E2E) | Sessions under `shadow-diff/<ns>/<name>/`; cleaned on delete only if `retentionPolicy: Delete` |
-| **PostgreSQL** (BYO) | Required for durable verdicts (`BERU_DB_SECRET`) | Shared by every beru-local; survives ShadowTest delete |
+| **PostgreSQL** (BYO) | Required (`BERU_DB_SECRET` on the manager) | Shared by every beru-local; survives ShadowTest delete |
 | **beru-local** | Per ShadowTest | Lives in shadow namespace; **gone on teardown** |
 | **ShadowTest** CR | Per test | `record` and/or `replay` → Ready → Delete |
 
@@ -35,7 +35,7 @@ sequenceDiagram
   participant User
 
   Ops->>Monarch: Install Monarch + Kaisel once
-  Note over Ops,S3: BYOB bucket ready; optional shared Beru
+  Note over Ops,S3: BYOB bucket and shared PostgreSQL ready
 
   User->>Monarch: apply ShadowTest mode=record
   Monarch->>Monarch: sinks Shop+Igris then KaiselRule then AMQP bind
@@ -97,7 +97,7 @@ In record mode Monarch creates a `KaiselRule` with target pod IPs, ports, `igris
 
 ### 4. Shared PostgreSQL
 
-Set `BERU_DB_SECRET` on the Monarch manager to a Secret with `DB_*` keys. Monarch replicates it into each shadow namespace for beru-local. Verdicts persist keyed by `shadow_test_name` and `session_id`. See [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md).
+Set `BERU_DB_SECRET` on the Monarch manager to a Secret with `DB_*` keys. Monarch replicates it into each shadow namespace and mounts it on beru-local. A missing env or Secret fails the ShadowTest. Verdicts persist keyed by `shadow_test_name` and `session_id`. See [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md).
 
 ### Bootstrap verification
 
@@ -136,7 +136,7 @@ Bottom-up: sinks and unbound queue first, then eBPF tap, then AMQP bind. From `r
    - Igris (HTTP ConfigMap→Deployment→Service, or igris-rabbitmq Deployment→Service)
    - Gate: Shop and Igris `AvailableReplicas > 0` — else `RequeueAfter: 2s`
 9. **Phase 2 — eBPF tap:** create/apply `KaiselRule` (ingress + egress sinks are online)
-10. **Phase 3 — async ingress:** AMQP `QueueBind` to prod exchange (HTTP-only: no-op)
+10. **Phase 3 — async ingress:** AMQP `QueueBind` to the named prod exchange (must already exist; HTTP-only: no-op)
 11. Status → `Ready`
 
 Record does not provision control-a/b/candidate, shadow dependencies, or egress-relay-rabbitmq.
@@ -203,7 +203,7 @@ From `ShadowTestReconciler.Reconcile` when `spec.mode` is `replay`. Requires a r
 | Mode GC | Deletes `KaiselRule` |
 | Replay trigger | When Shop/hub/ABC are roll-ready (`ReadyReplicas >= desired`; ABC Envoy TCP probe on ingress port) and `status.replayState` empty: `POST …:9090/v1/replay/start` → `replayState=started` |
 
-Beru (local or shared) runs diff-of-diffs on the three roles. Session JSONL in S3 is the durable input; beru-local SQLite is not.
+beru-local runs diff-of-diffs on the three roles. Session JSONL in S3 is the durable capture input; verdicts live in shared PostgreSQL.
 
 ---
 

@@ -21,9 +21,10 @@ func statusTestReconciler(t *testing.T, name string) (*ShadowTestReconciler, *en
 	t.Helper()
 	scheme := deleteLifecycleScheme(t)
 	st := recordOrderShadowTest(name)
+	t.Setenv(envBeruDBSecret, "monarch-system/beru-postgres")
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret()).
+		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret(), recordOrderBeruDBSecret()).
 		WithStatusSubresource(&enginev1alpha1.ShadowTest{}, &enginev1alpha1.KaiselRule{}, &appsv1.Deployment{}).
 		Build()
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: st.Name, Namespace: st.Namespace}}

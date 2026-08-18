@@ -17,28 +17,28 @@ import (
 const (
 	// envBeruDBSecret names the Secret holding Beru's DB_* connection settings,
 	// as "namespace/name" or a bare "name" in defaultBeruDBSecretNS. Set on the
-	// manager Deployment, same as BERU_IMAGE. Unset means beru-local uses SQLite.
+	// manager Deployment, same as BERU_IMAGE. Required — Beru boots only with Postgres.
 	envBeruDBSecret = "BERU_DB_SECRET"
 
 	defaultBeruDBSecretNS = "monarch-system"
 )
 
-// beruDBSecretRef resolves BERU_DB_SECRET. ok is false when durable storage is
-// not configured, which is the signal to leave beru-local on SQLite.
-func beruDBSecretRef() (namespace, name string, ok bool) {
+// beruDBSecretRef resolves BERU_DB_SECRET. Empty or malformed values error;
+// every beru-local mounts the named Secret via envFrom.
+func beruDBSecretRef() (namespace, name string, err error) {
 	raw := strings.TrimSpace(os.Getenv(envBeruDBSecret))
 	if raw == "" {
-		return "", "", false
+		return "", "", fmt.Errorf("BERU_DB_SECRET is required")
 	}
 	ns, n, found := strings.Cut(raw, "/")
 	if !found {
-		return defaultBeruDBSecretNS, ns, true
+		return defaultBeruDBSecretNS, ns, nil
 	}
 	ns, n = strings.TrimSpace(ns), strings.TrimSpace(n)
 	if ns == "" || n == "" {
-		return "", "", false
+		return "", "", fmt.Errorf("BERU_DB_SECRET must be namespace/name or a bare name")
 	}
-	return ns, n, true
+	return ns, n, nil
 }
 
 // syncBeruDBSecret copies the Beru database Secret into the shadow namespace so
@@ -51,9 +51,9 @@ func (r *ShadowTestReconciler) syncBeruDBSecret(
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 ) error {
-	srcNS, name, ok := beruDBSecretRef()
-	if !ok {
-		return nil
+	srcNS, name, err := beruDBSecretRef()
+	if err != nil {
+		return err
 	}
 
 	var src corev1.Secret
@@ -67,7 +67,7 @@ func (r *ShadowTestReconciler) syncBeruDBSecret(
 			Name:      name,
 		},
 	}
-	_, err := ctrl.CreateOrPatch(ctx, r.Client, dst, func() error {
+	_, err = ctrl.CreateOrPatch(ctx, r.Client, dst, func() error {
 		if dst.Labels == nil {
 			dst.Labels = map[string]string{}
 		}

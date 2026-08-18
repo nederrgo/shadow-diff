@@ -117,6 +117,34 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-monarch" (include "shadow-diff.fullname" .) -}}
 {{- end }}
 
+{{- define "shadow-diff.beruDbSecretNamespace" -}}
+{{- $ref := include "shadow-diff.beruDbSecret" . -}}
+{{- $parts := splitList "/" $ref -}}
+{{- if eq (len $parts) 2 -}}
+{{- index $parts 0 -}}
+{{- else -}}
+{{- .Release.Namespace -}}
+{{- end -}}
+{{- end }}
+
+{{- define "shadow-diff.beruDbSecretName" -}}
+{{- $ref := include "shadow-diff.beruDbSecret" . -}}
+{{- $parts := splitList "/" $ref -}}
+{{- if eq (len $parts) 2 -}}
+{{- index $parts 1 -}}
+{{- else -}}
+{{- $ref -}}
+{{- end -}}
+{{- end }}
+
+{{- define "shadow-diff.shadowWorkloadClusterRole" -}}
+{{- printf "%s-shadow-workload" (include "shadow-diff.monarchName" .) -}}
+{{- end }}
+
+{{- define "shadow-diff.secretSourceReaderClusterRole" -}}
+{{- printf "%s-secret-source-reader" (include "shadow-diff.monarchName" .) -}}
+{{- end }}
+
 {{- define "shadow-diff.monarchStatusService" -}}
 {{- printf "%s-monarch-status-grpc" (include "shadow-diff.fullname" .) -}}
 {{- end }}

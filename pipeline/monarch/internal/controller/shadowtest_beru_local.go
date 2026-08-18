@@ -94,14 +94,14 @@ func (r *ShadowTestReconciler) reconcileLocalBeru(
 }
 
 // localBeruPodSpec builds the beru-local container and its volumes. Split out of
-// the CreateOrPatch mutation so the storage-mode branch is testable without a
-// cluster.
+// the CreateOrPatch mutation so Secret envFrom + WAL volume are testable without
+// a cluster.
 //
 // Always mounts a disk EmptyDir at /data for the Bbolt WAL and dead-letter file.
-// With BERU_DB_SECRET configured, DB_* arrives wholesale from the replicated
-// Secret via envFrom — adding a connection setting later needs no controller change.
+// DB_* arrives wholesale from the replicated Secret via envFrom — adding a
+// connection setting later needs no controller change.
 func localBeruPodSpec(st *enginev1alpha1.ShadowTest) (corev1.Container, []corev1.Volume) {
-	_, dbSecretName, usesPostgres := beruDBSecretRef()
+	_, dbSecretName, _ := beruDBSecretRef()
 
 	container := corev1.Container{
 		Name:            "beru",
@@ -124,6 +124,11 @@ func localBeruPodSpec(st *enginev1alpha1.ShadowTest) (corev1.Container, []corev1
 			{Name: "SHADOW_NAMESPACE", Value: st.Namespace},
 			{Name: "SHADOW_MODE", Value: st.Spec.Mode},
 		},
+		EnvFrom: []corev1.EnvFromSource{{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: dbSecretName},
+			},
+		}},
 		VolumeMounts: []corev1.VolumeMount{{
 			Name:      volumeNameLocalBeruData,
 			MountPath: "/data",
@@ -134,14 +139,6 @@ func localBeruPodSpec(st *enginev1alpha1.ShadowTest) (corev1.Container, []corev1
 				corev1.ResourceCPU:    resource.MustParse("200m"),
 			},
 		},
-	}
-
-	if usesPostgres {
-		container.EnvFrom = []corev1.EnvFromSource{{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: dbSecretName},
-			},
-		}}
 	}
 
 	volumes := []corev1.Volume{{

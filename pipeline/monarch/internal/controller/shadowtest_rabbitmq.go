@@ -45,22 +45,6 @@ func amqpExchangeType(spec *enginev1alpha1.AMQPInputSpec) string {
 	return t
 }
 
-func ensureProdExchange(ch *amqp.Channel, spec *enginev1alpha1.AMQPInputSpec) error {
-	kind := amqpExchangeType(spec)
-	if err := ch.ExchangeDeclare(
-		spec.Exchange,
-		kind,
-		true,  // durable
-		false, // autoDelete
-		false, // internal
-		false, // noWait
-		nil,
-	); err != nil {
-		return fmt.Errorf("exchange declare %q type=%s: %w", spec.Exchange, kind, err)
-	}
-	return nil
-}
-
 // dialAMQP is overridable in tests (ponytail: real broker required for full AMQP E2E).
 var dialAMQP = amqp.Dial
 
@@ -97,10 +81,6 @@ func (r *ShadowTestReconciler) ensureProdShadowQueueDeclared(
 		return "", fmt.Errorf("prod broker channel: %w", err)
 	}
 	defer ch.Close()
-
-	if err := ensureProdExchange(ch, amqpSpec); err != nil {
-		return "", err
-	}
 
 	if _, err := ch.QueueDeclare(
 		name,
@@ -153,11 +133,8 @@ func (r *ShadowTestReconciler) ensureProdShadowQueueBound(
 	}
 	defer ch.Close()
 
-	if err := ensureProdExchange(ch, amqpSpec); err != nil {
-		return err
-	}
 	if err := ch.QueueBind(name, amqpSpec.RoutingKey, amqpSpec.Exchange, false, nil); err != nil {
-		return fmt.Errorf("queue bind %q: %w", name, err)
+		return fmt.Errorf("queue bind %q to exchange %q: %w", name, amqpSpec.Exchange, err)
 	}
 	return nil
 }

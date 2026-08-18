@@ -4,7 +4,7 @@ title: Beru Storage Backends
 description: Beru's Postgres-only persistence behind RunStore and TraceRepository, the Bbolt disk WAL with claimed parallel flushers, advisory-locked evaluate, and 3-retry dead-lettering.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/storage
 tags: [data-plane, beru, storage, postgres, wal, persistence, networking]
-timestamp: 2026-08-03T14:00:00Z
+timestamp: 2026-08-18T18:40:00Z
 ---
 
 # Beru Storage Backends
@@ -43,7 +43,8 @@ Every ShadowTest gets a `beru-local` pod in the shadow namespace.
 
 | Step | Where |
 | --- | --- |
-| `BERU_DB_SECRET` on the manager names the Secret (`namespace/name` or bare name in `monarch-system`) | `beruDBSecretRef`, `shadowtest_beru_db.go` |
+| `BERU_DB_SECRET` on the manager names the Secret (`namespace/name` or bare name in `monarch-system`). Unset or malformed fails the ShadowTest | `beruDBSecretRef`, `shadowtest_beru_db.go` |
+| Manager SA `get`s that Secret via a namespaced Role (`resourceNames`); no cluster-wide Secret list/watch | `beru_db_secret_role.yaml`, `cmd/main.go` `DisableFor` Secrets |
 | Monarch replicates that Secret into `shadow-<ns>-<name>` on each reconcile | `syncBeruDBSecret` |
 | beru-local mounts it via `envFrom` and always mounts a disk EmptyDir at `/data` for the WAL + DLQ | `localBeruPodSpec` |
 
@@ -67,7 +68,7 @@ Every ShadowTest gets a `beru-local` pod in the shadow namespace.
 | `SHADOW_NAMESPACE` | `""` | Recorded on the session row |
 | `SHADOW_MODE` | `""` | `record` or `replay` |
 
-`BERU_DB_SECRET` is read by Monarch, not Beru. Every beru-local shares one database, partitioned by `shadow_test_name`, `session_id`, and `replay_execution_id`. The incomplete-trace reaper only lists rows for `BERU_SHADOW_TEST_NAME` + this execution that lack a `verdicts` row, so one beru-local cannot re-project another test's `WAITING_FOR_ROLES` onto its own session.
+`BERU_DB_SECRET` is required on the Monarch manager (not on Beru). Missing or malformed env, or a Secret that cannot be copied, fails the ShadowTest. Every beru-local shares one database, partitioned by `shadow_test_name`, `session_id`, and `replay_execution_id`. The incomplete-trace reaper only lists rows for `BERU_SHADOW_TEST_NAME` + this execution that lack a `verdicts` row, so one beru-local cannot re-project another test's `WAITING_FOR_ROLES` onto its own session.
 
 ## Schema layers
 
@@ -115,7 +116,7 @@ go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection|WAL
 go -C pipeline/monarch test ./internal/controller/... -run 'BeruDB|LocalBeruPodSpec' -v
 ```
 
-`TestPostgresConformance` skips when the DSN is unset. `TestPostgres_concurrentFlushSameTrace` opens two store pools and races `flushReportsAndEvaluate` on the same `trace_id` under `pg_advisory_xact_lock`. `TestWAL_*` exercises claim-skip and 3-strike dead-lettering against a temp Bbolt file. `TestLocalBeruPodSpec_*` asserts the WAL EmptyDir is always mounted and `envFrom` appears when the Secret is configured.
+`TestPostgresConformance` skips when the DSN is unset. `TestPostgres_concurrentFlushSameTrace` opens two store pools and races `flushReportsAndEvaluate` on the same `trace_id` under `pg_advisory_xact_lock`. `TestWAL_*` exercises claim-skip and 3-strike dead-lettering against a temp Bbolt file. `TestLocalBeruPodSpec_postgresAndWAL` asserts the WAL EmptyDir and Postgres `envFrom` are both mounted.
 
 # Citations
 

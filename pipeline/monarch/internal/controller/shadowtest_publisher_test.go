@@ -109,10 +109,11 @@ func TestPublisher_DeleteEmitsDeletingThenDeleted(t *testing.T) {
 func TestPublisher_NilIsSafe(t *testing.T) {
 	scheme := deleteLifecycleScheme(t)
 	st := recordOrderShadowTest("publisher-nil")
+	t.Setenv(envBeruDBSecret, "monarch-system/beru-postgres")
 
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret()).
+		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret(), recordOrderBeruDBSecret()).
 		WithStatusSubresource(&enginev1alpha1.ShadowTest{}, &enginev1alpha1.KaiselRule{}, &appsv1.Deployment{}).
 		Build()
 	rec := &ShadowTestReconciler{Client: c, Scheme: scheme}

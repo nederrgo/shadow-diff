@@ -56,6 +56,16 @@ spec:
           env:
             - name: BERU_DB_SECRET
               value: {{ include "shadow-diff.beruDbSecret" . | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_SERVICE_ACCOUNT
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.serviceAccountName
+            - name: MONARCH_SHADOW_WORKLOAD_CLUSTER_ROLE
+              value: {{ include "shadow-diff.shadowWorkloadClusterRole" . | quote }}
             {{- if .Values.monarch.mode }}
             - name: MONARCH_MODE
               value: {{ .Values.monarch.mode | quote }}

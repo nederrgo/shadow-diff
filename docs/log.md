@@ -9,6 +9,17 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-08-18]
+### Added
+* 'pipeline/monarch + docs': Narrow manager Secret read to BERU_DB_SECRET Role + secretSourceNamespaces
+
+## [2026-08-17]
+### Added
+* 'pipeline/monarch,docs/control-plane': stop creating durable prod AMQP exchanges; bind-only, missing exchange sticky-fails
+* 'docs/control-plane/monarch-bug-audit.md': Close H1 — markBootFailed on missing target / unresolvable defaults / unpinable oldImage; leftover 30s retry removed
+* 'pipeline/monarch': Target-not-found / unresolvable defaults / unpinable oldImage call markBootFailed immediately; drop leftover RequeueAfter 30s retry
+* 'pipeline/monarch + docs': Require BERU_DB_SECRET for beru-local — always envFrom the replicated Postgres Secret; unset or malformed config fails the ShadowTest
+
 ## [2026-08-12]
 ### Added
 * 'pipeline/monarch + docs/control-plane/monarch-controller.md': persist spec.oldImage on first reconcile; etcd is source of truth for control-a/b baseline image

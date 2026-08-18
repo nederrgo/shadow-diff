@@ -74,6 +74,9 @@ spec:
         - containerPort: 9090
           name: grpc
           protocol: TCP
+        env:
+        - name: BERU_DB_SECRET
+          value: monarch-system/beru-postgres
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false

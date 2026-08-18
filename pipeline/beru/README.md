@@ -2,7 +2,7 @@
 
 Beru is the **L5 — analysis sink** for Shadow-Diff. It correlates traffic from the three shadow roles (control-a, control-b, candidate), runs **diff-of-diffs** to separate noise from regressions, and serves **egress mock responses** for strict downstream replay. Trace inspection UI lives in [The System](../../docs/control-plane/the-system.md) (ShadowDiff via Tusk + Postgres).
 
-Monarch provisions Beru automatically: one **`beru-local`** pod per ShadowTest, inside that ShadowTest's shadow namespace. It runs on SQLite over an in-memory EmptyDir, so state is lost on pod restart and with the namespace. Setting `BERU_DB_SECRET` on the Monarch manager points every beru-local at a shared PostgreSQL instead, and diff history then outlives the ShadowTest — see [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md). For how Beru fits in the full pipeline see [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md).
+Monarch provisions Beru automatically: one **`beru-local`** pod per ShadowTest, inside that ShadowTest's shadow namespace. `BERU_DB_SECRET` on the Monarch manager names a Secret with `DB_*` keys; Monarch replicates it into the shadow namespace and mounts it via `envFrom`. Diff history lives in that shared PostgreSQL — see [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md). For how Beru fits in the full pipeline see [docs/architecture/ARCHITECTURE.md](../../docs/architecture/ARCHITECTURE.md).
 
 ---
 
@@ -32,7 +32,7 @@ Monarch provisions Beru automatically: one **`beru-local`** pod per ShadowTest, 
 4. **N+1 detection:** if the candidate has more operations than control-a, Beru flags a **count regression** (`expected N queries/messages but got N+1`). This catches extra loops, duplicate publishes, and spurious DB writes without mis-aligning later operations.
 5. When counts match but the candidate introduces an operation with no control-a signature, Beru reports an **unexpected extra egress** for that signature.
 
-Every inbound report is appended to SQLite immediately. Each arrival triggers a **full timeline re-diff** for that trace. Evaluation is a strict 3-step pipeline: (1) wait for all three roles or mark `WAITING_FOR_ROLES` after `BERU_TRACE_TIMEOUT`, (2) void the trace on control baseline divergence (`VOIDED_BASELINE_DIVERGENCE`), (3) compound-diff the candidate against control-a (`MATCH` / `MISMATCH` with JSON detail flags). Results land in `raw_reports` and `verdicts`. User-configured **noise filters** suppress known flaky JSON paths before `MISMATCH_PAYLOAD` is recorded. See [docs/data-plane/beru-analysis.md](../../docs/data-plane/beru-analysis.md).
+Every inbound report is appended to the Bbolt WAL immediately, then flushed to Postgres. Each arrival triggers a **full timeline re-diff** for that trace. Evaluation is a strict 3-step pipeline: (1) wait for all three roles or mark `WAITING_FOR_ROLES` after `BERU_TRACE_TIMEOUT`, (2) void the trace on control baseline divergence (`VOIDED_BASELINE_DIVERGENCE`), (3) compound-diff the candidate against control-a (`MATCH` / `MISMATCH` with JSON detail flags). Results land in `raw_reports` and `verdicts`. User-configured **noise filters** suppress known flaky JSON paths before `MISMATCH_PAYLOAD` is recorded. See [docs/data-plane/beru-analysis.md](../../docs/data-plane/beru-analysis.md).
 
 ---
 
@@ -200,7 +200,7 @@ cmd/beru/              Entrypoint — gRPC + HTTP servers, wiring
 internal/
   v2/
     engine/            TraceRouter worker pool, legacy log mirroring
-    storage/           SQLite raw_reports + verdicts
+    storage/           Postgres raw_reports + verdicts (Bbolt WAL in front)
     diff/              Signature-based timeline evaluation
     report/            RawReport builders (ingress, egress, signatures)
   envoyextproc/        Envoy ext_proc (ingress observe → TraceRouter)

@@ -6,7 +6,9 @@
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=shadowtests/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=kaiselrules,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=engine.shadow-diff.io,resources=kaiselrules/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// Secret reads are not cluster-wide: BERU_DB_SECRET uses a namespaced Role
+// (resourceNames) and credentialsSecretRef uses ClusterRole secret-source-reader
+// bound only in install-time source namespaces. Writes stay on shadow-workload-role.
 // +kubebuilder:rbac:groups="",resources=configmaps;services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -117,9 +119,7 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if apierrors.IsNotFound(err) {
 			msg := fmt.Sprintf("target Deployment %s/%s not found", targetNamespaceFor(&shadowTest), shadowTest.Spec.TargetDeployment)
 			log.Info(msg)
-			_ = r.patchBootStatus(ctx, &shadowTest, phaseFailed, msg, shadowNS,
-				enginev1alpha1.BootStepValidating, boot)
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			return r.markBootFailed(ctx, &shadowTest, shadowNS, msg, boot)
 		}
 		return ctrl.Result{}, err
 	}
@@ -127,18 +127,14 @@ func (r *ShadowTestReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err := resolveSpecDefaults(&shadowTest, &target); err != nil {
 		msg := fmt.Sprintf("cannot resolve spec defaults from target: %s", err)
 		log.Info(msg)
-		_ = r.patchBootStatus(ctx, &shadowTest, phaseFailed, msg, shadowNS,
-			enginev1alpha1.BootStepValidating, boot)
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return r.markBootFailed(ctx, &shadowTest, shadowNS, msg, boot)
 	}
 
 	patched, err := r.ensureOldImage(ctx, &shadowTest, &target)
 	if err != nil {
 		msg := fmt.Sprintf("cannot pin spec.oldImage from target: %s", err)
 		log.Info(msg)
-		_ = r.patchBootStatus(ctx, &shadowTest, phaseFailed, msg, shadowNS,
-			enginev1alpha1.BootStepValidating, boot)
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return r.markBootFailed(ctx, &shadowTest, shadowNS, msg, boot)
 	}
 	if patched {
 		return ctrl.Result{Requeue: true}, nil

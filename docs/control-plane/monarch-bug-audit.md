@@ -1,11 +1,11 @@
 ---
-type: Audit Report
+
+## type: Audit Report
 title: Monarch Operator Bug and Security Audit
 description: Consolidated correctness and security findings for pipeline/monarch from full-codebase review (2026-08-11). Severity-ranked; evidence paths point at controller and RBAC sources. Checklist tracks remediation.
-resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
+resource: [https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch)
 tags: [audit, bugs, security, control-plane, monarch, kaisel, rabbitmq, rbac, secrets]
-timestamp: 2026-08-12T06:35:00Z
----
+timestamp: 2026-08-18T18:40:00Z
 
 # Monarch Operator Bug and Security Audit
 
@@ -15,26 +15,30 @@ Related specs: [/control-plane/monarch-controller.md](/control-plane/monarch-con
 
 ---
 
+
+
 ## Summary
 
-| Severity | Count | Fixed |
-|----------|------:|------:|
-| Critical | 2 | 2 |
-| High | 12 | 0 |
-| Medium | 12 | 1 |
-| Low | 6 | 0 |
 
-**Highest-priority fixes:** status gRPC auth → Secret blast radius → prod AMQP controls → workload hardening *(C1 shadow NS + C2 Kaisel ownership done)*.
+| Severity | Count | Fixed |
+| -------- | ----- | ----- |
+| Critical | 2     | 2     |
+| High     | 12    | 3     |
+| Medium   | 12    | 1     |
+| Low      | 6     | 0     |
+
+
+**Highest-priority fixes:** status gRPC auth → H4 DB creds → prod AMQP controls → workload hardening *(C1 shadow NS + C2 Kaisel ownership + H5 Secret read done)*.
 
 ### Progress checklist
 
 - [x] **C1** — Shadow namespace length reject + UID ownership
 - [x] **C2** — Kaisel target pods via Deployment ownership (no label matching)
-- [ ] **H1** — Sticky Failed recovery
-- [ ] **H2** — Passive prod exchange declare
+- [x] **H1** — Dead Failed + 30s retry aligned with sticky Failed
+- [x] **H2** — Prod AMQP bind-only (no exchange create)
 - [ ] **H3** — Status gRPC auth + TLS
 - [ ] **H4** — Per-test Beru DB creds
-- [ ] **H5** — Narrow Secret RBAC (write scoped; read still cluster-wide)
+- [x] **H5** — Narrow Secret RBAC (writes shadow-only; reads BERU_DB_SECRET Role + secretSourceNamespaces)
 - [ ] **H6** — Prod AMQP allowlist / Secret creds
 - [ ] **H7** — Image allowlist + PSS / securityContext
 - [ ] **H8** — Sanitize `beruGRPCTimeout`
@@ -47,7 +51,11 @@ Related specs: [/control-plane/monarch-controller.md](/control-plane/monarch-con
 
 ---
 
+
+
 ## Critical
+
+
 
 ### C1. Shadow namespace name collision + no ownership check
 
@@ -71,6 +79,8 @@ See [/control-plane/monarch-controller.md](/control-plane/monarch-controller.md)
 
 ---
 
+
+
 ### C2. Empty / sparse target pod labels → Kaisel captures broadly
 
 - [x] Fixed
@@ -93,33 +103,55 @@ See [/control-plane/monarch-controller.md](/control-plane/monarch-controller.md)
 
 ---
 
+
+
 ## High
 
-### H1. Sticky `Failed` blocks all recovery
 
-- [ ] Open
+
+### H1. Sticky `Failed` vs leftover 30s retry
+
+- [x] Fixed
 
 **Class:** correctness / ops  
-**Evidence:** `shadowtest_controller.go` (sticky Failed short-circuit vs `RequeueAfter: 30s` on target-not-found / resolve defaults); `shadowtest_fail_cleanup.go`
+**Evidence:** `shadowtest_controller.go` (`Get` target / `resolveSpecDefaults` / `ensureOldImage`); `shadowtest_fail_cleanup.go` (`markBootFailed`)
 
-Once `phase=Failed`, reconcile never re-enters validation or bring-up. Target-not-found returns `RequeueAfter: 30s`, but sticky Failed runs first, so the requeue is dead. Fixing the CR also does nothing until delete/recreate.
+**Original bug:** Target-not-found, unresolvable spec defaults, and unpinable `oldImage` patched `phase=Failed` and returned `RequeueAfter: 30s` (poll until the Deployment exists). Sticky Failed at the top of `Reconcile` made that poll a no-op: the next run never called `Get(target)` again, and teardown waited 30s to start.
 
-**Fix direction:** Reserve sticky Failed for terminal post-stack failures; treat pre-stack / recoverable cases as Progressing, or clear Failed when the cause is gone.
+**Impact:** Operators saw a retry timer that did not retry. A live shadow stack whose target disappeared kept running for up to 30s after Failed.
+
+**How we fixed it:**
+
+1. Those three branches call `markBootFailed` on the same pass (Failed + Warning Event + KaiselRule / prod queue / shadow NS teardown).
+2. While the namespace is terminating, cleanup still `RequeueAfter: 5s` until `Get` is NotFound.
+3. Sticky Failed stays the recovery contract: delete the CR and re-apply. Auto-resume if the target appears later is a product feature, not this bug.
+
+See [/control-plane/monarch-controller.md](/control-plane/monarch-controller.md) (Boot failure gates).
 
 ---
+
+
 
 ### H2. Durable `ExchangeDeclare` on the production AMQP broker
 
-- [ ] Open
+- [x] Fixed
 
 **Class:** security (prod side effect) / correctness  
-**Evidence:** `shadowtest_rabbitmq.go` (`ensureProdExchange`)
+**Evidence:** `internal/controller/shadowtest_rabbitmq.go` (`ensureProdShadowQueueDeclared`, `ensureProdShadowQueueBound`)
 
-Before queue declare/bind, Monarch creates a durable exchange on `amqp.prodUrl`. Wrong name/type can create durable prod topology or sticky-fail on precondition errors.
+**Original bug:** Before queue declare/bind, Monarch ran an active `ExchangeDeclare` (durable, type from CR defaulting to `topic`) on `amqp.prodUrl`. A wrong name created durable prod topology that teardown never deleted. A type/durability/args mismatch against an existing exchange returned 406 and sticky-failed a valid capture.
 
-**Fix direction:** Passive declare only; never auto-create exchanges on prod unless explicitly opted in.
+**How we fixed it:**
+
+1. **No prod exchange create** — `ensureProdShadowQueueDeclared` declares only the shadow queue. `ensureProdShadowQueueBound` `QueueBind`s to `amqp.exchange`.
+2. **Missing exchange is terminal** — broker `NOT_FOUND` on bind goes through existing `markBootFailed` (sticky Failed + autopsy teardown). `status.message` includes the queue and exchange names.
+3. **Shadow brokers unchanged** — `amqpExchangeType` still feeds igris-rabbitmq `ExchangeDeclare` on ephemeral role brokers.
+
+See [/control-plane/monarch-controller.md](/control-plane/monarch-controller.md) (Boot failure gates).
 
 ---
+
+
 
 ### H3. Status gRPC has no authn/authz or TLS
 
@@ -134,6 +166,8 @@ Metrics are auth-filtered; `:9090` is not. Empty filter streams every ShadowTest
 
 ---
 
+
+
 ### H4. Shared Beru DB Secret copied into every shadow namespace
 
 - [ ] Open
@@ -147,18 +181,29 @@ Metrics are auth-filtered; `:9090` is not. Empty filter streams every ShadowTest
 
 ---
 
+
+
 ### H5. Cluster-wide Secret `*` verbs on the manager SA
 
-- [x] Partially fixed (write verbs scoped to shadow namespaces via `shadow-workload-role` + per-ns `RoleBinding`; cluster-wide `get`/`list`/`watch` on Secrets remains for cred copy)
+- [x] Fixed (writes already shadow-only; reads now namespaced)
 
 **Class:** security (RBAC)  
-**Evidence:** `config/rbac/role.yaml`, `config/rbac/shadow_workload_role.yaml`, `internal/controller/shadowtest_rbac.go`
+**Evidence:** `config/rbac/role.yaml`, `config/rbac/secret_source_reader_role.yaml`, `config/rbac/beru_db_secret_role.yaml`, `cmd/main.go` (`Cache.DisableFor` Secrets); Helm `monarch.secretSourceNamespaces`
 
-Compromised controller SA could previously get/list/create/update/delete all Secrets cluster-wide. Write verbs now apply only inside shadow namespaces where Monarch has reconciled `RoleBinding/monarch-shadow-workload`.
+**Original bug:** Compromised controller SA could get/list/create/update/delete all Secrets cluster-wide. Write verbs were later scoped to shadow namespaces via `shadow-workload-role` + per-ns `RoleBinding`, but cluster-wide `get`/`list`/`watch` on Secrets remained for cred copy.
 
-**Remaining:** Narrow cluster-wide Secret **read** to explicit source namespaces/names (`credentialsSecretRef`, `BERU_DB_SECRET`).
+**How we fixed it:**
+
+1. **No Secret informer** — `ctrl.Options.Client.Cache.DisableFor` Secrets so the manager does not `list`/`watch` Secrets cluster-wide.
+2. **`manager-role` has no Secret verbs** — cluster-wide read is ConfigMaps/Services/Pods only.
+3. **`BERU_DB_SECRET`** — namespaced Role `get` with `resourceNames` (Kustomize: `beru-postgres` in `monarch-system`; Helm: parsed from `monarch.beruDbSecret`).
+4. **`credentialsSecretRef`** — ClusterRole `secret-source-reader` (`get` only) bound at install time into listed CR namespaces. Helm `monarch.secretSourceNamespaces` (default `default`). E2E applies `testing/bats/manifests/monarch-secret-source-rbac.yaml`. The manager SA does not `bind` this ClusterRole, so `namespace-guard` stays closed.
+
+Remaining blast radius: `get` any Secret **name** in a listed CR namespace; H4 (shared Beru DSN copied into every shadow NS) is unchanged.
 
 ---
+
+
 
 ### H6. Prod AMQP: CR-controlled dial, bind, and credential exposure
 
@@ -173,6 +218,8 @@ ShadowTest author supplies `prodUrl` (often with embedded creds), exchange, and 
 
 ---
 
+
+
 ### H7. Arbitrary images + root `NET_ADMIN` init; no shadow pod securityContext
 
 - [ ] Open
@@ -185,6 +232,8 @@ Anyone who can create a ShadowTest can schedule arbitrary images into a new NS w
 **Fix direction:** Image allowlist; static iptables image (no apt); restricted PSS on shadow namespaces; `runAsNonRoot` on app sidecars.
 
 ---
+
+
 
 ### H8. `spec.beruGRPCTimeout` unsanitized into Envoy YAML
 
@@ -199,6 +248,8 @@ Unvalidated CR string is interpolated into Envoy config and can break out of the
 
 ---
 
+
+
 ### H9. Cross-namespace `targetNamespace` with no authorization gate
 
 - [ ] Open
@@ -211,6 +262,8 @@ A CR in tenant A can target Deployments in tenant B/prod. Combined with C2, this
 **Fix direction:** Admission webhook: `targetNamespace` must equal CR namespace or an explicit allowlist.
 
 ---
+
+
 
 ### H10. `beru-local` gets raw `spec.mode`, not normalized operating mode
 
@@ -225,6 +278,8 @@ Empty mode yields `SHADOW_MODE=""` while Shop/Igris treat empty as `record` — 
 
 ---
 
+
+
 ### H11. iptables init installs packages on every pod start
 
 - [ ] Open
@@ -237,6 +292,8 @@ Empty mode yields `SHADOW_MODE=""` while Shop/Igris treat empty as `record` — 
 **Fix direction:** Prebuilt minimal image with iptables baked in; digest-pin.
 
 ---
+
+
 
 ### H12. Duplicate soldier `ContainerPort` names for same protocol
 
@@ -251,7 +308,11 @@ Two Postgres (or Redis) deps on different ports both get the same port name. Kub
 
 ---
 
+
+
 ## Medium
+
+
 
 ### M1. Failed status patch errors ignored before teardown
 
@@ -262,6 +323,8 @@ Two Postgres (or Redis) deps on different ports both get the same port name. Kub
 If the Failed write fails, CR may stay non-Failed while the stack is deleted → recreate flap.
 
 ---
+
+
 
 ### M2. Terminating namespace not handled on ensure
 
@@ -275,6 +338,8 @@ If the Failed write fails, CR may stay non-Failed while the stack is deleted →
 
 ---
 
+
+
 ### M3. Storage / Beru Secret overwrite by name in shadow NS
 
 - [ ] Open
@@ -284,6 +349,8 @@ If the Failed write fails, CR may stay non-Failed while the stack is deleted →
 `CreateOrPatch` by name with no collision/ownership guard; under C1, one test’s credentials can replace another’s.
 
 ---
+
+
 
 ### M4. S3 cleanup SSRF from controller
 
@@ -295,6 +362,8 @@ On delete with `retentionPolicy: Delete`, manager dials attacker-controlled `sto
 
 ---
 
+
+
 ### M5. Prod queue delete fails open if broker unreachable
 
 - [ ] Open
@@ -304,6 +373,8 @@ On delete with `retentionPolicy: Delete`, manager dials attacker-controlled `sto
 Dial failure skips delete; bound prod queue may drain until `x-expires` (10m). Documented trade-off; still a security/ops gap if TTL is insufficient.
 
 ---
+
+
 
 ### M6. Hardcoded DB connection strings drop credentials
 
@@ -315,6 +386,8 @@ Proxied postgres/mongo URIs omit user/password/DB name apps often need.
 
 ---
 
+
+
 ### M7. Egress iptables only redirects ports 80 and 8080
 
 - [ ] Open
@@ -324,6 +397,8 @@ Proxied postgres/mongo URIs omit user/password/DB name apps often need.
 HTTPS (443) and other HTTP ports bypass Envoy/Shop mock — record/replay egress gaps.
 
 ---
+
+
 
 ### M8. Pod watch mapper lists every ShadowTest
 
@@ -335,6 +410,8 @@ Cluster-wide list on pod IP changes — costly at scale.
 
 ---
 
+
+
 ### M9. Floating public image tags
 
 - [ ] Open
@@ -344,6 +421,8 @@ Cluster-wide list on pod IP changes — costly at scale.
 `debian:bookworm-slim`, envoy `:latest`-style tags, `controller:latest` — mutable supply chain.
 
 ---
+
+
 
 ### M10. AMQP credentials in CR / pod env / possible Event leakage
 
@@ -355,6 +434,8 @@ Broker passwords visible to CR get / pod inspect; dial errors may echo URLs.
 
 ---
 
+
+
 ### M11. Only KaiselRule gets an owner reference
 
 - [ ] Open
@@ -364,6 +445,8 @@ Broker passwords visible to CR get / pod inspect; dial errors may echo URLs.
 Shadow workloads rely on NS delete for GC; orphans if NS delete is blocked.
 
 ---
+
+
 
 ### M12. `primaryContainerPort` only inspects the first container
 
@@ -375,7 +458,11 @@ Multi-container targets without a named `http` port on container[0] fail or pick
 
 ---
 
+
+
 ## Low
+
+
 
 ### L1. Envoy admin bound to `0.0.0.0:9901`
 
@@ -387,6 +474,8 @@ Cluster peers who can reach the pod IP can hit Envoy admin.
 
 ---
 
+
+
 ### L2. Ingress ext_proc `failure_mode_allow: true`
 
 - [ ] Open
@@ -397,6 +486,8 @@ If beru-local is down, ingress continues without recording (diff integrity). Egr
 
 ---
 
+
+
 ### L3. No NetworkPolicy for status gRPC
 
 - [ ] Open
@@ -404,6 +495,8 @@ If beru-local is down, ingress continues without recording (diff integrity). Egr
 **Evidence:** `config/default/kustomization.yaml`; only metrics NP exists
 
 ---
+
+
 
 ### L4. gRPC hub drops updates when subscriber buffer is full
 
@@ -415,6 +508,8 @@ Documented snapshot semantics; slow UI clients can see stale topology briefly.
 
 ---
 
+
+
 ### L5. Scaffolding TODOs in manager manifests
 
 - [ ] Open
@@ -424,6 +519,8 @@ Documented snapshot semantics; slow UI clients can see stale topology briefly.
 Affinity/resources still marked `TODO(user)`.
 
 ---
+
+
 
 ### L6. `mintID` falls back to `0000` on `rand.Read` failure
 
@@ -435,6 +532,8 @@ Tiny collision risk under entropy failure.
 
 ---
 
+
+
 ## What looks solid
 
 - Beru **8080 vs 8081** ingest split is consistent and tested (iptables redirect of 8080).
@@ -445,29 +544,34 @@ Tiny collision risk under entropy failure.
 - Delete / sticky teardown / S3 finalizer ordering (see teardown ADR).
 - Manager pod: `runAsNonRoot`, drop ALL, read-only root, restricted PSS on `monarch-system`.
 - Metrics endpoint authn/authz; HTTP/2 disabled by default on metrics/webhook TLS.
-- Prod shadow queues: `x-max-length` + `x-expires` mitigations.
+- Prod AMQP: bind-only to an existing exchange; shadow queues have `x-max-length` + `x-expires` mitigations.
 
 ---
+
+
 
 ## Suggested fix order
 
 1. ~~**C1** — Unique shadow NS + UID ownership check~~ **done**
 2. ~~**C2** — Kaisel selector / ownership resolution~~ **done**
-3. **H3** — Auth + TLS (or NP + TokenReview) on status gRPC  
-4. **H4 / H5** — Narrow Secret RBAC; per-test DB creds  
-5. **H2 / H6** — Passive exchange; Secret for broker URL; allowlist hosts  
-6. **H7 / H8 / H11** — Image allowlist, PSS, timeout validation, baked iptables image  
-7. **H9** — Admission on `targetNamespace`  
-8. **H1 / H10 / H12** — Sticky Failed recovery, `SHADOW_MODE`, soldier port names  
-9. Medium/Low backlog as capacity allows  
+3. **H3** — Auth + TLS (or NP + TokenReview) on status gRPC
+4. ~~**H5** — Narrow Secret RBAC~~ **done** / **H4** — per-test DB creds
+5. **H6** — Secret for broker URL; allowlist hosts
+6. **H7 / H8 / H11** — Image allowlist, PSS, timeout validation, baked iptables image
+7. **H9** — Admission on `targetNamespace`
+8. ~~**H1** — Sticky Failed recovery~~ **done** / **H10 / H12** — `SHADOW_MODE`, soldier port names
+9. Medium/Low backlog as capacity allows
 
 ---
 
+
+
 ## Citations
 
-* Controller package: `pipeline/monarch/internal/controller/`
-* Status gRPC: `pipeline/monarch/pkg/grpc/`
-* Manager RBAC: `pipeline/monarch/config/rbac/role.yaml`
-* Manager Deployment: `pipeline/monarch/config/manager/manager.yaml`
-* CRD types: `pipeline/monarch/api/v1alpha1/shadowtest_types.go`
-* Teardown ADR: [/control-plane/shadowtest-teardown-edge-cases.md](/control-plane/shadowtest-teardown-edge-cases.md)
+- Controller package: `pipeline/monarch/internal/controller/`
+- Status gRPC: `pipeline/monarch/pkg/grpc/`
+- Manager RBAC: `pipeline/monarch/config/rbac/role.yaml`
+- Manager Deployment: `pipeline/monarch/config/manager/manager.yaml`
+- CRD types: `pipeline/monarch/api/v1alpha1/shadowtest_types.go`
+- Teardown ADR: [/control-plane/shadowtest-teardown-edge-cases.md](/control-plane/shadowtest-teardown-edge-cases.md)
+

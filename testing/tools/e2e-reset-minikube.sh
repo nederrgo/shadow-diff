@@ -147,6 +147,9 @@ e2e_reset_deploy_stack() {
   echo "==> Monarch operator"
   make -C pipeline/monarch deploy IMG="$MONARCH_IMG"
 
+  echo "==> Secret-source RoleBinding (credentialsSecretRef in default)"
+  kubectl apply -f "$REPO/testing/bats/manifests/monarch-secret-source-rbac.yaml"
+
   # Local PostgreSQL fixture for Beru's durable backend (BYO-Postgres). Not
   # managed by Monarch. Applied here because `make deploy` creates monarch-system,
   # and the Secret must exist before the manager reconciles a ShadowTest.

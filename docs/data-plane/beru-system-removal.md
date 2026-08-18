@@ -4,7 +4,7 @@ title: Shared Beru Removed in Favour of Per-ShadowTest beru-local
 description: Decision to delete the beru-system Deployment and the spec.beruGRPCAddress escape hatch, leaving one beru-local per shadow namespace backed by a shared PostgreSQL.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller
 tags: [data-plane, beru, adr, monarch, storage, deprecation]
-timestamp: 2026-08-02T06:40:00Z
+timestamp: 2026-08-17T13:28:00Z
 ---
 
 # Shared Beru Removed in Favour of Per-ShadowTest beru-local
@@ -44,9 +44,9 @@ readiness unconditionally.
 ## Consequences
 
 **Storage moved down a layer.** Compute is per-test and ephemeral; history is shared and
-durable in PostgreSQL, partitioned by `shadow_test_name` and `session_id`. Without
-`BERU_DB_SECRET`, `beru-local` stays on tmpfs SQLite and its verdicts die with the
-namespace.
+durable in PostgreSQL, partitioned by `shadow_test_name` and `session_id`. The manager
+requires `BERU_DB_SECRET`; Monarch replicates that Secret into each shadow namespace
+and mounts it on beru-local.
 
 **Removing a CRD field is a breaking change.** Strict field validation rejects any
 manifest still carrying `beruGRPCAddress` or `beruIngestAddress`. A ShadowTest persisted

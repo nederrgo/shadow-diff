@@ -5,7 +5,7 @@ title: Kaisel eBPF Capture Daemon
 description: Self-hosted eBPF ingress and egress capture — AF_PACKET socket filter, kernel-side address/protocol/port filtering and in-kernel W3C traceparent sampling, chunked perf transport for GSO super-packets, user-space TCP reassembly, and request/response pairing for egress mocks.
 resource: [https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel](https://github.com/shadow-diff/monarch/tree/main/pipeline/kaisel)
 tags: [data-plane, kaisel, ebpf, capture, networking, gso, egress, sampling]
-timestamp: 2026-08-10T17:00:00Z
+timestamp: 2026-08-18T18:40:00Z
 
 # Kaisel eBPF Capture Daemon
 
@@ -433,16 +433,18 @@ kubectl apply -k pipeline/kaisel/deploy/
 
 ### Monarch RBAC
 
-Monarch splits permissions across two ClusterRoles:
+Monarch splits permissions across ClusterRoles plus install-time namespaced Secret reads:
 
-| ClusterRole | Scope | Resources | Verbs | Reason |
+| ClusterRole / Role | Scope | Resources | Verbs | Reason |
 | ----------- | ----- | --------- | ----- | ------ |
 | `manager-role` | Cluster | `namespaces` | create/delete/get/list/watch | Shadow namespace lifecycle |
 | `manager-role` | Cluster | `deployments`, `replicasets`, `pods` | get/list/watch | Target workload discovery for `KaiselRule` |
-| `manager-role` | Cluster | `secrets`, `configmaps`, `services` | get/list/watch | Informer cache + cred copy; no cluster-wide writes |
+| `manager-role` | Cluster | `configmaps`, `services` | get/list/watch | Informer cache; no cluster-wide Secret read or writes |
 | `manager-role` | Cluster | `rolebindings` | full | Create per-ns binding to `shadow-workload-role` |
 | `manager-role` | Cluster | `clusterroles` (`resourceNames: shadow-workload-role`) | `bind` | Privilege-escalation exception so the SA can grant shadow writes it does not hold cluster-wide |
 | `manager-role` | Cluster | `shadowtests`, `kaiselrules` | full + status | CRD owner |
+| `beru-db-secret-role` | Beru Secret namespace | `secrets` (`resourceNames: beru-postgres`) | get | Copy `BERU_DB_SECRET` |
+| `secret-source-reader` | **Per CR ns** (install-time RoleBinding) | `secrets` | get | Copy `credentialsSecretRef`; no `bind` on the manager SA |
 | `shadow-workload-role` | **Per shadow ns** (via `RoleBinding`) | `configmaps`, `secrets`, `services`, `deployments` | full | Igris/Envoy/Shop/Beru/ABC stack |
 | `shadow-workload-role` | Per shadow ns | `pods` | get/list/watch | Readiness / boot gates |
 

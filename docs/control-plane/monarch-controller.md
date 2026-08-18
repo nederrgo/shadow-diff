@@ -4,7 +4,7 @@ title: Monarch Controller — Envoy-Only Shadow Injection
 description: Reconcile contract for record/replay ShadowTests; status/topology surface; S3 env; replay trigger; S3 prefix finalizer.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [architecture, control-plane, monarch, envoy, shop, beru, record-replay, status, topology]
-timestamp: 2026-08-12T12:55:00Z
+timestamp: 2026-08-18T18:40:00Z
 ---
 
 # Monarch Controller — Envoy-Only Shadow Injection
@@ -20,7 +20,7 @@ Every ShadowTest is either `record` or `replay` (`spec.mode`; default `record`).
 | `record` | Bottom-up: unbound AMQP queue (if any) + Shop + Igris → Ready gate → KaiselRule → AMQP bind; (+ beru-local); mints `status.currentSessionID` when unset (and remints on replay→record when unpinned) | ABC Deployments/Services; clears `status.replayState` + `currentReplayExecutionID` |
 | `replay` | Shop → Igris → ABC (+ deps); requires `spec.sessionID` or existing `status.currentSessionID`; mints `status.currentReplayExecutionID` and injects `REPLAY_EXECUTION_ID` on beru-local | KaiselRule |
 
-Record mode opens eBPF (`KaiselRule`) only after Shop/Igris are Available, and binds the prod AMQP shadow queue only after KaiselRule exists — see [platform bootstrap lifecycle](/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md).
+Record mode opens eBPF (`KaiselRule`) only after Shop/Igris are Available, and `QueueBind`s the prod AMQP shadow queue to the named production exchange (which must already exist) only after KaiselRule exists — see [platform bootstrap lifecycle](/control-plane/platform-bootstrap-and-shadowtest-lifecycle.md).
 
 Monarch copies `storage.credentialsSecretRef` from the CR namespace into the shadow namespace (same name), then injects `OPERATING_MODE`, `S3_*`, `TEST_*`, `SESSION_ID`, and optional AWS `secretKeyRef` env into Igris, **igris-rabbitmq**, and Shop. Both HTTP Igris and igris-rabbitmq expose admin `:9090` (`IGRIS_ADMIN_ADDR`, Service port `9090`).
 
@@ -47,7 +47,9 @@ On create, Monarch labels the namespace with `shadow-diff.io/shadowtest-uid=<Sha
 
 Immediately after the namespace exists, Monarch reconciles `RoleBinding/monarch-shadow-workload` in that namespace, binding the manager ServiceAccount to ClusterRole `shadow-workload-role`. Kubernetes privilege-escalation prevention requires the creator to already hold the granted verbs **or** have `bind` on that ClusterRole; `manager-role` therefore includes `bind` on `resourceNames: [monarch-shadow-workload-role]` only. Workload mutations (`ConfigMap`/`Secret`/`Service`/`Deployment`) are authorized only through that binding, so the manager's cluster-wide RBAC stays read-only on prod namespaces.
 
-`ValidatingAdmissionPolicy/namespace-guard` (deployed with Monarch) denies the manager ServiceAccount from creating or deleting any `Namespace` whose name does not start with `shadow-`, and from creating/updating/deleting `RoleBinding` objects outside `shadow-*` namespaces. Native Kubernetes RBAC cannot express name-prefix rules on cluster-scoped `Namespace` objects; admission policy closes that gap.
+Secret **reads** are not cluster-wide. The manager cache disables Secrets; `Get` hits the API server. `BERU_DB_SECRET` is authorized by a namespaced Role (`resourceNames` on that Secret). `storage.credentialsSecretRef` requires an install-time RoleBinding of ClusterRole `secret-source-reader` (`get` only) in the ShadowTest CR namespace — Helm `monarch.secretSourceNamespaces` (default `default`), or the e2e manifest `testing/bats/manifests/monarch-secret-source-rbac.yaml`. A CR in an unbound namespace fails at secret sync.
+
+`ValidatingAdmissionPolicy/namespace-guard` (deployed with Monarch) denies the manager ServiceAccount from creating or deleting any `Namespace` whose name does not start with `shadow-`, and from creating/updating/deleting `RoleBinding` objects outside `shadow-*` namespaces. Native Kubernetes RBAC cannot express name-prefix rules on cluster-scoped `Namespace` objects; admission policy closes that gap. The controller does not create Secret-source RoleBindings; those stay install-time so a stolen SA cannot bind `secret-source-reader` into `kube-system`.
 
 ## Kaisel capture targets
 
@@ -163,7 +165,8 @@ While any Monarch-managed Deployment is not Available, Monarch requeues every 5s
 - a container exits non-zero
 - Deployment `ProgressDeadlineExceeded`
 - the Deployment is still not Available after **7m** from creation (covers RabbitMQ `trace_on` startup-probe budget; CrashLoop/ImagePull still fail immediately)
-- prod AMQP shadow queue `QueueDeclare` or `QueueBind` fails (record Phase 1 / Phase 3)
+- prod AMQP shadow queue `QueueDeclare` or `QueueBind` fails (record Phase 1 / Phase 3), including a missing `amqp.exchange` on the production broker
+- target Deployment is missing, spec defaults cannot be resolved from it, or `spec.oldImage` cannot be pinned
 - projected shadow namespace name exceeds 63 characters, or the name is already owned by another ShadowTest UID (sticky Failed via status patch only — the foreign namespace is not deleted)
 
 On terminal failure Monarch:
@@ -178,7 +181,7 @@ Teardown unreachable-broker / S3-retry trade-offs: [/control-plane/shadowtest-te
 
 ## Beru wire ingest (Plan 2)
 
-Beru exposes `POST /api/v1/ingest/wire` on `:8080` (`BERU_HTTP_ADDR`). Envelopes decode to `NetworkEventEnvelope` → `FromWireEnvelope` → existing `TraceRouter.Route` → SQLite `raw_reports`. OTLP Mongo span export is deprecated; callers should use wire ingest.
+Beru exposes `POST /api/v1/ingest/wire` on `:8080` (`BERU_HTTP_ADDR`). Envelopes decode to `NetworkEventEnvelope` → `FromWireEnvelope` → existing `TraceRouter.Route` → Postgres `raw_reports`. OTLP Mongo span export is deprecated; callers should use wire ingest.
 
 ## Out of scope
 
