@@ -162,7 +162,7 @@ traffic of a Tier 1 node at the same rate. Raise `-percpu-buffer` if `lost` appe
 
 **No pre-5.17 node has run this.** The development host is 6.18 and the E2E minikube is 6.6, so
 Tier 1 is the only tier exercised on real traffic. The fallback path is proven by forcing the gated
-candidate to fail, not by meeting a kernel that rejects it.
+candidate to fail, not by meeting a kernel that rejects it. Deep Kaisel cluster E2E remains Minikube until the Kind migration in [/infrastructure/minikube-to-kind-migration.md](/infrastructure/minikube-to-kind-migration.md) completes Phase 2.
 
 # Citations
 

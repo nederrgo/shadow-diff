@@ -112,12 +112,20 @@ shadow_app_pod_for_role() {
 
 e2e_init_cluster() {
   local repo="$1"
-  # shellcheck source=testing/bats/helpers/cluster-minikube.sh
-  source "$repo/testing/bats/helpers/cluster-minikube.sh"
-  echo "==> E2E cluster: minikube"
+  if [[ "${E2E_CLUSTER:-minikube}" == kind ]]; then
+    # shellcheck source=testing/bats/helpers/cluster-kind.sh
+    source "$repo/testing/bats/helpers/cluster-kind.sh"
+    echo "==> E2E cluster: kind (${KIND_CLUSTER:-shadow-diff})"
+  else
+    # shellcheck source=testing/bats/helpers/cluster-minikube.sh
+    source "$repo/testing/bats/helpers/cluster-minikube.sh"
+    echo "==> E2E cluster: minikube"
+  fi
 }
 
 e2e_prepare_docker_build() {
+  # Kind uses the host docker daemon; images are loaded via kind load.
+  [[ "${E2E_CLUSTER:-minikube}" == kind ]] && return 0
   if [[ "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
     use_minikube_docker_env
   fi
@@ -126,6 +134,10 @@ e2e_prepare_docker_build() {
 e2e_load_image() {
   local img="$1"
   [[ "${SKIP_LOAD:-0}" == "1" ]] && return 0
+  if [[ "${E2E_CLUSTER:-minikube}" == kind ]]; then
+    load_kind_image "$img"
+    return
+  fi
   if [[ "${MINIKUBE_DRIVER:-kvm2}" == none ]]; then
     load_minikube_image "$img"
   else

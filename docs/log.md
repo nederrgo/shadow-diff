@@ -9,6 +9,16 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-08-21]
+### Added
+* 'testing/tools/e2e-reset-kind.sh': Phase 2b one-shot Kind reset + shared e2e-reset-deploy.sh; host Postgres DSN localhost:15432
+* 'testing/bats/lib/platform.bash,kind/config.yaml': Phase 2a Kind platform path (opt-in) + Postgres 15432→30432
+* 'docs/infrastructure/minikube-to-kind-migration.md': Phase 2 planned as 2a–2e (not started) with Cursor plan pointers; index hub refreshed
+* 'docs/infrastructure/minikube-to-kind-migration.md': Phase 2 split into 2a–2e with exit criteria; index hub refreshed
+* 'testing/bats/lib/kaisel.bash,cluster-kind.sh': Kind smoke green — WSL Docker Desktop DOCKER_HOST fallback; kaisel_setup_platform applies secret-source RBAC + Postgres BERU_DB_SECRET
+* 'testing/bats/helpers/cluster-kind.sh,e2e/kaisel-kind-smoke': Phase 1 Kind Kaisel smoke (E2E_CLUSTER=kind, NodePort 18080→30080, make test-bats-kaisel-kind); update minikube-to-kind-migration ADR
+* 'docs/infrastructure/minikube-to-kind-migration.md': ADR roadmap for Minikube→Kind local E2E (Kaisel traffic gate, Phase 1 smoke / Phase 2 switch); indexed from infrastructure hub with cross-links from bats, VERIFICATION, kernel-compatibility
+
 ## [2026-08-20]
 ### Added
 * 'pipeline/beru H2': WAL append on accept path; 202 means local Bbolt durable

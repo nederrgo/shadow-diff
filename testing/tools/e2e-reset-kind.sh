@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Reset and deploy the full Monarch E2E stack on Minikube (kvm2 + flannel by default).
+# Reset and deploy the full Monarch E2E stack on Kind (host docker + kind load).
 #
 # HTTP ingress and egress capture both use Kaisel eBPF (DaemonSet in kaisel-system).
-# E2E assertions: make test-bats-e2e / make test-bats-kaisel
+# E2E assertions: make test-bats-e2e / make test-bats-kaisel (default still Minikube
+# until Phase 2c; use E2E_CLUSTER=kind for Kind bats).
 #
-# Override driver: MINIKUBE_DRIVER=virtualbox|kvm2|none
-#
-# Images: VM drivers use eval $(minikube docker-env); none driver uses host docker + minikube image load.
+# Cluster: KIND_CLUSTER (default shadow-diff) from testing/bats/kind/config.yaml.
+# Port mappings (recreate cluster if missing):
+#   host 18080 → node 30080 (prod NodePort)
+#   host 15432 → node 30432 (Postgres NodePort)
+#   kind delete cluster --name shadow-diff
 #
 # Port model (do not change without updating manifests):
 #   prod pod          -> :80   (HTTP_PORT=80; Kaisel eBPF capture -> igris-http)
@@ -16,18 +19,17 @@
 #   Envoy egress proxy -> :15001 (Shop always-on)
 #
 # Usage (from repo root):
-#   ./testing/tools/e2e-reset-minikube.sh                 # full reset + deploy + wait Ready
-#   ./testing/tools/e2e-reset-minikube.sh --skip-build    # reuse images already in minikube docker
-#   ./testing/tools/e2e-reset-minikube.sh --no-reset      # deploy/upgrade only (no deletes; reuses running minikube)
-#   ./testing/tools/e2e-reset-minikube.sh --skip-load --skip-build --no-reset  # fastest: cluster already up + images present
+#   ./testing/tools/e2e-reset-kind.sh                 # full reset + deploy + wait Ready
+#   ./testing/tools/e2e-reset-kind.sh --skip-build    # reuse images already on host docker
+#   ./testing/tools/e2e-reset-kind.sh --no-reset      # deploy/upgrade only (no deletes)
+#   ./testing/tools/e2e-reset-kind.sh --skip-load --skip-build --no-reset  # fastest
 #
 # A PostgreSQL fixture is always deployed to monarch-system. The manager always
 # gets BERU_DB_SECRET=monarch-system/beru-postgres so beru-local uses Postgres +
-# a disk WAL EmptyDir. Reach Postgres from the host (Go conformance) on NodePort:
-#   export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@$(minikube ip):30432/beru?sslmode=disable"
+# a disk WAL EmptyDir. Reach Postgres from the host (Go conformance) via Kind
+# extraPortMappings:
+#   export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@localhost:15432/beru?sslmode=disable"
 #   go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection' -v
-#
-# Deploy body lives in testing/tools/lib/e2e-reset-deploy.sh (shared with e2e-reset-kind.sh).
 #
 set -euo pipefail
 
@@ -36,8 +38,8 @@ REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 cd "$REPO"
 # shellcheck source=testing/bats/helpers/e2e-helpers.sh
 source "$REPO/testing/bats/helpers/e2e-helpers.sh"
-# shellcheck source=testing/bats/helpers/cluster-minikube.sh
-source "$REPO/testing/bats/helpers/cluster-minikube.sh"
+# shellcheck source=testing/bats/helpers/cluster-kind.sh
+source "$REPO/testing/bats/helpers/cluster-kind.sh"
 # shellcheck source=testing/tools/lib/e2e-reset-deploy.sh
 source "$REPO/testing/tools/lib/e2e-reset-deploy.sh"
 ensure_go_path
@@ -62,7 +64,7 @@ NO_RESET=0
 
 usage() {
   # Comment header only (through the blank line before set -euo).
-  sed -n '2,33p' "$0"
+  sed -n '2,35p' "$0"
   echo "Flags: --skip-build --skip-load --no-reset -h"
 }
 
@@ -88,30 +90,21 @@ need() {
 }
 
 need kubectl
-if [[ "$SKIP_BUILD" -eq 0 ]]; then
+if [[ "$SKIP_BUILD" -eq 0 ]] || [[ "$SKIP_LOAD" -eq 0 ]]; then
   need docker
-fi
-if [[ "$SKIP_LOAD" -eq 0 ]] || [[ "$SKIP_BUILD" -eq 0 ]]; then
-  require_minikube
+  require_kind
 fi
 
-ensure_minikube_ready
+ensure_kind_ready
 
-echo "==> Monarch E2E reset (minikube profile=${MINIKUBE_PROFILE}, driver=${MINIKUBE_DRIVER}, cni=${MINIKUBE_CNI:-flannel})"
+echo "==> Monarch E2E reset (kind cluster=${KIND_CLUSTER}, context=${KIND_CONTEXT})"
 echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG shop=$SHOP_IMG igris=$IGRIS_IMG kaisel=$KAISEL_IMG"
 if [[ "$SKIP_BUILD" -eq 1 ]]; then
-  echo "WARN: --skip-build reuses existing minikube docker images; code changes are NOT included until you rebuild"
+  echo "WARN: --skip-build reuses existing host docker images; code changes are NOT included until you rebuild"
 fi
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
-  use_minikube_docker_env
-  if [[ "${MINIKUBE_DRIVER:-}" != none ]]; then
-    trap 'unload_minikube_docker_env' EXIT
-  fi
-fi
-
-if [[ "$SKIP_BUILD" -eq 0 ]]; then
-  echo "==> Build container images (minikube docker daemon)"
+  echo "==> Build container images (host docker daemon)"
   if [[ "${MONARCH_NO_CACHE:-0}" == "1" ]]; then
     docker build --no-cache -f "$REPO/pipeline/monarch/Dockerfile" -t "$MONARCH_IMG" "$REPO/pipeline"
   else
@@ -125,18 +118,14 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   make the-system-docker-build THE_SYSTEM_IMG="$THE_SYSTEM_IMG"
 fi
 
-if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
-  echo "==> Sync local images into containerd (none driver)"
-  load_minikube_images "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$KAISEL_IMG" "$TUSK_IMG" "$THE_SYSTEM_IMG"
+if [[ "$SKIP_LOAD" -eq 0 ]]; then
+  echo "==> kind load docker-image into cluster ${KIND_CLUSTER}"
+  for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$KAISEL_IMG" "$TUSK_IMG" "$THE_SYSTEM_IMG"; do
+    load_kind_image "$img"
+  done
 fi
 
-if [[ "${MINIKUBE_DRIVER:-}" == none ]]; then
-  export E2E_IMAGE_REBUILD_HINT="After Monarch code fixes: make -C pipeline/monarch docker-build IMG=${MONARCH_IMG} && load_minikube_images ${MONARCH_IMG} && kubectl rollout restart deployment/monarch-controller-manager -n monarch-system"
-else
-  export E2E_IMAGE_REBUILD_HINT="After Monarch code fixes: eval \$(minikube docker-env) && make -C pipeline/monarch docker-build IMG=${MONARCH_IMG} && kubectl rollout restart deployment/monarch-controller-manager -n monarch-system"
-fi
-
-node_ip=$(minikube ip -p "${MINIKUBE_PROFILE}" 2>/dev/null || echo '<minikube ip>')
-export E2E_HOST_PG_ADDR="${node_ip}:30432"
+export E2E_HOST_PG_ADDR=localhost:15432
+export E2E_IMAGE_REBUILD_HINT="After Monarch code fixes: make -C pipeline/monarch docker-build IMG=${MONARCH_IMG} && kind load docker-image ${MONARCH_IMG} --name ${KIND_CLUSTER} && kubectl rollout restart deployment/monarch-controller-manager -n monarch-system"
 
 e2e_reset_deploy_stack

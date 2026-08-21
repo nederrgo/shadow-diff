@@ -38,10 +38,11 @@ bats_platform_with_flock() {
 
 platform_health_matrix() {
   local ok=1
+  local cluster="${E2E_CLUSTER:-minikube}"
   bats_source_e2e_helpers
   bats_source_cluster_helpers
 
-  bats_minikube_running || { echo "health: minikube not running" >&2; ok=0; }
+  bats_cluster_running || { echo "health: ${cluster} not running" >&2; ok=0; }
   kubectl cluster-info >/dev/null 2>&1 || { echo "health: kubectl cluster unreachable" >&2; ok=0; }
   kubectl get crd shadowtests.engine.shadow-diff.io >/dev/null 2>&1 || { echo "health: ShadowTest CRD missing" >&2; ok=0; }
   kubectl get deploy monarch-controller-manager -n monarch-system >/dev/null 2>&1 || { echo "health: Monarch deploy missing" >&2; ok=0; }
@@ -69,7 +70,7 @@ platform_bootstrap_install() {
   bats_source_e2e_helpers
   bats_source_cluster_helpers
 
-  bats_ensure_minikube
+  bats_ensure_cluster || return 1
 
   if [[ "${SKIP_PLATFORM_BOOTSTRAP:-0}" == "1" ]]; then
     platform_health_matrix || return 1
@@ -163,11 +164,9 @@ build_test_images_if_needed() {
 
   bats_source_e2e_helpers
   bats_source_cluster_helpers
-  if [[ "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
-    use_minikube_docker_env
-  fi
+  e2e_prepare_docker_build
   require_docker || {
-    echo "HINT: if images are already in minikube docker, rerun with SKIP_BUILD=1 SKIP_LOAD=1" >&2
+    echo "HINT: if images are already loaded, rerun with SKIP_BUILD=1 SKIP_LOAD=1" >&2
     return 1
   }
 
@@ -193,10 +192,8 @@ load_test_images_if_needed() {
   [[ "${SKIP_LOAD:-0}" == "1" ]] && return 0
   bats_source_e2e_helpers
   bats_source_cluster_helpers
-  if [[ "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
-    use_minikube_docker_env
-  fi
-  echo "==> [bats] ensure images present in cluster docker"
+  e2e_prepare_docker_build
+  echo "==> [bats] ensure images present in cluster"
   local img
   for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$SHADOW_SOLDIER_IMG" "$TUSK_IMG" "$IGRIS_IMG" "${KAISEL_IMG:-kaisel:dev}" \
     "$IGRIS_RABBITMQ_IMG" "$EGRESS_RELAY_RABBITMQ_IMG" "$PYTHON_TEST_WORKER_IMG" \
@@ -208,6 +205,12 @@ load_test_images_if_needed() {
     echo "    pulling ${img}"
     docker pull "$img" || {
       echo "FAIL: could not load or pull ${img}" >&2
+      return 1
+    }
+    # Kind: pull lands on the host daemon; load into the node. Minikube VM: docker-env
+    # already targets the cluster daemon after e2e_prepare_docker_build.
+    e2e_load_image "$img" || {
+      echo "FAIL: ${img} pulled but not available in cluster" >&2
       return 1
     }
   done

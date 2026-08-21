@@ -1,0 +1,20 @@
+# Kind cluster config for local E2E (Phase 1 smoke + Phase 2a platform path).
+# Create with: kind create cluster --name shadow-diff --config testing/bats/kind/config.yaml
+#
+# hostPort 18080 → node containerPort 30080 matches the prod Service nodePort in
+# testing/bats/fixtures/e2e/kaisel-kind-smoke/prod-target.yaml.
+# hostPort 15432 → node containerPort 30432 matches postgres NodePort in
+# testing/bats/manifests/postgres/service.yaml (host Go conformance DSN).
+# If this cluster was created without these mappings, delete and recreate:
+#   kind delete cluster --name shadow-diff
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 18080
+        protocol: TCP
+      - containerPort: 30432
+        hostPort: 15432
+        protocol: TCP

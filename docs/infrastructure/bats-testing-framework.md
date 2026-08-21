@@ -44,6 +44,8 @@ testing/tools/            # standalone developer utilities (not called by bats)
   e2e-reset-minikube.sh   # bootstrap a local minikube cluster from scratch
 ```
 
+Local E2E remains Minikube today. Kind Kaisel smoke (`make test-bats-kaisel-kind`, `E2E_CLUSTER=kind`) proves AF_PACKET capture on Kind before a full switch; see [/infrastructure/minikube-to-kind-migration.md](/infrastructure/minikube-to-kind-migration.md). Default bats cluster is still Minikube.
+
 ## Platform bootstrap (`lib/platform.bash`)
 
 `ensure_platform_ready()` is idempotent and flock-guarded (`.cache/shadow-diff-bats/platform.lock`):

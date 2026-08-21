@@ -418,6 +418,8 @@ sudo make test-integration   # real BPF + netns lab, needs root
 ./testing/tools/e2e-reset-minikube.sh
 ```
 
+Deep Kaisel capture E2E (`make test-bats-kaisel`) runs on Minikube. Kind smoke gate (`make test-bats-kaisel-kind`, three traffic paths): [/infrastructure/minikube-to-kind-migration.md](/infrastructure/minikube-to-kind-migration.md).
+
 ## 9. Cleanup (optional)
 
 ```bash

@@ -27,9 +27,10 @@ KAISEL_EGRESS_EXTERNAL_HOST="httpbin.org"
 #   SKIP_BUILD=1   skip docker build (images must already exist in cluster)
 #   SKIP_LOAD=1    skip image load (images must already be in cluster registry)
 kaisel_setup_platform() {
+  bats_init_env
   bats_source_e2e_helpers
   bats_source_cluster_helpers
-  bats_init_env
+  bats_ensure_cluster || return 1
 
   if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
     echo "==> [kaisel] build images (monarch/kaisel/igris/beru/shop)"
@@ -43,11 +44,11 @@ kaisel_setup_platform() {
   fi
 
   if [[ "${SKIP_LOAD:-0}" != "1" ]]; then
-    echo "==> [kaisel] ensure images present in cluster docker"
-    # Builds above already target minikube docker when MINIKUBE_DRIVER != none.
+    echo "==> [kaisel] ensure images present in cluster"
+    # Minikube VM drivers: builds target minikube docker. Kind / none: host docker + load.
     # Fail hard if a :dev image is missing — do not docker-pull (no registry) or
     # swallow errors (that produced silent ErrImagePull on beru-local).
-    if [[ "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
+    if [[ "${E2E_CLUSTER:-minikube}" != kind && "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
       use_minikube_docker_env
     fi
     if ! docker image inspect nginx:alpine >/dev/null 2>&1; then
@@ -56,7 +57,7 @@ kaisel_setup_platform() {
     for img in "${MONARCH_IMG}" "${KAISEL_IMG}" "${BERU_IMG}" "${SHOP_IMG}" \
       "${IGRIS_IMG}" "${EGRESS_TEST_IMG}" nginx:alpine; do
       e2e_load_image "${img}" || {
-        echo "FAIL: ${img} missing in minikube docker" >&2
+        echo "FAIL: ${img} missing in cluster (E2E_CLUSTER=${E2E_CLUSTER:-minikube})" >&2
         return 1
       }
     done
@@ -67,9 +68,19 @@ kaisel_setup_platform() {
 
   echo "==> [kaisel] deploy Monarch operator (${MONARCH_IMG})"
   make -C "${REPO}/pipeline/monarch" deploy IMG="${MONARCH_IMG}"
+
+  echo "==> [kaisel] secret-source RoleBinding (credentialsSecretRef in default)"
+  kubectl apply -f "${REPO}/testing/bats/manifests/monarch-secret-source-rbac.yaml"
+
+  echo "==> [kaisel] PostgreSQL fixture (BERU_DB_SECRET)"
+  kubectl apply -f "${REPO}/testing/bats/manifests/postgres/deployment.yaml"
+  kubectl apply -f "${REPO}/testing/bats/manifests/postgres/service.yaml"
+  kubectl rollout status deployment/postgres -n monarch-system --timeout=180s
+
   # Env overrides keep bare local :dev tags (ghcr defaults apply when unset).
   kubectl set env deployment/monarch-controller-manager -n monarch-system \
     MONARCH_MODE=dev \
+    BERU_DB_SECRET=monarch-system/beru-postgres \
     BERU_IMAGE="${BERU_IMG:-beru:dev}" \
     SHOP_IMAGE="${SHOP_IMG:-shop:dev}" \
     IGRIS_HTTP_IMAGE="${IGRIS_IMG:-igris-http:dev}" \
