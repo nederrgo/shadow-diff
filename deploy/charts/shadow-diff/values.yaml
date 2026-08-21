@@ -46,7 +46,8 @@ monarch:
   # namespace/secret consumed by Monarch and replicated into each shadow namespace.
   # Empty → "<release-namespace>/<postgres.existingSecret or created secret>"
   beruDbSecret: ""
-  # Namespaces where the manager may Get storage.credentialsSecretRef.
+  # Namespaces where the manager may Get storage.credentialsSecretRef and
+  # AMQP inputs[].amqp.credentialsSecretRef.
   # ShadowTests in other namespaces fail secret sync. Listed namespaces must exist.
   secretSourceNamespaces:
     - default

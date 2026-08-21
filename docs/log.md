@@ -9,8 +9,16 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-08-20]
+### Added
+* 'pipeline/beru H2': WAL append on accept path; 202 means local Bbolt durable
+* 'pipeline/beru/internal/v2/diff': H1 baseline A↔B uses signature-bucket counts; docs + audit checkbox
+* 'docs/data-plane/beru-bug-audit.md': Beru correctness audit from local service review — H1 baseline signature buckets, H2 WAL-on-accept, M1 ingest idempotency, M2 projection hard-fail; checkbox tracker
+* 'testing/bats/helpers/cluster-minikube.sh': Bump VM-driver minikube start to --memory=8192 --cpus=4
+
 ## [2026-08-18]
 ### Added
+* 'pipeline/monarch + docs': AMQP prodUrl host-only; broker creds from credentialsSecretRef
 * 'pipeline/monarch + docs': Narrow manager Secret read to BERU_DB_SECRET Role + secretSourceNamespaces
 
 ## [2026-08-17]

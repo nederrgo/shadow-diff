@@ -39,6 +39,9 @@ export function buildShadowTestDoc(form: ShadowTestFormState): Record<string, un
   if (inp.driver === 'rabbitmq_message') {
     const amqp: Record<string, unknown> = {
       prodUrl: inp.prodUrl.trim(),
+      credentialsSecretRef: {
+        name: inp.amqpSecret.trim(),
+      },
       exchange: inp.exchange.trim(),
       routingKey: inp.routingKey.trim() || '#',
       targetDependency: inp.targetDependency.trim(),

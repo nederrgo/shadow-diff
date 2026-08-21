@@ -133,7 +133,10 @@ func (s *Server) ingestResponseBody(state *streamState, body *extprocv3.HttpBody
 			state.traceID, state.role, state.shadowTestName, state.method, state.path,
 			meta, data, state.contentType,
 		); err == nil {
-			s.Router.Route(raw)
+			if err := s.Router.Route(raw); err != nil && s.Log != nil {
+				s.Log.Error("WAL append failed on ingress accept",
+					"trace_id", state.traceID, "role", state.role, "err", err)
+			}
 		}
 	}
 }

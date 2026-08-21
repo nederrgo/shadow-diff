@@ -200,28 +200,20 @@ func verifyBaseline(grouped protoMap, chronological map[string]map[string][]stor
 		}
 	}
 
-	// Per-protocol egress sequence count + ordered signatures.
+	// Per-signature egress counts (same buckets as candidate compare; order ignored).
 	for _, protocol := range sortedKeys(grouped) {
-		byRole := chronological[protocol]
-		aSeq := egressSequence(byRole[roleControlA])
-		bSeq := egressSequence(byRole[roleControlB])
-		if len(aSeq) != len(bSeq) {
-			return &storage.BaselineFailure{
-				Reason:   "egress_count_mismatch",
-				Protocol: protocol,
-				Detail:   fmt.Sprintf("egress count control-a=%d control-b=%d", len(aSeq), len(bSeq)),
-				ControlA: fmt.Sprintf("%d", len(aSeq)),
-				ControlB: fmt.Sprintf("%d", len(bSeq)),
-			}
-		}
-		for i := range aSeq {
-			if aSeq[i] != bSeq[i] {
+		aBuckets := grouped[protocol][roleControlA]
+		bBuckets := grouped[protocol][roleControlB]
+		for _, sig := range unionSignatures(aBuckets, bBuckets) {
+			nA := countEgress(aBuckets[sig])
+			nB := countEgress(bBuckets[sig])
+			if nA != nB {
 				return &storage.BaselineFailure{
-					Reason:   "egress_signature_mismatch",
+					Reason:   "egress_count_mismatch",
 					Protocol: protocol,
-					Detail:   fmt.Sprintf("signature sequence diverges at index=%d", i),
-					ControlA: aSeq[i],
-					ControlB: bSeq[i],
+					Detail:   fmt.Sprintf("signature=%s egress count control-a=%d control-b=%d", sig, nA, nB),
+					ControlA: fmt.Sprintf("%d", nA),
+					ControlB: fmt.Sprintf("%d", nB),
 				}
 			}
 		}
@@ -250,15 +242,14 @@ func effectiveDirection(r storage.RawReport) storage.PayloadDirection {
 	return storage.DirectionEgress
 }
 
-func egressSequence(reports []storage.RawReport) []string {
-	var out []string
+func countEgress(reports []storage.RawReport) int {
+	n := 0
 	for _, r := range reports {
-		if effectiveDirection(r) == storage.DirectionIngress {
-			continue
+		if effectiveDirection(r) == storage.DirectionEgress {
+			n++
 		}
-		out = append(out, r.Signature)
 	}
-	return out
+	return n
 }
 
 func compareIngressStatus(chronological map[string]map[string][]storage.RawReport, flagSet map[string]struct{}) []storage.VerdictStep {

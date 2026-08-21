@@ -45,22 +45,9 @@ func (r *wireRouteRecorder) ListStaleIncompleteTraces(_ context.Context, _ time.
 	return nil, nil
 }
 
-func waitWireReport(t *testing.T, rec *wireRouteRecorder) *v2storage.RawReport {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if got := rec.last.Load(); got != nil {
-			return got
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("expected routed report")
-	return nil
-}
-
 func TestHandleWireIngest_http(t *testing.T) {
 	var rec wireRouteRecorder
-	router := v2engine.NewTraceRouter(1, &rec, nil)
+	router := v2engine.NewTraceRouter(&rec, nil)
 	s := &Server{Log: slog.Default(), Router: router}
 
 	body, _ := json.Marshal(v2report.NetworkEventEnvelope{
@@ -78,7 +65,10 @@ func TestHandleWireIngest_http(t *testing.T) {
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
-	got := waitWireReport(t, &rec)
+	got := rec.last.Load()
+	if got == nil {
+		t.Fatal("expected routed report before 202")
+	}
 	if got.Signature != "http:POST:/v1/charges" {
 		t.Fatalf("signature = %q", got.Signature)
 	}
@@ -86,7 +76,7 @@ func TestHandleWireIngest_http(t *testing.T) {
 
 func TestHandleWireIngest_mongodb(t *testing.T) {
 	var rec wireRouteRecorder
-	router := v2engine.NewTraceRouter(1, &rec, nil)
+	router := v2engine.NewTraceRouter(&rec, nil)
 	s := &Server{Log: slog.Default(), Router: router}
 
 	body, _ := json.Marshal(v2report.NetworkEventEnvelope{
@@ -102,7 +92,10 @@ func TestHandleWireIngest_mongodb(t *testing.T) {
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("status %d", rr.Code)
 	}
-	got := waitWireReport(t, &rec)
+	got := rec.last.Load()
+	if got == nil {
+		t.Fatal("expected routed report before 202")
+	}
 	if got.Signature != "mongodb:insert:orders" {
 		t.Fatalf("got %+v", got)
 	}

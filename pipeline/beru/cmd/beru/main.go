@@ -38,7 +38,7 @@ func main() {
 	}
 	defer store.Close()
 
-	router := v2engine.NewTraceRouter(8, store.Traces, store.Runs)
+	router := v2engine.NewTraceRouter(store.Traces, store.Runs)
 
 	defaultTest := store.Runs.DefaultShadowTestName()
 

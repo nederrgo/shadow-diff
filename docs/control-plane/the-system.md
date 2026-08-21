@@ -4,7 +4,7 @@ title: The System — Shadow-Diff Dashboard UI
 description: React SPA for live ShadowTest topology, ShadowDiff verdict inspection via Tusk, and interactive ShadowTest YAML authoring.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/the-system
 tags: [architecture, control-plane, the-system, ui, react, topology, websocket, diffs]
-timestamp: 2026-08-03T14:00:00Z
+timestamp: 2026-08-18T22:15:00Z
 ---
 
 # The System — Dashboard UI
@@ -79,7 +79,7 @@ On each `{type:verdict}` WebSocket frame the page refetches REST diffs so new tr
 
 ## ShadowTest editor
 
-Form fields map to CRD paths (`spec.storage.bucketName`, etc.), including required `spec.newImage`. Dependencies use collapsible Add menus; **input** is a single driver chooser (default / `http_request` / `rabbitmq_message`) with fields that swap underneath — at most one `spec.inputs` entry.
+Form fields map to CRD paths (`spec.storage.bucketName`, etc.), including required `spec.newImage`. Dependencies use collapsible Add menus; **input** is a single driver chooser (default / `http_request` / `rabbitmq_message`) with fields that swap underneath — at most one `spec.inputs` entry. RabbitMQ fields emit host-only `amqp.prodUrl` plus `amqp.credentialsSecretRef.name` (Secret keys `username` / `password` in the CR namespace).
 
 Menu options (dependency kinds and input drivers) come from the shared Go catalog [`pipeline/pkg/shadowspec`](https://github.com/shadow-diff/monarch/tree/main/pipeline/pkg/shadowspec). Monarch uses the same package for image/port defaults. Regenerate the UI module with:
 

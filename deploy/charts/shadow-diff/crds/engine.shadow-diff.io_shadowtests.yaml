@@ -338,6 +338,22 @@ spec:
                     amqp:
                       description: AMQP holds broker settings when driver is rabbitmq_message.
                       properties:
+                        credentialsSecretRef:
+                          description: |-
+                            CredentialsSecretRef names a Secret in the ShadowTest CR namespace with
+                            username and password keys. Required for rabbitmq_message.
+                          properties:
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                          type: object
+                          x-kubernetes-map-type: atomic
                         exchange:
                           description: Exchange is the production exchange to bind
                             the shadow queue to.
@@ -352,8 +368,9 @@ spec:
                           - headers
                           type: string
                         prodUrl:
-                          description: ProdURL is the production broker URL (e.g.
-                            amqp://prod-rabbitmq.default.svc:5672).
+                          description: |-
+                            ProdURL is the production broker location (amqp(s)://host[:port][/vhost]).
+                            Must not include userinfo; credentials come from credentialsSecretRef.
                           type: string
                         routingKey:
                           description: RoutingKey is the binding routing key (e.g.
@@ -364,6 +381,7 @@ spec:
                             entry (shadow brokers per role).
                           type: string
                       required:
+                      - credentialsSecretRef
                       - exchange
                       - prodUrl
                       - routingKey
@@ -407,7 +425,8 @@ spec:
               oldImage:
                 description: |-
                   OldImage is the container image for Control-A and Control-B pods.
-                  When unset, Monarch derives it from the target Deployment's current running image.
+                  When unset, Monarch pins it from the target Deployment on first reconcile
+                  and persists it on the CR. It is not overwritten on later reconciles.
                 type: string
               samplePercentage:
                 description: |-
@@ -432,7 +451,8 @@ spec:
               sessionID:
                 description: |-
                   SessionID pins the S3 session folder for replay (and optionally for record).
-                  When unset in record mode, Monarch mints status.currentSessionID.
+                  When unset in record mode, Monarch mints status.currentSessionID (and remints
+                  on each replay→record transition so capture does not append into the prior folder).
                 type: string
               shadowSoldier:
                 description: ShadowSoldier overrides the database egress capture sidecar
@@ -640,6 +660,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              currentReplayExecutionID:
+                description: |-
+                  CurrentReplayExecutionID scopes Postgres diffs for one replay run of CurrentSessionID.
+                  Minted when entering replay; injected as REPLAY_EXECUTION_ID on beru-local.
+                type: string
               currentSessionID:
                 description: CurrentSessionID is the active S3 session folder for
                   this ShadowTest.

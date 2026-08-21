@@ -96,7 +96,10 @@ func (s *Server) handleEgressDiff(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	s.Router.Route(rawReport)
+	if err := s.Router.Route(rawReport); err != nil {
+		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -133,7 +136,10 @@ func (s *Server) handleWireIngest(w http.ResponseWriter, r *http.Request) {
 	if rawReport.ShadowTestName == "" && s.DB != nil {
 		rawReport.ShadowTestName = s.DB.DefaultShadowTestName()
 	}
-	s.Router.Route(rawReport)
+	if err := s.Router.Route(rawReport); err != nil {
+		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -215,7 +221,7 @@ func (s *Server) handleSeedReports(w http.ResponseWriter, r *http.Request) {
 				sig = derived.Signature
 			}
 		}
-		s.Router.Route(&v2storage.RawReport{
+		if err := s.Router.Route(&v2storage.RawReport{
 			TraceID:        req.TraceID,
 			ShadowRole:     req.ShadowRole,
 			ShadowTestName: name,
@@ -225,7 +231,10 @@ func (s *Server) handleSeedReports(w http.ResponseWriter, r *http.Request) {
 			StatusCode:     req.StatusCode,
 			PayloadBytes:   append([]byte(nil), payload...),
 			CapturedAt:     captured.UTC(),
-		})
+		}); err != nil {
+			http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		accepted++
 	}
 

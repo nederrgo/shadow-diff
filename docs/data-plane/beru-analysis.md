@@ -4,7 +4,7 @@ title: Beru Trace Analysis Engine
 description: Single-trace correctness pipeline for Beru v2 — completeness timeout, baseline void guard, and compound candidate diffing with structured verdict details.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2
 tags: [data-plane, beru, diff, analysis, verdict, baseline]
-timestamp: 2026-08-02T06:40:00Z
+timestamp: 2026-08-20T20:35:00Z
 ---
 
 # Beru Trace Analysis Engine
@@ -33,8 +33,7 @@ While roles are incomplete and age is still within the timeout, no verdict row i
 ### Baseline checks (HTTP ingress + egress)
 
 1. HTTP ingress status codes: `control-a.StatusCode == control-b.StatusCode` (both `400` is a valid baseline).
-2. Per-protocol egress operation counts must match.
-3. Ordered egress signature sequences must match.
+2. Per-signature egress counts must match between `control-a` and `control-b` (same signature buckets as the candidate path). Cross-signature reorder is not a void reason. Payload diffs between controls are natural noise for candidate evaluation, not a baseline void.
 
 Status comparison runs **only** for HTTP ingress. Empty `status_code` on MongoDB/AMQP reports is ignored.
 

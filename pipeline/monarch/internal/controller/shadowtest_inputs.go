@@ -141,6 +141,12 @@ func validateInputs(st *enginev1alpha1.ShadowTest) error {
 			if strings.TrimSpace(a.ProdURL) == "" {
 				return fmt.Errorf("amqp.prodUrl is required")
 			}
+			if _, err := parseHostOnlyAMQPURL(a.ProdURL); err != nil {
+				return err
+			}
+			if _, err := amqpCredentialsSecretName(a); err != nil {
+				return err
+			}
 			if strings.TrimSpace(a.Exchange) == "" {
 				return fmt.Errorf("amqp.exchange is required")
 			}

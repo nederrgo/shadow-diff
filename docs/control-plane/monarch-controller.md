@@ -4,7 +4,7 @@ title: Monarch Controller — Envoy-Only Shadow Injection
 description: Reconcile contract for record/replay ShadowTests; status/topology surface; S3 env; replay trigger; S3 prefix finalizer.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch
 tags: [architecture, control-plane, monarch, envoy, shop, beru, record-replay, status, topology]
-timestamp: 2026-08-18T18:40:00Z
+timestamp: 2026-08-18T22:15:00Z
 ---
 
 # Monarch Controller — Envoy-Only Shadow Injection
@@ -47,9 +47,13 @@ On create, Monarch labels the namespace with `shadow-diff.io/shadowtest-uid=<Sha
 
 Immediately after the namespace exists, Monarch reconciles `RoleBinding/monarch-shadow-workload` in that namespace, binding the manager ServiceAccount to ClusterRole `shadow-workload-role`. Kubernetes privilege-escalation prevention requires the creator to already hold the granted verbs **or** have `bind` on that ClusterRole; `manager-role` therefore includes `bind` on `resourceNames: [monarch-shadow-workload-role]` only. Workload mutations (`ConfigMap`/`Secret`/`Service`/`Deployment`) are authorized only through that binding, so the manager's cluster-wide RBAC stays read-only on prod namespaces.
 
-Secret **reads** are not cluster-wide. The manager cache disables Secrets; `Get` hits the API server. `BERU_DB_SECRET` is authorized by a namespaced Role (`resourceNames` on that Secret). `storage.credentialsSecretRef` requires an install-time RoleBinding of ClusterRole `secret-source-reader` (`get` only) in the ShadowTest CR namespace — Helm `monarch.secretSourceNamespaces` (default `default`), or the e2e manifest `testing/bats/manifests/monarch-secret-source-rbac.yaml`. A CR in an unbound namespace fails at secret sync.
+Secret **reads** are not cluster-wide. The manager cache disables Secrets; `Get` hits the API server. `BERU_DB_SECRET` is authorized by a namespaced Role (`resourceNames` on that Secret). `storage.credentialsSecretRef` and AMQP `inputs[].amqp.credentialsSecretRef` require an install-time RoleBinding of ClusterRole `secret-source-reader` (`get` only) in the ShadowTest CR namespace — Helm `monarch.secretSourceNamespaces` (default `default`), or the e2e manifest `testing/bats/manifests/monarch-secret-source-rbac.yaml`. A CR in an unbound namespace fails at secret sync. S3 Secrets are copied into the shadow namespace; AMQP broker Secrets are not.
 
 `ValidatingAdmissionPolicy/namespace-guard` (deployed with Monarch) denies the manager ServiceAccount from creating or deleting any `Namespace` whose name does not start with `shadow-`, and from creating/updating/deleting `RoleBinding` objects outside `shadow-*` namespaces. Native Kubernetes RBAC cannot express name-prefix rules on cluster-scoped `Namespace` objects; admission policy closes that gap. The controller does not create Secret-source RoleBindings; those stay install-time so a stolen SA cannot bind `secret-source-reader` into `kube-system`.
+
+## AMQP ingress
+
+`rabbitmq_message` inputs take a host-only `prodUrl` (`amqp(s)://host[:port][/vhost]`, no userinfo) plus `credentialsSecretRef` naming a Secret in the CR namespace with `username` and `password`. Monarch resolves the dial DSN at reconcile time for prod queue declare / bind / delete and for igris-rabbitmq `PROD_URL` (plain env `Value`). Userinfo in `prodUrl` fails validation.
 
 ## Kaisel capture targets
 
@@ -105,6 +109,7 @@ Shop Deployment env includes `BERU_HTTP_URL` (same host resolution as egress-rel
 - `spec.mode` — `record` \| `replay` (default `record`)
 - `spec.sessionID` — pin S3 session folder (required resolvable on replay)
 - `spec.storage` — **required** BYOB S3 config (`type`, `bucketName`, `endpoint`, `region`, `credentialsSecretRef`, `retentionPolicy`)
+- `inputs[].amqp.prodUrl` — host-only `amqp(s)://host[:port][/vhost]`; `inputs[].amqp.credentialsSecretRef` names the broker Secret (`username` / `password`) in the CR namespace
 
 ## Spike Guard (ingress load shedding)
 

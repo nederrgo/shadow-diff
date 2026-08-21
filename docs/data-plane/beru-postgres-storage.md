@@ -4,7 +4,7 @@ title: Beru Storage Backends
 description: Beru's Postgres-only persistence behind RunStore and TraceRepository, the Bbolt disk WAL with claimed parallel flushers, advisory-locked evaluate, and 3-retry dead-lettering.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/storage
 tags: [data-plane, beru, storage, postgres, wal, persistence, networking]
-timestamp: 2026-08-18T18:40:00Z
+timestamp: 2026-08-20T20:45:00Z
 ---
 
 # Beru Storage Backends
@@ -20,7 +20,7 @@ PostgreSQL is the sole database engine. Missing `DB_HOST` / `DB_USER` / `DB_NAME
 
 ## Ingest path and disk WAL
 
-HTTP/gRPC ingest hits `TraceRouter`, which only calls `AppendReport`. That appends a record to a Bbolt WAL at `/data/beru_wal.db` (`BERU_WAL_PATH` override) and returns immediately — handlers never wait on Postgres.
+HTTP/gRPC ingest hits `TraceRouter.Route`, which calls `AppendReport` on the accept goroutine. That appends a record to a Bbolt WAL at `/data/beru_wal.db` (`BERU_WAL_PATH` override) before the handler returns success (**202** / gRPC OK). Handlers wait on the local WAL, never on Postgres; WAL append failure returns **503** / `Unavailable` (ext_proc still CONTINUE and logs). Postgres flush stays async via WAL kick.
 
 A single-threaded dispatcher owns an `inFlightTraces` map:
 

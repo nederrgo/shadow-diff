@@ -4,7 +4,7 @@ title: ShadowTest Teardown Edge Cases — Queue Leak vs Stuck CR
 description: Why prod AMQP queue delete skips on broker unreachable (with x-expires fail-safe) while S3 prefix delete retries under the finalizer; how Failed autopsy differs from delete.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller
 tags: [adr, control-plane, monarch, rabbitmq, s3, lifecycle, teardown, finalizer]
-timestamp: 2026-07-30T17:20:00Z
+timestamp: 2026-08-18T22:15:00Z
 ---
 
 # ShadowTest Teardown Edge Cases — Queue Leak vs Stuck CR
@@ -24,7 +24,7 @@ Boot failure (`markBootFailed`) also tears down runtime (queue, KaiselRule, shad
 
 ### Prod AMQP queue delete — fail open on unreachable broker
 
-[`deleteProdShadowQueue`](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_rabbitmq.go) dials `inputs[].amqp.prodUrl`. If the broker is **unreachable**, Monarch **logs and skips** queue delete (returns success) so:
+[`deleteProdShadowQueue`](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch/internal/controller/shadowtest_rabbitmq.go) dials the resolved production DSN (`prodUrl` host plus `credentialsSecretRef` username/password). If the broker is **unreachable**, Monarch **logs and skips** queue delete (returns success) so:
 
 - `kubectl delete` can finish (finalizers clear after NS + optional S3).
 - Sticky `Failed` cleanup can finish tearing down the shadow namespace.

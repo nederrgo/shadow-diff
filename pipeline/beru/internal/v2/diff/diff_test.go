@@ -87,6 +87,64 @@ func TestEvaluateTraceHistory_outOfOrderProtocols_match(t *testing.T) {
 	}
 }
 
+func TestEvaluateTraceHistory_controlReorderAcrossSignatures_match(t *testing.T) {
+	// A: mongo then rabbit; B: rabbit then mongo — same per-sig counts; not a void.
+	t0 := time.Date(2026, 6, 25, 10, 5, 0, 0, time.UTC)
+	t1 := t0.Add(time.Second)
+	mongoPayload := []byte(`{"q":1}`)
+	rabbitPayload := []byte(`{"id":1}`)
+
+	history := []storage.RawReport{
+		mongoReport("control-a", "mongodb:find:orders", mongoPayload, t0),
+		rabbitmqReport("control-a", "rabbitmq:publish:order.created", rabbitPayload, t1),
+		rabbitmqReport("control-b", "rabbitmq:publish:order.created", rabbitPayload, t0),
+		mongoReport("control-b", "mongodb:find:orders", mongoPayload, t1),
+		mongoReport("candidate", "mongodb:find:orders", mongoPayload, t0),
+		rabbitmqReport("candidate", "rabbitmq:publish:order.created", rabbitPayload, t1),
+	}
+
+	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
+	if verdict == nil || verdict.Status != storage.StatusMatch {
+		t.Fatalf("status = %v, want MATCH", verdict)
+	}
+}
+
+func TestEvaluateTraceHistory_controlMissingSignatureVoidsBaseline(t *testing.T) {
+	t0 := time.Date(2026, 6, 25, 10, 10, 0, 0, time.UTC)
+	history := []storage.RawReport{
+		mongoReport("control-a", "mongodb:find:orders", []byte(`{"q":1}`), t0),
+		rabbitmqReport("control-a", "rabbitmq:publish:order.created", []byte(`{"id":1}`), t0),
+		mongoReport("control-b", "mongodb:find:orders", []byte(`{"q":1}`), t0),
+		mongoReport("candidate", "mongodb:find:orders", []byte(`{"q":1}`), t0),
+		rabbitmqReport("candidate", "rabbitmq:publish:order.created", []byte(`{"id":1}`), t0),
+	}
+
+	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
+	if verdict == nil || verdict.Status != storage.StatusVoidedBaselineDivergence {
+		t.Fatalf("status = %v, want VOIDED_BASELINE_DIVERGENCE", verdict)
+	}
+	details := parseDetails(t, verdict.SummaryDetails)
+	if details.Baseline == nil || details.Baseline.Reason != "egress_count_mismatch" {
+		t.Fatalf("baseline = %+v, want egress_count_mismatch", details.Baseline)
+	}
+}
+
+func TestEvaluateTraceHistory_controlPayloadNoiseNotVoid(t *testing.T) {
+	// A/B same signature counts but different payloads; C matches A → MATCH (noise, not void).
+	t0 := time.Date(2026, 6, 25, 10, 15, 0, 0, time.UTC)
+	sig := "mongodb:insert:orders"
+	history := triple(
+		mongoReport("control-a", sig, []byte(`{"v":1}`), t0),
+		mongoReport("control-b", sig, []byte(`{"v":99}`), t0),
+		mongoReport("candidate", sig, []byte(`{"v":1}`), t0),
+	)
+
+	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
+	if verdict == nil || verdict.Status != storage.StatusMatch {
+		t.Fatalf("status = %v, want MATCH", verdict)
+	}
+}
+
 func TestEvaluateTraceHistory_countRegression(t *testing.T) {
 	t0 := time.Date(2026, 6, 25, 11, 0, 0, 0, time.UTC)
 	sig := "rabbitmq:publish:order.created"
@@ -257,6 +315,10 @@ func TestEvaluateTraceHistory_controlCountMismatchVoidsBaseline(t *testing.T) {
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
 	if verdict == nil || verdict.Status != storage.StatusVoidedBaselineDivergence {
 		t.Fatalf("status = %v, want VOIDED_BASELINE_DIVERGENCE", verdict)
+	}
+	details := parseDetails(t, verdict.SummaryDetails)
+	if details.Baseline == nil || details.Baseline.Reason != "egress_count_mismatch" {
+		t.Fatalf("baseline = %+v, want egress_count_mismatch", details.Baseline)
 	}
 }
 

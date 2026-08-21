@@ -705,9 +705,9 @@ ensure_minikube_ready() {
     elif [[ "$driver" == kvm2 ]]; then
       _ensure_kvm2_libvirt_group
       _ensure_libvirtd_running
-      echo "==> Start Minikube (${MINIKUBE_PROFILE}, driver=${driver}, memory=4096, cpus=2, cni=${cni})"
+      echo "==> Start Minikube (${MINIKUBE_PROFILE}, driver=${driver}, memory=8192, cpus=4, cni=${cni})"
     else
-      echo "==> Start Minikube (${MINIKUBE_PROFILE}, driver=${driver}, memory=4096, cpus=2, cni=${cni})"
+      echo "==> Start Minikube (${MINIKUBE_PROFILE}, driver=${driver}, memory=8192, cpus=4, cni=${cni})"
     fi
     local -a start_args=(start --driver="$driver" --cni="$cni")
     if [[ "$driver" == none ]]; then
@@ -720,7 +720,7 @@ ensure_minikube_ready() {
           start_args+=(--extra-config=kubelet.fail-swap-on=false)
       fi
     else
-      start_args+=(--memory=4096 --cpus=2)
+      start_args+=(--memory=8192 --cpus=4)
     fi
     local err
     if ! err=$(_minikube_start "$driver" "${start_args[@]}" 2>&1); then

@@ -5,7 +5,7 @@ title: Monarch Operator Bug and Security Audit
 description: Consolidated correctness and security findings for pipeline/monarch from full-codebase review (2026-08-11). Severity-ranked; evidence paths point at controller and RBAC sources. Checklist tracks remediation.
 resource: [https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch](https://github.com/shadow-diff/monarch/tree/main/pipeline/monarch)
 tags: [audit, bugs, security, control-plane, monarch, kaisel, rabbitmq, rbac, secrets]
-timestamp: 2026-08-18T18:40:00Z
+timestamp: 2026-08-18T22:15:00Z
 
 # Monarch Operator Bug and Security Audit
 
@@ -39,7 +39,7 @@ Related specs: [/control-plane/monarch-controller.md](/control-plane/monarch-con
 - [ ] **H3** — Status gRPC auth + TLS
 - [ ] **H4** — Per-test Beru DB creds
 - [x] **H5** — Narrow Secret RBAC (writes shadow-only; reads BERU_DB_SECRET Role + secretSourceNamespaces)
-- [ ] **H6** — Prod AMQP allowlist / Secret creds
+- [ ] **H6** — Prod AMQP allowlist / Secret creds *(partial: creds out of the CR)*
 - [ ] **H7** — Image allowlist + PSS / securityContext
 - [ ] **H8** — Sanitize `beruGRPCTimeout`
 - [ ] **H9** — Gate `targetNamespace`
@@ -197,7 +197,7 @@ Metrics are auth-filtered; `:9090` is not. Empty filter streams every ShadowTest
 1. **No Secret informer** — `ctrl.Options.Client.Cache.DisableFor` Secrets so the manager does not `list`/`watch` Secrets cluster-wide.
 2. **`manager-role` has no Secret verbs** — cluster-wide read is ConfigMaps/Services/Pods only.
 3. **`BERU_DB_SECRET`** — namespaced Role `get` with `resourceNames` (Kustomize: `beru-postgres` in `monarch-system`; Helm: parsed from `monarch.beruDbSecret`).
-4. **`credentialsSecretRef`** — ClusterRole `secret-source-reader` (`get` only) bound at install time into listed CR namespaces. Helm `monarch.secretSourceNamespaces` (default `default`). E2E applies `testing/bats/manifests/monarch-secret-source-rbac.yaml`. The manager SA does not `bind` this ClusterRole, so `namespace-guard` stays closed.
+4. **`credentialsSecretRef`** — ClusterRole `secret-source-reader` (`get` only) bound at install time into listed CR namespaces, covering S3 `storage.credentialsSecretRef` and AMQP `inputs[].amqp.credentialsSecretRef`. Helm `monarch.secretSourceNamespaces` (default `default`). E2E applies `testing/bats/manifests/monarch-secret-source-rbac.yaml`. The manager SA does not `bind` this ClusterRole, so `namespace-guard` stays closed.
 
 Remaining blast radius: `get` any Secret **name** in a listed CR namespace; H4 (shared Beru DSN copied into every shadow NS) is unchanged.
 
@@ -207,14 +207,16 @@ Remaining blast radius: `get` any Secret **name** in a listed CR namespace; H4 (
 
 ### H6. Prod AMQP: CR-controlled dial, bind, and credential exposure
 
-- [ ] Open
+- [ ] Partial (creds out of the CR; remaining allowlist / igris `secretKeyRef` / Event redaction)
 
 **Class:** security  
-**Evidence:** `shadowtest_rabbitmq.go`; `shadowtest_igris_rabbitmq.go` (`PROD_URL`); `api/v1alpha1/shadowtest_types.go` (`AMQPInputSpec.ProdURL`)
+**Evidence:** `shadowtest_rabbitmq.go`; `shadowtest_igris_rabbitmq.go` (`PROD_URL`); `api/v1alpha1/shadowtest_types.go` (`AMQPInputSpec`)
 
-ShadowTest author supplies `prodUrl` (often with embedded creds), exchange, and routing key (e.g. `#`). Controller dials that URL (SSRF), declares/binds a shadow queue (prod message siphon). URL lands in etcd and pod env.
+**Original bug:** ShadowTest author supplied `prodUrl` with embedded creds, plus exchange and routing key (e.g. `#`). Controller dialed that URL (SSRF), declared/bound a shadow queue, and stored the DSN in etcd and igris-rabbitmq `PROD_URL`.
 
-**Fix direction:** Allowlisted broker hosts; broker creds via Secret; admission policy on AMQP fields; redact URLs in status/events.
+**Shipped:** `prodUrl` is host-only (`amqp(s)://host[:port][/vhost]`; userinfo rejected). Broker `username`/`password` come from `credentialsSecretRef` in the CR namespace. `resolveProdAMQPURL` builds the dial DSN for declare/bind/delete and for igris `PROD_URL` as a reconcile-time env `Value`. The AMQP Secret is not copied into the shadow namespace (same `secret-source-reader` Get as S3).
+
+**Remaining:** host allowlist (`AMQP_ALLOWED_HOSTS` / dial SSRF); igris `secretKeyRef` instead of plaintext `PROD_URL` on the pod; Event redaction (M10).
 
 ---
 
@@ -556,7 +558,7 @@ Tiny collision risk under entropy failure.
 2. ~~**C2** — Kaisel selector / ownership resolution~~ **done**
 3. **H3** — Auth + TLS (or NP + TokenReview) on status gRPC
 4. ~~**H5** — Narrow Secret RBAC~~ **done** / **H4** — per-test DB creds
-5. **H6** — Secret for broker URL; allowlist hosts
+5. **H6** remaining — host allowlist; igris `secretKeyRef`; Event redaction (M10)
 6. **H7 / H8 / H11** — Image allowlist, PSS, timeout validation, baked iptables image
 7. **H9** — Admission on `targetNamespace`
 8. ~~**H1** — Sticky Failed recovery~~ **done** / **H10 / H12** — `SHADOW_MODE`, soldier port names

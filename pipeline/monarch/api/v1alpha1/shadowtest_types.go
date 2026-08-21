@@ -25,8 +25,13 @@ import (
 
 // AMQPInputSpec configures native RabbitMQ shadow ingress (Phase 5b).
 type AMQPInputSpec struct {
-	// ProdURL is the production broker URL (e.g. amqp://prod-rabbitmq.default.svc:5672).
+	// ProdURL is the production broker location (amqp(s)://host[:port][/vhost]).
+	// Must not include userinfo; credentials come from credentialsSecretRef.
 	ProdURL string `json:"prodUrl"`
+
+	// CredentialsSecretRef names a Secret in the ShadowTest CR namespace with
+	// username and password keys. Required for rabbitmq_message.
+	CredentialsSecretRef *corev1.LocalObjectReference `json:"credentialsSecretRef"`
 
 	// Exchange is the production exchange to bind the shadow queue to.
 	Exchange string `json:"exchange"`

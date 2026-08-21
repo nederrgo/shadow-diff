@@ -202,10 +202,11 @@ func TestRecordMode_AMQPBindAfterKaisel(t *testing.T) {
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{
 		Driver: "rabbitmq_message",
 		AMQP: &enginev1alpha1.AMQPInputSpec{
-			ProdURL:          "amqp://prod:5672",
-			Exchange:         "orders",
-			RoutingKey:       "k",
-			TargetDependency: "rabbitmq",
+			ProdURL:              "amqp://prod:5672",
+			Exchange:             "orders",
+			RoutingKey:           "k",
+			TargetDependency:     "rabbitmq",
+			CredentialsSecretRef: testAMQPCredentialsRef(),
 		},
 	}}
 	st.Spec.Dependencies = []enginev1alpha1.DependencySpec{{
@@ -219,7 +220,7 @@ func TestRecordMode_AMQPBindAfterKaisel(t *testing.T) {
 	var declareCalls, bindCalls int
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret()).
+		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret(), testAMQPCredentialsSecret(st.Namespace)).
 		WithStatusSubresource(&enginev1alpha1.ShadowTest{}, &enginev1alpha1.KaiselRule{}, &appsv1.Deployment{}).
 		Build()
 	rec := &ShadowTestReconciler{Client: c, Scheme: scheme}
@@ -275,13 +276,14 @@ func TestEnsureProdShadowQueue_DeclareThenBindHooks(t *testing.T) {
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{
 		Driver: "rabbitmq_message",
 		AMQP: &enginev1alpha1.AMQPInputSpec{
-			ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
-			TargetDependency: "rabbitmq",
+			ProdURL:              "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
+			TargetDependency:     "rabbitmq",
+			CredentialsSecretRef: testAMQPCredentialsRef(),
 		},
 	}}
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(st.DeepCopy()).
+		WithObjects(st.DeepCopy(), testAMQPCredentialsSecret(st.Namespace)).
 		WithStatusSubresource(&enginev1alpha1.ShadowTest{}).
 		Build()
 
@@ -314,10 +316,11 @@ func amqpRecordShadowTest(name string) *enginev1alpha1.ShadowTest {
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{
 		Driver: "rabbitmq_message",
 		AMQP: &enginev1alpha1.AMQPInputSpec{
-			ProdURL:          "amqp://prod:5672",
-			Exchange:         "orders",
-			RoutingKey:       "k",
-			TargetDependency: "rabbitmq",
+			ProdURL:              "amqp://prod:5672",
+			Exchange:             "orders",
+			RoutingKey:           "k",
+			TargetDependency:     "rabbitmq",
+			CredentialsSecretRef: testAMQPCredentialsRef(),
 		},
 	}}
 	st.Spec.Dependencies = []enginev1alpha1.DependencySpec{{
@@ -338,7 +341,7 @@ func TestRecordMode_QueueDeclareFail_MarkBootFailed(t *testing.T) {
 
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret()).
+		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret(), testAMQPCredentialsSecret(st.Namespace)).
 		WithStatusSubresource(&enginev1alpha1.ShadowTest{}, &enginev1alpha1.KaiselRule{}, &appsv1.Deployment{}).
 		Build()
 	rec := &ShadowTestReconciler{Client: c, Scheme: scheme}
@@ -388,7 +391,7 @@ func TestRecordMode_QueueBindFail_MarkBootFailed(t *testing.T) {
 
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret()).
+		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret(), testAMQPCredentialsSecret(st.Namespace)).
 		WithStatusSubresource(&enginev1alpha1.ShadowTest{}, &enginev1alpha1.KaiselRule{}, &appsv1.Deployment{}).
 		Build()
 	rec := &ShadowTestReconciler{Client: c, Scheme: scheme}

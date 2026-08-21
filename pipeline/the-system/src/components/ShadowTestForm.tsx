@@ -15,6 +15,7 @@ export type InputFormEntry = {
   driver: string
   port: string
   prodUrl: string
+  amqpSecret: string
   exchange: string
   exchangeType: string
   routingKey: string
@@ -47,6 +48,7 @@ const emptyInput = (): InputFormEntry => ({
   driver: '',
   port: '80',
   prodUrl: '',
+  amqpSecret: '',
   exchange: '',
   exchangeType: 'topic',
   routingKey: '#',
@@ -312,6 +314,14 @@ export function ShadowTestForm({ value, onChange }: Props) {
                 value={value.input.prodUrl}
                 placeholder="amqp://prod-rabbitmq.default.svc:5672"
                 onChange={(e) => patchInput({ prodUrl: e.target.value })}
+              />
+            </Field>
+            <Field label="Broker credentials Secret">
+              <input
+                className={fieldClass}
+                value={value.input.amqpSecret}
+                placeholder="rmq-prod-creds"
+                onChange={(e) => patchInput({ amqpSecret: e.target.value })}
               />
             </Field>
             <Field label="Exchange">

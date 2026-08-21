@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"hash/fnv"
 	"log"
 	"os"
 	"strconv"
@@ -20,34 +19,25 @@ const (
 )
 
 type TraceRouter struct {
-	workers []chan *v2storage.RawReport
 	repo    v2storage.TraceRepository
 	runs    storage.RunStore
 	timeout time.Duration
 	stop    chan struct{}
 }
 
-func NewTraceRouter(workerCount int, repo v2storage.TraceRepository, runs storage.RunStore) *TraceRouter {
-	return NewTraceRouterWithTimeout(workerCount, repo, runs, TraceTimeoutFromEnv())
+func NewTraceRouter(repo v2storage.TraceRepository, runs storage.RunStore) *TraceRouter {
+	return NewTraceRouterWithTimeout(repo, runs, TraceTimeoutFromEnv())
 }
 
-func NewTraceRouterWithTimeout(workerCount int, repo v2storage.TraceRepository, runs storage.RunStore, timeout time.Duration) *TraceRouter {
-	if workerCount < 1 {
-		workerCount = 1
-	}
+func NewTraceRouterWithTimeout(repo v2storage.TraceRepository, runs storage.RunStore, timeout time.Duration) *TraceRouter {
 	if timeout <= 0 {
 		timeout = defaultTraceTimeout
 	}
 	tr := &TraceRouter{
-		workers: make([]chan *v2storage.RawReport, workerCount),
 		repo:    repo,
 		runs:    runs,
 		timeout: timeout,
 		stop:    make(chan struct{}),
-	}
-	for i := 0; i < workerCount; i++ {
-		tr.workers[i] = make(chan *v2storage.RawReport, 2048)
-		go tr.startWorker(tr.workers[i])
 	}
 	go tr.startReaper()
 	return tr
@@ -69,30 +59,22 @@ func TraceTimeoutFromEnv() time.Duration {
 	return d
 }
 
-func (tr *TraceRouter) Route(report *v2storage.RawReport) {
+// Route appends to the local WAL on the caller's goroutine. A nil error means
+// the report is durable on Bbolt; Postgres flush stays async via WAL kick.
+func (tr *TraceRouter) Route(report *v2storage.RawReport) error {
 	if report == nil {
-		return
+		return nil
 	}
-	hasher := fnv.New32a()
-	hasher.Write([]byte(report.TraceID))
-	workerIdx := hasher.Sum32() % uint32(len(tr.workers))
-	tr.workers[workerIdx] <- report
-}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-func (tr *TraceRouter) startWorker(ch chan *v2storage.RawReport) {
-	for report := range ch {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
-		if tr.runs != nil && report.ShadowTestName != "" {
-			_ = tr.runs.EnsureShadowTest(ctx, report.ShadowTestName)
-		}
-
-		// Verdict evaluation runs in the WAL flusher under pg_advisory_xact_lock.
-		if _, err := tr.repo.AppendReport(ctx, report); err != nil {
-			log.Printf("[Engine] Database append fault for trace %s: %v", report.TraceID, err)
-		}
-		cancel()
+	if tr.runs != nil && report.ShadowTestName != "" {
+		_ = tr.runs.EnsureShadowTest(ctx, report.ShadowTestName)
 	}
+
+	// Verdict evaluation runs in the WAL flusher under pg_advisory_xact_lock.
+	_, err := tr.repo.AppendReport(ctx, report)
+	return err
 }
 
 // startReaper periodically finalizes incomplete traces past the timeout as WAITING_FOR_ROLES.

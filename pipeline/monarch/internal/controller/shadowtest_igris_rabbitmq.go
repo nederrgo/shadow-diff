@@ -50,7 +50,7 @@ func shadowAMQPURL(shadowNS, depName, role string, port int32) string {
 	return fmt.Sprintf("amqp://%s:%s@%s:%d/", defaultAMQPUser, defaultAMQPPass, host, port)
 }
 
-func (r *ShadowTestReconciler) igrisRabbitMQEnv(st *enginev1alpha1.ShadowTest, shadowNS string) ([]corev1.EnvVar, error) {
+func (r *ShadowTestReconciler) igrisRabbitMQEnv(ctx context.Context, st *enginev1alpha1.ShadowTest, shadowNS string) ([]corev1.EnvVar, error) {
 	amqpSpec, err := firstAMQPInput(st)
 	if err != nil {
 		return nil, err
@@ -77,8 +77,12 @@ func (r *ShadowTestReconciler) igrisRabbitMQEnv(st *enginev1alpha1.ShadowTest, s
 		if queueName == "" {
 			queueName = prodShadowQueueName(st)
 		}
+		prodURL, err := r.resolveProdAMQPURL(ctx, st, amqpSpec)
+		if err != nil {
+			return nil, err
+		}
 		env = append(env,
-			corev1.EnvVar{Name: envProdURL, Value: amqpSpec.ProdURL},
+			corev1.EnvVar{Name: envProdURL, Value: prodURL},
 			corev1.EnvVar{Name: envShadowQueueName, Value: queueName},
 		)
 		// ponytail: record dials prod only — omit shadow broker URLs so startup does not fail when deps are absent.
@@ -112,7 +116,7 @@ func (r *ShadowTestReconciler) reconcileIgrisRabbitMQDeployment(
 		labelShadowTestUID:       string(st.UID),
 		"app.kubernetes.io/name": containerIgrisRabbitMQ,
 	}
-	env, err := r.igrisRabbitMQEnv(st, shadowNS)
+	env, err := r.igrisRabbitMQEnv(ctx, st, shadowNS)
 	if err != nil {
 		return err
 	}

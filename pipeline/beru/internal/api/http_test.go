@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,11 +17,15 @@ import (
 )
 
 type egressRouteRecorder struct {
-	routed atomic.Bool
-	last   atomic.Pointer[v2storage.RawReport]
+	routed    atomic.Bool
+	last      atomic.Pointer[v2storage.RawReport]
+	appendErr error
 }
 
 func (r *egressRouteRecorder) AppendReport(ctx context.Context, report *v2storage.RawReport) ([]v2storage.RawReport, error) {
+	if r.appendErr != nil {
+		return nil, r.appendErr
+	}
 	r.last.Store(report)
 	r.routed.Store(true)
 	return []v2storage.RawReport{*report}, nil
@@ -75,7 +80,7 @@ func TestHealthz_methodNotAllowed(t *testing.T) {
 
 func TestEgressDiff_acceptsReport(t *testing.T) {
 	routeRec := &egressRouteRecorder{}
-	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(1, routeRec, nil)}
+	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(routeRec, nil)}
 
 	payload := map[string]any{
 		"trace_id": "abc123",
@@ -90,20 +95,38 @@ func TestEgressDiff_acceptsReport(t *testing.T) {
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for !routeRec.routed.Load() {
-		if time.Now().After(deadline) {
-			t.Fatal("expected router to receive report")
-		}
-		time.Sleep(10 * time.Millisecond)
+	if !routeRec.routed.Load() {
+		t.Fatal("expected router to receive report before 202")
 	}
 }
 
-// postEgressDiff sends one report and waits for the router to consume it.
+func TestEgressDiff_appendFailureReturns503(t *testing.T) {
+	routeRec := &egressRouteRecorder{appendErr: errors.New("wal write failed")}
+	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(routeRec, nil)}
+
+	payload := map[string]any{
+		"trace_id": "abc123",
+		"workload": "control-a",
+		"protocol": "rabbitmq",
+		"payload":  map[string]any{"order": 1},
+	}
+	raw, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/egress/diff", bytes.NewReader(raw))
+	rr := httptest.NewRecorder()
+	s.handleEgressDiff(rr, req)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d, want 503", rr.Code)
+	}
+	if routeRec.routed.Load() {
+		t.Fatal("must not mark routed on append failure")
+	}
+}
+
+// postEgressDiff sends one report; Route is sync so the report is present on 202.
 func postEgressDiff(t *testing.T, body map[string]any) *v2storage.RawReport {
 	t.Helper()
 	routeRec := &egressRouteRecorder{}
-	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(1, routeRec, nil)}
+	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(routeRec, nil)}
 
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/egress/diff", bytes.NewReader(raw))
@@ -112,14 +135,11 @@ func postEgressDiff(t *testing.T, body map[string]any) *v2storage.RawReport {
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for !routeRec.routed.Load() {
-		if time.Now().After(deadline) {
-			t.Fatal("expected router to receive report")
-		}
-		time.Sleep(10 * time.Millisecond)
+	got := routeRec.last.Load()
+	if got == nil {
+		t.Fatal("expected router to receive report")
 	}
-	return routeRec.last.Load()
+	return got
 }
 
 // A producer that decoded the wire protocol itself is authoritative for the
@@ -198,10 +218,10 @@ func TestGetTrace_returnsReportsAndVerdict(t *testing.T) {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
 	var out struct {
-		TraceID  string                   `json:"trace_id"`
-		Protocol string                   `json:"protocol"`
-		Reports  []v2storage.RawReport    `json:"reports"`
-		Verdict  *v2storage.VerdictState  `json:"verdict"`
+		TraceID  string                  `json:"trace_id"`
+		Protocol string                  `json:"protocol"`
+		Reports  []v2storage.RawReport   `json:"reports"`
+		Verdict  *v2storage.VerdictState `json:"verdict"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -252,7 +272,7 @@ func TestGetTrace_requiresProtocol(t *testing.T) {
 
 func TestSeedReports_acceptsBatch(t *testing.T) {
 	routeRec := &egressRouteRecorder{}
-	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(1, routeRec, nil)}
+	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(routeRec, nil)}
 
 	body := map[string]any{
 		"reports": []map[string]any{
@@ -289,11 +309,7 @@ func TestSeedReports_acceptsBatch(t *testing.T) {
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for !routeRec.routed.Load() {
-		if time.Now().After(deadline) {
-			t.Fatal("expected router to receive seeded report")
-		}
-		time.Sleep(10 * time.Millisecond)
+	if !routeRec.routed.Load() {
+		t.Fatal("expected router to receive seeded report before 202")
 	}
 }
