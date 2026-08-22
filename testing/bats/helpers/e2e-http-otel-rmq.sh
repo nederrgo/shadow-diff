@@ -1,27 +1,6 @@
 #!/usr/bin/env bash
-# Shared helpers for HTTP ingress → RabbitMQ egress E2E scripts.
-# Minikube + kvm2 only — no Kind, no cluster detection.
+# Shared helpers for HTTP ingress → RabbitMQ egress E2E scripts (Kind local E2E).
 # shellcheck shell=bash
-
-http_otel_rmq_init_cluster() {
-  local repo="$1"
-  # shellcheck source=testing/bats/helpers/cluster-minikube.sh
-  source "$repo/testing/bats/helpers/cluster-minikube.sh"
-  echo "==> E2E cluster: minikube (kvm2)"
-}
-
-http_otel_rmq_prepare_docker_build() {
-  use_minikube_docker_env
-}
-
-http_otel_rmq_load_image() {
-  local img="$1"
-  [[ "${SKIP_LOAD:-0}" == "1" ]] && return 0
-  docker image inspect "$img" >/dev/null 2>&1 || {
-    echo "missing image ${img} in minikube docker" >&2
-    return 1
-  }
-}
 
 http_otel_rmq_strip_kubectl_run_output() {
   local out="$1"

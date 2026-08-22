@@ -35,23 +35,8 @@ ensure_go_path() {
 }
 
 # require_docker ensures the Docker daemon is reachable (Kind image builds/loads need it).
-# When E2E_CLUSTER=minikube we check Minikube's daemon (not the host socket); the host
-# Docker Desktop being down is irrelevant in that case because all builds target Minikube.
 require_docker() {
   require_cmd docker
-  if [[ "${E2E_CLUSTER:-}" == minikube && "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
-    local minikube_env
-    minikube_env=$(minikube docker-env 2>/dev/null) || {
-      log_fail "minikube docker-env failed — is minikube running? (minikube start)"
-      exit 1
-    }
-    eval "$minikube_env"
-    if ! timeout 15 docker ps >/dev/null 2>&1; then
-      log_fail "Minikube Docker daemon is not reachable after 'minikube docker-env'"
-      exit 1
-    fi
-    return 0
-  fi
   if ! timeout 15 docker ps >/dev/null 2>&1; then
     log_fail "Docker daemon is not reachable (docker ps failed or timed out after 15s)"
     echo "       On WSL: start Docker Desktop on Windows and wait until 'docker ps' succeeds." >&2
@@ -67,7 +52,7 @@ require_kubectl_cluster() {
   if ! kubectl cluster-info >/dev/null 2>&1; then
     log_fail "kubectl cannot reach the Kubernetes API (connection refused or stale kubeconfig)"
     echo "       Recreate the cluster stack:" >&2
-    echo "         ./testing/tools/e2e-reset-minikube.sh" >&2
+    echo "         ./testing/tools/e2e-reset-kind.sh" >&2
     echo "       Or point kubeconfig at a running cluster: export KUBECONFIG=..." >&2
     exit 1
   fi
@@ -110,49 +95,25 @@ shadow_app_pod_for_role() {
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
 }
 
-e2e_init_cluster() {
-  local repo="$1"
-  if [[ "${E2E_CLUSTER:-minikube}" == kind ]]; then
-    # shellcheck source=testing/bats/helpers/cluster-kind.sh
-    source "$repo/testing/bats/helpers/cluster-kind.sh"
-    echo "==> E2E cluster: kind (${KIND_CLUSTER:-shadow-diff})"
-  else
-    # shellcheck source=testing/bats/helpers/cluster-minikube.sh
-    source "$repo/testing/bats/helpers/cluster-minikube.sh"
-    echo "==> E2E cluster: minikube"
-  fi
-}
-
 e2e_prepare_docker_build() {
   # Kind uses the host docker daemon; images are loaded via kind load.
-  [[ "${E2E_CLUSTER:-minikube}" == kind ]] && return 0
-  if [[ "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
-    use_minikube_docker_env
-  fi
+  :
 }
 
 e2e_load_image() {
   local img="$1"
   [[ "${SKIP_LOAD:-0}" == "1" ]] && return 0
-  if [[ "${E2E_CLUSTER:-minikube}" == kind ]]; then
-    load_kind_image "$img"
-    return
-  fi
-  if [[ "${MINIKUBE_DRIVER:-kvm2}" == none ]]; then
-    load_minikube_image "$img"
-  else
-    use_minikube_docker_env
-    # return (not exit): load_test_images_if_needed falls back to docker pull
-    docker image inspect "$img" >/dev/null 2>&1 || {
-      echo "missing image ${img} in minikube docker" >&2
-      return 1
-    }
-  fi
+  load_kind_image "$img"
 }
 
 e2e_strip_kubectl_run_output() {
   local out="$1"
-  echo "$out" | grep -v '^pod "' | grep -v '^If you don' | grep -v '^All commands' | grep -v '^Defaulted container' | grep -v 'credentials and sensitive'
+  # curl -w '%{http_code}' omits a trailing newline, so kubectl's "pod deleted"
+  # line is often concatenated on the same line — trim that suffix, don't drop
+  # the whole line (would erase the HTTP status / body we need).
+  echo "$out" | grep -v '^pod "' | grep -v '^If you don' | grep -v '^All commands' \
+    | grep -v '^Defaulted container' | grep -v 'credentials and sensitive' \
+    | sed -E 's/pod "[^"]*" deleted from [^ ]* namespace//g'
 }
 
 e2e_in_cluster_curl() {

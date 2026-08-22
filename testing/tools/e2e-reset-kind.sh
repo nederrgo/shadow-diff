@@ -2,8 +2,7 @@
 # Reset and deploy the full Monarch E2E stack on Kind (host docker + kind load).
 #
 # HTTP ingress and egress capture both use Kaisel eBPF (DaemonSet in kaisel-system).
-# E2E assertions: make test-bats-e2e / make test-bats-kaisel (default still Minikube
-# until Phase 2c; use E2E_CLUSTER=kind for Kind bats).
+# E2E assertions: make test-bats-e2e / make test-bats-kaisel.
 #
 # Cluster: KIND_CLUSTER (default shadow-diff) from testing/bats/kind/config.yaml.
 # Port mappings (recreate cluster if missing):

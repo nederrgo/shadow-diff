@@ -63,7 +63,7 @@ Triggered manually, via a schedule, or by a CI/CD pipeline.
 
 Monarch will not have the IAM permissions to create S3 buckets. Bucket creation is an Infrastructure-as-Code (Terraform/Platform) responsibility. The ShadowTest CRD will simply accept a bucket name and credentials. Monarch never deploys object storage.
 
-**Developer experience fallback:** For local development and fast onboarding, [`testing/tools/e2e-reset-minikube.sh`](../../testing/tools/e2e-reset-minikube.sh) applies an ephemeral MinIO Deployment/Service under `monarch-system` (manifests in [`testing/bats/manifests/minio/`](../../testing/bats/manifests/minio/)), creates bucket `shadow-diff-local`, and a `shadow-diff-s3` credentials Secret in `default`.
+**Developer experience fallback:** For local development and fast onboarding, [`testing/tools/e2e-reset-kind.sh`](../../testing/tools/e2e-reset-kind.sh) applies an ephemeral MinIO Deployment/Service under `monarch-system` (manifests in [`testing/bats/manifests/minio/`](../../testing/bats/manifests/minio/)), creates bucket `shadow-diff-local`, and a `shadow-diff-s3` credentials Secret in `default`.
 
 ### Decision B: Igris and Shop are "Storage Gateways"
 
@@ -97,7 +97,7 @@ We will execute this transition in 5 incremental mini-plans to avoid breaking th
 
 | Phase | Focus | Scope |
 |-------|-------|-------|
-| 1 | Storage Foundation & Configuration | Update ShadowTest CRD with storage config (S3 endpoint, bucket, retention policy). Add MinIO via the minikube setup script for developer testing. Update Monarch to parse and validate these fields. |
+| 1 | Storage Foundation & Configuration | Update ShadowTest CRD with storage config (S3 endpoint, bucket, retention policy). Add MinIO via the Kind reset script for developer testing. Update Monarch to parse and validate these fields. |
 | 2 | Record Mode (S3 Writers) | Shared `pipeline/pkg/s3utils` BatchUploader (JSONL, 5s/100 flush). Igris-http and Shop honor `OPERATING_MODE=record`: buffer ingress/egress to `shadow-diff/<ns>/<test>/sessions/<id>/{ingress\|egress}/`. Kaisel stays a dumb POST pipe. Monarch env injection is Phase 4. |
 | 3 | Replay Mode (S3 Readers) | Shared `s3utils.S3Reader` (sorted FIFO ListObjectsV2 + GetObject). Shop `OPERATING_MODE=replay` preloads egress JSONL before gRPC (`/healthz` 503→200). Igris-http preloads ingress JSONL and exposes `POST /v1/replay/start` (202; 409 if already running) to multicast reconstructed requests with preserved `traceparent` and per-target `x-shadow-role`. Dial/transport errors on each target retry up to 3 times with 1s/3s/5s backoff (HTTP status codes are not retried). |
 | 4 | Monarch Orchestration & Lifecycle | Complete: mode record\|replay, required storage, session mint/pin, S3 env + Secret sync, Igris admin `:9090`, mode GC, auto `POST /v1/replay/start` → `replayState=started`, `shadow-diff.io/s3-cleanup` prefix delete when `retentionPolicy=Delete`. |

@@ -4,7 +4,7 @@ title: Bats-Core Modular Testing Framework
 description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, record→replay CR switch, Postgres settlement via beru_wait_verdict_settled, Jest-like reporter for BATS_PARALLEL_JOBS=1, and idempotent platform bootstrap.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats
 tags: [infrastructure, testing, bats, e2e, integration, monarch, beru, postgres, record-replay]
-timestamp: 2026-08-03T08:50:00Z
+timestamp: 2026-08-22T06:45:00Z
 ---
 
 # Bats-Core Modular Testing Framework
@@ -41,19 +41,19 @@ testing/bats/
 
 
 testing/tools/            # standalone developer utilities (not called by bats)
-  e2e-reset-minikube.sh   # bootstrap a local minikube cluster from scratch
+  e2e-reset-kind.sh       # bootstrap a local Kind cluster from scratch
 ```
 
-Local E2E remains Minikube today. Kind Kaisel smoke (`make test-bats-kaisel-kind`, `E2E_CLUSTER=kind`) proves AF_PACKET capture on Kind before a full switch; see [/infrastructure/minikube-to-kind-migration.md](/infrastructure/minikube-to-kind-migration.md). Default bats cluster is still Minikube.
+Local E2E uses **Kind** (host docker + `kind load`). One-shot bootstrap: [`testing/tools/e2e-reset-kind.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/tools/e2e-reset-kind.sh); host Postgres DSN `localhost:15432`. See [/infrastructure/minikube-to-kind-migration.md](/infrastructure/minikube-to-kind-migration.md).
 
 ## Platform bootstrap (`lib/platform.bash`)
 
 `ensure_platform_ready()` is idempotent and flock-guarded (`.cache/shadow-diff-bats/platform.lock`):
 
-- Minikube (kvm2/virtualbox)
+- Kind (host docker + `kind load`)
 - Monarch CRDs + operator (`MONARCH_MODE=dev`)
 - Kaisel DaemonSet (no per-test restart)
-- Kaisel DaemonSet (`pipeline/kaisel/deploy/`, also via `e2e-reset-minikube.sh`)
+- Kaisel DaemonSet (`pipeline/kaisel/deploy/`, also via `e2e-reset-kind.sh`)
 
 Escape hatches: `SKIP_PLATFORM_BOOTSTRAP`, `SKIP_BUILD`, `SKIP_LOAD`, `BATS_FORCE_PLATFORM_BOOTSTRAP`.
 

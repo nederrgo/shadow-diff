@@ -63,11 +63,7 @@ cd "$REPO/pipeline/monarch"
 make docker-build IMG=$MONARCH_IMG
 
 # Kind: load image into the cluster
-# kind load docker-image $MONARCH_IMG --name <your-kind-cluster>
-
-# Minikube: build inside Minikube Docker
-# eval $(minikube docker-env)
-# make docker-build IMG=$MONARCH_IMG
+kind load docker-image $MONARCH_IMG --name shadow-diff
 
 make install
 make deploy IMG=$MONARCH_IMG
@@ -187,8 +183,7 @@ cd "$REPO"
 
 make beru-docker-build BERU_IMG=$BERU_IMG
 
-# Kind: kind load docker-image $BERU_IMG
-# Minikube: minikube image load $BERU_IMG
+# Kind: kind load docker-image $BERU_IMG --name shadow-diff
 
 kubectl set env deployment/monarch-controller-manager -n monarch-system BERU_IMAGE=$BERU_IMG
 kubectl rollout status deployment/beru-local -n "$SHADOW_NS" --timeout=120s
@@ -412,13 +407,14 @@ make test             # unit tests, no root
 sudo make test-integration   # real BPF + netns lab, needs root
 ```
 
-### One-shot Minikube reset
+### One-shot Kind reset
 
 ```bash
-./testing/tools/e2e-reset-minikube.sh
+./testing/tools/e2e-reset-kind.sh
+make test-bats
 ```
 
-Deep Kaisel capture E2E (`make test-bats-kaisel`) runs on Minikube. Kind smoke gate (`make test-bats-kaisel-kind`, three traffic paths): [/infrastructure/minikube-to-kind-migration.md](/infrastructure/minikube-to-kind-migration.md).
+Deep Kaisel capture E2E (`make test-bats-kaisel`) runs on Kind by default. Kind smoke gate (`make test-bats-kaisel-kind`, three traffic paths): [/infrastructure/minikube-to-kind-migration.md](/infrastructure/minikube-to-kind-migration.md). Host Postgres: `export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@localhost:15432/beru?sslmode=disable"`.
 
 ## 9. Cleanup (optional)
 
@@ -442,7 +438,7 @@ make uninstall
 | Symptom | Likely cause | What to do |
 |---------|----------------|------------|
 | `phase: Failed`, target not found | Wrong `targetDeployment` / `targetNamespace` | Fix spec; ensure Deployment exists |
-| Pods `ImagePullBackOff` | Local image not in cluster | `kind load` / `minikube image load` or use a registry |
+| Pods `ImagePullBackOff` | Local image not in cluster | `kind load docker-image <img> --name shadow-diff` or use a registry |
 | Pods `1/2` not Ready | Envoy sidecar failing | `kubectl logs ... -c envoy-sidecar` |
 | `grpcurl` connection refused | Beru not ready or no port-forward | Check `beru-local` in the shadow namespace; re-run port-forward |
 | Wrong cluster | Multiple kube contexts | `kubectl config current-context` |
@@ -512,7 +508,7 @@ kubectl get cm -n "$SHADOW_NS" my-app-shadow-control-a-envoy -o yaml | grep -E '
 
 ## Phase 4 — Record mode S3 capture (bats)
 
-With MinIO from [`e2e-reset-minikube.sh`](testing/tools/e2e-reset-minikube.sh) (or the suite’s own `minio_ensure`):
+With MinIO from [`e2e-reset-kind.sh`](testing/tools/e2e-reset-kind.sh) (or the suite’s own `minio_ensure`):
 
 ```bash
 make test-bats-record
@@ -534,7 +530,7 @@ Monarch deploys Shop (always-on) into each shadow namespace and configures an eg
 
 ### Automated Kind E2E
 
-After [`testing/tools/e2e-reset-minikube.sh`](testing/tools/e2e-reset-minikube.sh) deploys the stack:
+After [`testing/tools/e2e-reset-kind.sh`](testing/tools/e2e-reset-kind.sh) deploys the stack:
 
 ```bash
 make test-bats-e2e
@@ -717,7 +713,7 @@ AMQP-only ShadowTests use **`igris-rabbitmq`** (not HTTP Igris or Kaisel ingress
 ```bash
 make igris-rabbitmq-docker-build IGRIS_RABBITMQ_IMG=igris-rabbitmq:dev
 make -C testing/example-apps/rmq-test-worker docker-build RMQ_TEST_WORKER_IMG=rmq-test-worker:dev
-./testing/tools/e2e-reset-minikube.sh --no-reset
+./testing/tools/e2e-reset-kind.sh --no-reset
 make test-bats-e2e
 ```
 
@@ -745,7 +741,7 @@ make test-bats-e2e
 Or after cluster reset:
 
 ```bash
-./testing/tools/e2e-reset-minikube.sh --no-reset
+./testing/tools/e2e-reset-kind.sh --no-reset
 make test-bats-e2e
 ```
 
@@ -840,7 +836,7 @@ Apps that spawn **untracked** goroutines or thread pools without `context.Contex
 Proves W3C `traceparent` propagates across AMQP consume/publish when shadow workers use OpenTelemetry auto-instrumentation (no app-level header copying).
 
 ```bash
-./testing/tools/e2e-reset-minikube.sh --no-reset
+./testing/tools/e2e-reset-kind.sh --no-reset
 make test-bats-e2e
 ```
 
@@ -856,7 +852,7 @@ make test-bats-e2e   # Express + amqplib / Flask + pika / Go (http-ingress suite
 
 See [`docs/verification/http-ingress-e2e-flow.md`](/verification/http-ingress-e2e-flow.md). Suites record to MinIO, switch the CR to replay, then assert Postgres verdicts via `beru_wait_verdict_settled` (`MATCH` for http / rabbitmq / mongodb).
 
-OTel Operator bootstrap (when needed) is covered by the bats platform helpers / hybrid suites — there is no separate `e2e-reset-kind.sh`.
+OTel Operator bootstrap (when needed) is covered by the bats platform helpers / hybrid suites and [`testing/tools/e2e-reset-kind.sh`](testing/tools/e2e-reset-kind.sh).
 
 ### Unit tests
 

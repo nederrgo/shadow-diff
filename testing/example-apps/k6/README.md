@@ -10,10 +10,10 @@ Parallel load test for the shadow stack: steady JSON traffic, noisy payloads (Be
 
 ## Prerequisites
 
-1. Minikube E2E stack is **Ready** (Monarch, Beru, Igris, shadows, optional Kaisel):
+1. Kind E2E stack is **Ready** (Monarch, Beru, Igris, shadows, optional Kaisel):
 
    ```bash
-   ./testing/tools/e2e-reset-minikube.sh
+   ./testing/tools/e2e-reset-kind.sh
    ```
 
 2. Rebuild/load **Igris** with the **512KiB** default (`IGRIS_MAX_BODY_SIZE=524288`) and **Beru** with `GET /healthz`. **Building alone does not update running pods:**
@@ -193,7 +193,7 @@ With identical echo images (`testing/bats/manifests/e2e-shadowtest.yaml`), contr
 
 ## Related scripts
 
-- [`testing/tools/e2e-reset-minikube.sh`](../../testing/tools/e2e-reset-minikube.sh) — full Minikube deploy.
+- [`testing/tools/e2e-reset-kind.sh`](../../tools/e2e-reset-kind.sh) — full Kind deploy.
 - [`e2e-pipeline-test.sh`](../../scripts/e2e-pipeline-test.sh) — single-trace ingress validation.
 
 ## Troubleshooting

@@ -38,11 +38,10 @@ bats_platform_with_flock() {
 
 platform_health_matrix() {
   local ok=1
-  local cluster="${E2E_CLUSTER:-minikube}"
   bats_source_e2e_helpers
   bats_source_cluster_helpers
 
-  bats_cluster_running || { echo "health: ${cluster} not running" >&2; ok=0; }
+  bats_cluster_running || { echo "health: Kind cluster not running" >&2; ok=0; }
   kubectl cluster-info >/dev/null 2>&1 || { echo "health: kubectl cluster unreachable" >&2; ok=0; }
   kubectl get crd shadowtests.engine.shadow-diff.io >/dev/null 2>&1 || { echo "health: ShadowTest CRD missing" >&2; ok=0; }
   kubectl get deploy monarch-controller-manager -n monarch-system >/dev/null 2>&1 || { echo "health: Monarch deploy missing" >&2; ok=0; }
@@ -134,9 +133,8 @@ ensure_platform_ready() {
   bats_platform_with_flock _ensure_platform_ready_body
 }
 
-# Ensure a :dev image exists in the docker daemon used by the cluster (minikube
-# docker-env when driver != none). Builds via make if missing. Fails hard if
-# still absent — do not swallow errors (ImagePullBackOff fails ShadowTests).
+# Ensure a :dev image exists on the host docker daemon and is loaded into the
+# Kind cluster. Builds via make if missing. Fails hard if still absent.
 # Usage: bats_ensure_dev_image <image:tag> <makefile-dir> <MAKE_VAR>
 bats_ensure_dev_image() {
   local img="$1" dir="$2" make_var="$3"
@@ -146,14 +144,19 @@ bats_ensure_dev_image() {
   e2e_prepare_docker_build
   require_docker || return 1
 
-  if docker image inspect "$img" >/dev/null 2>&1; then
+  if ! docker image inspect "$img" >/dev/null 2>&1; then
+    echo "==> [bats] build missing image ${img}"
+    make -C "$dir" docker-build "${make_var}=${img}" || return 1
+    docker image inspect "$img" >/dev/null 2>&1 || {
+      echo "FAIL: ${img} still missing after docker-build in ${dir}" >&2
+      return 1
+    }
+  else
     echo "==> [bats] image present: ${img}"
-    return 0
   fi
-  echo "==> [bats] build missing image ${img}"
-  make -C "$dir" docker-build "${make_var}=${img}" || return 1
-  docker image inspect "$img" >/dev/null 2>&1 || {
-    echo "FAIL: ${img} still missing after docker-build in ${dir}" >&2
+  # Host docker presence ≠ Kind node presence.
+  e2e_load_image "$img" || {
+    echo "FAIL: ${img} not loaded into Kind cluster" >&2
     return 1
   }
 }
@@ -201,6 +204,12 @@ load_test_images_if_needed() {
     "$MONGO_IMAGE" rabbitmq:3-management-alpine; do
     if e2e_load_image "$img" 2>/dev/null; then
       continue
+    fi
+    # Local :dev tags are never on a registry — build them (omit SKIP_BUILD=1).
+    if [[ "$img" == *:dev ]]; then
+      echo "FAIL: ${img} missing on host docker (Kind needs host build + kind load)" >&2
+      echo "  rebuild without SKIP_BUILD=1, or: make -C <service> docker-build" >&2
+      return 1
     fi
     echo "    pulling ${img}"
     docker pull "$img" || {

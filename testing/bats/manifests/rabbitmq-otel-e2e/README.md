@@ -4,14 +4,14 @@ End-to-end fixtures for **zero-touch W3C trace propagation** across RabbitMQ con
 
 ## Prerequisites
 
-- Minikube with Monarch + Beru (`./testing/tools/e2e-reset-minikube.sh`)
+- Kind cluster with Monarch + Beru (`./testing/tools/e2e-reset-kind.sh`)
 - Monarch operator with **`MONARCH_MODE=dev`** (set by reset / bats platform bootstrap)
 - Kaisel DaemonSet for the HTTP capture paths used by hybrid suites
 
 ## Run
 
 ```bash
-./testing/tools/e2e-reset-minikube.sh --no-reset
+./testing/tools/e2e-reset-kind.sh --no-reset
 make test-bats-e2e
 # or:
 make test-bats-one FILE=e2e/rabbitmq-ingress/nodejs_hybrid.bats

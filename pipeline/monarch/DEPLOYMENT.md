@@ -63,7 +63,7 @@ Monarch resolves helper container images at reconcile time:
 
 `ENVOY_IMAGE` overrides the Envoy sidecar (default `envoyproxy/envoy:v1.30-latest`).
 
-**Minikube E2E:** `./testing/tools/e2e-reset-minikube.sh` sets `MONARCH_MODE=dev` and rollout-restarts the operator after loading images. Use `MONARCH_NO_CACHE=1` when rebuilding Monarch to avoid stale Docker cache under the same tag.
+**Local Kind E2E:** `./testing/tools/e2e-reset-kind.sh` sets `MONARCH_MODE=dev` and rollout-restarts the operator after loading images via `kind load`. Use `MONARCH_NO_CACHE=1` when rebuilding Monarch to avoid stale Docker cache under the same tag.
 
 ---
 
@@ -345,7 +345,7 @@ Typical layout when prod listens on **:80** and Envoy ingress is **:8888**:
 | Shadow app (echo) | `:80` (`applicationPort`) |
 | Envoy egress proxy | `:15001` (`HTTP_PROXY`) |
 
-See `testing/tools/e2e-reset-minikube.sh` and `testing/bats/manifests/e2e-shadowtest.yaml`.
+See `testing/tools/e2e-reset-kind.sh`, `testing/tools/lib/e2e-reset-deploy.sh`, and `testing/bats/manifests/e2e-shadowtest.yaml`.
 
 ---
 

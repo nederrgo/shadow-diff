@@ -1,7 +1,7 @@
-# ShadowTest tuned for Minikube E2E: prod (port 80) -> Kaisel -> Igris:80 -> S3 (record).
+# ShadowTest tuned for local Kind E2E: prod (port 80) -> Kaisel -> Igris:80 -> S3 (record).
 #
 # mode=record: Kaisel + Igris + Shop (+ beru-local); no ABC shadow pods.
-# storage is required (BYOB). Local MinIO is provisioned by e2e-reset-minikube.sh.
+# storage is required (BYOB). Local MinIO is provisioned by e2e-reset-kind.sh.
 #
 # Apply:
 #   kubectl apply -f testing/bats/manifests/e2e-shadowtest.yaml
@@ -19,7 +19,7 @@ spec:
   # sessionID: optional pin; Monarch mints status.currentSessionID when unset
 
   # Required BYOB S3. Secret shadow-diff-s3 is created in this namespace by
-  # testing/tools/e2e-reset-minikube.sh (copied into the shadow ns by Monarch).
+  # testing/tools/e2e-reset-kind.sh (copied into the shadow ns by Monarch).
   storage:
     type: s3
     bucketName: shadow-diff-local

@@ -1,4 +1,4 @@
-# Kind cluster bootstrap for Monarch Kaisel smoke (E2E_CLUSTER=kind).
+# Kind cluster bootstrap for Monarch local E2E.
 # Source from bats helpers; do not execute directly.
 #
 # Reuses an existing cluster named KIND_CLUSTER. Does not delete/recreate.

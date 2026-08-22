@@ -167,7 +167,7 @@ type IgrisSpec struct {
 // for asynchronous record/replay artifacts. Objects are keyed under
 // shadow-diff/<namespace>/<test-name>/sessions/<session-id>/[ingress|egress]/.
 // Monarch does not create buckets; callers provision storage out of band (e.g. AWS
-// or the local MinIO fixture from testing/tools/e2e-reset-minikube.sh).
+// or the local MinIO fixture from testing/tools/e2e-reset-kind.sh).
 type StorageConfig struct {
 	// Type selects the object-storage backend.
 	// +kubebuilder:validation:Enum=s3

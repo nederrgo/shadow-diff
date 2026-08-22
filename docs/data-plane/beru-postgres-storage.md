@@ -108,10 +108,10 @@ Beru runs unrestricted. NetworkPolicy is deny-only, so beru-local reaches Postgr
 
 ## Local fixture
 
-`testing/tools/e2e-reset-minikube.sh` always deploys PostgreSQL to `monarch-system` and sets `BERU_DB_SECRET=monarch-system/beru-postgres` on the manager. Host access:
+[`testing/tools/e2e-reset-kind.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/tools/e2e-reset-kind.sh) (and the shared deploy in [`e2e-reset-deploy.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/tools/lib/e2e-reset-deploy.sh)) always deploys PostgreSQL to `monarch-system` and sets `BERU_DB_SECRET=monarch-system/beru-postgres` on the manager. Host access via Kind `extraPortMappings` (host `15432` → node `30432`):
 
 ```bash
-export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@$(minikube ip):30432/beru?sslmode=disable"
+export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@localhost:15432/beru?sslmode=disable"
 go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection|WAL|concurrentFlushSameTrace' -v
 go -C pipeline/monarch test ./internal/controller/... -run 'BeruDB|LocalBeruPodSpec' -v
 ```

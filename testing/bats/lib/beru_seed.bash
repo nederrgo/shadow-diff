@@ -15,6 +15,29 @@ beru_http_post() {
   e2e_strip_kubectl_run_output "$out"
 }
 
+# POST with empty reports → HTTP 400 when /api/v1/debug/seed-reports is live.
+beru_probe_seed_endpoint() {
+  local shadow_ns="${1:-${SHADOW_NS:-${BERU_NS:-monarch-system}}}"
+  bats_source_e2e_helpers
+  local base curl_ns out code
+  base="$(beru_http_base "$shadow_ns")"
+  curl_ns="$(beru_curl_ns "$shadow_ns")"
+  out=$(kubectl run "bats-curl-${RANDOM}" --rm -i --restart=Never -n "$curl_ns" \
+    --image=curlimages/curl:8.5.0 --command -- \
+    curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' \
+    --data '{"reports":[]}' "${base}/api/v1/debug/seed-reports" 2>&1) || true
+  out=$(e2e_strip_kubectl_run_output "$out")
+  code=$(printf '%s\n' "$out" | grep -E '^[0-9]{3}$' | head -1)
+  case "$code" in
+    400|202) return 0 ;;
+    *)
+      echo "seed endpoint probe failed (HTTP ${code:-unknown}) at ${base}/api/v1/debug/seed-reports" >&2
+      echo "probe output: ${out}" >&2
+      return 1
+      ;;
+  esac
+}
+
 # POST {"reports":[...]} body.
 beru_seed_reports_json() {
   local body="$1"
@@ -72,6 +95,8 @@ beru_seed_reports() {
 beru_assert_verdict_status() {
   # Seed-only assert: one GET per attempt, no quiescence (history is static).
   # Args: trace_id protocol want_status [want_regression] [timeout_sec]
+  # WAITING_FOR_ROLES is non-terminal while the WAL flusher catches up after a
+  # multi-report seed — keep polling until want_status or timeout.
   local trace_id="$1" protocol="$2" want_status="$3" want_reg="${4:-}"
   local timeout="${5:-20}"
   local line status reg i=0
@@ -79,18 +104,23 @@ beru_assert_verdict_status() {
     line=$(beru_verdict_line_api "$trace_id" "$protocol" 2>/dev/null || true)
     IFS='|' read -r status reg <<<"$line"
     if [[ -n "$status" ]]; then
-      [[ "$status" == "$want_status" ]] || {
-        echo "verdict status=${status} want=${want_status} line=${line}" >&2
-        return 1
-      }
-      if [[ -n "$want_reg" ]]; then
-        [[ "$reg" == "$want_reg" ]] || {
-          echo "has_count_regression=${reg} want=${want_reg}" >&2
-          return 1
-        }
+      if [[ "$status" == "$want_status" ]]; then
+        if [[ -n "$want_reg" ]]; then
+          [[ "$reg" == "$want_reg" ]] || {
+            echo "has_count_regression=${reg} want=${want_reg}" >&2
+            return 1
+          }
+        fi
+        echo "ok status=${status} regression=${reg}"
+        return 0
       fi
-      echo "ok status=${status} regression=${reg}"
-      return 0
+      if [[ "$status" == "WAITING_FOR_ROLES" && "$want_status" != "WAITING_FOR_ROLES" ]]; then
+        sleep 1
+        i=$((i + 1))
+        continue
+      fi
+      echo "verdict status=${status} want=${want_status} line=${line}" >&2
+      return 1
     fi
     sleep 1
     i=$((i + 1))

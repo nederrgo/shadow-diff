@@ -85,7 +85,7 @@ Set `MONARCH_MODE=dev` on the controller Deployment when using local `:dev` help
 
 ### 2. Object storage (BYOB)
 
-Every ShadowTest needs `spec.storage` (S3-compatible bucket + credentials Secret). Monarch never creates the bucket. Local E2E uses MinIO under `monarch-system` via [`testing/tools/e2e-reset-minikube.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/tools/e2e-reset-minikube.sh) (bucket `shadow-diff-local`, Secret `shadow-diff-s3`).
+Every ShadowTest needs `spec.storage` (S3-compatible bucket + credentials Secret). Monarch never creates the bucket. Local E2E uses MinIO under `monarch-system` via [`testing/tools/e2e-reset-kind.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/tools/e2e-reset-kind.sh) (bucket `shadow-diff-local`, Secret `shadow-diff-s3`).
 
 ### 3. Kaisel DaemonSet
 

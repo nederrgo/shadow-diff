@@ -22,6 +22,12 @@ setup_file() {
   bats_suite_mark PROD_DEPLOYED 1
 
   bats_prepare_shadowtest_slot "$SHADOWTEST" "$SHADOWTEST_NS"
+  # Adding mongodb mid-test injects shadow-soldier; ensure it is in the Kind node
+  # (platform "already healthy" skips load_test_images_if_needed).
+  bats_ensure_dev_image \
+    "${SHADOW_SOLDIER_IMG:-shadow-soldier:dev}" \
+    "${REPO}/pipeline/shadow-soldier" \
+    "SHADOW_SOLDIER_IMG"
   apply_shadowtest "${FIXTURE_DIR}/shadowtest.yaml"
   bats_suite_mark SHADOWTEST_APPLIED 1
 

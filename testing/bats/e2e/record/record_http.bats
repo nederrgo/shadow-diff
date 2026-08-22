@@ -8,7 +8,7 @@
 #   4. Traced prod egress pairs are POSTed to Shop and flushed under sessions/<id>/egress/.
 #
 # Requirements:
-#   - Cluster with docker/kind/minikube image load
+#   - Kind cluster with host docker + kind load
 #   - make test-bats-record  (or SKIP_BUILD=1 SKIP_LOAD=1 when images are warm)
 
 load '../../test_helper'

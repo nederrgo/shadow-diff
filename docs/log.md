@@ -9,6 +9,15 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-08-22]
+### Added
+* 'testing/bats/helpers/e2e-helpers.sh': trim kubectl pod-deleted suffix instead of dropping whole curl output line (spike_guard baseline parse)
+* 'testing/bats/lib/beru_seed.bash': fix seed probe HTTP code parse — curl newline + strip kubectl pod-deleted noise
+* 'testing/bats/lib/beru_seed.bash': beru_probe_seed_endpoint checks HTTP status (400/202) instead of grepping for 404/stale-image false positive
+* 'testing/bats,testing/tools,docs/': Phase 2e — delete Minikube bootstrap; Kind-only local E2E (drop e2e-reset-minikube.sh, cluster-minikube.sh)
+* 'docs/, READMEs, testing/bats/': Phase 2d Kind docs/DX retarget — e2e-reset-kind.sh + localhost:15432 default; Minikube opt-in until 2e
+* 'testing/bats,docs/infrastructure': Phase 2c — default E2E_CLUSTER=kind; Kind image load in bats_ensure_dev_image; integration green on Kind
+
 ## [2026-08-21]
 ### Added
 * 'testing/tools/e2e-reset-kind.sh': Phase 2b one-shot Kind reset + shared e2e-reset-deploy.sh; host Postgres DSN localhost:15432

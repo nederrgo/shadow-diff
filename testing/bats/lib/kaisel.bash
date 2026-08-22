@@ -45,19 +45,15 @@ kaisel_setup_platform() {
 
   if [[ "${SKIP_LOAD:-0}" != "1" ]]; then
     echo "==> [kaisel] ensure images present in cluster"
-    # Minikube VM drivers: builds target minikube docker. Kind / none: host docker + load.
     # Fail hard if a :dev image is missing — do not docker-pull (no registry) or
     # swallow errors (that produced silent ErrImagePull on beru-local).
-    if [[ "${E2E_CLUSTER:-minikube}" != kind && "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
-      use_minikube_docker_env
-    fi
     if ! docker image inspect nginx:alpine >/dev/null 2>&1; then
       docker pull nginx:alpine
     fi
     for img in "${MONARCH_IMG}" "${KAISEL_IMG}" "${BERU_IMG}" "${SHOP_IMG}" \
       "${IGRIS_IMG}" "${EGRESS_TEST_IMG}" nginx:alpine; do
       e2e_load_image "${img}" || {
-        echo "FAIL: ${img} missing in cluster (E2E_CLUSTER=${E2E_CLUSTER:-minikube})" >&2
+        echo "FAIL: ${img} missing in Kind cluster" >&2
         return 1
       }
     done

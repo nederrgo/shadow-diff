@@ -1,4 +1,4 @@
-# Shared E2E stack deploy for e2e-reset-{minikube,kind}.sh.
+# Shared E2E stack deploy for e2e-reset-kind.sh.
 # Source after cluster helpers + image build/load. Do not execute directly.
 #
 # Required env (set by the driver):
@@ -7,8 +7,8 @@
 #   TUSK_IMG, THE_SYSTEM_IMG
 # Optional:
 #   NO_RESET, SKIP_LOAD, E2E_IMAGE_REBUILD_HINT
-#   E2E_HOST_PG_ADDR — host:port for Postgres NodePort (Kind: localhost:15432;
-#     Minikube: $(minikube ip):30432). Defaults to localhost:15432 if unset.
+#   E2E_HOST_PG_ADDR — host:port for Postgres NodePort (Kind: localhost:15432).
+#     Defaults to localhost:15432 if unset.
 
 e2e_reset_deploy_stack() {
   echo "==> Monarch CRDs (ShadowTest + KaiselRule)"

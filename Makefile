@@ -166,7 +166,7 @@ test-bats-kaisel: ## Kaisel eBPF capture E2E test (requires root + cluster + pip
 
 test-bats-kaisel-kind: ## Kind Kaisel smoke (pod↔pod, pod→httpbin, host→NodePort).
 	@chmod +x testing/bats/run-one.sh
-	@E2E_CLUSTER=kind ./testing/bats/run-one.sh e2e/kaisel-kind-smoke/kaisel_kind_smoke.bats
+	@./testing/bats/run-one.sh e2e/kaisel-kind-smoke/kaisel_kind_smoke.bats
 
 test-bats-record: ## Record-mode S3 capture E2E (also included in test-bats-e2e).
 	@chmod +x testing/bats/run-one.sh

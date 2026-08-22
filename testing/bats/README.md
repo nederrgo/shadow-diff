@@ -4,9 +4,9 @@ Modular integration and E2E tests using [bats-core](https://github.com/bats-core
 
 ## Prerequisites
 
-- Linux host with Minikube **kvm2** or **virtualbox** driver (eBPF capture)
+- Linux host with **Docker** and **Kind** (default local E2E cluster; Kaisel eBPF capture)
 - `kubectl`, `jq`, `openssl`
-- Container images built into Minikube docker (`make` targets below)
+- Container images built on host docker and loaded via `kind load` (`make` targets below; or run `./testing/tools/e2e-reset-kind.sh` once)
 - For Jest-like output: Node/npm once — `npm ci --prefix testing/bats`
 
 ## Layout
@@ -71,7 +71,7 @@ make test-bats               # both
 # Or directly
 export BATS_PARALLEL_JOBS=1 BATS_TEST_TIMEOUT=900
 
-# If images are already loaded into minikube docker, skip builds:
+# If images are already built on host docker and loaded into Kind, skip builds:
 SKIP_BUILD=1 SKIP_LOAD=1 ./testing/bats/run-one.sh e2e/rabbitmq-ingress/python_hybrid.bats -f 'RabbitMQ egress'
 ```
 
@@ -100,7 +100,7 @@ BATS_PARALLEL_JOBS=2 make test-bats-e2e       # parallel; NO Jest reporter
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `SKIP_BUILD` | `0` | Skip `docker build` in `setup_file` |
-| `SKIP_LOAD` | `0` | Skip image load into Minikube |
+| `SKIP_LOAD` | `0` | Skip `kind load` into the cluster |
 | `SKIP_PLATFORM_BOOTSTRAP` | `0` | Health-check only; no install |
 | `BERU_QUIESCENCE_SEC` | `5` | Verdict settlement quiescence window |
 | `BATS_ISOLATE_MODE` | `trace` | `trace` or `full` (dependency reset) |

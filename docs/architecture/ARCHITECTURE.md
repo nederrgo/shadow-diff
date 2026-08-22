@@ -230,7 +230,7 @@ s3://<bucket>/shadow-diff/<cr-namespace>/<cr-name>/sessions/<session-id>/
 | `Delete` | Finalizer `shadow-diff.io/s3-cleanup` deletes that prefix only |
 
 
-Local DX: `[e2e-reset-minikube.sh](../../testing/tools/e2e-reset-minikube.sh)` deploys MinIO in `monarch-system` + Secret `shadow-diff-s3` (not managed by Monarch).
+Local DX: [`e2e-reset-kind.sh`](../../testing/tools/e2e-reset-kind.sh) deploys MinIO in `monarch-system` + Secret `shadow-diff-s3` (not managed by Monarch).
 
 ---
 

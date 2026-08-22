@@ -80,10 +80,11 @@ Each service has its own README with layer role, build commands, and Monarch wir
 With Docker and Kind available:
 
 ```sh
-./testing/tools/e2e-reset-minikube.sh
+./testing/tools/e2e-reset-kind.sh
+make test-bats
 ```
 
-This bootstraps a test cluster, builds and loads images, deploys Monarch and Beru, applies a sample `ShadowTest`, and waits for `Ready`. See [docs/verification/VERIFICATION.md](docs/verification/VERIFICATION.md) for step-by-step manual verification and individual E2E scripts (egress, RabbitMQ, OTel, dependencies).
+This bootstraps a Kind cluster, builds and loads images, deploys Monarch and Beru, applies a sample `ShadowTest`, and waits for `Ready`. Host Postgres for Go conformance tests: `export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@localhost:15432/beru?sslmode=disable"`. See [docs/verification/VERIFICATION.md](docs/verification/VERIFICATION.md) for step-by-step manual verification and individual E2E scripts (egress, RabbitMQ, OTel, dependencies).
 
 Build or test a single service from the repo root:
 
