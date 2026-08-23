@@ -85,6 +85,12 @@ e2e_reset_deploy_stack() {
   fi
   kubectl apply -k "$REPO/pipeline/tusk/deploy"
   kubectl set image deployment/tusk -n monarch-system "tusk=${TUSK_IMG}"
+  # Force a new pod: apply + set-image with the same :dev tag often leaves a
+  # stale ReplicaSet running. Tusk opens Postgres once at startup with no retry
+  # (pipeline/tusk/cmd/tusk/main.go) — a pod that booted before Postgres was
+  # ready stays in control-plane-only mode (503 on /api/v1/sessions) until restart.
+  # TODO(tusk): retry Open() with backoff so this restart is not required.
+  kubectl rollout restart deployment/tusk -n monarch-system
   kubectl rollout status deployment/tusk -n monarch-system --timeout=120s
 
   # The System: cluster-wide topology / ShadowTest editor UI (Nginx :80).

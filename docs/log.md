@@ -9,6 +9,12 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-08-23]
+### Added
+* 'testing/tools/lib/e2e-reset-deploy.sh': Force Tusk rollout restart on Kind reset; TODO comment for startup Postgres retry
+* 'pipeline/beru/internal/storage': M2 projection hard-fail same-tx as verdict
+* 'pipeline/beru + docs/data-plane': M1 ingest idempotency via WAL seq ingest_id
+
 ## [2026-08-22]
 ### Added
 * 'Makefile, testing/bats': add test-bats-e2e-smoke (Python HTTP-otel + RMQ hybrid only)

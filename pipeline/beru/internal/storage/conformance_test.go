@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -392,5 +393,8 @@ func reportForTest(traceID, shadowTest, role, protocol string, dir v2storage.Pay
 		StatusCode:     statusCode,
 		PayloadBytes:   []byte(payload),
 		CapturedAt:     at,
+		IngestID:       testIngestSeq.Add(1),
 	}
 }
+
+var testIngestSeq atomic.Uint64

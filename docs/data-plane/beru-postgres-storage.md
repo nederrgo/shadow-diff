@@ -29,7 +29,9 @@ A single-threaded dispatcher owns an `inFlightTraces` map:
 3. Skip traces that are inflight or before `nextRetryAt`.
 4. Non-blocking enqueue onto one of **8** sticky FNV-hashed worker channels; claim only after a successful send.
 
-Workers run `BEGIN` → `SELECT pg_advisory_xact_lock(hashtext(replay_execution_id || ':' || trace_id))` → insert reports → evaluate → upsert verdicts + UI projection → `COMMIT`, then delete exact WAL keys. On failure, keys stay on disk, `RetryCount` is bumped, and the dispatcher applies exponential backoff (`100ms` → `500ms` → `1s`, capped at `5s`).
+Workers run `BEGIN` → `SELECT pg_advisory_xact_lock(hashtext(replay_execution_id || ':' || trace_id))` → insert reports (with `ingest_id` from WAL seq; `ON CONFLICT DO NOTHING` on retry) → evaluate → upsert verdicts + UI projection → `COMMIT`, then delete exact WAL keys. A projection or `NOTIFY` error aborts the transaction (nothing persisted); WAL keys stay on disk, `RetryCount` is bumped, and the dispatcher applies exponential backoff (`100ms` → `500ms` → `1s`, capped at `5s`).
+
+Flush retries reuse the same Bbolt key bytes as `ingest_id`, so a Postgres commit followed by a failed WAL delete cannot duplicate `raw_reports` rows. The flusher still reloads the full trace history and re-diff on every attempt.
 
 After **3** consecutive failures for a batch, Beru appends a JSON line to `/data/dead_letters.jsonl` (`BERU_DEAD_LETTER_PATH`), deletes the WAL keys, and logs an error so a poison payload cannot block the pipeline.
 
@@ -76,7 +78,7 @@ Every ShadowTest gets a `beru-local` pod in the shadow namespace.
 
 | Table | Key | Notes |
 | --- | --- | --- |
-| `raw_reports` | `id` | Append-only. Stamped with `session_id` + `replay_execution_id`. Index on `(replay_execution_id, trace_id, signature)` for Tusk occurrence pager |
+| `raw_reports` | `id` | Append-only. Stamped with `session_id` + `replay_execution_id`. `ingest_id` is the Bbolt WAL sequence; unique on `(replay_execution_id, ingest_id)` for flush idempotency. Index on `(replay_execution_id, trace_id, signature)` for Tusk occurrence pager |
 | `verdicts` | `(replay_execution_id, trace_id)` | Upserted; `summary_details` is `JSONB`. `shadow_test_name` + `session_id` denormalised |
 | `shadow_tests` | `id` | Created lazily per shadow test name |
 | `noise_filters` | `(shadow_test_name, path)` | User ignore paths |
@@ -112,7 +114,7 @@ Beru runs unrestricted. NetworkPolicy is deny-only, so beru-local reaches Postgr
 
 ```bash
 export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@localhost:15432/beru?sslmode=disable"
-go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection|WAL|concurrentFlushSameTrace' -v
+go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection|WAL|concurrentFlushSameTrace|idempotency' -v
 go -C pipeline/monarch test ./internal/controller/... -run 'BeruDB|LocalBeruPodSpec' -v
 ```
 

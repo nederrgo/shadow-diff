@@ -431,6 +431,9 @@ func (w *WALStore) processBatch(batch TraceBatch) {
 	reports := make([]v2storage.RawReport, len(batch.Entries))
 	for i := range batch.Entries {
 		reports[i] = batch.Entries[i].Report
+		if len(batch.Keys[i]) == 8 {
+			reports[i].IngestID = binary.BigEndian.Uint64(batch.Keys[i])
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), walFlushTimeoutFromEnv())

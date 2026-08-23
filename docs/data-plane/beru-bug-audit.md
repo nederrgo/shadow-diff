@@ -20,7 +20,7 @@ Related specs: [/data-plane/beru-analysis.md](/data-plane/beru-analysis.md), [/d
 | Severity | Count | Fixed |
 | -------- | ----- | ----- |
 | High     | 2     | 2     |
-| Medium   | 2     | 0     |
+| Medium   | 2     | 2     |
 | Low      | 2     | 0     |
 | Deferred | 2     | —     |
 
@@ -30,8 +30,8 @@ Related specs: [/data-plane/beru-analysis.md](/data-plane/beru-analysis.md), [/d
 
 - [x] **H1** — Baseline A↔B uses signature-bucket compare (like C↔A); still void on structural miss
 - [x] **H2** — WAL append on HTTP/gRPC accept path so 202 means local-WAL durable
-- [ ] **M1** — Ingest idempotency via WAL seq / `ingest_id` (`ON CONFLICT DO NOTHING`)
-- [ ] **M2** — Kill projection soft success; same tx as verdict; fix split `SaveDiffVerdict`
+- [x] **M1** — Ingest idempotency via WAL seq / `ingest_id` (`ON CONFLICT DO NOTHING`)
+- [x] **M2** — Kill projection soft success; same tx as verdict; fix split `SaveDiffVerdict`
 - [ ] **L1** — Log ext_proc normalize / `FromHTTPIngress` failures (still CONTINUE)
 - [ ] **L2** — Document or extend hardcoded Mongo metadata strip list (small)
 - [ ] **D1** — WAL 1 GiB drop-head *(deferred — not caring for now)*
@@ -97,7 +97,7 @@ Related specs: [/data-plane/beru-analysis.md](/data-plane/beru-analysis.md), [/d
 
 ### M1. Commit OK + WAL delete fail → duplicate `raw_reports`
 
-- [ ] Open
+- [x] Fixed
 
 **Class:** correctness / false mismatches  
 **Evidence:** `internal/storage/wal.go` (`processBatch` — `flushReportsAndEvaluate` then `deleteKeys`); `migrations/0001_init.sql` (`raw_reports` identity PK only)
@@ -113,11 +113,13 @@ Related specs: [/data-plane/beru-analysis.md](/data-plane/beru-analysis.md), [/d
 3. Do **not** unique on `(trace, role, signature, payload)` — that collapses legitimate double ops and breaks N+1 detection.
 4. Retries must still re-load history and re-diff.
 
+**Done:** `raw_reports.ingest_id` holds the Bbolt WAL sequence; unique on `(replay_execution_id, ingest_id)`; `insertReport` uses `ON CONFLICT DO NOTHING`; `processBatch` stamps seq from WAL key before flush. Retries reload history and re-diff without duplicating rows.
+
 ---
 
 ### M2. Projection soft success — SoT vs UI diverge
 
-- [ ] Open
+- [x] Fixed
 
 **Class:** correctness / UI consistency  
 **Evidence:** `internal/storage/postgres_traces.go` (`SaveDiffVerdict` upsert then separate `projectTrace` with Warn + `return nil`); flush path `flushReportsAndEvaluate` / `saveDiffVerdictUnderLock`
@@ -132,6 +134,8 @@ Related specs: [/data-plane/beru-analysis.md](/data-plane/beru-analysis.md), [/d
 2. One transaction: lock → reports (if any) → upsert verdict → project + notify → commit.
 3. Route all verdict writes through the locked same-tx path; remove Warn-and-succeed on `SaveDiffVerdict`.
 4. Keep projection tables for Tusk (do not drop the read model).
+
+**Done:** `flushReportsAndEvaluate` and `saveDiffVerdictUnderLock` return projection errors (tx rolls back). `SaveDiffVerdict` delegates to the locked path; split `projectTrace` removed. Failed flush leaves WAL keys for retry.
 
 ---
 

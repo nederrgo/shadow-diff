@@ -40,6 +40,8 @@ func main() {
 	if cfg, ok := db.ConfigFromEnv(); ok {
 		opened, err := db.Open(cfg)
 		if err != nil {
+			// TODO: retry Open() with capped backoff (like db.Listen and MonarchClient)
+			// so a transient startup race or Postgres blip does not require a pod restart.
 			log.Error("Postgres open failed; running control-plane-only", "err", err)
 		} else {
 			pgStore = opened

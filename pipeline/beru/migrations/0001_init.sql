@@ -26,7 +26,10 @@ CREATE TABLE IF NOT EXISTS raw_reports (
   -- are not guaranteed to be JSON. A JSONB column would reject the INSERT and
   -- drop the report on the ingest hot path.
   payload_bytes        BYTEA,
-  captured_at          TIMESTAMPTZ NOT NULL
+  captured_at          TIMESTAMPTZ NOT NULL,
+  -- WAL sequence stamped at flush; scopes idempotent retry (ON CONFLICT DO NOTHING).
+  ingest_id            BIGINT NOT NULL,
+  CONSTRAINT uq_raw_reports_ingest UNIQUE (replay_execution_id, ingest_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_raw_reports_trace_id ON raw_reports (trace_id);

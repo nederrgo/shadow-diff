@@ -37,11 +37,15 @@ type dbQuerier interface {
 }
 
 func (p *PostgresStore) insertReport(ctx context.Context, q dbQuerier, report *v2storage.RawReport) error {
+	if report.IngestID == 0 {
+		return fmt.Errorf("append report insert: ingest_id is required")
+	}
 	_, err := q.ExecContext(ctx, `
 INSERT INTO raw_reports (
   trace_id, shadow_role, shadow_test_name, session_id, replay_execution_id,
-  protocol, direction, signature, status_code, payload_bytes, captured_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+  protocol, direction, signature, status_code, payload_bytes, captured_at, ingest_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ON CONFLICT (replay_execution_id, ingest_id) DO NOTHING`,
 		report.TraceID,
 		report.ShadowRole,
 		report.ShadowTestName,
@@ -53,6 +57,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		report.StatusCode,
 		report.PayloadBytes,
 		report.CapturedAt.UTC(),
+		int64(report.IngestID),
 	)
 	if err != nil {
 		return fmt.Errorf("append report insert: %w", err)
@@ -102,7 +107,7 @@ func (p *PostgresStore) flushReportsAndEvaluate(
 			return err
 		}
 		if err := p.projectTraceTx(ctx, tx, traceID, verdict, history); err != nil {
-			p.log.Warn("Trace projection failed", "trace_id", traceID, "err", err)
+			return err
 		}
 	}
 	return tx.Commit()
@@ -129,7 +134,7 @@ func (p *PostgresStore) saveDiffVerdictUnderLock(ctx context.Context, traceID st
 		return err
 	}
 	if err := p.projectTraceTx(ctx, tx, traceID, verdict, history); err != nil {
-		p.log.Warn("Trace projection failed", "trace_id", traceID, "err", err)
+		return err
 	}
 	return tx.Commit()
 }
@@ -329,40 +334,9 @@ HAVING MIN(r.captured_at) <= $1
 	return out, rows.Err()
 }
 
-// SaveDiffVerdict upserts the trace's verdict, then refreshes the UI projection.
+// SaveDiffVerdict upserts the trace's verdict and UI projection under the per-trace advisory lock.
 func (p *PostgresStore) SaveDiffVerdict(ctx context.Context, traceID string, verdict *v2storage.VerdictState) error {
-	if verdict == nil {
-		return fmt.Errorf("save diff verdict: nil verdict")
-	}
-	history, err := p.ListReports(ctx, traceID, "")
-	if err != nil {
-		return fmt.Errorf("save diff verdict: %w", err)
-	}
-	if err := p.upsertVerdict(ctx, p.db, traceID, verdict, history); err != nil {
-		return err
-	}
-	if err := p.projectTrace(ctx, traceID, verdict, history); err != nil {
-		p.log.Warn("Trace projection failed", "trace_id", traceID, "err", err)
-	}
-	return nil
-}
-
-// projectTrace rebuilds the traces / diff_reports rows Tusk reads.
-func (p *PostgresStore) projectTrace(
-	ctx context.Context,
-	traceID string,
-	verdict *v2storage.VerdictState,
-	history []v2storage.RawReport,
-) error {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := p.projectTraceTx(ctx, tx, traceID, verdict, history); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return p.saveDiffVerdictUnderLock(ctx, traceID, verdict)
 }
 
 func (p *PostgresStore) projectTraceTx(

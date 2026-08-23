@@ -41,6 +41,8 @@ type RawReport struct {
 	StatusCode     string           `json:"status_code,omitempty"`
 	PayloadBytes   []byte           `json:"payload_bytes"`
 	CapturedAt     time.Time        `json:"captured_at"`
+	// IngestID is the Bbolt WAL sequence; set by Beru before Postgres insert, not by producers.
+	IngestID uint64 `json:"ingest_id,omitempty"`
 }
 
 // TraceSummary is one list row: a trace plus protocol with diff status.
