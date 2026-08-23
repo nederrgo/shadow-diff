@@ -34,6 +34,7 @@ This suite does **not** bootstrap Kind or Monarch. The cluster must already have
 |-----------|---------|-------|
 | `STRESS_N` | 1000 | Override for CI smoke (`STRESS_N=10`) |
 | RPS ramp | 500 → 2000 over 60s | `STRESS_RPS_*` / `STRESS_RAMP_SEC` |
+| `S3_FLUSH_WAIT_SEC` | 300 | Poll until S3 line counts reach N (not file-count alone) |
 | S3 egress / request | 1 | HTTP only (Kaisel → Shop) |
 | Postgres egress / role | HTTP×1 + AMQP×1 + Mongo×1 | `EXPECTED_EGRESS_*` |
 
@@ -50,7 +51,7 @@ STRESS_N=10 STRESS_RPS_START=5 STRESS_RPS_END=10 STRESS_RAMP_SEC=5 make test-str
 1. Apply [`fixtures/shadowtest.yaml`](https://github.com/shadow-diff/monarch/blob/main/testing/stress/fixtures/shadowtest.yaml) (`mode: record`); wait `phase=Ready` and `kaiselPhase=Ready`.
 2. Snapshot Kaisel drop counters (`check_ebpf_drops.sh --snapshot`).
 3. Run `load_gen` with deterministic `traceparent` IDs → `stress_sent_traces.json`.
-4. Wait MinIO JSONL flush; assert eBPF deltas == 0; assert S3 ingress = N, egress = N × `EXPECTED_S3_EGRESS_PER_REQ`.
+4. Wait MinIO object count stable, then **poll S3 JSONL line counts** until ingress = N and egress = N × `EXPECTED_S3_EGRESS_PER_REQ` (Kaisel→Shop→S3 can lag minutes at high RPS); assert eBPF deltas == 0.
 5. Patch `spec.mode=replay` + `spec.sessionID=<currentSessionID>`.
 6. Wait `replayState=started`, Igris log `replay loop finished`, Postgres row-count stability.
 7. Assert per-role `(protocol, direction)` counts and exact `trace_id` set match.
@@ -67,6 +68,7 @@ STRESS_N=10 STRESS_RPS_START=5 STRESS_RPS_END=10 STRESS_RAMP_SEC=5 make test-str
 |---------|----------------|
 | eBPF `ring_lost` / `frag_drops` > 0 | RPS above Kaisel perf-ring capacity; lower `STRESS_RPS_END` or raise per-CPU pages |
 | S3 ingress < N | KaiselRule not Ready, sampling < 100%, or prod not targeted |
+| S3 egress < N (ingress OK) | Export queue / S3 uploader still draining — raise `S3_FLUSH_WAIT_SEC` or wait for line-count poll; not prod loss |
 | S3 egress = 0 | `HTTP_EGRESS_CONNECT_URL` unset or `user-service-python` missing |
 | Postgres AMQP/Mongo missing | Shadow deps / egress-relay / shadow-soldier not roll-ready in replay |
 | `load_gen` HTTP failures | Prod worker returning 500 (egress dep down) |

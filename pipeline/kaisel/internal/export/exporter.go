@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	defaultWorkers    = 8
-	defaultQueue      = 1024
+	defaultWorkers    = 16
+	defaultQueue      = 8192
 	defaultTimeout    = 5 * time.Second
 	headerTraceparent = "traceparent"
 )
@@ -118,6 +118,7 @@ func (e *Exporter) recordEgress(shops map[string]*forwarder.ShopClient, j job) {
 	hash, err := c.Record(context.Background(), j.egress)
 	if err != nil {
 		e.log.Warn("record egress to shop failed", "err", err,
+			"trace_id", j.egress.TraceID,
 			"method", j.egress.Method, "host", j.egress.Host, "path", j.egress.Path,
 			"base", j.baseURL)
 		return
@@ -125,6 +126,7 @@ func (e *Exporter) recordEgress(shops map[string]*forwarder.ShopClient, j job) {
 	// hash is Shop's own computed mock key, so logging it shows the key Envoy
 	// will look up rather than one Kaisel guessed at.
 	e.log.Info("egress recorded",
+		"trace_id", j.egress.TraceID,
 		"method", j.egress.Method, "host", j.egress.Host, "path", j.egress.Path,
 		"status", j.egress.Response.Status, "body_bytes", len(j.egress.Response.Body),
 		"hash", hash)
@@ -163,8 +165,12 @@ func (e *Exporter) Handle(netFlow gopacket.Flow, req *http.Request) {
 	select {
 	case e.jobs <- job{baseURL: route.IgrisBaseURL, record: record}:
 	default:
-		// ponytail: drop on full queue; upgrade path = metric + larger queue
 		e.dropped.Add(1)
+		if e.log != nil {
+			e.log.Warn("export job dropped; queue full",
+				"kind", "ingress", "method", record.Method, "uri", record.RequestURI,
+				"total", e.dropped.Load())
+		}
 	}
 }
 
@@ -219,5 +225,11 @@ func (e *Exporter) HandleTransaction(netFlow, transportFlow gopacket.Flow, req *
 	case e.jobs <- job{baseURL: route.EgressBaseURL, egress: record}:
 	default:
 		e.dropped.Add(1)
+		if e.log != nil {
+			e.log.Warn("export job dropped; queue full",
+				"kind", "egress", "trace_id", tid, "method", record.Method,
+				"host", record.Host, "path", record.Path,
+				"total", e.dropped.Load())
+		}
 	}
 }

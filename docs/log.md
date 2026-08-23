@@ -11,6 +11,9 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-08-23]
 ### Added
+* 'testing/stress/run_stress_test.sh': Poll S3 line counts until N before verify; default S3_FLUSH_WAIT_SEC=300
+* 'testing/stress/run_stress_test.sh': wait_ready accepts kaiselPhase=Disabled when ShadowTest spec.mode=replay
+* 'testing/tools/e2e-reset-kind.sh': Build and kind-load igris-rabbitmq, egress-relay-rabbitmq, and shadow-soldier :dev images
 * 'testing/stress/run_stress_test.sh': Fix fragile nested quotes in load_gen pass, kubectl mc exec blocks, and config.env inline comment parsing
 * 'testing/stress/run_stress_test.sh': Wait for ShadowTest CR finalizer before re-apply (reuse delete-shadowtest.sh)
 * 'testing/stress/verifiers/check_postgres_counts.py': Fix kubectl SQL GROUP BY for role/protocol/direction counts

@@ -58,7 +58,7 @@ STRESS_RPS_START="${STRESS_RPS_START:-500}"
 STRESS_RPS_END="${STRESS_RPS_END:-2000}"
 STRESS_RAMP_SEC="${STRESS_RAMP_SEC:-60}"
 KAISEL_NS="${KAISEL_NS:-kaisel-system}"
-S3_FLUSH_WAIT_SEC="${S3_FLUSH_WAIT_SEC:-120}"
+S3_FLUSH_WAIT_SEC="${S3_FLUSH_WAIT_SEC:-300}"
 REPLAY_WAIT_SEC="${REPLAY_WAIT_SEC:-600}"
 POSTGRES_STABLE_POLLS="${POSTGRES_STABLE_POLLS:-6}"
 POSTGRES_STABLE_INTERVAL_SEC="${POSTGRES_STABLE_INTERVAL_SEC:-10}"
@@ -106,21 +106,30 @@ jsonpath() {
 }
 
 wait_ready() {
-  local timeout="${1:-300}" elapsed=0 phase kaisel
-  echo "==> wait ShadowTest Ready + kaiselPhase=Ready (timeout=${timeout}s)"
+  local timeout="${1:-300}" elapsed=0 phase kaisel mode
+  echo "==> wait ShadowTest Ready (timeout=${timeout}s)"
   while true; do
     phase=$(jsonpath '{.status.phase}')
     kaisel=$(jsonpath '{.status.kaiselPhase}')
-    if [[ "$phase" == "Ready" && "$kaisel" == "Ready" ]]; then
-      echo "    phase=Ready kaiselPhase=Ready"
-      return 0
+    mode=$(jsonpath '{.spec.mode}')
+    [[ -z "$mode" ]] && mode=record
+    if [[ "$phase" == "Ready" ]]; then
+      if [[ "$kaisel" == "Ready" ]]; then
+        echo "    phase=Ready kaiselPhase=Ready (record)"
+        return 0
+      fi
+      # Replay tears down KaiselRule — Disabled is expected, not an error.
+      if [[ "$mode" == "replay" && "$kaisel" == "Disabled" ]]; then
+        echo "    phase=Ready kaiselPhase=Disabled (replay)"
+        return 0
+      fi
     fi
     if [[ "$elapsed" -ge "$timeout" ]]; then
-      echo "FAIL: phase=${phase:-?} kaiselPhase=${kaisel:-?} after ${timeout}s" >&2
+      echo "FAIL: phase=${phase:-?} kaiselPhase=${kaisel:-?} mode=${mode:-?} after ${timeout}s" >&2
       kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o yaml >&2 || true
       return 1
     fi
-    echo "    waiting (${elapsed}s) phase=${phase:-?} kaisel=${kaisel:-?}"
+    echo "    waiting (${elapsed}s) phase=${phase:-?} kaisel=${kaisel:-?} mode=${mode:-?}"
     sleep 5
     elapsed=$((elapsed + 5))
   done
@@ -269,6 +278,37 @@ wait_s3_flush() {
   done
 }
 
+# Poll S3 JSONL line counts until ingress=N and egress=N*EXPECTED_S3_EGRESS_PER_REQ.
+# File-count stability alone is insufficient: Kaisel→Shop→S3 can lag minutes after load.
+wait_s3_counts_ready() {
+  local session="$1" timeout="${S3_FLUSH_WAIT_SEC}" elapsed=0
+  echo "==> wait S3 record counts for N=${STRESS_N} (timeout=${timeout}s)"
+  while true; do
+    set +e
+    out=$(python3 "${STRESS_DIR}/verifiers/check_s3_counts.py" \
+      --reference "$REFERENCE" \
+      --session-id "$session" \
+      --namespace "$SHADOWTEST_NS" \
+      --test-name "$SHADOWTEST" \
+      --n "$STRESS_N" \
+      --expected-egress-per-req "$EXPECTED_S3_EGRESS_PER_REQ" 2>&1)
+    rc=$?
+    set -e
+    if [[ $rc -eq 0 ]]; then
+      echo "$out"
+      echo "    S3 counts ready"
+      return 0
+    fi
+    echo "$out" | grep -E 's3_ingress_for_run|s3_egress_for_run|egress_covers_run|missing egress' | sed 's/^/    /' || true
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      echo "$out" >&2
+      die "S3 counts did not reach N within ${timeout}s"
+    fi
+    sleep 10
+    elapsed=$((elapsed + 10))
+  done
+}
+
 patch_replay() {
   local session="$1"
   echo "==> patch mode=replay sessionID=${session}"
@@ -400,6 +440,7 @@ else
 fi
 
 echo "==> check S3 counts"
+wait_s3_counts_ready "$SESSION_ID"
 S3_LOCAL="${WORK_DIR}/s3_session"
 rm -rf "$S3_LOCAL"
 download_session_jsonl "$SESSION_ID" "$S3_LOCAL"

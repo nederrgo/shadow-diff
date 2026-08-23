@@ -97,7 +97,8 @@ fi
 ensure_kind_ready
 
 echo "==> Monarch E2E reset (kind cluster=${KIND_CLUSTER}, context=${KIND_CONTEXT})"
-echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG shop=$SHOP_IMG igris=$IGRIS_IMG kaisel=$KAISEL_IMG"
+echo "    Images: monarch=$MONARCH_IMG beru=$BERU_IMG shop=$SHOP_IMG igris=$IGRIS_IMG"
+echo "            igris-rmq=$IGRIS_RABBITMQ_IMG egress-relay=$EGRESS_RELAY_RABBITMQ_IMG soldier=$SHADOW_SOLDIER_IMG kaisel=$KAISEL_IMG"
 if [[ "$SKIP_BUILD" -eq 1 ]]; then
   echo "WARN: --skip-build reuses existing host docker images; code changes are NOT included until you rebuild"
 fi
@@ -112,6 +113,9 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   make beru-docker-build BERU_IMG="$BERU_IMG"
   make shop-docker-build SHOP_IMG="$SHOP_IMG"
   make igris-docker-build IGRIS_IMG="$IGRIS_IMG"
+  make igris-rabbitmq-docker-build IGRIS_RABBITMQ_IMG="$IGRIS_RABBITMQ_IMG"
+  make egress-relay-rabbitmq-docker-build EGRESS_RELAY_RABBITMQ_IMG="$EGRESS_RELAY_RABBITMQ_IMG"
+  make shadow-soldier-docker-build SHADOW_SOLDIER_IMG="$SHADOW_SOLDIER_IMG"
   make kaisel-docker-build KAISEL_IMG="$KAISEL_IMG"
   make tusk-docker-build TUSK_IMG="$TUSK_IMG"
   make the-system-docker-build THE_SYSTEM_IMG="$THE_SYSTEM_IMG"
@@ -119,7 +123,9 @@ fi
 
 if [[ "$SKIP_LOAD" -eq 0 ]]; then
   echo "==> kind load docker-image into cluster ${KIND_CLUSTER}"
-  for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" "$KAISEL_IMG" "$TUSK_IMG" "$THE_SYSTEM_IMG"; do
+  for img in "$MONARCH_IMG" "$BERU_IMG" "$SHOP_IMG" "$IGRIS_IMG" \
+    "$IGRIS_RABBITMQ_IMG" "$EGRESS_RELAY_RABBITMQ_IMG" "$SHADOW_SOLDIER_IMG" \
+    "$KAISEL_IMG" "$TUSK_IMG" "$THE_SYSTEM_IMG"; do
     load_kind_image "$img"
   done
 fi
