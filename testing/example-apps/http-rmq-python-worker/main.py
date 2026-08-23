@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
-"""Trace-unaware HTTP ingress -> Mongo + RabbitMQ egress worker for OTel E2E."""
+"""Trace-unaware HTTP ingress -> Mongo + HTTP + RabbitMQ egress worker for OTel E2E."""
 
 import json
 import os
 import signal
 import sys
+import time
 
 import pika
 import pymongo
+import requests
 from flask import Flask, jsonify, request
 
 EGRESS_EXCHANGE = os.environ.get("RMQ_EGRESS_EXCHANGE", "egress-events")
 EGRESS_ROUTING_KEY = os.environ.get("RMQ_EGRESS_ROUTING_KEY", "order.egress")
+# Shop egress mock key (:authority / Host header). Empty CONNECT_URL skips HTTP egress
+# so bats suites that omit user-service keep working.
+HTTP_EGRESS_REPLAY_HOST = os.environ.get(
+    "HTTP_EGRESS_REPLAY_HOST", "user-service.prod.internal"
+)
+HTTP_EGRESS_CONNECT_URL = (os.environ.get("HTTP_EGRESS_CONNECT_URL") or "").strip()
 
 
 def env_or(name: str, default: str) -> str:
@@ -33,6 +41,23 @@ def listen_port() -> int:
     if http_port := env_or("HTTP_PORT", ""):
         return int(http_port)
     return int(env_or("LISTEN_ADDR", ":8080").lstrip(":") or "8080")
+
+
+def is_shadow_worker() -> bool:
+    return "shadow" in env_or("AMQP_URL", "") or "shadow" in env_or("MONGO_URL", "")
+
+
+def http_post(
+    url: str, payload: dict, headers: dict | None = None, timeout: int = 30
+) -> requests.Response:
+    """Retry 599 while prod egress is recorded for Shop replay."""
+    headers = headers or {}
+    deadline = time.monotonic() + 60
+    while True:
+        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        if resp.status_code != 599 or time.monotonic() >= deadline:
+            return resp
+        time.sleep(2)
 
 
 def publish_egress(amqp_url: str, doc: dict, traceparent: str | None) -> None:
@@ -88,6 +113,19 @@ def main() -> None:
                 mongo_opts = {"comment": traceparent} if traceparent else {}
                 mongo_coll.insert_one({**doc}, **mongo_opts)
                 print("mongo insert ok", flush=True)
+            if HTTP_EGRESS_CONNECT_URL:
+                headers = {"Host": HTTP_EGRESS_REPLAY_HOST}
+                if traceparent:
+                    headers["traceparent"] = traceparent
+                via = "replay" if is_shadow_worker() else "record"
+                resp = http_post(
+                    HTTP_EGRESS_CONNECT_URL,
+                    {"status": "complete", **{k: doc[k] for k in ("order_id", "seq") if k in doc}},
+                    headers=headers,
+                )
+                print(f"http egress via={via} status={resp.status_code}", flush=True)
+                if resp.status_code != 200:
+                    return jsonify(error=f"http egress status={resp.status_code}"), 500
             publish_egress(amqp_url, doc, traceparent)
             print(
                 f"rmq egress published exchange={EGRESS_EXCHANGE} routing_key={EGRESS_ROUTING_KEY}",
@@ -100,6 +138,7 @@ def main() -> None:
 
     print(
         f"http-rmq-python-worker listen=:{port} amqp={amqp_url} mongo={mongo_url or '<none>'} "
+        f"http_egress={HTTP_EGRESS_CONNECT_URL or '<disabled>'} "
         f"egress={EGRESS_EXCHANGE}/{EGRESS_ROUTING_KEY}",
         flush=True,
     )

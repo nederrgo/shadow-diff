@@ -1,0 +1,33 @@
+# Stress suite ShadowTest — HTTP ingress + mongo/rmq deps, record mode.
+# Requires pre-provisioned: MinIO, Postgres (BERU_DB_SECRET), Kaisel DS,
+# http-rmq-python-prod (+ user-service-python for HTTP egress), Monarch.
+apiVersion: engine.shadow-diff.io/v1alpha1
+kind: ShadowTest
+metadata:
+  name: bats-stress
+  namespace: default
+spec:
+  targetDeployment: http-rmq-python-prod
+  newImage: http-rmq-python-worker:dev
+  mode: record
+  storage:
+    type: s3
+    bucketName: shadow-diff-local
+    endpoint: http://minio-service.monarch-system.svc.cluster.local:9000
+    region: us-east-1
+    credentialsSecretRef:
+      name: shadow-diff-s3
+    retentionPolicy: Retain
+
+  inputs:
+    - port: 8888
+      driver: http_request
+
+  dependencies:
+    - name: rabbitmq
+      type: rabbitmq
+      envVarInjection: AMQP_URL
+    - name: mongodb
+      type: mongodb
+      image: mongo:4.4
+      envVarInjection: MONGO_URL

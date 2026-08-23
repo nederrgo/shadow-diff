@@ -151,7 +151,7 @@ test-all: ## Run Monarch, Beru, Shop, Igris, kaisel, igris-rabbitmq, egress-rela
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
 	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) test
 	@$(MAKE) -C $(TUSK_DIR) test
-.PHONY: test-bats test-bats-integration test-bats-e2e test-bats-e2e-smoke test-bats-kaisel test-bats-kaisel-kind test-bats-record
+.PHONY: test-bats test-bats-integration test-bats-e2e test-bats-e2e-smoke test-bats-kaisel test-bats-kaisel-kind test-bats-record test-stress
 test-bats-integration: ## Bats integration suite (one ShadowTest per .bats file).
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh integration
@@ -180,6 +180,10 @@ test-bats-record: ## Record-mode S3 capture E2E (also included in test-bats-e2e)
 test-bats: ## Run all Bats integration + E2E suites.
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh all
+
+test-stress: ## Standalone stress suite (requires ready cluster; see testing/stress/README.md).
+	@chmod +x testing/stress/run_stress_test.sh testing/stress/verifiers/check_ebpf_drops.sh
+	@./testing/stress/run_stress_test.sh
 
 # Run one .bats file or filtered @test. Examples:
 #   make test-bats-one FILE=e2e/rabbitmq-ingress/python_hybrid.bats

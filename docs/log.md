@@ -11,6 +11,13 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-08-23]
 ### Added
+* 'testing/stress/run_stress_test.sh': Fix fragile nested quotes in load_gen pass, kubectl mc exec blocks, and config.env inline comment parsing
+* 'testing/stress/run_stress_test.sh': Wait for ShadowTest CR finalizer before re-apply (reuse delete-shadowtest.sh)
+* 'testing/stress/verifiers/check_postgres_counts.py': Fix kubectl SQL GROUP BY for role/protocol/direction counts
+* 'testing/stress': Scope S3 verifier to reference trace_ids; mint fresh session per run (STRESS_FRESH_SESSION=1)
+* 'testing/stress/run_stress_test.sh': Download S3 JSONL via debian+mc (kubectl cp needs tar); abort before replay on S3 fail
+* 'testing/stress/run_stress_test.sh': Fix S3 flush wait (grep on host; minio/mc has no grep) and preserve env overrides over config.env
+* 'testing/stress,docs/verification/stress-load-test.md': Add standalone stress load suite (deterministic load_gen, eBPF/S3 zero-loss checks, replay Postgres integrity) and optional HTTP egress on http-rmq-python-worker
 * 'testing/tools/lib/e2e-reset-deploy.sh': Force Tusk rollout restart on Kind reset; TODO comment for startup Postgres retry
 * 'pipeline/beru/internal/storage': M2 projection hard-fail same-tx as verdict
 * 'pipeline/beru + docs/data-plane': M1 ingest idempotency via WAL seq ingest_id
