@@ -1,5 +1,8 @@
 #!/usr/bin/env bats
 # E2E: HTTP ingress record→S3→replay — Node.js worker; Postgres verdicts.
+#
+# Ordering: record @test pins one trace and switches to replay once; replay @tests
+# reuse that trace (do not run replay @tests alone with -f).
 
 load '../../test_helper'
 
@@ -44,12 +47,6 @@ setup_file() {
   bats_write_suite_state
 }
 
-_http_record_then_replay() {
-  run e2e_http_record_then_replay "$BATS_TRACE_ID"
-  assert_success
-  bats_http_otel_firehose_ready
-}
-
 @test "record: traced HTTP ingress flushes to MinIO (nodejs)" {
   run kaisel_ensure_record_mode
   assert_success
@@ -57,16 +54,24 @@ _http_record_then_replay() {
   assert_success
   run e2e_assert_session_objects ingress 60
   assert_success
+  bats_pin_suite_trace "$BATS_TRACE_ID" "$BATS_ORDER_ID"
+  run kaisel_switch_to_replay ingress
+  assert_success
+  bats_http_otel_firehose_ready
 }
 
 @test "replay: HTTP ingress verdict MATCH in Postgres (nodejs)" {
-  _http_record_then_replay
+  bats_load_suite_state
+  bats_use_suite_trace
+  bats_assert_replay_mode
   run beru_wait_verdict_settled "$BATS_TRACE_ID" http --expect-status=MATCH --timeout=120
   assert_success
 }
 
 @test "replay: shadow workers publish RMQ egress without logging trace id (nodejs)" {
-  _http_record_then_replay
+  bats_load_suite_state
+  bats_use_suite_trace
+  bats_assert_replay_mode
   for role in control-a control-b candidate; do
     run assert_worker_log_grep "$role" "$RMQ_EGRESS_LOG"
     assert_success
@@ -76,13 +81,17 @@ _http_record_then_replay() {
 }
 
 @test "replay: RabbitMQ egress verdict MATCH in Postgres (nodejs)" {
-  _http_record_then_replay
+  bats_load_suite_state
+  bats_use_suite_trace
+  bats_assert_replay_mode
   run beru_wait_verdict_settled "$BATS_TRACE_ID" rabbitmq --expect-status=MATCH --timeout=120
   assert_success
 }
 
 @test "replay: MongoDB egress verdict MATCH in Postgres (nodejs)" {
-  _http_record_then_replay
+  bats_load_suite_state
+  bats_use_suite_trace
+  bats_assert_replay_mode
   run beru_wait_verdict_settled "$BATS_TRACE_ID" mongodb --expect-status=MATCH --timeout=120
   assert_success
 }

@@ -39,6 +39,8 @@ bats_init_env() {
   export SKIP_PLATFORM_BOOTSTRAP="${SKIP_PLATFORM_BOOTSTRAP:-0}"
   # When 1, teardown_file / run.sh EXIT trap leave ShadowTest + beru-local up for UI inspection.
   export BATS_KEEP="${BATS_KEEP:-0}"
+  # When 1, still tear down the CR / ns but leave Postgres projection rows for ShadowDiff.
+  export BATS_KEEP_POSTGRES="${BATS_KEEP_POSTGRES:-0}"
 }
 
 # Stable ShadowTest name per .bats file (set in setup_file).

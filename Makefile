@@ -151,7 +151,7 @@ test-all: ## Run Monarch, Beru, Shop, Igris, kaisel, igris-rabbitmq, egress-rela
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
 	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) test
 	@$(MAKE) -C $(TUSK_DIR) test
-.PHONY: test-bats test-bats-integration test-bats-e2e test-bats-kaisel test-bats-kaisel-kind test-bats-record
+.PHONY: test-bats test-bats-integration test-bats-e2e test-bats-e2e-smoke test-bats-kaisel test-bats-kaisel-kind test-bats-record
 test-bats-integration: ## Bats integration suite (one ShadowTest per .bats file).
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh integration
@@ -159,6 +159,11 @@ test-bats-integration: ## Bats integration suite (one ShadowTest per .bats file)
 test-bats-e2e: ## Bats E2E suite (shared env per file, multi-@test).
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh e2e
+
+test-bats-e2e-smoke: ## Kind E2E smoke: Python HTTP-otel + Python RMQ hybrid only.
+	@chmod +x testing/bats/run-one.sh
+	@./testing/bats/run-one.sh e2e/http-ingress/http_otel_rmq_python.bats
+	@./testing/bats/run-one.sh e2e/rabbitmq-ingress/python_hybrid.bats
 
 test-bats-kaisel: ## Kaisel eBPF capture E2E test (requires root + cluster + pipeline/kaisel/bin/kaisel).
 	@chmod +x testing/bats/run-one.sh

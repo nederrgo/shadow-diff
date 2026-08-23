@@ -11,6 +11,9 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-08-22]
 ### Added
+* 'Makefile, testing/bats': add test-bats-e2e-smoke (Python HTTP-otel + RMQ hybrid only)
+* 'testing/bats': Postgres verdict waits + teardown scrub (BATS_KEEP_POSTGRES)
+* 'testing/bats': shared record→replay cycle across five primary E2E suites
 * 'testing/bats/helpers/e2e-helpers.sh': trim kubectl pod-deleted suffix instead of dropping whole curl output line (spike_guard baseline parse)
 * 'testing/bats/lib/beru_seed.bash': fix seed probe HTTP code parse — curl newline + strip kubectl pod-deleted noise
 * 'testing/bats/lib/beru_seed.bash': beru_probe_seed_endpoint checks HTTP status (400/202) instead of grepping for 404/stale-image false positive

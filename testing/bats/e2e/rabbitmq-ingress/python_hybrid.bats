@@ -1,5 +1,8 @@
 #!/usr/bin/env bats
 # E2E: Python hybrid — RMQ ingress + Mongo + HTTP; record→S3→replay; Postgres verdicts.
+#
+# Ordering: record @test pins one trace and switches to replay once; replay @tests
+# reuse that trace (do not run replay @tests alone with -f).
 
 load '../../test_helper'
 
@@ -47,18 +50,6 @@ setup_file() {
   bats_write_suite_state
 }
 
-# Record one prod order, wait for Kaisel egress seed, then switch to replay.
-_hybrid_record_then_replay() {
-  run kaisel_ensure_record_mode
-  assert_success
-  publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
-  if ! wait_kaisel_egress_seed; then
-    skip "Kaisel egress seed not available"
-  fi
-  run kaisel_switch_to_replay both
-  assert_success
-}
-
 @test "record: RMQ ingress + HTTP egress flush to MinIO (python)" {
   run kaisel_ensure_record_mode
   assert_success
@@ -68,10 +59,15 @@ _hybrid_record_then_replay() {
   fi
   run e2e_assert_session_objects both 60
   assert_success
+  bats_pin_suite_trace "$BATS_TRACE_ID" "$BATS_ORDER_ID"
+  run kaisel_switch_to_replay both
+  assert_success
 }
 
 @test "replay: HTTP egress reaches all shadow roles (python)" {
-  _hybrid_record_then_replay
+  bats_load_suite_state
+  bats_use_suite_trace
+  bats_assert_replay_mode
   for role in control-a control-b candidate; do
     run assert_worker_http_replay "$role" "$BATS_ORDER_ID"
     assert_success
@@ -79,23 +75,18 @@ _hybrid_record_then_replay() {
 }
 
 @test "replay: RabbitMQ egress count regression in Postgres (python)" {
-  _hybrid_record_then_replay
-  for role in control-a control-b candidate; do
-    run assert_worker_http_replay "$role" "$BATS_ORDER_ID"
-    assert_success
-  done
-
+  bats_load_suite_state
+  bats_use_suite_trace
+  bats_assert_replay_mode
   run beru_wait_verdict_settled "$BATS_TRACE_ID" rabbitmq \
     --expect-status=MISMATCH --expect-count-regression=1 --timeout=120
   assert_success
 }
 
 @test "replay: MongoDB egress count regression in Postgres (python)" {
-  _hybrid_record_then_replay
-  for role in control-a control-b candidate; do
-    run assert_worker_http_replay "$role" "$BATS_ORDER_ID"
-    assert_success
-  done
+  bats_load_suite_state
+  bats_use_suite_trace
+  bats_assert_replay_mode
   # candidate unconditionally inserts a second "candidate_n1_loop" document per order.
   run beru_wait_verdict_settled "$BATS_TRACE_ID" mongodb \
     --expect-status=MISMATCH --expect-count-regression=1 --timeout=120

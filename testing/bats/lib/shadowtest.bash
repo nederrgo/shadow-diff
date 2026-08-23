@@ -256,6 +256,17 @@ bats_teardown_suite() {
     delete_shadowtest_and_verify "${SHADOWTEST}" "${SHADOWTEST_NS:-default}" || true
   fi
 
+  if [[ "${BATS_KEEP_POSTGRES:-0}" == "1" ]]; then
+    echo ""
+    echo "==> BATS_KEEP_POSTGRES=1 — retaining Postgres rows for ShadowTest ${SHADOWTEST}"
+    echo "    Browse The System /diffs (Tusk reads shadow_sessions / verdicts)."
+    echo "    Scrub later: beru_cleanup_shadow_test_postgres ${SHADOWTEST}"
+    echo ""
+  else
+    echo "==> scrub Postgres projection for ShadowTest ${SHADOWTEST}"
+    beru_cleanup_shadow_test_postgres "${SHADOWTEST}" || true
+  fi
+
   if [[ "${PROD_DEPLOYED:-0}" == "1" ]]; then
     while [[ $# -gt 0 ]]; do
       kubectl delete -f "$1" --ignore-not-found --wait=false 2>/dev/null || true

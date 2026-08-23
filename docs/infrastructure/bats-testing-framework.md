@@ -4,7 +4,7 @@ title: Bats-Core Modular Testing Framework
 description: Bats-based integration and E2E harness with per-file shared ShadowTest environments, record→replay CR switch, Postgres settlement via beru_wait_verdict_settled, Jest-like reporter for BATS_PARALLEL_JOBS=1, and idempotent platform bootstrap.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats
 tags: [infrastructure, testing, bats, e2e, integration, monarch, beru, postgres, record-replay]
-timestamp: 2026-08-22T06:45:00Z
+timestamp: 2026-08-22T17:30:00Z
 ---
 
 # Bats-Core Modular Testing Framework
@@ -17,12 +17,27 @@ Shadow-Diff E2E validation uses **bats-core** under [`testing/bats/`](https://gi
 |-----------|-------|----------------|
 | `setup_file` | Platform + suite stack | `ensure_platform_ready`, then ShadowTest CR **or** standalone beru+Postgres |
 | `setup` | Isolation | `isolate_test_state` — fresh `BATS_TRACE_ID` per `@test` |
-| `@test` | Validation | Record: MinIO session objects; replay: CR switch + `beru_wait_verdict_settled`; seed-only: `beru_assert_verdict_status` |
-| `teardown_file` | Teardown | ShadowTest suites: `delete_shadowtest_and_verify` then prod undeploy; postgres_verdict: scrub rows + delete `beru-verdict` |
+| `@test` | Validation | Record: MinIO + pin trace + one `kaisel_switch_to_replay`; replay: reuse pinned trace + `beru_wait_verdict_settled`; seed-only: `beru_assert_verdict_status` |
+| `teardown_file` | Teardown | ShadowTest suites: delete CR, scrub Postgres (`beru_cleanup_shadow_test_postgres`) unless `BATS_KEEP` / `BATS_KEEP_POSTGRES`, then prod undeploy; postgres_verdict: scrub rows + delete `beru-verdict` |
 
 **CI optimization:** Multiple `@test` blocks share one ShadowTest CR. Phase 4 runs in `teardown_file` only — not after each test.
 
 **Mode stack suites:** `lifecycle_record.bats` / `lifecycle_replay.bats` apply once in `setup_file`, assert mode-specific Deployments / KaiselRule / `OPERATING_MODE`, then delete after Ready in the last `@test`.
+
+## Shared record→replay cycle (`lib/record_replay_suite.bash`)
+
+Primary hybrid and HTTP-otel E2E files (`python_hybrid.bats`, `nodejs_hybrid.bats`, `http_otel_rmq_*.bats`, `http_ingress_rmq_go.bats`) run **one** record→replay transition per file instead of repeating it in every replay `@test`:
+
+1. **Record `@test`** — publish one prod message, assert MinIO session objects, `bats_pin_suite_trace`, then `kaisel_switch_to_replay` (HTTP-otel suites also call `bats_http_otel_firehose_ready`).
+2. **Replay `@test`s** — `bats_use_suite_trace` restores the pinned trace/order id; `bats_assert_replay_mode`; assertions only (verdicts, worker logs).
+
+| Helper | Role |
+|--------|------|
+| `bats_pin_suite_trace trace_id [order_id]` | Persist `RECORDED_TRACE_ID` / `RECORDED_ORDER_ID` in the suite state file |
+| `bats_use_suite_trace` | Export pinned ids for replay `@test`s; fails if record `@test` did not run |
+| `bats_assert_replay_mode` | Guard: `spec.mode=replay` and `replayState=started` |
+
+Replay `@test`s must run after the record `@test` in the same file (default bats order). Filtering with `-f` on a replay test alone will fail at `bats_use_suite_trace`. Sampling suites and `kaisel_capture.bats` still use per-scenario cycles (`e2e_http_record_then_replay`, etc.).
 
 ## Directory layout
 
@@ -76,7 +91,7 @@ Install once: `npm ci --prefix testing/bats`. Prefer Linux `node` for ANSI color
 
 ## Beru settlement assertions (`lib/beru_assert.bash`)
 
-Beru UPSERTs Postgres `verdicts` on every report. **E2E pipeline end** is `beru_wait_verdict_settled` (3-role completeness + quiescence against beru-local `GET /api/v1/traces/{id}?protocol=`):
+Beru UPSERTs Postgres `verdicts` on every report. **E2E pipeline end** is `beru_wait_verdict_settled`: wait until `raw_reports` has three distinct `shadow_role`s for the protocol (HTTP defaults to `direction=ingress`), then quiesce on `verdicts.updated_at` via `kubectl exec` / `psql` into the bats Postgres fixture (`--via=postgres`, default). Pass `--via=api` to use beru-local `GET /api/v1/traces/{id}?protocol=` instead (each poll spawns an ephemeral curl pod on Kind).
 
 ```bash
 beru_wait_verdict_settled "$BATS_TRACE_ID" http --expect-status=MATCH
@@ -84,7 +99,9 @@ beru_wait_verdict_settled "$BATS_TRACE_ID" rabbitmq \
   --expect-status=MISMATCH --expect-count-regression=1
 ```
 
-Record-phase helpers: `e2e_assert_session_objects`, `kaisel_ensure_record_mode`, `kaisel_switch_to_replay`, `e2e_http_record_then_replay` in `lib/kaisel.bash` / `lib/minio.bash`.
+Record-phase helpers: `e2e_assert_session_objects`, `kaisel_ensure_record_mode`, `kaisel_switch_to_replay`, `e2e_http_record_then_replay` in `lib/kaisel.bash` / `lib/minio.bash`. Shared-cycle helpers: `bats_pin_suite_trace`, `bats_use_suite_trace`, `bats_assert_replay_mode` in `lib/record_replay_suite.bash`.
+
+**Teardown scrub:** `bats_teardown_suite` calls `beru_cleanup_shadow_test_postgres` after CR delete (sessions, executions, traces, verdicts, raw_reports, noise_filters, shadow_tests). Skip with `BATS_KEEP=1` (leave CR) or `BATS_KEEP_POSTGRES=1` (delete CR, keep rows for The System /diffs).
 
 `beru_wait_log` remains for debug / legacy log greps. Seed-only suites (`integration/beru/postgres_verdict.bats`) use `beru_assert_verdict_status` — history is static, so no drip wait. That suite targets standalone `svc/beru-verdict` via `BERU_SVC`/`BERU_NS` and cleans Postgres with `beru_cleanup_trace_postgres` / `beru_cleanup_shadow_test_postgres`. The poison-pill scenario uses `beru_wait_dead_letter`.
 
@@ -98,6 +115,7 @@ Default: trace UUID scoping. Optional `BATS_ISOLATE_MODE=full` for dependency re
 npm ci --prefix testing/bats   # once, for Jest-like reporter
 make test-bats-integration
 BATS_PARALLEL_JOBS=1 make test-bats-e2e   # Jest-like on TTY
+make test-bats-e2e-smoke                  # Python HTTP-otel + Python RMQ hybrid only
 make test-bats
 ```
 
@@ -121,7 +139,7 @@ Helpers: `monarch_wait_shadowtest_bringup_started`, `monarch_wait_shadowtest_cle
 
 ### E2E suites (`testing/bats/e2e/`)
 
-`make test-bats-e2e` runs `http-ingress/` + `rabbitmq-ingress/` + `record/`. Kaisel deep capture stays on `make test-bats-kaisel`.
+`make test-bats-e2e` runs `http-ingress/` + `rabbitmq-ingress/` + `record/`. `make test-bats-e2e-smoke` runs only `http_otel_rmq_python.bats` + `python_hybrid.bats` (Kind smoke path). Kaisel deep capture stays on `make test-bats-kaisel`.
 
 | File | Scenario |
 |------|----------|
@@ -145,5 +163,6 @@ See [`testing/bats/README.md`](https://github.com/shadow-diff/monarch/tree/main/
 - [/verification/http-ingress-e2e-flow.md](/verification/http-ingress-e2e-flow.md)
 - [`testing/bats/lib/platform.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/platform.bash)
 - [`testing/bats/lib/reporter.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/reporter.bash)
+- [`testing/bats/lib/record_replay_suite.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/record_replay_suite.bash)
 - [`testing/bats/manifests/`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/manifests)
 - [`pipeline/beru/internal/v2/engine/router.go`](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2/engine/router.go)
