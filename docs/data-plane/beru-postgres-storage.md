@@ -13,7 +13,7 @@ Beru persists behind two interfaces. Both are satisfied by `*storage.WALStore`, 
 
 | Interface | Owns | Consumers |
 | --- | --- | --- |
-| `v2/storage.TraceRepository` | `raw_reports`, `verdicts` | WAL flusher, slim HTTP traces API, reaper |
+| `model.TraceRepository` | `raw_reports`, `verdicts` | WAL flusher, slim HTTP traces API, reaper |
 | `storage.RunStore` | `shadow_tests`, `noise_filters` | TraceRouter, seed/ingest HTTP |
 
 PostgreSQL is the sole database engine. Missing `DB_HOST` / `DB_USER` / `DB_NAME` fails boot. There is no SQLite path.

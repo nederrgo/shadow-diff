@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/shadow-diff/egress-relay-rabbitmq/internal/beru"
+	"github.com/shadow-diff/beruclient"
 	"github.com/shadow-diff/egress-relay-rabbitmq/internal/config"
 	"github.com/shadow-diff/egress-relay-rabbitmq/internal/consumer"
 )
@@ -18,7 +18,7 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	beruClient := beru.NewClient(cfg.BeruEgressDiffURL())
+	beruClient := beruclient.NewClient(cfg.BeruHTTPURL)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -1,4 +1,4 @@
-package storage
+package model
 
 import "time"
 
@@ -66,10 +66,10 @@ type VerdictState struct {
 
 // VerdictDetails is the JSON shape stored in VerdictState.SummaryDetails.
 type VerdictDetails struct {
-	Flags    []string          `json:"flags,omitempty"`
-	Steps    []VerdictStep     `json:"steps,omitempty"`
-	Baseline *BaselineFailure  `json:"baseline,omitempty"`
-	Missing  []string          `json:"missing_roles,omitempty"`
+	Flags    []string         `json:"flags,omitempty"`
+	Steps    []VerdictStep    `json:"steps,omitempty"`
+	Baseline *BaselineFailure `json:"baseline,omitempty"`
+	Missing  []string         `json:"missing_roles,omitempty"`
 }
 
 // VerdictStep is one compound-diff finding for a MISMATCH verdict.
@@ -86,11 +86,11 @@ type VerdictStep struct {
 
 // BaselineFailure describes why control-a vs control-b voided the trace.
 type BaselineFailure struct {
-	Reason    string `json:"reason"`
-	Protocol  string `json:"protocol,omitempty"`
-	Detail    string `json:"detail,omitempty"`
-	ControlA  string `json:"control_a,omitempty"`
-	ControlB  string `json:"control_b,omitempty"`
+	Reason   string `json:"reason"`
+	Protocol string `json:"protocol,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+	ControlA string `json:"control_a,omitempty"`
+	ControlB string `json:"control_b,omitempty"`
 }
 
 // TraceGroup is one (trace_id, protocol) pair for listing.

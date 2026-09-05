@@ -51,11 +51,11 @@ only acceptable here because the blast radius is a shadow pod.
 
 | Removed | Kept |
 | --- | --- |
-| `pipeline/beru/internal/otlp/` (receiver, MongoDB wire parser, HTTP handler) | Beru's MongoDB diff (`internal/v2/diff/mongo_compare.go`) |
+| `pipeline/beru/internal/otlp/` (receiver, MongoDB wire parser, HTTP handler) | Beru's MongoDB diff (`internal/diff/mongo_compare.go`) |
 | Beru's `:4317` OTLP gRPC listener and `POST /v1/traces` | `MongoSignature` / `MongoHints`, reached from `EgressSignature` and the wire-ingest path |
 | `FromMongoEgress`, `MongoOperationFromStatement` | `/api/v1/egress/diff`, now with an optional `signature` |
 | beru-local's `otlp-grpc` port; `beruOTLPEndpointFor` / `beruOTLPHTTPEndpointFor` (already dead) | beru-local's gRPC and HTTP ports |
-| `go.opentelemetry.io/proto/otlp` from Beru's `go.mod` | The `mongo_spans.json` signature fixture, moved to `internal/v2/report/testdata/` |
+| `go.opentelemetry.io/proto/otlp` from Beru's `go.mod` | The `mongo_spans.json` signature fixture, moved to `internal/report/testdata/` |
 
 The OTLP receiver was safe to delete whole because `Export()` skipped every span
 where `isMongoSpan()` was false — it had no non-MongoDB purpose. Its Monarch-side
@@ -113,4 +113,4 @@ ephemeral database inside the shadow namespace.
 - Prior withdrawal of MongoDB egress diffing: [/data-plane/pixie-removal.md](/data-plane/pixie-removal.md)
 - HTTP capture path and the untraced-drop policy: [/data-plane/kaisel-ebpf.md](/data-plane/kaisel-ebpf.md)
 - Manifesto constraint on proxy placement: [/manifesto.md](/manifesto.md)
-- [`mongoPayloadsEqual`](https://github.com/shadow-diff/monarch/blob/main/pipeline/beru/internal/v2/diff/mongo_compare.go) — the analysis half kept from the Pixie era.
+- [`mongoPayloadsEqual`](https://github.com/shadow-diff/monarch/blob/main/pipeline/beru/internal/diff/mongo_compare.go) — the analysis half kept from the Pixie era.

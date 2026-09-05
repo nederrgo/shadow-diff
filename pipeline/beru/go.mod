@@ -5,10 +5,13 @@ go 1.25.7
 require (
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/shadow-diff/trace v0.0.0
 	go.etcd.io/bbolt v1.4.3
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
 )
+
+replace github.com/shadow-diff/trace => ../pkg/trace
 
 require (
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect

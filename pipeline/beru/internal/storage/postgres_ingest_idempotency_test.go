@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shadow-diff/beru/internal/model"
 	"github.com/shadow-diff/beru/internal/roles"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 func TestPostgres_flushRetryIsIdempotent(t *testing.T) {
@@ -23,10 +23,10 @@ func TestPostgres_flushRetryIsIdempotent(t *testing.T) {
 	payload := `{"n":1}`
 	sig := "mongodb:insert:orders"
 
-	batch := []v2storage.RawReport{
-		*reportWithIngestID(trace, roles.ControlA, "mongodb", v2storage.DirectionEgress, sig, payload, "", now, 1001),
-		*reportWithIngestID(trace, roles.ControlB, "mongodb", v2storage.DirectionEgress, sig, payload, "", now.Add(time.Millisecond), 1002),
-		*reportWithIngestID(trace, roles.Candidate, "mongodb", v2storage.DirectionEgress, sig, payload, "", now.Add(2*time.Millisecond), 1003),
+	batch := []model.RawReport{
+		*reportWithIngestID(trace, roles.ControlA, "mongodb", model.DirectionEgress, sig, payload, "", now, 1001),
+		*reportWithIngestID(trace, roles.ControlB, "mongodb", model.DirectionEgress, sig, payload, "", now.Add(time.Millisecond), 1002),
+		*reportWithIngestID(trace, roles.Candidate, "mongodb", model.DirectionEgress, sig, payload, "", now.Add(2*time.Millisecond), 1003),
 	}
 
 	if err := store.flushReportsAndEvaluate(ctx, batch, nil, 10*time.Second); err != nil {
@@ -44,7 +44,7 @@ func TestPostgres_flushRetryIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verdictAfterFirst == nil || verdictAfterFirst.Status != v2storage.StatusMatch {
+	if verdictAfterFirst == nil || verdictAfterFirst.Status != model.StatusMatch {
 		t.Fatalf("verdict after first flush = %+v, want MATCH", verdictAfterFirst)
 	}
 
@@ -64,7 +64,7 @@ func TestPostgres_flushRetryIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verdictAfterRetry == nil || verdictAfterRetry.Status != v2storage.StatusMatch {
+	if verdictAfterRetry == nil || verdictAfterRetry.Status != model.StatusMatch {
 		t.Fatalf("verdict after retry = %+v, want MATCH", verdictAfterRetry)
 	}
 }
@@ -82,9 +82,9 @@ func TestPostgres_duplicatePayloadsDistinct(t *testing.T) {
 	payload := `{"same":true}`
 	sig := "mongodb:insert:orders"
 
-	batch := []v2storage.RawReport{
-		*reportWithIngestID(trace, roles.ControlA, "mongodb", v2storage.DirectionEgress, sig, payload, "", now, 2001),
-		*reportWithIngestID(trace, roles.ControlA, "mongodb", v2storage.DirectionEgress, sig, payload, "", now.Add(time.Millisecond), 2002),
+	batch := []model.RawReport{
+		*reportWithIngestID(trace, roles.ControlA, "mongodb", model.DirectionEgress, sig, payload, "", now, 2001),
+		*reportWithIngestID(trace, roles.ControlA, "mongodb", model.DirectionEgress, sig, payload, "", now.Add(time.Millisecond), 2002),
 	}
 
 	if err := store.flushReportsAndEvaluate(ctx, batch, nil, 10*time.Second); err != nil {
@@ -99,8 +99,8 @@ func TestPostgres_duplicatePayloadsDistinct(t *testing.T) {
 	}
 }
 
-func reportWithIngestID(traceID, role, protocol string, dir v2storage.PayloadDirection,
-	signature, payload, statusCode string, at time.Time, ingestID uint64) *v2storage.RawReport {
+func reportWithIngestID(traceID, role, protocol string, dir model.PayloadDirection,
+	signature, payload, statusCode string, at time.Time, ingestID uint64) *model.RawReport {
 	rep := report(traceID, role, protocol, dir, signature, payload, statusCode, at)
 	rep.IngestID = ingestID
 	return rep

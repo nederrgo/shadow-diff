@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"log/slog"
 
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
+	"github.com/shadow-diff/beru/internal/model"
 )
 
 // Backend is the pair of stores Beru runs on.
 type Backend struct {
 	Runs   RunStore
-	Traces v2storage.TraceRepository
+	Traces model.TraceRepository
 	Close  func() error
 }
 

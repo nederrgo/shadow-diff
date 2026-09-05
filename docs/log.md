@@ -50,7 +50,7 @@ timestamp: 2026-06-27T19:40:00Z
 ## [2026-08-20]
 ### Added
 * 'pipeline/beru H2': WAL append on accept path; 202 means local Bbolt durable
-* 'pipeline/beru/internal/v2/diff': H1 baseline A↔B uses signature-bucket counts; docs + audit checkbox
+* 'pipeline/beru/internal/diff': H1 baseline A↔B uses signature-bucket counts; docs + audit checkbox
 * 'docs/data-plane/beru-bug-audit.md': Beru correctness audit from local service review — H1 baseline signature buckets, H2 WAL-on-accept, M1 ingest idempotency, M2 projection hard-fail; checkbox tracker
 * 'testing/bats/helpers/cluster-minikube.sh': Bump VM-driver minikube start to --memory=8192 --cpus=4
 
@@ -258,7 +258,7 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-23]
 ### Added
-* 'pipeline/beru/internal/v2': single-trace verdicts, baseline void, compound diffs, WAITING_FOR_ROLES timeout
+* 'pipeline/beru/internal': single-trace verdicts, baseline void, compound diffs, WAITING_FOR_ROLES timeout
 * 'pipeline/beru': purge legacy internal/diff package, wire user noise filters into v2 EvaluateTraceHistory, remove committed beru binary, add .gitignore
 * 'testing/bats/integration/monarch/deps_update.bats': add integration test for live dependency add (mongodb deps created, shadow app pods roll with MONGO_URL)
 * 'testing/bats/integration/monarch/lifecycle.bats': add 4 ShadowTest lifecycle integration tests (mid-delete, re-apply while deleting, recreate after clean, delete after Ready)

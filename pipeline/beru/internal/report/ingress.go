@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"time"
 
-	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
+	"github.com/shadow-diff/beru/internal/model"
 	"github.com/shadow-diff/beru/internal/payload"
-	"github.com/shadow-diff/beru/internal/v2/storage"
+	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
 )
 
 var ingressCodec = payload.NewRegistry()
 
-func FromTrafficReport(report *beruv1.TrafficReport, shadowTestName string) (*storage.RawReport, error) {
+func FromTrafficReport(report *beruv1.TrafficReport, shadowTestName string) (*model.RawReport, error) {
 	if report == nil || report.TraceId == "" || report.Role == "" {
 		return nil, fmt.Errorf("incomplete traffic report")
 	}
@@ -42,12 +42,12 @@ func FromTrafficReport(report *beruv1.TrafficReport, shadowTestName string) (*st
 	if statusCode == "" {
 		statusCode = meta["status"]
 	}
-	return &storage.RawReport{
+	return &model.RawReport{
 		TraceID:        report.TraceId,
 		ShadowRole:     report.Role,
 		ShadowTestName: name,
 		Protocol:       "http",
-		Direction:      storage.DirectionIngress,
+		Direction:      model.DirectionIngress,
 		Signature:      HTTPSignature(method, path),
 		StatusCode:     statusCode,
 		PayloadBytes:   body,
@@ -55,7 +55,7 @@ func FromTrafficReport(report *beruv1.TrafficReport, shadowTestName string) (*st
 	}, nil
 }
 
-func FromHTTPIngress(traceID, role, shadowTestName, method, path string, meta map[string]string, body []byte, contentType string) (*storage.RawReport, error) {
+func FromHTTPIngress(traceID, role, shadowTestName, method, path string, meta map[string]string, body []byte, contentType string) (*model.RawReport, error) {
 	if traceID == "" || role == "" {
 		return nil, fmt.Errorf("incomplete http ingress report")
 	}
@@ -80,12 +80,12 @@ func FromHTTPIngress(traceID, role, shadowTestName, method, path string, meta ma
 	if statusCode == "" {
 		statusCode = meta["status"]
 	}
-	return &storage.RawReport{
+	return &model.RawReport{
 		TraceID:        traceID,
 		ShadowRole:     role,
 		ShadowTestName: name,
 		Protocol:       "http",
-		Direction:      storage.DirectionIngress,
+		Direction:      model.DirectionIngress,
 		Signature:      HTTPSignature(method, path),
 		StatusCode:     statusCode,
 		PayloadBytes:   normalized,

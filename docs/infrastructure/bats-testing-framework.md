@@ -165,4 +165,4 @@ See [`testing/bats/README.md`](https://github.com/shadow-diff/monarch/tree/main/
 - [`testing/bats/lib/reporter.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/reporter.bash)
 - [`testing/bats/lib/record_replay_suite.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/record_replay_suite.bash)
 - [`testing/bats/manifests/`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/manifests)
-- [`pipeline/beru/internal/v2/engine/router.go`](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2/engine/router.go)
+- [`pipeline/beru/internal/engine/router.go`](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/engine/router.go)

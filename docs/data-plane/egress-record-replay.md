@@ -151,7 +151,7 @@ When Shop starts with `OPERATING_MODE=replay`, it uses `s3utils.S3Reader` to lis
 - S3 batch uploader / reader: [`pipeline/pkg/s3utils`](../../pipeline/pkg/s3utils)
 - Egress preload: [`pipeline/shop/internal/replay/preload.go`](../../pipeline/shop/internal/replay/preload.go)
 - Envoy egress ext_proc: [`pipeline/shop/internal/envoyextproc/egress.go`](../../pipeline/shop/internal/envoyextproc/egress.go)
-- Shop→Beru client: [`pipeline/shop/internal/beru/client.go`](../../pipeline/shop/internal/beru/client.go)
+- Shared Beru client: [`pipeline/pkg/beruclient/client.go`](../../pipeline/pkg/beruclient/client.go)
 - Mock keys: [`pipeline/shop/internal/replay/keys.go`](../../pipeline/shop/internal/replay/keys.go)
 - Shop Put dedup: [`pipeline/shop/internal/replay/mockstore.go`](../../pipeline/shop/internal/replay/mockstore.go)
 - Bats seed helper: [`testing/bats/lib/kaisel.bash`](../../testing/bats/lib/kaisel.bash) — `wait_kaisel_egress_seed`

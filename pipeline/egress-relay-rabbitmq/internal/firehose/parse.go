@@ -7,7 +7,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
-	"github.com/shadow-diff/egress-relay-rabbitmq/internal/trace"
+	"github.com/shadow-diff/trace"
 )
 
 const headerTraceparent = "traceparent"
@@ -81,7 +81,7 @@ func TraceContextFromFirehose(traceHeaders amqp.Table) (traceID, spanID string, 
 		return "", "", err
 	}
 	if tp, ok := getStringHeader(appHeaders, headerTraceparent); ok {
-		if tid, sid, ok := trace.ParseTraceparent(tp); ok {
+		if tid, sid, ok := trace.ParseTraceparentContext(tp); ok {
 			return tid, sid, nil
 		}
 		return "", "", fmt.Errorf("invalid traceparent header")

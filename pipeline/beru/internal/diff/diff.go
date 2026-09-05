@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shadow-diff/beru/internal/v2/storage"
+	"github.com/shadow-diff/beru/internal/model"
 )
 
 const (
@@ -26,7 +26,7 @@ type EvalOptions struct {
 }
 
 // sigBuckets maps signature -> chronologically ordered reports for one shadow role.
-type sigBuckets map[string][]storage.RawReport
+type sigBuckets map[string][]model.RawReport
 
 // roleMap maps shadow role -> signature buckets within one protocol.
 type roleMap map[string]sigBuckets
@@ -36,7 +36,7 @@ type protoMap map[string]roleMap
 
 // EvaluateTraceHistory runs the strict 3-step verdict pipeline.
 // Returns nil when the trace is still waiting for roles (within the timeout window).
-func EvaluateTraceHistory(history []storage.RawReport, userNoise map[string]struct{}, opts EvalOptions) *storage.VerdictState {
+func EvaluateTraceHistory(history []model.RawReport, userNoise map[string]struct{}, opts EvalOptions) *model.VerdictState {
 	now := opts.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -46,8 +46,8 @@ func EvaluateTraceHistory(history []storage.RawReport, userNoise map[string]stru
 		timeout = defaultTraceTimeout
 	}
 
-	verdict := &storage.VerdictState{
-		Status:    storage.StatusMatch,
+	verdict := &model.VerdictState{
+		Status:    model.StatusMatch,
 		UpdatedAt: now,
 	}
 	if len(history) == 0 {
@@ -60,8 +60,8 @@ func EvaluateTraceHistory(history []storage.RawReport, userNoise map[string]stru
 	if len(missing) > 0 {
 		first := earliestCaptured(history)
 		if now.Sub(first) >= timeout {
-			details := storage.VerdictDetails{Missing: missing}
-			verdict.Status = storage.StatusWaitingForRoles
+			details := model.VerdictDetails{Missing: missing}
+			verdict.Status = model.StatusWaitingForRoles
 			verdict.SummaryDetails = mustJSON(details)
 			return verdict
 		}
@@ -74,14 +74,14 @@ func EvaluateTraceHistory(history []storage.RawReport, userNoise map[string]stru
 
 	// Step 2: Baseline verification (control-a vs control-b).
 	if fail := verifyBaseline(grouped, chronological); fail != nil {
-		details := storage.VerdictDetails{Baseline: fail}
-		verdict.Status = storage.StatusVoidedBaselineDivergence
+		details := model.VerdictDetails{Baseline: fail}
+		verdict.Status = model.StatusVoidedBaselineDivergence
 		verdict.SummaryDetails = mustJSON(details)
 		return verdict
 	}
 
 	// Step 3: Compound candidate evaluation against control-a.
-	var steps []storage.VerdictStep
+	var steps []model.VerdictStep
 	flagSet := make(map[string]struct{})
 
 	// HTTP ingress status: candidate vs control-a.
@@ -102,15 +102,15 @@ func EvaluateTraceHistory(history []storage.RawReport, userNoise map[string]stru
 
 	if len(steps) > 0 {
 		flags := sortedKeys(flagSet)
-		verdict.Status = storage.StatusMismatch
+		verdict.Status = model.StatusMismatch
 		verdict.Flags = flags
-		verdict.HasCountRegression = hasFlag(flagSet, storage.FlagMismatchCount) || hasFlag(flagSet, storage.FlagMismatchSignature)
-		verdict.SummaryDetails = mustJSON(storage.VerdictDetails{Flags: flags, Steps: steps})
+		verdict.HasCountRegression = hasFlag(flagSet, model.FlagMismatchCount) || hasFlag(flagSet, model.FlagMismatchSignature)
+		verdict.SummaryDetails = mustJSON(model.VerdictDetails{Flags: flags, Steps: steps})
 	}
 	return verdict
 }
 
-func rolesPresent(history []storage.RawReport) map[string]struct{} {
+func rolesPresent(history []model.RawReport) map[string]struct{} {
 	have := make(map[string]struct{})
 	for _, r := range history {
 		have[r.ShadowRole] = struct{}{}
@@ -128,7 +128,7 @@ func missingRoles(have map[string]struct{}) []string {
 	return missing
 }
 
-func earliestCaptured(history []storage.RawReport) time.Time {
+func earliestCaptured(history []model.RawReport) time.Time {
 	first := history[0].CapturedAt
 	for _, r := range history[1:] {
 		if r.CapturedAt.Before(first) {
@@ -138,7 +138,7 @@ func earliestCaptured(history []storage.RawReport) time.Time {
 	return first
 }
 
-func groupHistory(history []storage.RawReport) protoMap {
+func groupHistory(history []model.RawReport) protoMap {
 	grouped := make(protoMap)
 	for _, report := range history {
 		if grouped[report.Protocol] == nil {
@@ -157,30 +157,30 @@ func groupHistory(history []storage.RawReport) protoMap {
 }
 
 // chronologicalByRole returns protocol -> role -> reports in capture order.
-func chronologicalByRole(history []storage.RawReport) map[string]map[string][]storage.RawReport {
-	out := make(map[string]map[string][]storage.RawReport)
+func chronologicalByRole(history []model.RawReport) map[string]map[string][]model.RawReport {
+	out := make(map[string]map[string][]model.RawReport)
 	for _, report := range history {
 		if out[report.Protocol] == nil {
-			out[report.Protocol] = make(map[string][]storage.RawReport)
+			out[report.Protocol] = make(map[string][]model.RawReport)
 		}
 		out[report.Protocol][report.ShadowRole] = append(out[report.Protocol][report.ShadowRole], report)
 	}
 	return out
 }
 
-func verifyBaseline(grouped protoMap, chronological map[string]map[string][]storage.RawReport) *storage.BaselineFailure {
+func verifyBaseline(grouped protoMap, chronological map[string]map[string][]model.RawReport) *model.BaselineFailure {
 	// HTTP ingress status codes must match between control-a and control-b.
 	for protocol, byRole := range chronological {
 		if !strings.EqualFold(protocol, "http") {
 			continue
 		}
-		aReports := filterDirection(byRole[roleControlA], storage.DirectionIngress)
-		bReports := filterDirection(byRole[roleControlB], storage.DirectionIngress)
+		aReports := filterDirection(byRole[roleControlA], model.DirectionIngress)
+		bReports := filterDirection(byRole[roleControlB], model.DirectionIngress)
 		n := min(len(aReports), len(bReports))
 		for i := 0; i < n; i++ {
 			aCode, bCode := aReports[i].StatusCode, bReports[i].StatusCode
 			if aCode != bCode {
-				return &storage.BaselineFailure{
+				return &model.BaselineFailure{
 					Reason:   "status_code_mismatch",
 					Protocol: protocol,
 					Detail:   fmt.Sprintf("ingress status control-a=%s control-b=%s index=%d", aCode, bCode, i),
@@ -190,7 +190,7 @@ func verifyBaseline(grouped protoMap, chronological map[string]map[string][]stor
 			}
 		}
 		if len(aReports) != len(bReports) {
-			return &storage.BaselineFailure{
+			return &model.BaselineFailure{
 				Reason:   "ingress_count_mismatch",
 				Protocol: protocol,
 				Detail:   fmt.Sprintf("ingress count control-a=%d control-b=%d", len(aReports), len(bReports)),
@@ -208,7 +208,7 @@ func verifyBaseline(grouped protoMap, chronological map[string]map[string][]stor
 			nA := countEgress(aBuckets[sig])
 			nB := countEgress(bBuckets[sig])
 			if nA != nB {
-				return &storage.BaselineFailure{
+				return &model.BaselineFailure{
 					Reason:   "egress_count_mismatch",
 					Protocol: protocol,
 					Detail:   fmt.Sprintf("signature=%s egress count control-a=%d control-b=%d", sig, nA, nB),
@@ -221,8 +221,8 @@ func verifyBaseline(grouped protoMap, chronological map[string]map[string][]stor
 	return nil
 }
 
-func filterDirection(reports []storage.RawReport, dir storage.PayloadDirection) []storage.RawReport {
-	var out []storage.RawReport
+func filterDirection(reports []model.RawReport, dir model.PayloadDirection) []model.RawReport {
+	var out []model.RawReport
 	for _, r := range reports {
 		if effectiveDirection(r) == dir {
 			out = append(out, r)
@@ -231,45 +231,45 @@ func filterDirection(reports []storage.RawReport, dir storage.PayloadDirection) 
 	return out
 }
 
-func effectiveDirection(r storage.RawReport) storage.PayloadDirection {
+func effectiveDirection(r model.RawReport) model.PayloadDirection {
 	if r.Direction != "" {
 		return r.Direction
 	}
 	// Unspecified: http defaults to ingress; everything else is egress.
 	if strings.EqualFold(r.Protocol, "http") {
-		return storage.DirectionIngress
+		return model.DirectionIngress
 	}
-	return storage.DirectionEgress
+	return model.DirectionEgress
 }
 
-func countEgress(reports []storage.RawReport) int {
+func countEgress(reports []model.RawReport) int {
 	n := 0
 	for _, r := range reports {
-		if effectiveDirection(r) == storage.DirectionEgress {
+		if effectiveDirection(r) == model.DirectionEgress {
 			n++
 		}
 	}
 	return n
 }
 
-func compareIngressStatus(chronological map[string]map[string][]storage.RawReport, flagSet map[string]struct{}) []storage.VerdictStep {
-	var steps []storage.VerdictStep
+func compareIngressStatus(chronological map[string]map[string][]model.RawReport, flagSet map[string]struct{}) []model.VerdictStep {
+	var steps []model.VerdictStep
 	for protocol, byRole := range chronological {
 		if !strings.EqualFold(protocol, "http") {
 			continue
 		}
-		aReports := filterDirection(byRole[roleControlA], storage.DirectionIngress)
-		cReports := filterDirection(byRole[roleCandidate], storage.DirectionIngress)
+		aReports := filterDirection(byRole[roleControlA], model.DirectionIngress)
+		cReports := filterDirection(byRole[roleCandidate], model.DirectionIngress)
 		n := min(len(aReports), len(cReports))
 		for i := 0; i < n; i++ {
 			if aReports[i].StatusCode == cReports[i].StatusCode {
 				continue
 			}
 			idx := i
-			flagSet[storage.FlagMismatchPayload] = struct{}{}
-			steps = append(steps, storage.VerdictStep{
-				Kind:      storage.FlagMismatchPayload,
-				Reason:    storage.ReasonStatusCode,
+			flagSet[model.FlagMismatchPayload] = struct{}{}
+			steps = append(steps, model.VerdictStep{
+				Kind:      model.FlagMismatchPayload,
+				Reason:    model.ReasonStatusCode,
 				Protocol:  protocol,
 				Signature: aReports[i].Signature,
 				Index:     &idx,
@@ -280,16 +280,16 @@ func compareIngressStatus(chronological map[string]map[string][]storage.RawRepor
 	return steps
 }
 
-func compareSignature(protocol, signature string, aSlice, bSlice, cSlice []storage.RawReport, flagSet map[string]struct{}, userNoise map[string]struct{}) []storage.VerdictStep {
-	var steps []storage.VerdictStep
+func compareSignature(protocol, signature string, aSlice, bSlice, cSlice []model.RawReport, flagSet map[string]struct{}, userNoise map[string]struct{}) []model.VerdictStep {
+	var steps []model.VerdictStep
 	nA, nB, nC := len(aSlice), len(bSlice), len(cSlice)
 
 	// Candidate-only signature (not present on control-a).
 	if nA == 0 && nC > 0 {
-		flagSet[storage.FlagMismatchSignature] = struct{}{}
-		steps = append(steps, storage.VerdictStep{
-			Kind:      storage.FlagMismatchSignature,
-			Reason:    storage.ReasonUnexpectedExtraEgress,
+		flagSet[model.FlagMismatchSignature] = struct{}{}
+		steps = append(steps, model.VerdictStep{
+			Kind:      model.FlagMismatchSignature,
+			Reason:    model.ReasonUnexpectedExtraEgress,
 			Protocol:  protocol,
 			Signature: signature,
 			Detail:    fmt.Sprintf("unexpected signature candidate=%d", nC),
@@ -298,19 +298,19 @@ func compareSignature(protocol, signature string, aSlice, bSlice, cSlice []stora
 	}
 
 	if nC > nA {
-		flagSet[storage.FlagMismatchCount] = struct{}{}
-		steps = append(steps, storage.VerdictStep{
-			Kind:      storage.FlagMismatchCount,
-			Reason:    storage.ReasonUnexpectedExtraEgress,
+		flagSet[model.FlagMismatchCount] = struct{}{}
+		steps = append(steps, model.VerdictStep{
+			Kind:      model.FlagMismatchCount,
+			Reason:    model.ReasonUnexpectedExtraEgress,
 			Protocol:  protocol,
 			Signature: signature,
 			Detail:    fmt.Sprintf("candidate=%d control-a=%d", nC, nA),
 		})
 	} else if nC < nA {
-		flagSet[storage.FlagMismatchCount] = struct{}{}
-		steps = append(steps, storage.VerdictStep{
-			Kind:      storage.FlagMismatchCount,
-			Reason:    storage.ReasonMissingEgress,
+		flagSet[model.FlagMismatchCount] = struct{}{}
+		steps = append(steps, model.VerdictStep{
+			Kind:      model.FlagMismatchCount,
+			Reason:    model.ReasonMissingEgress,
 			Protocol:  protocol,
 			Signature: signature,
 			Detail:    fmt.Sprintf("candidate=%d control-a=%d", nC, nA),
@@ -332,11 +332,11 @@ func compareSignature(protocol, signature string, aSlice, bSlice, cSlice []stora
 			continue
 		}
 		idx := i
-		flagSet[storage.FlagMismatchPayload] = struct{}{}
+		flagSet[model.FlagMismatchPayload] = struct{}{}
 		if len(fields) == 0 {
 			// Non-JSON body mismatch: show the step, but no Ignore-path (not a field filter).
-			steps = append(steps, storage.VerdictStep{
-				Kind:      storage.FlagMismatchPayload,
+			steps = append(steps, model.VerdictStep{
+				Kind:      model.FlagMismatchPayload,
 				Protocol:  protocol,
 				Signature: signature,
 				Index:     &idx,
@@ -345,8 +345,8 @@ func compareSignature(protocol, signature string, aSlice, bSlice, cSlice []stora
 			continue
 		}
 		for _, field := range fields {
-			steps = append(steps, storage.VerdictStep{
-				Kind:      storage.FlagMismatchPayload,
+			steps = append(steps, model.VerdictStep{
+				Kind:      model.FlagMismatchPayload,
 				Protocol:  protocol,
 				Signature: signature,
 				Index:     &idx,

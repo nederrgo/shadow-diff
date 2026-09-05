@@ -22,6 +22,44 @@ func TestParseTraceparent_version00(t *testing.T) {
 	}
 }
 
+func TestParseTraceparentContext(t *testing.T) {
+	t.Parallel()
+	tid, sid, ok := ParseTraceparentContext("01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-BBBBBBBBBBBBBBBB-01")
+	if !ok || tid != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || sid != "bbbbbbbbbbbbbbbb" {
+		t.Fatalf("got tid=%q sid=%q ok=%v", tid, sid, ok)
+	}
+}
+
+func TestTraceIDFromMap(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		headers map[string]string
+		want    string
+	}{
+		{
+			name: "traceparent",
+			headers: map[string]string{
+				HeaderTraceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+				HeaderRequestID:   "req-ignored",
+			},
+			want: "4bf92f3577b34da6a3ce929d0e0e4736",
+		},
+		{name: "request id fallback", headers: map[string]string{HeaderRequestID: " req-99 "}, want: "req-99"},
+		{name: "nil map", want: ""},
+	}
+	lookup := func(headers map[string]string, key string) string { return headers[key] }
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := TraceIDFromMap(tt.headers, lookup); got != tt.want {
+				t.Fatalf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseTraceparent_rejectsInvalid(t *testing.T) {
 	t.Parallel()
 	cases := []string{"", "00-short-span-00f067aa0ba902b7-01", "not-a-traceparent"}

@@ -9,6 +9,7 @@ import (
 
 const (
 	HeaderTraceparent  = "traceparent"
+	HeaderRequestID    = "x-request-id"
 	TraceparentVersion = "00"
 	TraceparentFlags   = "01"
 	traceIDLen         = 32
@@ -43,19 +44,38 @@ func FormatTraceparent(traceID, spanID string) string {
 // ParseTraceparent extracts the trace id from a W3C traceparent value.
 // Accepts any 2-character hex version byte (not only 00).
 func ParseTraceparent(h string) (traceID string, ok bool) {
+	traceID, _, ok = ParseTraceparentContext(h)
+	return traceID, ok
+}
+
+// ParseTraceparentContext extracts the trace and parent span ids from a W3C
+// traceparent value. Accepts any 2-character hex version byte (not only 00).
+func ParseTraceparentContext(h string) (traceID, spanID string, ok bool) {
 	h = strings.TrimSpace(h)
 	parts := strings.Split(h, "-")
 	if len(parts) != 4 {
-		return "", false
+		return "", "", false
 	}
 	version, tid, sid, flags := parts[0], parts[1], parts[2], parts[3]
 	if len(version) != versionLen || len(tid) != traceIDLen || len(sid) != spanIDLen || len(flags) != flagsLen {
-		return "", false
+		return "", "", false
 	}
 	if !isHex(version) || !isHex(tid) || !isHex(sid) || !isHex(flags) {
-		return "", false
+		return "", "", false
 	}
-	return strings.ToLower(tid), true
+	return strings.ToLower(tid), strings.ToLower(sid), true
+}
+
+// TraceIDFromMap returns the trace id from a header map using headerValue for
+// lookup. The generic map type keeps this package independent of any protocol
+// library. Resolution order: W3C traceparent, then x-request-id.
+func TraceIDFromMap[H any](headers H, headerValue func(H, string) string) string {
+	if tp := strings.TrimSpace(headerValue(headers, HeaderTraceparent)); tp != "" {
+		if tid, ok := ParseTraceparent(tp); ok {
+			return tid
+		}
+	}
+	return strings.TrimSpace(headerValue(headers, HeaderRequestID))
 }
 
 func isHex(s string) bool {

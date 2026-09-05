@@ -90,7 +90,7 @@ func (c PostgresConfig) DSN() string {
 }
 
 // PostgresStore is the durable backend. One type satisfies both halves of
-// Beru's persistence: RunStore and v2/storage.TraceRepository.
+// Beru's persistence: RunStore and model.TraceRepository.
 type PostgresStore struct {
 	db                 *sql.DB
 	log                *slog.Logger

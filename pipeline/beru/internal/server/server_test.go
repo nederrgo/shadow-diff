@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shadow-diff/beru/internal/engine"
+	"github.com/shadow-diff/beru/internal/model"
 	"github.com/shadow-diff/beru/internal/roles"
-	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,37 +20,37 @@ type routeRecorder struct {
 	appendErr error
 }
 
-func (r *routeRecorder) AppendReport(ctx context.Context, report *v2storage.RawReport) ([]v2storage.RawReport, error) {
+func (r *routeRecorder) AppendReport(ctx context.Context, report *model.RawReport) ([]model.RawReport, error) {
 	if r.appendErr != nil {
 		return nil, r.appendErr
 	}
 	r.done.Store(true)
-	return []v2storage.RawReport{*report}, nil
+	return []model.RawReport{*report}, nil
 }
 
-func (r *routeRecorder) SaveDiffVerdict(ctx context.Context, traceID string, verdict *v2storage.VerdictState) error {
+func (r *routeRecorder) SaveDiffVerdict(ctx context.Context, traceID string, verdict *model.VerdictState) error {
 	return nil
 }
 
-func (r *routeRecorder) ListReports(ctx context.Context, traceID, protocol string) ([]v2storage.RawReport, error) {
+func (r *routeRecorder) ListReports(ctx context.Context, traceID, protocol string) ([]model.RawReport, error) {
 	return nil, nil
 }
 
-func (r *routeRecorder) ListTraceGroups(ctx context.Context, shadowTestName string, limit int) ([]v2storage.TraceGroup, error) {
+func (r *routeRecorder) ListTraceGroups(ctx context.Context, shadowTestName string, limit int) ([]model.TraceGroup, error) {
 	return nil, nil
 }
 
-func (r *routeRecorder) GetVerdict(ctx context.Context, traceID string) (*v2storage.VerdictState, error) {
+func (r *routeRecorder) GetVerdict(ctx context.Context, traceID string) (*model.VerdictState, error) {
 	return nil, nil
 }
 
-func (r *routeRecorder) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]v2storage.StaleIncompleteTrace, error) {
+func (r *routeRecorder) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]model.StaleIncompleteTrace, error) {
 	return nil, nil
 }
 
 func TestReportTraffic(t *testing.T) {
 	rec := &routeRecorder{}
-	router := v2engine.NewTraceRouter(rec, nil)
+	router := engine.NewTraceRouter(rec, nil)
 	srv := &TrafficReporter{Router: router}
 	_, err := srv.ReportTraffic(context.Background(), &beruv1.ReportTrafficRequest{
 		Report: &beruv1.TrafficReport{
@@ -73,7 +73,7 @@ func TestReportTraffic(t *testing.T) {
 
 func TestReportTraffic_appendFailure(t *testing.T) {
 	rec := &routeRecorder{appendErr: errors.New("wal write failed")}
-	router := v2engine.NewTraceRouter(rec, nil)
+	router := engine.NewTraceRouter(rec, nil)
 	srv := &TrafficReporter{Router: router}
 	_, err := srv.ReportTraffic(context.Background(), &beruv1.ReportTrafficRequest{
 		Report: &beruv1.TrafficReport{

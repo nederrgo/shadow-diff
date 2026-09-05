@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shadow-diff/beru/internal/diff"
+	"github.com/shadow-diff/beru/internal/model"
 	"github.com/shadow-diff/beru/internal/storage"
-	"github.com/shadow-diff/beru/internal/v2/diff"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 const (
@@ -19,17 +19,17 @@ const (
 )
 
 type TraceRouter struct {
-	repo    v2storage.TraceRepository
+	repo    model.TraceRepository
 	runs    storage.RunStore
 	timeout time.Duration
 	stop    chan struct{}
 }
 
-func NewTraceRouter(repo v2storage.TraceRepository, runs storage.RunStore) *TraceRouter {
+func NewTraceRouter(repo model.TraceRepository, runs storage.RunStore) *TraceRouter {
 	return NewTraceRouterWithTimeout(repo, runs, TraceTimeoutFromEnv())
 }
 
-func NewTraceRouterWithTimeout(repo v2storage.TraceRepository, runs storage.RunStore, timeout time.Duration) *TraceRouter {
+func NewTraceRouterWithTimeout(repo model.TraceRepository, runs storage.RunStore, timeout time.Duration) *TraceRouter {
 	if timeout <= 0 {
 		timeout = defaultTraceTimeout
 	}
@@ -61,7 +61,7 @@ func TraceTimeoutFromEnv() time.Duration {
 
 // Route appends to the local WAL on the caller's goroutine. A nil error means
 // the report is durable on Bbolt; Postgres flush stays async via WAL kick.
-func (tr *TraceRouter) Route(report *v2storage.RawReport) error {
+func (tr *TraceRouter) Route(report *model.RawReport) error {
 	if report == nil {
 		return nil
 	}

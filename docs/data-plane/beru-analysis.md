@@ -1,8 +1,8 @@
 ---
 type: Architecture Specification
 title: Beru Trace Analysis Engine
-description: Single-trace correctness pipeline for Beru v2 — completeness timeout, baseline void guard, and compound candidate diffing with structured verdict details.
-resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2
+description: Single-trace correctness pipeline for Beru — completeness timeout, baseline void guard, and compound candidate diffing with structured verdict details.
+resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal
 tags: [data-plane, beru, diff, analysis, verdict, baseline]
 timestamp: 2026-08-20T20:35:00Z
 ---
@@ -66,5 +66,5 @@ Bats suite: `testing/bats/integration/beru/postgres_verdict.bats` — standalone
 ## Citations
 
 * [/data-plane/index.md](/data-plane/index.md) — Data-plane document map
-* [pipeline/beru/internal/v2/diff/diff.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2/diff/diff.go) — Evaluation implementation
-* [pipeline/beru/internal/v2/engine/router.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/v2/engine/router.go) — TraceRouter + reaper
+* [pipeline/beru/internal/diff/diff.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/diff/diff.go) — Evaluation implementation
+* [pipeline/beru/internal/engine/router.go](https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/engine/router.go) — TraceRouter + reaper

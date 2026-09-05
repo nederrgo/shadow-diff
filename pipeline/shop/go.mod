@@ -4,7 +4,9 @@ go 1.26.0
 
 require (
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
+	github.com/shadow-diff/beruclient v0.0.0
 	github.com/shadow-diff/s3utils v0.0.0
+	github.com/shadow-diff/trace v0.0.0
 	github.com/tidwall/sjson v1.2.5
 	google.golang.org/grpc v1.81.1
 )
@@ -42,4 +44,8 @@ require (
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
 )
 
-replace github.com/shadow-diff/s3utils => ../pkg/s3utils
+replace (
+	github.com/shadow-diff/beruclient => ../pkg/beruclient
+	github.com/shadow-diff/s3utils => ../pkg/s3utils
+	github.com/shadow-diff/trace => ../pkg/trace
+)

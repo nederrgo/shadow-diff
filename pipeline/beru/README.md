@@ -119,7 +119,7 @@ Beru uses **PostgreSQL** as the sole database, fronted by a **Bbolt disk WAL** s
 | **State engine** | Every report + latest verdict per trace | Postgres `raw_reports`, `verdicts` | Yes |
 | **Shadow test runs** | Run names + noise filter scope | Postgres `shadow_tests`, `noise_filters` | Yes |
 
-### State engine (`internal/v2/` + `internal/storage/`)
+### State engine (`internal/{diff,engine,model,report}/` + `internal/storage/`)
 
 All ingress and egress sources normalize to a `RawReport` and hit the **TraceRouter**:
 
@@ -198,13 +198,11 @@ comparing. See
 ```
 cmd/beru/              Entrypoint — gRPC + HTTP servers, wiring
 internal/
-  v2/
-    engine/            TraceRouter worker pool, legacy log mirroring
-    storage/           Postgres raw_reports + verdicts (Bbolt WAL in front)
-    diff/              Signature-based timeline evaluation
-    report/            RawReport builders (ingress, egress, signatures)
+  engine/              TraceRouter worker pool, legacy log mirroring
+  model/               RawReport, verdict types, repository contracts
+  diff/                Signature-based timeline evaluation
+  report/              RawReport builders (ingress, egress, signatures)
   envoyextproc/        Envoy ext_proc (ingress observe → TraceRouter)
-  diff/                JSON diff-of-diffs (ingress noise paths; noise filter tests)
   api/                 HTTP handlers (egress/wire ingest, seed, slim traces)
   storage/             Postgres + WAL (raw_reports, verdicts, noise_filters)
   server/              gRPC TrafficReporter
@@ -244,4 +242,3 @@ RabbitMQ egress-relay deduplicates duplicate Firehose publishes (by trace+span+p
 - [pipeline/monarch/DEPLOYMENT.md](../monarch/DEPLOYMENT.md) — ShadowTest deployment; always-on Shop egress replay
 - [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md) — storage backends and durable diff history
 - [docs/verification/VERIFICATION.md](../../docs/verification/VERIFICATION.md) — end-to-end verification steps
-

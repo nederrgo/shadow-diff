@@ -12,42 +12,42 @@ import (
 	"testing"
 	"time"
 
-	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
+	"github.com/shadow-diff/beru/internal/engine"
+	"github.com/shadow-diff/beru/internal/model"
 )
 
 type egressRouteRecorder struct {
 	routed    atomic.Bool
-	last      atomic.Pointer[v2storage.RawReport]
+	last      atomic.Pointer[model.RawReport]
 	appendErr error
 }
 
-func (r *egressRouteRecorder) AppendReport(ctx context.Context, report *v2storage.RawReport) ([]v2storage.RawReport, error) {
+func (r *egressRouteRecorder) AppendReport(ctx context.Context, report *model.RawReport) ([]model.RawReport, error) {
 	if r.appendErr != nil {
 		return nil, r.appendErr
 	}
 	r.last.Store(report)
 	r.routed.Store(true)
-	return []v2storage.RawReport{*report}, nil
+	return []model.RawReport{*report}, nil
 }
 
-func (r *egressRouteRecorder) SaveDiffVerdict(ctx context.Context, traceID string, verdict *v2storage.VerdictState) error {
+func (r *egressRouteRecorder) SaveDiffVerdict(ctx context.Context, traceID string, verdict *model.VerdictState) error {
 	return nil
 }
 
-func (r *egressRouteRecorder) ListReports(ctx context.Context, traceID, protocol string) ([]v2storage.RawReport, error) {
+func (r *egressRouteRecorder) ListReports(ctx context.Context, traceID, protocol string) ([]model.RawReport, error) {
 	return nil, nil
 }
 
-func (r *egressRouteRecorder) ListTraceGroups(ctx context.Context, shadowTestName string, limit int) ([]v2storage.TraceGroup, error) {
+func (r *egressRouteRecorder) ListTraceGroups(ctx context.Context, shadowTestName string, limit int) ([]model.TraceGroup, error) {
 	return nil, nil
 }
 
-func (r *egressRouteRecorder) GetVerdict(ctx context.Context, traceID string) (*v2storage.VerdictState, error) {
+func (r *egressRouteRecorder) GetVerdict(ctx context.Context, traceID string) (*model.VerdictState, error) {
 	return nil, nil
 }
 
-func (r *egressRouteRecorder) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]v2storage.StaleIncompleteTrace, error) {
+func (r *egressRouteRecorder) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]model.StaleIncompleteTrace, error) {
 	return nil, nil
 }
 
@@ -80,7 +80,7 @@ func TestHealthz_methodNotAllowed(t *testing.T) {
 
 func TestEgressDiff_acceptsReport(t *testing.T) {
 	routeRec := &egressRouteRecorder{}
-	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(routeRec, nil)}
+	s := &Server{Log: slog.Default(), Router: engine.NewTraceRouter(routeRec, nil)}
 
 	payload := map[string]any{
 		"trace_id": "abc123",
@@ -102,7 +102,7 @@ func TestEgressDiff_acceptsReport(t *testing.T) {
 
 func TestEgressDiff_appendFailureReturns503(t *testing.T) {
 	routeRec := &egressRouteRecorder{appendErr: errors.New("wal write failed")}
-	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(routeRec, nil)}
+	s := &Server{Log: slog.Default(), Router: engine.NewTraceRouter(routeRec, nil)}
 
 	payload := map[string]any{
 		"trace_id": "abc123",
@@ -123,10 +123,10 @@ func TestEgressDiff_appendFailureReturns503(t *testing.T) {
 }
 
 // postEgressDiff sends one report; Route is sync so the report is present on 202.
-func postEgressDiff(t *testing.T, body map[string]any) *v2storage.RawReport {
+func postEgressDiff(t *testing.T, body map[string]any) *model.RawReport {
 	t.Helper()
 	routeRec := &egressRouteRecorder{}
-	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(routeRec, nil)}
+	s := &Server{Log: slog.Default(), Router: engine.NewTraceRouter(routeRec, nil)}
 
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/egress/diff", bytes.NewReader(raw))
@@ -173,18 +173,18 @@ func TestEgressDiff_derivesSignatureWhenAbsent(t *testing.T) {
 }
 
 type memTraceRepo struct {
-	reports []v2storage.RawReport
-	verdict *v2storage.VerdictState
+	reports []model.RawReport
+	verdict *model.VerdictState
 }
 
-func (m *memTraceRepo) AppendReport(context.Context, *v2storage.RawReport) ([]v2storage.RawReport, error) {
+func (m *memTraceRepo) AppendReport(context.Context, *model.RawReport) ([]model.RawReport, error) {
 	return nil, nil
 }
-func (m *memTraceRepo) SaveDiffVerdict(context.Context, string, *v2storage.VerdictState) error {
+func (m *memTraceRepo) SaveDiffVerdict(context.Context, string, *model.VerdictState) error {
 	return nil
 }
-func (m *memTraceRepo) ListReports(_ context.Context, traceID, protocol string) ([]v2storage.RawReport, error) {
-	var out []v2storage.RawReport
+func (m *memTraceRepo) ListReports(_ context.Context, traceID, protocol string) ([]model.RawReport, error) {
+	var out []model.RawReport
 	for _, r := range m.reports {
 		if r.TraceID == traceID && (protocol == "" || r.Protocol == protocol) {
 			out = append(out, r)
@@ -192,23 +192,23 @@ func (m *memTraceRepo) ListReports(_ context.Context, traceID, protocol string) 
 	}
 	return out, nil
 }
-func (m *memTraceRepo) ListTraceGroups(context.Context, string, int) ([]v2storage.TraceGroup, error) {
+func (m *memTraceRepo) ListTraceGroups(context.Context, string, int) ([]model.TraceGroup, error) {
 	return nil, nil
 }
-func (m *memTraceRepo) GetVerdict(context.Context, string) (*v2storage.VerdictState, error) {
+func (m *memTraceRepo) GetVerdict(context.Context, string) (*model.VerdictState, error) {
 	return m.verdict, nil
 }
-func (m *memTraceRepo) ListStaleIncompleteTraces(context.Context, time.Time) ([]v2storage.StaleIncompleteTrace, error) {
+func (m *memTraceRepo) ListStaleIncompleteTraces(context.Context, time.Time) ([]model.StaleIncompleteTrace, error) {
 	return nil, nil
 }
 
 func TestGetTrace_returnsReportsAndVerdict(t *testing.T) {
 	repo := &memTraceRepo{
-		reports: []v2storage.RawReport{{
-			TraceID: "t1", Protocol: "mongodb", Direction: v2storage.DirectionEgress,
+		reports: []model.RawReport{{
+			TraceID: "t1", Protocol: "mongodb", Direction: model.DirectionEgress,
 			ShadowRole: "control-a", Signature: "mongodb:insert:orders",
 		}},
-		verdict: &v2storage.VerdictState{Status: v2storage.StatusMatch},
+		verdict: &model.VerdictState{Status: model.StatusMatch},
 	}
 	s := &Server{Log: slog.Default(), Repo: repo}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/t1?protocol=mongodb", nil)
@@ -218,10 +218,10 @@ func TestGetTrace_returnsReportsAndVerdict(t *testing.T) {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
 	var out struct {
-		TraceID  string                  `json:"trace_id"`
-		Protocol string                  `json:"protocol"`
-		Reports  []v2storage.RawReport   `json:"reports"`
-		Verdict  *v2storage.VerdictState `json:"verdict"`
+		TraceID  string              `json:"trace_id"`
+		Protocol string              `json:"protocol"`
+		Reports  []model.RawReport   `json:"reports"`
+		Verdict  *model.VerdictState `json:"verdict"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -229,16 +229,16 @@ func TestGetTrace_returnsReportsAndVerdict(t *testing.T) {
 	if out.TraceID != "t1" || out.Protocol != "mongodb" || len(out.Reports) != 1 {
 		t.Fatalf("unexpected response: %+v", out)
 	}
-	if out.Verdict == nil || out.Verdict.Status != v2storage.StatusMatch {
+	if out.Verdict == nil || out.Verdict.Status != model.StatusMatch {
 		t.Fatalf("verdict = %+v", out.Verdict)
 	}
 }
 
 func TestGetTrace_filtersHTTPDirection(t *testing.T) {
 	repo := &memTraceRepo{
-		reports: []v2storage.RawReport{
-			{TraceID: "t1", Protocol: "http", Direction: v2storage.DirectionIngress, ShadowRole: "control-a", Signature: "http:POST:/a"},
-			{TraceID: "t1", Protocol: "http", Direction: v2storage.DirectionEgress, ShadowRole: "control-a", Signature: "http:GET:/ext"},
+		reports: []model.RawReport{
+			{TraceID: "t1", Protocol: "http", Direction: model.DirectionIngress, ShadowRole: "control-a", Signature: "http:POST:/a"},
+			{TraceID: "t1", Protocol: "http", Direction: model.DirectionEgress, ShadowRole: "control-a", Signature: "http:GET:/ext"},
 		},
 	}
 	s := &Server{Log: slog.Default(), Repo: repo}
@@ -249,8 +249,8 @@ func TestGetTrace_filtersHTTPDirection(t *testing.T) {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
 	var out struct {
-		Direction string                `json:"direction"`
-		Reports   []v2storage.RawReport `json:"reports"`
+		Direction string            `json:"direction"`
+		Reports   []model.RawReport `json:"reports"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -272,7 +272,7 @@ func TestGetTrace_requiresProtocol(t *testing.T) {
 
 func TestSeedReports_acceptsBatch(t *testing.T) {
 	routeRec := &egressRouteRecorder{}
-	s := &Server{Log: slog.Default(), Router: v2engine.NewTraceRouter(routeRec, nil)}
+	s := &Server{Log: slog.Default(), Router: engine.NewTraceRouter(routeRec, nil)}
 
 	body := map[string]any{
 		"reports": []map[string]any{

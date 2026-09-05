@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Standalone Beru ↔ Postgres verdict suite.
-# Seeds the same histories as pipeline/beru/internal/v2/diff/diff_test.go via
+# Seeds the same histories as pipeline/beru/internal/diff/diff_test.go via
 # POST /api/v1/debug/seed-reports into a Deployment that is NOT owned by a
 # ShadowTest — only Postgres + the Bbolt WAL flusher are under test.
 #

@@ -138,11 +138,11 @@ make docker-build EGRESS_RELAY_RABBITMQ_IMG=egress-relay-rabbitmq:dev
 | `CONTROL_B_AMQP_URL` | Yes | — | Shadow broker AMQP URL for control-b |
 | `CANDIDATE_AMQP_URL` | Yes | — | Shadow broker AMQP URL for candidate |
 | `BERU_HTTP_URL` | Yes | — | Beru HTTP base (e.g. `http://beru-local.<shadow-ns>.svc.cluster.local:8080`) |
-| `BERU_EGRESS_DIFF_PATH` | No | `/api/v1/egress/diff` | Egress diff ingest path |
+| `SHADOW_TEST_NAME` | No | — | ShadowTest correlation key (set by Monarch) |
 | `RECONNECT_MIN_DELAY` | No | `1s` | Initial broker reconnect delay |
 | `RECONNECT_MAX_DELAY` | No | `30s` | Max broker reconnect delay |
 
-Monarch sets broker URLs from shadow RabbitMQ dependency Services and `BERU_HTTP_URL` from the ShadowTest's Beru HTTP endpoint.
+Monarch sets broker URLs from shadow RabbitMQ dependency Services, `BERU_HTTP_URL` from the ShadowTest's Beru HTTP endpoint, and `SHADOW_TEST_NAME` from the ShadowTest resource.
 
 ---
 

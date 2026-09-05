@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shadow-diff/beru/internal/v2/storage"
+	"github.com/shadow-diff/beru/internal/model"
 )
 
 func TestMirrorLegacyLogs_httpEgressMatch(t *testing.T) {
@@ -17,12 +17,12 @@ func TestMirrorLegacyLogs_httpEgressMatch(t *testing.T) {
 
 	tid := "4bf92f3577b34da6a3ce929d0e0e4736"
 	payload := []byte(`{"method":"GET","host":"h","path":"/dep/echo","status":200,"body":""}`)
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		httpEgressReport(tid, "control-a", "http:GET:/dep/echo", payload),
 		httpEgressReport(tid, "control-b", "http:GET:/dep/echo", payload),
 		httpEgressReport(tid, "candidate", "http:GET:/dep/echo", payload),
 	}
-	mirrorLegacyLogs(tid, history, &storage.VerdictState{Status: storage.StatusMatch})
+	mirrorLegacyLogs(tid, history, &model.VerdictState{Status: model.StatusMatch})
 
 	log := buf.String()
 	want := "No egress regression for Trace " + tid + " (http)"
@@ -44,7 +44,7 @@ func TestMirrorLegacyLogs_httpIngressAndEgress(t *testing.T) {
 	tid := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	egressBody := []byte(`{"method":"GET","path":"/dep/echo","status":200,"body":""}`)
 	ingressBody := []byte(`{"ok":true}`)
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		httpIngressReport(tid, "control-a", "http:GET:/egress/run", ingressBody),
 		httpIngressReport(tid, "control-b", "http:GET:/egress/run", ingressBody),
 		httpIngressReport(tid, "candidate", "http:GET:/egress/run", ingressBody),
@@ -52,7 +52,7 @@ func TestMirrorLegacyLogs_httpIngressAndEgress(t *testing.T) {
 		httpEgressReport(tid, "control-b", "http:GET:/dep/echo", egressBody),
 		httpEgressReport(tid, "candidate", "http:GET:/dep/echo", egressBody),
 	}
-	mirrorLegacyLogs(tid, history, &storage.VerdictState{Status: storage.StatusMatch})
+	mirrorLegacyLogs(tid, history, &model.VerdictState{Status: model.StatusMatch})
 
 	log := buf.String()
 	if !strings.Contains(log, "No regression for Trace "+tid) {
@@ -63,23 +63,23 @@ func TestMirrorLegacyLogs_httpIngressAndEgress(t *testing.T) {
 	}
 }
 
-func httpEgressReport(tid, role, sig string, payload []byte) storage.RawReport {
-	return storage.RawReport{
+func httpEgressReport(tid, role, sig string, payload []byte) model.RawReport {
+	return model.RawReport{
 		TraceID:      tid,
 		ShadowRole:   role,
 		Protocol:     "http",
-		Direction:    storage.DirectionEgress,
+		Direction:    model.DirectionEgress,
 		Signature:    sig,
 		PayloadBytes: payload,
 	}
 }
 
-func httpIngressReport(tid, role, sig string, payload []byte) storage.RawReport {
-	return storage.RawReport{
+func httpIngressReport(tid, role, sig string, payload []byte) model.RawReport {
+	return model.RawReport{
 		TraceID:      tid,
 		ShadowRole:   role,
 		Protocol:     "http",
-		Direction:    storage.DirectionIngress,
+		Direction:    model.DirectionIngress,
 		Signature:    sig,
 		PayloadBytes: payload,
 		StatusCode:   "200",

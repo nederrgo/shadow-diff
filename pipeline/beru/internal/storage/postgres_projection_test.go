@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/shadow-diff/beru/internal/model"
 	"github.com/shadow-diff/beru/internal/roles"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 // The projection is Postgres-only: the tables Tusk reads are rebuilt on every
@@ -29,7 +29,7 @@ func TestPostgresProjection(t *testing.T) {
 		{roles.Candidate, "500"},
 	} {
 		if _, err := store.AppendReport(ctx, report(trace, r.role, "http",
-			v2storage.DirectionIngress, "http:POST:/v1/orders", `{"ok":true}`, r.status, t0)); err != nil {
+			model.DirectionIngress, "http:POST:/v1/orders", `{"ok":true}`, r.status, t0)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -40,27 +40,27 @@ func TestPostgresProjection(t *testing.T) {
 		{roles.Candidate, `not json at all`},
 	} {
 		if _, err := store.AppendReport(ctx, report(trace, r.role, "mongodb",
-			v2storage.DirectionEgress, "mongodb:insert:orders", r.payload, "", t0.Add(time.Second))); err != nil {
+			model.DirectionEgress, "mongodb:insert:orders", r.payload, "", t0.Add(time.Second))); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	details := v2storage.VerdictDetails{
-		Flags: []string{v2storage.FlagMismatchPayload},
-		Steps: []v2storage.VerdictStep{{
-			Kind:      v2storage.FlagMismatchPayload,
+	details := model.VerdictDetails{
+		Flags: []string{model.FlagMismatchPayload},
+		Steps: []model.VerdictStep{{
+			Kind:      model.FlagMismatchPayload,
 			Protocol:  "mongodb",
 			Signature: "mongodb:insert:orders",
 			Detail:    "n differs",
 		}},
-		Baseline: &v2storage.BaselineFailure{Reason: "none"},
+		Baseline: &model.BaselineFailure{Reason: "none"},
 	}
 	encoded, err := json.Marshal(details)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveDiffVerdict(ctx, trace, &v2storage.VerdictState{
-		Status:             v2storage.StatusMismatch,
+	if err := store.SaveDiffVerdict(ctx, trace, &model.VerdictState{
+		Status:             model.StatusMismatch,
 		HasCountRegression: true,
 		SummaryDetails:     string(encoded),
 		UpdatedAt:          t0,
@@ -70,9 +70,9 @@ func TestPostgresProjection(t *testing.T) {
 
 	t.Run("traces row carries the request line and per-role status", func(t *testing.T) {
 		var (
-			sessionID, method, path    string
-			statusA, statusB, statusC  string
-			verdict, shadowTest        string
+			sessionID, method, path   string
+			statusA, statusB, statusC string
+			verdict, shadowTest       string
 		)
 		if err := store.db.QueryRowContext(ctx, `
 SELECT session_id, shadow_test_name, method, path,
@@ -87,7 +87,7 @@ FROM traces WHERE trace_id = $1`, trace,
 		if statusA != "200" || statusB != "200" || statusC != "500" {
 			t.Fatalf("status codes = %q/%q/%q, want 200/200/500", statusA, statusB, statusC)
 		}
-		if verdict != v2storage.StatusMismatch {
+		if verdict != model.StatusMismatch {
 			t.Fatalf("verdict = %q, want MISMATCH", verdict)
 		}
 		if sessionID != "conformance-session" {
@@ -117,7 +117,7 @@ SELECT signature, source_type FROM diff_reports WHERE trace_id = $1 ORDER BY sig
 			t.Fatal(err)
 		}
 		want := map[string]string{
-			"http:POST:/v1/orders":   "http/ingress",
+			"http:POST:/v1/orders":  "http/ingress",
 			"mongodb:insert:orders": "mongodb/egress",
 		}
 		if len(got) != len(want) {
@@ -157,14 +157,14 @@ FROM diff_reports WHERE trace_id = $1 AND signature = $2`, trace, "mongodb:inser
 			t.Fatalf("candidate_payload = %v, want _raw wrapper", wrapped)
 		}
 
-		var gotSteps []v2storage.VerdictStep
+		var gotSteps []model.VerdictStep
 		if err := json.Unmarshal(regression, &gotSteps); err != nil {
 			t.Fatalf("regression_diff is not JSON: %v", err)
 		}
 		if len(gotSteps) != 1 || gotSteps[0].Detail != "n differs" {
 			t.Fatalf("regression_diff = %+v, want the mongodb step", gotSteps)
 		}
-		var gotBaseline v2storage.BaselineFailure
+		var gotBaseline model.BaselineFailure
 		if err := json.Unmarshal(noise, &gotBaseline); err != nil {
 			t.Fatalf("noise_diff is not JSON: %v", err)
 		}
@@ -186,8 +186,8 @@ SELECT regression_diff FROM diff_reports WHERE trace_id = $1 AND signature = $2`
 	})
 
 	t.Run("re-saving updates in place", func(t *testing.T) {
-		if err := store.SaveDiffVerdict(ctx, trace, &v2storage.VerdictState{
-			Status:    v2storage.StatusMatch,
+		if err := store.SaveDiffVerdict(ctx, trace, &model.VerdictState{
+			Status:    model.StatusMatch,
 			UpdatedAt: t0.Add(time.Minute),
 		}); err != nil {
 			t.Fatal(err)
@@ -205,7 +205,7 @@ SELECT regression_diff FROM diff_reports WHERE trace_id = $1 AND signature = $2`
 			`SELECT verdict FROM traces WHERE trace_id = $1`, trace).Scan(&verdict); err != nil {
 			t.Fatal(err)
 		}
-		if verdict != v2storage.StatusMatch {
+		if verdict != model.StatusMatch {
 			t.Fatalf("verdict = %q, want MATCH after re-save", verdict)
 		}
 	})
@@ -258,8 +258,8 @@ SELECT shadow_test_name, namespace, mode FROM shadow_sessions WHERE session_id =
 			got <- n.Payload
 		}()
 
-		if err := store.SaveDiffVerdict(ctx, trace, &v2storage.VerdictState{
-			Status:    v2storage.StatusMismatch,
+		if err := store.SaveDiffVerdict(ctx, trace, &model.VerdictState{
+			Status:    model.StatusMismatch,
 			UpdatedAt: t0.Add(2 * time.Minute),
 		}); err != nil {
 			t.Fatal(err)
@@ -268,16 +268,16 @@ SELECT shadow_test_name, namespace, mode FROM shadow_sessions WHERE session_id =
 		select {
 		case payload := <-got:
 			var ev struct {
-				SessionID          string `json:"session_id"`
-				ReplayExecutionID  string `json:"replay_execution_id"`
-				TraceID            string `json:"trace_id"`
-				Verdict            string `json:"verdict"`
+				SessionID         string `json:"session_id"`
+				ReplayExecutionID string `json:"replay_execution_id"`
+				TraceID           string `json:"trace_id"`
+				Verdict           string `json:"verdict"`
 			}
 			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 				t.Fatalf("payload %q: %v", payload, err)
 			}
 			if ev.SessionID != "conformance-session" || ev.ReplayExecutionID != "exec-conformance" ||
-				ev.TraceID != trace || ev.Verdict != v2storage.StatusMismatch {
+				ev.TraceID != trace || ev.Verdict != model.StatusMismatch {
 				t.Fatalf("notify = %+v, want session/exec/trace/MISMATCH", ev)
 			}
 		case <-notifyCtx.Done():

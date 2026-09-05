@@ -6,8 +6,8 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/shadow-diff/beruclient"
 
-	"github.com/shadow-diff/egress-relay-rabbitmq/internal/beru"
 	"github.com/shadow-diff/egress-relay-rabbitmq/internal/config"
 	"github.com/shadow-diff/egress-relay-rabbitmq/internal/firehose"
 )
@@ -16,7 +16,8 @@ import (
 type Runner struct {
 	Workload       string
 	URL            string
-	Beru           *beru.Client
+	Beru           *beruclient.Client
+	ShadowTestName string
 	EgressExchange string
 	MinDelay       time.Duration
 	MaxDelay       time.Duration
@@ -139,11 +140,12 @@ func (r *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 		log.Printf("workload=%s dedup discard trace=%s span=%s", r.Workload, traceID, spanID)
 		return
 	}
-	report := beru.Report{
-		TraceID:  traceID,
-		Workload: r.Workload,
-		Protocol: "rabbitmq",
-		Payload:  payload,
+	report := beruclient.Report{
+		TraceID:        traceID,
+		Workload:       r.Workload,
+		Protocol:       "rabbitmq",
+		Payload:        payload,
+		ShadowTestName: r.ShadowTestName,
 	}
 	if err := r.Beru.PostReport(ctx, report); err != nil {
 		log.Printf("workload=%s beru post failed trace=%s: %v", r.Workload, traceID, err)
@@ -151,7 +153,7 @@ func (r *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 }
 
 // StartAll launches one reconnect loop per configured broker URL.
-func StartAll(ctx context.Context, cfg config.Config, beruClient *beru.Client) {
+func StartAll(ctx context.Context, cfg config.Config, beruClient *beruclient.Client) {
 	workers := []struct {
 		workload string
 		url      string
@@ -171,6 +173,7 @@ func StartAll(ctx context.Context, cfg config.Config, beruClient *beru.Client) {
 			Workload:       w.workload,
 			URL:            w.url,
 			Beru:           beruClient,
+			ShadowTestName: cfg.ShadowTestName,
 			EgressExchange: cfg.EgressExchange,
 			MinDelay:       cfg.ReconnectMin,
 			MaxDelay:       cfg.ReconnectMax,

@@ -406,7 +406,7 @@ beru_dump_trace_diagnostics() {
   fi
 }
 
-# Build mirrorLegacyLogs strings (pipeline/beru/internal/v2/engine/logs.go).
+# Build mirrorLegacyLogs strings (pipeline/beru/internal/engine/logs.go).
 beru_log_egress_count_unit() {
   local protocol="$1" count="$2"
   case "$protocol" in

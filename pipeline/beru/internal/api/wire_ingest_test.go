@@ -11,46 +11,46 @@ import (
 	"testing"
 	"time"
 
-	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
-	v2report "github.com/shadow-diff/beru/internal/v2/report"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
+	"github.com/shadow-diff/beru/internal/engine"
+	"github.com/shadow-diff/beru/internal/model"
+	"github.com/shadow-diff/beru/internal/report"
 )
 
 type wireRouteRecorder struct {
-	last atomic.Pointer[v2storage.RawReport]
+	last atomic.Pointer[model.RawReport]
 }
 
-func (r *wireRouteRecorder) AppendReport(_ context.Context, report *v2storage.RawReport) ([]v2storage.RawReport, error) {
+func (r *wireRouteRecorder) AppendReport(_ context.Context, report *model.RawReport) ([]model.RawReport, error) {
 	r.last.Store(report)
-	return []v2storage.RawReport{*report}, nil
+	return []model.RawReport{*report}, nil
 }
 
-func (r *wireRouteRecorder) SaveDiffVerdict(_ context.Context, _ string, _ *v2storage.VerdictState) error {
+func (r *wireRouteRecorder) SaveDiffVerdict(_ context.Context, _ string, _ *model.VerdictState) error {
 	return nil
 }
 
-func (r *wireRouteRecorder) ListReports(_ context.Context, _, _ string) ([]v2storage.RawReport, error) {
+func (r *wireRouteRecorder) ListReports(_ context.Context, _, _ string) ([]model.RawReport, error) {
 	return nil, nil
 }
 
-func (r *wireRouteRecorder) ListTraceGroups(_ context.Context, _ string, _ int) ([]v2storage.TraceGroup, error) {
+func (r *wireRouteRecorder) ListTraceGroups(_ context.Context, _ string, _ int) ([]model.TraceGroup, error) {
 	return nil, nil
 }
 
-func (r *wireRouteRecorder) GetVerdict(_ context.Context, _ string) (*v2storage.VerdictState, error) {
+func (r *wireRouteRecorder) GetVerdict(_ context.Context, _ string) (*model.VerdictState, error) {
 	return nil, nil
 }
 
-func (r *wireRouteRecorder) ListStaleIncompleteTraces(_ context.Context, _ time.Time) ([]v2storage.StaleIncompleteTrace, error) {
+func (r *wireRouteRecorder) ListStaleIncompleteTraces(_ context.Context, _ time.Time) ([]model.StaleIncompleteTrace, error) {
 	return nil, nil
 }
 
 func TestHandleWireIngest_http(t *testing.T) {
 	var rec wireRouteRecorder
-	router := v2engine.NewTraceRouter(&rec, nil)
+	router := engine.NewTraceRouter(&rec, nil)
 	s := &Server{Log: slog.Default(), Router: router}
 
-	body, _ := json.Marshal(v2report.NetworkEventEnvelope{
+	body, _ := json.Marshal(report.NetworkEventEnvelope{
 		TraceID:            "4bf92f3577b34da6a3ce929d0e0e4736",
 		PodRole:            "control-a",
 		Protocol:           "http",
@@ -76,10 +76,10 @@ func TestHandleWireIngest_http(t *testing.T) {
 
 func TestHandleWireIngest_mongodb(t *testing.T) {
 	var rec wireRouteRecorder
-	router := v2engine.NewTraceRouter(&rec, nil)
+	router := engine.NewTraceRouter(&rec, nil)
 	s := &Server{Log: slog.Default(), Router: router}
 
-	body, _ := json.Marshal(v2report.NetworkEventEnvelope{
+	body, _ := json.Marshal(report.NetworkEventEnvelope{
 		TraceID:           "4bf92f3577b34da6a3ce929d0e0e4736",
 		PodRole:           "candidate",
 		Protocol:          "mongodb",

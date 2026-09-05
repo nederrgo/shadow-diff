@@ -16,7 +16,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
+	"github.com/shadow-diff/beru/internal/model"
 )
 
 const (
@@ -35,13 +35,13 @@ const (
 var backoffSteps = []time.Duration{100 * time.Millisecond, 500 * time.Millisecond, time.Second, 2 * time.Second, 5 * time.Second}
 
 var (
-	_ RunStore                    = (*WALStore)(nil)
-	_ v2storage.TraceRepository   = (*WALStore)(nil)
+	_ RunStore              = (*WALStore)(nil)
+	_ model.TraceRepository = (*WALStore)(nil)
 )
 
 type walEntry struct {
-	RetryCount int                 `json:"retry_count"`
-	Report     v2storage.RawReport `json:"report"`
+	RetryCount int             `json:"retry_count"`
+	Report     model.RawReport `json:"report"`
 }
 
 type TraceBatch struct {
@@ -204,21 +204,21 @@ func (w *WALStore) ListShadowTests(ctx context.Context, limit int) ([]ShadowTest
 func (w *WALStore) GetShadowTest(ctx context.Context, id int64) (ShadowTest, error) {
 	return w.pg.GetShadowTest(ctx, id)
 }
-func (w *WALStore) ListReports(ctx context.Context, traceID, protocol string) ([]v2storage.RawReport, error) {
+func (w *WALStore) ListReports(ctx context.Context, traceID, protocol string) ([]model.RawReport, error) {
 	return w.pg.ListReports(ctx, traceID, protocol)
 }
-func (w *WALStore) ListTraceGroups(ctx context.Context, shadowTestName string, limit int) ([]v2storage.TraceGroup, error) {
+func (w *WALStore) ListTraceGroups(ctx context.Context, shadowTestName string, limit int) ([]model.TraceGroup, error) {
 	return w.pg.ListTraceGroups(ctx, shadowTestName, limit)
 }
-func (w *WALStore) GetVerdict(ctx context.Context, traceID string) (*v2storage.VerdictState, error) {
+func (w *WALStore) GetVerdict(ctx context.Context, traceID string) (*model.VerdictState, error) {
 	return w.pg.GetVerdict(ctx, traceID)
 }
-func (w *WALStore) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]v2storage.StaleIncompleteTrace, error) {
+func (w *WALStore) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]model.StaleIncompleteTrace, error) {
 	return w.pg.ListStaleIncompleteTraces(ctx, olderThan)
 }
 
 // AppendReport appends to the disk WAL and returns immediately.
-func (w *WALStore) AppendReport(_ context.Context, report *v2storage.RawReport) ([]v2storage.RawReport, error) {
+func (w *WALStore) AppendReport(_ context.Context, report *model.RawReport) ([]model.RawReport, error) {
 	if report == nil {
 		return nil, fmt.Errorf("append report: nil report")
 	}
@@ -226,11 +226,11 @@ func (w *WALStore) AppendReport(_ context.Context, report *v2storage.RawReport) 
 		return nil, err
 	}
 	w.kick()
-	return []v2storage.RawReport{*report}, nil
+	return []model.RawReport{*report}, nil
 }
 
 // SaveDiffVerdict runs under the per-trace advisory lock (reaper / sync callers).
-func (w *WALStore) SaveDiffVerdict(ctx context.Context, traceID string, verdict *v2storage.VerdictState) error {
+func (w *WALStore) SaveDiffVerdict(ctx context.Context, traceID string, verdict *model.VerdictState) error {
 	return w.pg.saveDiffVerdictUnderLock(ctx, traceID, verdict)
 }
 
@@ -241,7 +241,7 @@ func (w *WALStore) kick() {
 	}
 }
 
-func (w *WALStore) appendWAL(report v2storage.RawReport) error {
+func (w *WALStore) appendWAL(report model.RawReport) error {
 	if err := w.maybeDropHead(); err != nil {
 		w.log.Warn("WAL overflow drop-head failed", "err", err)
 	}
@@ -428,7 +428,7 @@ func (w *WALStore) processBatch(batch TraceBatch) {
 	ev := completionEvent{TraceID: batch.TraceID}
 	defer func() { w.completion <- ev }()
 
-	reports := make([]v2storage.RawReport, len(batch.Entries))
+	reports := make([]model.RawReport, len(batch.Entries))
 	for i := range batch.Entries {
 		reports[i] = batch.Entries[i].Report
 		if len(batch.Keys[i]) == 8 {
@@ -525,11 +525,11 @@ func (w *WALStore) writeDeadLetter(batch TraceBatch, flushErr error) error {
 	}
 	defer f.Close()
 	rec := map[string]any{
-		"trace_id":   batch.TraceID,
-		"error":      fmt.Sprint(flushErr),
-		"ts":         time.Now().UTC().Format(time.RFC3339Nano),
-		"entries":    batch.Entries,
-		"key_count":  len(batch.Keys),
+		"trace_id":  batch.TraceID,
+		"error":     fmt.Sprint(flushErr),
+		"ts":        time.Now().UTC().Format(time.RFC3339Nano),
+		"entries":   batch.Entries,
+		"key_count": len(batch.Keys),
 	}
 	line, err := json.Marshal(rec)
 	if err != nil {

@@ -56,7 +56,7 @@ Related specs: [/data-plane/beru-analysis.md](/data-plane/beru-analysis.md), [/d
 - [x] Fixed
 
 **Class:** correctness / false voids  
-**Evidence:** `internal/v2/diff/diff.go` (`verifyBaseline` egress sequence vs `compareSignature` signature buckets)
+**Evidence:** `internal/diff/diff.go` (`verifyBaseline` egress sequence vs `compareSignature` signature buckets)
 
 **Bug / asymmetry:** Control-a vs control-b must match the full ordered egress signature playlist. Candidate vs control-a buckets by signature and compares counts + per-index payloads. Cross-signature reorder between controls voids the whole trace (`VOIDED_BASELINE_DIVERGENCE`) even when the candidate would score cleanly. Candidate reorder across signatures is already allowed (`TestEvaluateTraceHistory_outOfOrderProtocols_match`).
 
@@ -77,7 +77,7 @@ Related specs: [/data-plane/beru-analysis.md](/data-plane/beru-analysis.md), [/d
 - [x] Fixed
 
 **Class:** durability semantics / ops  
-**Evidence:** `internal/api/http.go` (`handleEgressDiff`, `handleWireIngest`); `internal/v2/engine/router.go` (`Route` → sync `AppendReport`); `internal/storage/wal.go` (`AppendReport` → `appendWAL`)
+**Evidence:** `internal/api/http.go` (`handleEgressDiff`, `handleWireIngest`); `internal/engine/router.go` (`Route` → sync `AppendReport`); `internal/storage/wal.go` (`AppendReport` → `appendWAL`)
 
 **Bug:** Egress/wire handlers called `Router.Route` (enqueue) then returned **202**. WAL append ran later on a worker. Client believed accept; process death before `appendWAL` lost the report. EmptyDir WAL need not survive pod reschedule (accepted).
 
@@ -161,7 +161,7 @@ Related specs: [/data-plane/beru-analysis.md](/data-plane/beru-analysis.md), [/d
 - [ ] Open
 
 **Class:** correctness (small)  
-**Evidence:** `internal/v2/diff/mongo_compare.go` (`mongoMetadataFields` = `_id`, `lsid`, `comment`, `$db`)
+**Evidence:** `internal/diff/mongo_compare.go` (`mongoMetadataFields` = `_id`, `lsid`, `comment`, `$db`)
 
 **Bug:** Per-connection Mongo fields outside this list produce false `MISMATCH_PAYLOAD` across roles for semantically identical ops.
 
@@ -198,6 +198,6 @@ Under sustained Postgres outage, oldest pending WAL entries are dropped. Accepte
 * [/data-plane/beru-analysis.md](/data-plane/beru-analysis.md) — verdict pipeline
 * [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md) — WAL, SoT, projection, NOTIFY
 * [/control-plane/tusk-bff.md](/control-plane/tusk-bff.md) — consumers of `traces` / `diff_reports` / `verdict_events`
-* `pipeline/beru/internal/v2/diff/diff.go` — baseline vs candidate compare
+* `pipeline/beru/internal/diff/diff.go` — baseline vs candidate compare
 * `pipeline/beru/internal/storage/wal.go` — accept vs flush durability
 * `pipeline/monarch/internal/controller/shadowtest_envoy.go` — ingress `failure_mode_allow: true` (context only; not a Beru code fix)

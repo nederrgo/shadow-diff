@@ -6,7 +6,7 @@ import (
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"github.com/shadow-diff/shop/internal/beru"
+	"github.com/shadow-diff/beruclient"
 	"github.com/shadow-diff/shop/internal/replay"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -19,7 +19,7 @@ const headerShadowRole = "x-shadow-role"
 type Server struct {
 	extprocv3.UnimplementedExternalProcessorServer
 	Mocks          *replay.MockStore
-	Beru           *beru.Client
+	Beru           *beruclient.Client
 	ShadowTestName string
 }
 

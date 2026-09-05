@@ -44,7 +44,7 @@ Delete the capture half; keep the analysis half.
 |---|---|
 | `pipeline/pixie-gate/` | Beru's OTLP receiver on `:4317` |
 | `pipeline/recorder/` | Beru's MongoDB wire parser (`internal/otlp/mongo_parser.go`) |
-| `PixieStreamRule` CRD and its reconcile | Beru's MongoDB diff (`internal/v2/diff/mongo_compare.go`) |
+| `PixieStreamRule` CRD and its reconcile | Beru's MongoDB diff (`internal/diff/mongo_compare.go`) |
 | `ShadowTest.spec.recorder` | `FromMongoEgress` report builder |
 | Vizier bootstrap + PxL templates + bridge shell | beru-local's `:4317` port and Service entry |
 
@@ -70,7 +70,7 @@ mode.
   are unaffected.
 
 Restoring it requires a new capture path only. The analysis half stays covered by
-`internal/otlp/mongo_parser_test.go` and `internal/v2/diff/mongo_compare_test.go`,
+`internal/otlp/mongo_parser_test.go` and `internal/diff/mongo_compare_test.go`,
 which need neither a cluster nor a producer, so it cannot rot unnoticed while
 dormant.
 

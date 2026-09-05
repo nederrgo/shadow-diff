@@ -13,6 +13,7 @@ import (
 	"runtime/debug"
 	"syscall"
 
+	"github.com/shadow-diff/beruclient"
 	"github.com/shadow-diff/shadow-soldier/internal/beru"
 	"github.com/shadow-diff/shadow-soldier/internal/config"
 	"github.com/shadow-diff/shadow-soldier/internal/health"
@@ -35,7 +36,7 @@ func main() {
 
 	reporter := &beru.Reporter{
 		Log:            log,
-		Client:         beru.NewClient(cfg.BeruURL, cfg.HTTPTimeout),
+		Client:         beruclient.NewClient(cfg.BeruURL, cfg.HTTPTimeout),
 		Role:           cfg.Role,
 		ShadowTestName: cfg.ShadowTestName,
 		ShadowPod:      cfg.ShadowPod,

@@ -11,7 +11,7 @@ import (
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"github.com/shadow-diff/shop/internal/beru"
+	"github.com/shadow-diff/beruclient"
 	"github.com/shadow-diff/shop/internal/replay"
 )
 
@@ -19,7 +19,7 @@ const testTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 
 func TestFinishEgress_reportsBodyAsync(t *testing.T) {
 	var mu sync.Mutex
-	var got beru.Report
+	var got beruclient.Report
 	done := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
@@ -40,7 +40,7 @@ func TestFinishEgress_reportsBodyAsync(t *testing.T) {
 
 	s := &Server{
 		Mocks:          mocks,
-		Beru:           beru.NewClient(srv.URL),
+		Beru:           beruclient.NewClient(srv.URL),
 		ShadowTestName: "my-test",
 	}
 	state := &egressState{
@@ -89,7 +89,7 @@ func TestFinishEgress_reportsBodyAsync(t *testing.T) {
 
 func TestFinishEgress_getEmptyBody(t *testing.T) {
 	var mu sync.Mutex
-	var got beru.Report
+	var got beruclient.Report
 	done := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
@@ -106,7 +106,7 @@ func TestFinishEgress_getEmptyBody(t *testing.T) {
 		StatusCode: 200,
 		Body:       []byte(`[]`),
 	})
-	s := &Server{Mocks: mocks, Beru: beru.NewClient(srv.URL)}
+	s := &Server{Mocks: mocks, Beru: beruclient.NewClient(srv.URL)}
 	resp := s.finishEgress(&egressState{
 		role:    "control-a",
 		traceID: testTraceID,
@@ -165,4 +165,3 @@ func TestHandleEgressRequest_waitsForBody(t *testing.T) {
 		t.Fatalf("body = %q", state.body)
 	}
 }
-

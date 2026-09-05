@@ -1,5 +1,5 @@
 # Seed RawReports into Beru for verdict scenario bats.
-# Mirrors pipeline/beru/internal/v2/diff unit-test histories via POST /api/v1/debug/seed-reports.
+# Mirrors pipeline/beru/internal/diff unit-test histories via POST /api/v1/debug/seed-reports.
 # shellcheck shell=bash
 
 beru_http_post() {

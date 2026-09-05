@@ -2,47 +2,47 @@ package diff
 
 import (
 	"encoding/json"
+	"github.com/shadow-diff/beru/internal/model"
 	"strings"
 	"testing"
 	"time"
-	"github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 func evalOpts(t0 time.Time) EvalOptions {
 	return EvalOptions{Timeout: 10 * time.Second, Now: t0.Add(time.Second)}
 }
 
-func triple(roleA, roleB, roleC storage.RawReport) []storage.RawReport {
-	return []storage.RawReport{roleA, roleB, roleC}
+func triple(roleA, roleB, roleC model.RawReport) []model.RawReport {
+	return []model.RawReport{roleA, roleB, roleC}
 }
 
-func mongoReport(role, sig string, payload []byte, t0 time.Time) storage.RawReport {
-	return storage.RawReport{
+func mongoReport(role, sig string, payload []byte, t0 time.Time) model.RawReport {
+	return model.RawReport{
 		ShadowRole:   role,
 		Protocol:     "mongodb",
-		Direction:    storage.DirectionEgress,
+		Direction:    model.DirectionEgress,
 		Signature:    sig,
 		PayloadBytes: payload,
 		CapturedAt:   t0,
 	}
 }
 
-func rabbitmqReport(role, sig string, payload []byte, t0 time.Time) storage.RawReport {
-	return storage.RawReport{
+func rabbitmqReport(role, sig string, payload []byte, t0 time.Time) model.RawReport {
+	return model.RawReport{
 		ShadowRole:   role,
 		Protocol:     "rabbitmq",
-		Direction:    storage.DirectionEgress,
+		Direction:    model.DirectionEgress,
 		Signature:    sig,
 		PayloadBytes: payload,
 		CapturedAt:   t0,
 	}
 }
 
-func httpIngress(role, sig, status string, payload []byte, t0 time.Time) storage.RawReport {
-	return storage.RawReport{
+func httpIngress(role, sig, status string, payload []byte, t0 time.Time) model.RawReport {
+	return model.RawReport{
 		ShadowRole:   role,
 		Protocol:     "http",
-		Direction:    storage.DirectionIngress,
+		Direction:    model.DirectionIngress,
 		Signature:    sig,
 		StatusCode:   status,
 		PayloadBytes: payload,
@@ -50,9 +50,9 @@ func httpIngress(role, sig, status string, payload []byte, t0 time.Time) storage
 	}
 }
 
-func parseDetails(t *testing.T, summary string) storage.VerdictDetails {
+func parseDetails(t *testing.T, summary string) model.VerdictDetails {
 	t.Helper()
-	var d storage.VerdictDetails
+	var d model.VerdictDetails
 	if err := json.Unmarshal([]byte(summary), &d); err != nil {
 		t.Fatalf("unmarshal details: %v (%q)", err, summary)
 	}
@@ -72,7 +72,7 @@ func TestEvaluateTraceHistory_outOfOrderProtocols_match(t *testing.T) {
 	t0 := time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Second)
 
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		mongoReport("control-a", "mongodb:find:orders", []byte(`{"q":1}`), t0),
 		rabbitmqReport("control-a", "rabbitmq:publish:order.created", []byte(`{"id":1}`), t1),
 		mongoReport("control-b", "mongodb:find:orders", []byte(`{"q":1}`), t0),
@@ -82,7 +82,7 @@ func TestEvaluateTraceHistory_outOfOrderProtocols_match(t *testing.T) {
 	}
 
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMatch {
+	if verdict == nil || verdict.Status != model.StatusMatch {
 		t.Fatalf("status = %v, want MATCH", verdict)
 	}
 }
@@ -94,7 +94,7 @@ func TestEvaluateTraceHistory_controlReorderAcrossSignatures_match(t *testing.T)
 	mongoPayload := []byte(`{"q":1}`)
 	rabbitPayload := []byte(`{"id":1}`)
 
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		mongoReport("control-a", "mongodb:find:orders", mongoPayload, t0),
 		rabbitmqReport("control-a", "rabbitmq:publish:order.created", rabbitPayload, t1),
 		rabbitmqReport("control-b", "rabbitmq:publish:order.created", rabbitPayload, t0),
@@ -104,14 +104,14 @@ func TestEvaluateTraceHistory_controlReorderAcrossSignatures_match(t *testing.T)
 	}
 
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMatch {
+	if verdict == nil || verdict.Status != model.StatusMatch {
 		t.Fatalf("status = %v, want MATCH", verdict)
 	}
 }
 
 func TestEvaluateTraceHistory_controlMissingSignatureVoidsBaseline(t *testing.T) {
 	t0 := time.Date(2026, 6, 25, 10, 10, 0, 0, time.UTC)
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		mongoReport("control-a", "mongodb:find:orders", []byte(`{"q":1}`), t0),
 		rabbitmqReport("control-a", "rabbitmq:publish:order.created", []byte(`{"id":1}`), t0),
 		mongoReport("control-b", "mongodb:find:orders", []byte(`{"q":1}`), t0),
@@ -120,7 +120,7 @@ func TestEvaluateTraceHistory_controlMissingSignatureVoidsBaseline(t *testing.T)
 	}
 
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusVoidedBaselineDivergence {
+	if verdict == nil || verdict.Status != model.StatusVoidedBaselineDivergence {
 		t.Fatalf("status = %v, want VOIDED_BASELINE_DIVERGENCE", verdict)
 	}
 	details := parseDetails(t, verdict.SummaryDetails)
@@ -140,7 +140,7 @@ func TestEvaluateTraceHistory_controlPayloadNoiseNotVoid(t *testing.T) {
 	)
 
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMatch {
+	if verdict == nil || verdict.Status != model.StatusMatch {
 		t.Fatalf("status = %v, want MATCH", verdict)
 	}
 }
@@ -150,7 +150,7 @@ func TestEvaluateTraceHistory_countRegression(t *testing.T) {
 	sig := "rabbitmq:publish:order.created"
 	payload := []byte(`{"id":1}`)
 
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		rabbitmqReport("control-a", sig, payload, t0),
 		rabbitmqReport("control-b", sig, payload, t0),
 		rabbitmqReport("candidate", sig, payload, t0),
@@ -158,14 +158,14 @@ func TestEvaluateTraceHistory_countRegression(t *testing.T) {
 	}
 
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMismatch {
+	if verdict == nil || verdict.Status != model.StatusMismatch {
 		t.Fatalf("status = %v, want MISMATCH", verdict)
 	}
 	if !verdict.HasCountRegression {
 		t.Fatal("expected HasCountRegression = true")
 	}
 	details := parseDetails(t, verdict.SummaryDetails)
-	if !flagPresent(details.Flags, storage.FlagMismatchCount) {
+	if !flagPresent(details.Flags, model.FlagMismatchCount) {
 		t.Fatalf("flags = %v, want MISMATCH_COUNT", details.Flags)
 	}
 }
@@ -176,7 +176,7 @@ func TestEvaluateTraceHistory_missingEgressCount(t *testing.T) {
 	sig := "rabbitmq:publish:order.created"
 	payload := []byte(`{"id":1}`)
 
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		rabbitmqReport("control-a", sig, payload, t0),
 		rabbitmqReport("control-a", sig, payload, t0.Add(time.Millisecond)),
 		rabbitmqReport("control-b", sig, payload, t0),
@@ -185,19 +185,19 @@ func TestEvaluateTraceHistory_missingEgressCount(t *testing.T) {
 	}
 
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMismatch {
+	if verdict == nil || verdict.Status != model.StatusMismatch {
 		t.Fatalf("status = %v, want MISMATCH", verdict)
 	}
 	if !verdict.HasCountRegression {
 		t.Fatal("expected HasCountRegression = true")
 	}
 	details := parseDetails(t, verdict.SummaryDetails)
-	if !flagPresent(details.Flags, storage.FlagMismatchCount) {
+	if !flagPresent(details.Flags, model.FlagMismatchCount) {
 		t.Fatalf("flags = %v, want MISMATCH_COUNT", details.Flags)
 	}
 	foundMissing := false
 	for _, s := range details.Steps {
-		if s.Kind == storage.FlagMismatchCount && s.Reason == storage.ReasonMissingEgress {
+		if s.Kind == model.FlagMismatchCount && s.Reason == model.ReasonMissingEgress {
 			foundMissing = true
 			break
 		}
@@ -218,11 +218,11 @@ func TestEvaluateTraceHistory_payloadMismatch(t *testing.T) {
 	)
 
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMismatch {
+	if verdict == nil || verdict.Status != model.StatusMismatch {
 		t.Fatalf("status = %v, want MISMATCH", verdict)
 	}
 	details := parseDetails(t, verdict.SummaryDetails)
-	if !flagPresent(details.Flags, storage.FlagMismatchPayload) {
+	if !flagPresent(details.Flags, model.FlagMismatchPayload) {
 		t.Fatalf("flags = %v, want MISMATCH_PAYLOAD", details.Flags)
 	}
 }
@@ -237,7 +237,7 @@ func TestEvaluateTraceHistory_wireHTTPMatch(t *testing.T) {
 		httpIngress("candidate", sig, "200", payload, t0),
 	)
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMatch {
+	if verdict == nil || verdict.Status != model.StatusMatch {
 		t.Fatalf("status = %v, want MATCH", verdict)
 	}
 }
@@ -251,7 +251,7 @@ func TestEvaluateTraceHistory_controlBNoiseCancelsPayloadMismatch(t *testing.T) 
 		mongoReport("candidate", sig, []byte(`{"_id":"ccc","data":"same"}`), t0),
 	)
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMatch {
+	if verdict == nil || verdict.Status != model.StatusMatch {
 		t.Fatalf("status = %v, want MATCH; details = %v", verdict, verdict)
 	}
 }
@@ -260,13 +260,13 @@ func TestEvaluateTraceHistory_controlBNoiseCancelsPayloadMismatch_nonMongo(t *te
 	// Diff(A,B) marks "ts" as natural noise; candidate's different ts is cancelled → MATCH.
 	t0 := time.Date(2026, 7, 6, 11, 0, 0, 0, time.UTC)
 	sig := "rabbitmq:publish:events"
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		rabbitmqReport("control-a", sig, []byte(`{"ts":1000,"v":1}`), t0),
 		rabbitmqReport("control-b", sig, []byte(`{"ts":2000,"v":1}`), t0),
 		rabbitmqReport("candidate", sig, []byte(`{"ts":3000,"v":1}`), t0),
 	}
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMatch {
+	if verdict == nil || verdict.Status != model.StatusMatch {
 		t.Fatalf("status = %v, want MATCH", verdict)
 	}
 }
@@ -274,13 +274,13 @@ func TestEvaluateTraceHistory_controlBNoiseCancelsPayloadMismatch_nonMongo(t *te
 func TestEvaluateTraceHistory_realRegressionNotCancelledByNoise(t *testing.T) {
 	t0 := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
 	sig := "rabbitmq:publish:orders"
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		rabbitmqReport("control-a", sig, []byte(`{"v":1}`), t0),
 		rabbitmqReport("control-b", sig, []byte(`{"v":1}`), t0),
 		rabbitmqReport("candidate", sig, []byte(`{"v":2}`), t0),
 	}
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMismatch {
+	if verdict == nil || verdict.Status != model.StatusMismatch {
 		t.Fatalf("status = %v, want MISMATCH", verdict)
 	}
 }
@@ -288,14 +288,14 @@ func TestEvaluateTraceHistory_realRegressionNotCancelledByNoise(t *testing.T) {
 func TestEvaluateTraceHistory_userNoiseSuppressesFieldRegression(t *testing.T) {
 	t0 := time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC)
 	sig := "rabbitmq:publish:orders"
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		rabbitmqReport("control-a", sig, []byte(`{"price":10,"v":1}`), t0),
 		rabbitmqReport("control-b", sig, []byte(`{"price":10,"v":1}`), t0),
 		rabbitmqReport("candidate", sig, []byte(`{"price":99,"v":1}`), t0),
 	}
 	userNoise := map[string]struct{}{"price": {}}
 	verdict := EvaluateTraceHistory(history, userNoise, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMatch {
+	if verdict == nil || verdict.Status != model.StatusMatch {
 		t.Fatalf("status = %v, want MATCH", verdict)
 	}
 }
@@ -305,7 +305,7 @@ func TestEvaluateTraceHistory_controlCountMismatchVoidsBaseline(t *testing.T) {
 	t0 := time.Date(2026, 7, 6, 13, 0, 0, 0, time.UTC)
 	sig := "rabbitmq:publish:events"
 	payload := []byte(`{"id":1}`)
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		rabbitmqReport("control-a", sig, payload, t0),
 		rabbitmqReport("control-b", sig, payload, t0),
 		rabbitmqReport("control-b", sig, payload, t0.Add(time.Millisecond)),
@@ -313,7 +313,7 @@ func TestEvaluateTraceHistory_controlCountMismatchVoidsBaseline(t *testing.T) {
 		rabbitmqReport("candidate", sig, payload, t0.Add(time.Millisecond)),
 	}
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusVoidedBaselineDivergence {
+	if verdict == nil || verdict.Status != model.StatusVoidedBaselineDivergence {
 		t.Fatalf("status = %v, want VOIDED_BASELINE_DIVERGENCE", verdict)
 	}
 	details := parseDetails(t, verdict.SummaryDetails)
@@ -332,7 +332,7 @@ func TestEvaluateTraceHistory_controlStatusMismatchVoids(t *testing.T) {
 		httpIngress("candidate", sig, "200", payload, t0),
 	)
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusVoidedBaselineDivergence {
+	if verdict == nil || verdict.Status != model.StatusVoidedBaselineDivergence {
 		t.Fatalf("status = %v, want VOIDED_BASELINE_DIVERGENCE", verdict)
 	}
 	details := parseDetails(t, verdict.SummaryDetails)
@@ -351,16 +351,16 @@ func TestEvaluateTraceHistory_intentionalErrorPath_candidateMismatch(t *testing.
 		httpIngress("candidate", sig, "200", []byte(`{"ok":true}`), t0),
 	)
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMismatch {
+	if verdict == nil || verdict.Status != model.StatusMismatch {
 		t.Fatalf("status = %v, want MISMATCH", verdict)
 	}
 	details := parseDetails(t, verdict.SummaryDetails)
-	if !flagPresent(details.Flags, storage.FlagMismatchPayload) {
+	if !flagPresent(details.Flags, model.FlagMismatchPayload) {
 		t.Fatalf("flags = %v, want MISMATCH_PAYLOAD", details.Flags)
 	}
 	foundStatus := false
 	for _, s := range details.Steps {
-		if s.Reason == storage.ReasonStatusCode {
+		if s.Reason == model.ReasonStatusCode {
 			foundStatus = true
 		}
 	}
@@ -372,26 +372,26 @@ func TestEvaluateTraceHistory_intentionalErrorPath_candidateMismatch(t *testing.
 func TestEvaluateTraceHistory_compoundPayloadAndCount(t *testing.T) {
 	t0 := time.Date(2026, 7, 23, 15, 0, 0, 0, time.UTC)
 	sig := "mongodb:insert:orders"
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		mongoReport("control-a", sig, []byte(`{"price":10}`), t0),
 		mongoReport("control-b", sig, []byte(`{"price":10}`), t0),
 		mongoReport("candidate", sig, []byte(`{"price":20}`), t0),
 		mongoReport("candidate", sig, []byte(`{"price":1}`), t0.Add(time.Millisecond)),
 	}
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMismatch {
+	if verdict == nil || verdict.Status != model.StatusMismatch {
 		t.Fatalf("status = %v, want MISMATCH", verdict)
 	}
 	details := parseDetails(t, verdict.SummaryDetails)
-	if !flagPresent(details.Flags, storage.FlagMismatchPayload) || !flagPresent(details.Flags, storage.FlagMismatchCount) {
+	if !flagPresent(details.Flags, model.FlagMismatchPayload) || !flagPresent(details.Flags, model.FlagMismatchCount) {
 		t.Fatalf("flags = %v, want both PAYLOAD and COUNT", details.Flags)
 	}
 	var havePayload, haveCount bool
 	for _, s := range details.Steps {
-		if s.Kind == storage.FlagMismatchPayload {
+		if s.Kind == model.FlagMismatchPayload {
 			havePayload = true
 		}
-		if s.Kind == storage.FlagMismatchCount && s.Reason == storage.ReasonUnexpectedExtraEgress {
+		if s.Kind == model.FlagMismatchCount && s.Reason == model.ReasonUnexpectedExtraEgress {
 			haveCount = true
 		}
 	}
@@ -403,7 +403,7 @@ func TestEvaluateTraceHistory_compoundPayloadAndCount(t *testing.T) {
 func TestEvaluateTraceHistory_waitingForRoles(t *testing.T) {
 	t0 := time.Date(2026, 7, 23, 16, 0, 0, 0, time.UTC)
 	sig := "mongodb:find:x"
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		mongoReport("control-a", sig, []byte(`{}`), t0),
 		mongoReport("control-b", sig, []byte(`{}`), t0),
 	}
@@ -414,7 +414,7 @@ func TestEvaluateTraceHistory_waitingForRoles(t *testing.T) {
 	}
 
 	timedOut := EvaluateTraceHistory(history, nil, EvalOptions{Timeout: 10 * time.Second, Now: t0.Add(11 * time.Second)})
-	if timedOut == nil || timedOut.Status != storage.StatusWaitingForRoles {
+	if timedOut == nil || timedOut.Status != model.StatusWaitingForRoles {
 		t.Fatalf("past timeout: got %+v, want WAITING_FOR_ROLES", timedOut)
 	}
 }
@@ -423,18 +423,18 @@ func TestEvaluateTraceHistory_lateArrivalOverridesWaiting(t *testing.T) {
 	t0 := time.Date(2026, 7, 23, 16, 30, 0, 0, time.UTC)
 	sig := "mongodb:find:x"
 	payload := []byte(`{"q":1}`)
-	incomplete := []storage.RawReport{
+	incomplete := []model.RawReport{
 		mongoReport("control-a", sig, payload, t0),
 		mongoReport("control-b", sig, payload, t0),
 	}
 	waiting := EvaluateTraceHistory(incomplete, nil, EvalOptions{Timeout: time.Second, Now: t0.Add(2 * time.Second)})
-	if waiting == nil || waiting.Status != storage.StatusWaitingForRoles {
+	if waiting == nil || waiting.Status != model.StatusWaitingForRoles {
 		t.Fatalf("want WAITING_FOR_ROLES, got %+v", waiting)
 	}
 
 	complete := append(incomplete, mongoReport("candidate", sig, payload, t0.Add(3*time.Second)))
 	verdict := EvaluateTraceHistory(complete, nil, EvalOptions{Timeout: time.Second, Now: t0.Add(4 * time.Second)})
-	if verdict == nil || verdict.Status != storage.StatusMatch {
+	if verdict == nil || verdict.Status != model.StatusMatch {
 		t.Fatalf("late arrival should MATCH, got %+v", verdict)
 	}
 }
@@ -442,7 +442,7 @@ func TestEvaluateTraceHistory_lateArrivalOverridesWaiting(t *testing.T) {
 func TestEvaluateTraceHistory_userNoiseOnCompoundKeepsCountOnly(t *testing.T) {
 	t0 := time.Date(2026, 7, 23, 17, 0, 0, 0, time.UTC)
 	sig := "mongodb:insert:orders"
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		mongoReport("control-a", sig, []byte(`{"price":10}`), t0),
 		mongoReport("control-b", sig, []byte(`{"price":10}`), t0),
 		mongoReport("candidate", sig, []byte(`{"price":20}`), t0),
@@ -450,14 +450,14 @@ func TestEvaluateTraceHistory_userNoiseOnCompoundKeepsCountOnly(t *testing.T) {
 	}
 	userNoise := map[string]struct{}{"price": {}}
 	verdict := EvaluateTraceHistory(history, userNoise, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMismatch {
+	if verdict == nil || verdict.Status != model.StatusMismatch {
 		t.Fatalf("status = %v, want MISMATCH (count still flags)", verdict)
 	}
 	details := parseDetails(t, verdict.SummaryDetails)
-	if flagPresent(details.Flags, storage.FlagMismatchPayload) {
+	if flagPresent(details.Flags, model.FlagMismatchPayload) {
 		t.Fatalf("payload should be suppressed by noise; flags=%v", details.Flags)
 	}
-	if !flagPresent(details.Flags, storage.FlagMismatchCount) {
+	if !flagPresent(details.Flags, model.FlagMismatchCount) {
 		t.Fatalf("flags = %v, want MISMATCH_COUNT", details.Flags)
 	}
 }
@@ -472,7 +472,7 @@ func TestEvaluateTraceHistory_nonHTTPEmptyStatusDoesNotVoid(t *testing.T) {
 	)
 	// StatusCode left empty on all — must MATCH, not void.
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMatch {
+	if verdict == nil || verdict.Status != model.StatusMatch {
 		t.Fatalf("status = %v, want MATCH", verdict)
 	}
 }
@@ -480,17 +480,17 @@ func TestEvaluateTraceHistory_nonHTTPEmptyStatusDoesNotVoid(t *testing.T) {
 func TestEvaluateTraceHistory_detailsContainSignature(t *testing.T) {
 	t0 := time.Now().UTC()
 	sig := "rabbitmq:publish:x"
-	history := []storage.RawReport{
+	history := []model.RawReport{
 		rabbitmqReport("control-a", sig, []byte(`{}`), t0),
 		rabbitmqReport("control-b", sig, []byte(`{}`), t0),
 		rabbitmqReport("candidate", sig, []byte(`{}`), t0),
 		rabbitmqReport("candidate", "rabbitmq:publish:extra", []byte(`{}`), t0),
 	}
 	verdict := EvaluateTraceHistory(history, nil, evalOpts(t0))
-	if verdict == nil || verdict.Status != storage.StatusMismatch {
+	if verdict == nil || verdict.Status != model.StatusMismatch {
 		t.Fatalf("want MISMATCH, got %+v", verdict)
 	}
-	if !strings.Contains(verdict.SummaryDetails, storage.FlagMismatchSignature) {
+	if !strings.Contains(verdict.SummaryDetails, model.FlagMismatchSignature) {
 		t.Fatalf("details missing signature flag: %s", verdict.SummaryDetails)
 	}
 }

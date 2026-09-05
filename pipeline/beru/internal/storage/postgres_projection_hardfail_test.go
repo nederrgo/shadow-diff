@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shadow-diff/beru/internal/model"
 	"github.com/shadow-diff/beru/internal/roles"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 // Projection failure must abort the verdict write so SoT and UI stay aligned.
@@ -28,7 +28,7 @@ func TestPostgres_projectionFailureRollsBackVerdict(t *testing.T) {
 			{roles.Candidate, `{"n":1}`},
 		} {
 			if _, err := store.AppendReport(ctx, report(trace, r.role, "mongodb",
-				v2storage.DirectionEgress, "mongodb:insert:orders", r.payload, "", now)); err != nil {
+				model.DirectionEgress, "mongodb:insert:orders", r.payload, "", now)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -36,9 +36,9 @@ func TestPostgres_projectionFailureRollsBackVerdict(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err := store.SaveDiffVerdict(ctx, trace, &v2storage.VerdictState{
-			Status:     v2storage.StatusMatch,
-			UpdatedAt:  now,
+		err := store.SaveDiffVerdict(ctx, trace, &model.VerdictState{
+			Status:    model.StatusMatch,
+			UpdatedAt: now,
 		})
 		if err == nil {
 			t.Fatal("SaveDiffVerdict: want error when traces table missing")
@@ -58,12 +58,12 @@ func TestPostgres_projectionFailureRollsBackVerdict(t *testing.T) {
 		ctx := context.Background()
 		now := time.Now().UTC().Truncate(time.Millisecond)
 		trace := "proj-fail-flush"
-		batch := []v2storage.RawReport{
-			*reportWithIngestID(trace, roles.ControlA, "mongodb", v2storage.DirectionEgress,
+		batch := []model.RawReport{
+			*reportWithIngestID(trace, roles.ControlA, "mongodb", model.DirectionEgress,
 				"mongodb:insert:orders", `{"n":1}`, "", now, 3001),
-			*reportWithIngestID(trace, roles.ControlB, "mongodb", v2storage.DirectionEgress,
+			*reportWithIngestID(trace, roles.ControlB, "mongodb", model.DirectionEgress,
 				"mongodb:insert:orders", `{"n":1}`, "", now.Add(time.Millisecond), 3002),
-			*reportWithIngestID(trace, roles.Candidate, "mongodb", v2storage.DirectionEgress,
+			*reportWithIngestID(trace, roles.Candidate, "mongodb", model.DirectionEgress,
 				"mongodb:insert:orders", `{"n":1}`, "", now.Add(2*time.Millisecond), 3003),
 		}
 		if _, err := store.db.ExecContext(ctx, `DROP TABLE traces`); err != nil {

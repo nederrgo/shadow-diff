@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
+	"github.com/shadow-diff/beru/internal/model"
 )
 
 // handleGetTrace serves GET /api/v1/traces/{id}?protocol=&direction= for bats
@@ -34,7 +34,7 @@ func (s *Server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
 	}
 	reports := allReports
 	if protocol == "http" {
-		reports = filterByProtocolAndDirection(allReports, protocol, v2storage.PayloadDirection(direction))
+		reports = filterByProtocolAndDirection(allReports, protocol, model.PayloadDirection(direction))
 		if len(reports) == 0 {
 			http.Error(w, "Trace not found", http.StatusNotFound)
 			return
@@ -54,8 +54,8 @@ func (s *Server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func filterByProtocolAndDirection(reports []v2storage.RawReport, protocol string, direction v2storage.PayloadDirection) []v2storage.RawReport {
-	var out []v2storage.RawReport
+func filterByProtocolAndDirection(reports []model.RawReport, protocol string, direction model.PayloadDirection) []model.RawReport {
+	var out []model.RawReport
 	for _, r := range reports {
 		if r.Protocol == protocol && r.Direction == direction {
 			out = append(out, r)
@@ -69,8 +69,8 @@ func normalizeHTTPDirection(protocol, direction string) string {
 		return ""
 	}
 	direction = strings.TrimSpace(direction)
-	if direction == string(v2storage.DirectionIngress) || direction == string(v2storage.DirectionEgress) {
+	if direction == string(model.DirectionIngress) || direction == string(model.DirectionEgress) {
 		return direction
 	}
-	return string(v2storage.DirectionIngress)
+	return string(model.DirectionIngress)
 }

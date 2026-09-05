@@ -13,10 +13,10 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/shadow-diff/beru/internal/api"
+	"github.com/shadow-diff/beru/internal/engine"
 	"github.com/shadow-diff/beru/internal/envoyextproc"
 	"github.com/shadow-diff/beru/internal/server"
 	"github.com/shadow-diff/beru/internal/storage"
-	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
 )
 
@@ -38,7 +38,7 @@ func main() {
 	}
 	defer store.Close()
 
-	router := v2engine.NewTraceRouter(store.Traces, store.Runs)
+	router := engine.NewTraceRouter(store.Traces, store.Runs)
 
 	defaultTest := store.Runs.DefaultShadowTestName()
 

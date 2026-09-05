@@ -7,19 +7,19 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/shadow-diff/beru/internal/v2/storage"
+	"github.com/shadow-diff/beru/internal/model"
 )
 
 func TestFromWireEnvelope_http(t *testing.T) {
 	env := &NetworkEventEnvelope{
-		TraceID:           "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-		PodRole:           "control-a",
-		ShadowTestName:    "my-shadow",
-		Protocol:          "http",
-		Direction:         "egress",
-		RawRequestPayload: `{"amount":1}`,
+		TraceID:            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		PodRole:            "control-a",
+		ShadowTestName:     "my-shadow",
+		Protocol:           "http",
+		Direction:          "egress",
+		RawRequestPayload:  `{"amount":1}`,
 		RawResponsePayload: `{"ok":true}`,
-		Metadata:          `{"method":"POST","path":"/v1/charges"}`,
+		Metadata:           `{"method":"POST","path":"/v1/charges"}`,
 	}
 	raw, err := FromWireEnvelope(env)
 	if err != nil {
@@ -31,7 +31,7 @@ func TestFromWireEnvelope_http(t *testing.T) {
 	if raw.Signature != "http:POST:/v1/charges" {
 		t.Fatalf("signature = %q", raw.Signature)
 	}
-	if raw.Direction != storage.DirectionEgress {
+	if raw.Direction != model.DirectionEgress {
 		t.Fatalf("direction = %q", raw.Direction)
 	}
 }

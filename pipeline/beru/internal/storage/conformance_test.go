@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shadow-diff/beru/internal/model"
 	"github.com/shadow-diff/beru/internal/roles"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 func TestPostgresConformance(t *testing.T) {
@@ -83,14 +83,14 @@ func configFromDSN(t *testing.T, dsn string) PostgresConfig {
 	return cfg
 }
 
-func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository) {
+func runTraceRepositoryConformance(t *testing.T, repo model.TraceRepository) {
 	ctx := context.Background()
 	t0 := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
 
 	t.Run("AppendReport builds an ordered timeline", func(t *testing.T) {
 		trace := "conf-timeline"
 		history, err := repo.AppendReport(ctx, report(trace, roles.ControlA, "mongodb",
-			v2storage.DirectionEgress, "mongodb:insert:orders", `{"n":1}`, "", t0))
+			model.DirectionEgress, "mongodb:insert:orders", `{"n":1}`, "", t0))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,12 +99,12 @@ func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository)
 		}
 
 		if _, err := repo.AppendReport(ctx, report(trace, roles.Candidate, "mongodb",
-			v2storage.DirectionEgress, "mongodb:insert:orders", `{"n":2}`, "", t0.Add(2*time.Second))); err != nil {
+			model.DirectionEgress, "mongodb:insert:orders", `{"n":2}`, "", t0.Add(2*time.Second))); err != nil {
 			t.Fatal(err)
 		}
 		// Inserted last but captured first: ordering must be by captured_at.
 		history, err = repo.AppendReport(ctx, report(trace, roles.ControlB, "mongodb",
-			v2storage.DirectionEgress, "mongodb:insert:orders", `{"n":3}`, "", t0.Add(-time.Second)))
+			model.DirectionEgress, "mongodb:insert:orders", `{"n":3}`, "", t0.Add(-time.Second)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,7 +128,7 @@ func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository)
 			{"mongodb", "mongodb:find:users"},
 		} {
 			if _, err := repo.AppendReport(ctx, report(trace, roles.ControlA, p.protocol,
-				v2storage.DirectionEgress, p.sig, `{}`, "", t0)); err != nil {
+				model.DirectionEgress, p.sig, `{}`, "", t0)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -144,7 +144,7 @@ func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository)
 	t.Run("status codes round-trip", func(t *testing.T) {
 		trace := "conf-status"
 		if _, err := repo.AppendReport(ctx, report(trace, roles.ControlA, "http",
-			v2storage.DirectionIngress, "http:GET:/x", `{}`, "404", t0)); err != nil {
+			model.DirectionIngress, "http:GET:/x", `{}`, "404", t0)); err != nil {
 			t.Fatal(err)
 		}
 		got, err := repo.ListReports(ctx, trace, "")
@@ -158,8 +158,8 @@ func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository)
 
 	t.Run("SaveDiffVerdict upserts", func(t *testing.T) {
 		trace := "conf-verdict"
-		if err := repo.SaveDiffVerdict(ctx, trace, &v2storage.VerdictState{
-			Status:    v2storage.StatusMatch,
+		if err := repo.SaveDiffVerdict(ctx, trace, &model.VerdictState{
+			Status:    model.StatusMatch,
 			UpdatedAt: t0,
 		}); err != nil {
 			t.Fatal(err)
@@ -168,17 +168,17 @@ func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Status != v2storage.StatusMatch || got.HasCountRegression {
+		if got.Status != model.StatusMatch || got.HasCountRegression {
 			t.Fatalf("initial verdict = %+v, want MATCH / false", got)
 		}
 		if !got.UpdatedAt.Equal(t0) {
 			t.Fatalf("updated_at = %v, want %v", got.UpdatedAt, t0)
 		}
 
-		details := v2storage.VerdictDetails{
-			Flags: []string{v2storage.FlagMismatchPayload},
-			Steps: []v2storage.VerdictStep{{
-				Kind:      v2storage.FlagMismatchPayload,
+		details := model.VerdictDetails{
+			Flags: []string{model.FlagMismatchPayload},
+			Steps: []model.VerdictStep{{
+				Kind:      model.FlagMismatchPayload,
 				Protocol:  "mongodb",
 				Signature: "mongodb:insert:orders",
 				NoisePath: "created_at",
@@ -189,8 +189,8 @@ func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository)
 			t.Fatal(err)
 		}
 		t1 := t0.Add(time.Minute)
-		if err := repo.SaveDiffVerdict(ctx, trace, &v2storage.VerdictState{
-			Status:             v2storage.StatusMismatch,
+		if err := repo.SaveDiffVerdict(ctx, trace, &model.VerdictState{
+			Status:             model.StatusMismatch,
 			HasCountRegression: true,
 			SummaryDetails:     string(encoded),
 			UpdatedAt:          t1,
@@ -201,14 +201,14 @@ func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Status != v2storage.StatusMismatch || !got.HasCountRegression {
+		if got.Status != model.StatusMismatch || !got.HasCountRegression {
 			t.Fatalf("updated verdict = %+v", got)
 		}
 		if !got.UpdatedAt.Equal(t1) {
 			t.Fatalf("updated_at = %v, want %v", got.UpdatedAt, t1)
 		}
 		// Compared semantically: Postgres JSONB reformats the text it stores.
-		var roundTripped v2storage.VerdictDetails
+		var roundTripped model.VerdictDetails
 		if err := json.Unmarshal([]byte(got.SummaryDetails), &roundTripped); err != nil {
 			t.Fatalf("summary_details is not JSON: %v (%q)", err, got.SummaryDetails)
 		}
@@ -234,32 +234,32 @@ func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository)
 		old := time.Now().UTC().Add(-30 * time.Second)
 		fresh := time.Now().UTC()
 		if _, err := repo.AppendReport(ctx, report("conf-stale", roles.ControlA, "mongodb",
-			v2storage.DirectionEgress, "mongodb:x:y", `{}`, "", old)); err != nil {
+			model.DirectionEgress, "mongodb:x:y", `{}`, "", old)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := repo.AppendReport(ctx, report("conf-fresh", roles.ControlA, "mongodb",
-			v2storage.DirectionEgress, "mongodb:x:y", `{}`, "", fresh)); err != nil {
+			model.DirectionEgress, "mongodb:x:y", `{}`, "", fresh)); err != nil {
 			t.Fatal(err)
 		}
 		// All three roles present: complete, so never stale however old it is.
 		for _, role := range roles.All {
 			if _, err := repo.AppendReport(ctx, report("conf-complete", role, "mongodb",
-				v2storage.DirectionEgress, "mongodb:x:y", `{}`, "", old)); err != nil {
+				model.DirectionEgress, "mongodb:x:y", `{}`, "", old)); err != nil {
 				t.Fatal(err)
 			}
 		}
 		// Foreign shadow test + already-verdicted incomplete must not be reaped
 		// (would re-stamp SESSION_ID onto another beru-local's UI session).
 		if _, err := repo.AppendReport(ctx, reportForTest("conf-foreign", "other-test",
-			roles.ControlA, "mongodb", v2storage.DirectionEgress, "mongodb:x:y", `{}`, "", old)); err != nil {
+			roles.ControlA, "mongodb", model.DirectionEgress, "mongodb:x:y", `{}`, "", old)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := repo.AppendReport(ctx, report("conf-verdicted", roles.ControlA, "mongodb",
-			v2storage.DirectionEgress, "mongodb:x:y", `{}`, "", old)); err != nil {
+			model.DirectionEgress, "mongodb:x:y", `{}`, "", old)); err != nil {
 			t.Fatal(err)
 		}
-		if err := repo.SaveDiffVerdict(ctx, "conf-verdicted", &v2storage.VerdictState{
-			Status:    v2storage.StatusWaitingForRoles,
+		if err := repo.SaveDiffVerdict(ctx, "conf-verdicted", &model.VerdictState{
+			Status:    model.StatusWaitingForRoles,
 			UpdatedAt: time.Now().UTC(),
 		}); err != nil {
 			t.Fatal(err)
@@ -292,7 +292,7 @@ func runTraceRepositoryConformance(t *testing.T, repo v2storage.TraceRepository)
 
 	t.Run("ListTraceGroups scopes to a shadow test", func(t *testing.T) {
 		if _, err := repo.AppendReport(ctx, reportForTest("conf-group", "conformance-test",
-			roles.ControlA, "http", v2storage.DirectionIngress, "http:GET:/g", `{}`, "200", t0)); err != nil {
+			roles.ControlA, "http", model.DirectionIngress, "http:GET:/g", `{}`, "200", t0)); err != nil {
 			t.Fatal(err)
 		}
 		groups, err := repo.ListTraceGroups(ctx, "conformance-test", 10)
@@ -376,14 +376,14 @@ func runRunStoreConformance(t *testing.T, runs RunStore) {
 	})
 }
 
-func report(traceID, role, protocol string, dir v2storage.PayloadDirection,
-	signature, payload, statusCode string, at time.Time) *v2storage.RawReport {
+func report(traceID, role, protocol string, dir model.PayloadDirection,
+	signature, payload, statusCode string, at time.Time) *model.RawReport {
 	return reportForTest(traceID, "default", role, protocol, dir, signature, payload, statusCode, at)
 }
 
-func reportForTest(traceID, shadowTest, role, protocol string, dir v2storage.PayloadDirection,
-	signature, payload, statusCode string, at time.Time) *v2storage.RawReport {
-	return &v2storage.RawReport{
+func reportForTest(traceID, shadowTest, role, protocol string, dir model.PayloadDirection,
+	signature, payload, statusCode string, at time.Time) *model.RawReport {
+	return &model.RawReport{
 		TraceID:        traceID,
 		ShadowRole:     role,
 		ShadowTestName: shadowTest,

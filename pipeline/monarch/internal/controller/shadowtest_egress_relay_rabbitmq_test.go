@@ -77,6 +77,9 @@ func TestEgressRelayRabbitMQEnv(t *testing.T) {
 	if byName[envBeruHTTPURL] != "http://beru-local.shadow-default-rmq-test.svc.cluster.local:8080" {
 		t.Fatalf("BERU_HTTP_URL = %q", byName[envBeruHTTPURL])
 	}
+	if byName[envShadowTestName] != "rmq-test" {
+		t.Fatalf("SHADOW_TEST_NAME = %q", byName[envShadowTestName])
+	}
 	if byName[envReplayExecutionID] != "exec-relay-1" {
 		t.Fatalf("%s = %q, want exec-relay-1", envReplayExecutionID, byName[envReplayExecutionID])
 	}
@@ -183,7 +186,7 @@ func TestIgrisRabbitMQEnv_RecordOmitsShadowURLs(t *testing.T) {
 			Inputs: []enginev1alpha1.InputSpec{{
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
-					ProdURL:              "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
+					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
 					TargetDependency:     "rabbitmq",
 					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},
@@ -230,7 +233,7 @@ func TestIgrisRabbitMQEnv_ReplayIncludesShadowURLs(t *testing.T) {
 			Inputs: []enginev1alpha1.InputSpec{{
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
-					ProdURL:              "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
+					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
 					TargetDependency:     "rabbitmq",
 					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},
@@ -272,7 +275,7 @@ func TestIgrisRabbitMQSamplePercentageFromTopLevel(t *testing.T) {
 			Inputs: []enginev1alpha1.InputSpec{{
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
-					ProdURL:              "amqp://rmq-prod:5672/", Exchange: "orders", RoutingKey: "order.created",
+					ProdURL: "amqp://rmq-prod:5672/", Exchange: "orders", RoutingKey: "order.created",
 					TargetDependency:     "rabbitmq",
 					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},

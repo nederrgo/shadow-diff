@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shadow-diff/beru/internal/model"
 	"github.com/shadow-diff/beru/internal/roles"
-	"github.com/shadow-diff/beru/internal/trace"
-	"github.com/shadow-diff/beru/internal/v2/storage"
+	"github.com/shadow-diff/trace"
 )
 
 // NetworkEventEnvelope is the wire format posted by Envoy sidecars to beru-ingest.
@@ -41,7 +41,7 @@ type mongoWireMeta struct {
 }
 
 // FromWireEnvelope maps a network-level event into a RawReport for the state engine.
-func FromWireEnvelope(env *NetworkEventEnvelope) (*storage.RawReport, error) {
+func FromWireEnvelope(env *NetworkEventEnvelope) (*model.RawReport, error) {
 	if env == nil {
 		return nil, fmt.Errorf("nil envelope")
 	}
@@ -58,9 +58,9 @@ func FromWireEnvelope(env *NetworkEventEnvelope) (*storage.RawReport, error) {
 		return nil, fmt.Errorf("protocol is required")
 	}
 
-	direction := storage.DirectionEgress
-	if strings.EqualFold(strings.TrimSpace(env.Direction), string(storage.DirectionIngress)) {
-		direction = storage.DirectionIngress
+	direction := model.DirectionEgress
+	if strings.EqualFold(strings.TrimSpace(env.Direction), string(model.DirectionIngress)) {
+		direction = model.DirectionIngress
 	}
 
 	stored, err := json.Marshal(wireStoredPayload{
@@ -82,7 +82,7 @@ func FromWireEnvelope(env *NetworkEventEnvelope) (*storage.RawReport, error) {
 		captured = time.Now().UTC()
 	}
 
-	return &storage.RawReport{
+	return &model.RawReport{
 		TraceID:        traceID,
 		ShadowRole:     role,
 		ShadowTestName: strings.TrimSpace(env.ShadowTestName),

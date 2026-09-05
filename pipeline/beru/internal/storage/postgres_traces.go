@@ -8,19 +8,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shadow-diff/beru/internal/diff"
+	"github.com/shadow-diff/beru/internal/model"
 	"github.com/shadow-diff/beru/internal/roles"
-	"github.com/shadow-diff/beru/internal/v2/diff"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
-func evaluateHistory(history []v2storage.RawReport, noise map[string]struct{}, timeout time.Duration) *v2storage.VerdictState {
+func evaluateHistory(history []model.RawReport, noise map[string]struct{}, timeout time.Duration) *model.VerdictState {
 	return diff.EvaluateTraceHistory(history, noise, diff.EvalOptions{Timeout: timeout})
 }
 
-var _ v2storage.TraceRepository = (*PostgresStore)(nil)
+var _ model.TraceRepository = (*PostgresStore)(nil)
 
 // AppendReport stores one report and returns the trace's full timeline.
-func (p *PostgresStore) AppendReport(ctx context.Context, report *v2storage.RawReport) ([]v2storage.RawReport, error) {
+func (p *PostgresStore) AppendReport(ctx context.Context, report *model.RawReport) ([]model.RawReport, error) {
 	if report == nil {
 		return nil, fmt.Errorf("append report: nil report")
 	}
@@ -36,7 +36,7 @@ type dbQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-func (p *PostgresStore) insertReport(ctx context.Context, q dbQuerier, report *v2storage.RawReport) error {
+func (p *PostgresStore) insertReport(ctx context.Context, q dbQuerier, report *model.RawReport) error {
 	if report.IngestID == 0 {
 		return fmt.Errorf("append report insert: ingest_id is required")
 	}
@@ -75,7 +75,7 @@ func (p *PostgresStore) lockKey(traceID string) string {
 // re-diffs the full history, and upserts the verdict + UI projection.
 func (p *PostgresStore) flushReportsAndEvaluate(
 	ctx context.Context,
-	reports []v2storage.RawReport,
+	reports []model.RawReport,
 	noise map[string]struct{},
 	timeout time.Duration,
 ) error {
@@ -114,7 +114,7 @@ func (p *PostgresStore) flushReportsAndEvaluate(
 }
 
 // saveDiffVerdictUnderLock upserts a verdict while holding the per-trace advisory lock.
-func (p *PostgresStore) saveDiffVerdictUnderLock(ctx context.Context, traceID string, verdict *v2storage.VerdictState) error {
+func (p *PostgresStore) saveDiffVerdictUnderLock(ctx context.Context, traceID string, verdict *model.VerdictState) error {
 	if verdict == nil {
 		return fmt.Errorf("save diff verdict: nil verdict")
 	}
@@ -143,8 +143,8 @@ func (p *PostgresStore) upsertVerdict(
 	ctx context.Context,
 	q dbQuerier,
 	traceID string,
-	verdict *v2storage.VerdictState,
-	history []v2storage.RawReport,
+	verdict *model.VerdictState,
+	history []model.RawReport,
 ) error {
 	shadowTestName := ""
 	if len(history) > 0 {
@@ -178,11 +178,11 @@ ON CONFLICT (replay_execution_id, trace_id) DO UPDATE SET
 }
 
 // ListReports returns a trace's reports in capture order, optionally one protocol.
-func (p *PostgresStore) ListReports(ctx context.Context, traceID, protocol string) ([]v2storage.RawReport, error) {
+func (p *PostgresStore) ListReports(ctx context.Context, traceID, protocol string) ([]model.RawReport, error) {
 	return p.listReportsQ(ctx, p.db, traceID, protocol)
 }
 
-func (p *PostgresStore) listReportsQ(ctx context.Context, q dbQuerier, traceID, protocol string) ([]v2storage.RawReport, error) {
+func (p *PostgresStore) listReportsQ(ctx context.Context, q dbQuerier, traceID, protocol string) ([]model.RawReport, error) {
 	if traceID == "" {
 		return nil, fmt.Errorf("list reports: empty trace_id")
 	}
@@ -203,10 +203,10 @@ WHERE replay_execution_id = $1 AND trace_id = $2`
 	}
 	defer rows.Close()
 
-	var out []v2storage.RawReport
+	var out []model.RawReport
 	for rows.Next() {
 		var (
-			rep       v2storage.RawReport
+			rep       model.RawReport
 			direction string
 		)
 		if err := rows.Scan(
@@ -215,7 +215,7 @@ WHERE replay_execution_id = $1 AND trace_id = $2`
 		); err != nil {
 			return nil, err
 		}
-		rep.Direction = v2storage.PayloadDirection(direction)
+		rep.Direction = model.PayloadDirection(direction)
 		rep.CapturedAt = rep.CapturedAt.UTC()
 		out = append(out, rep)
 	}
@@ -223,7 +223,7 @@ WHERE replay_execution_id = $1 AND trace_id = $2`
 }
 
 // ListTraceGroups returns recent (trace, protocol) pairs for a shadow test.
-func (p *PostgresStore) ListTraceGroups(ctx context.Context, shadowTestName string, limit int) ([]v2storage.TraceGroup, error) {
+func (p *PostgresStore) ListTraceGroups(ctx context.Context, shadowTestName string, limit int) ([]model.TraceGroup, error) {
 	if limit <= 0 {
 		limit = 200
 	}
@@ -242,10 +242,10 @@ LIMIT $3`, shadowTestName, p.replayExecutionID, limit)
 	}
 	defer rows.Close()
 
-	var out []v2storage.TraceGroup
+	var out []model.TraceGroup
 	for rows.Next() {
 		var (
-			g      v2storage.TraceGroup
+			g      model.TraceGroup
 			lastAt time.Time
 		)
 		if err := rows.Scan(&g.TraceID, &g.Protocol, &lastAt); err != nil {
@@ -258,7 +258,7 @@ LIMIT $3`, shadowTestName, p.replayExecutionID, limit)
 }
 
 // GetVerdict returns the stored verdict for a trace, or nil when absent.
-func (p *PostgresStore) GetVerdict(ctx context.Context, traceID string) (*v2storage.VerdictState, error) {
+func (p *PostgresStore) GetVerdict(ctx context.Context, traceID string) (*model.VerdictState, error) {
 	var (
 		status     string
 		regression bool
@@ -276,14 +276,14 @@ FROM verdicts WHERE replay_execution_id = $1 AND trace_id = $2`,
 	if err != nil {
 		return nil, fmt.Errorf("get verdict: %w", err)
 	}
-	v := &v2storage.VerdictState{
+	v := &model.VerdictState{
 		Status:             status,
 		HasCountRegression: regression,
 		UpdatedAt:          updated.UTC(),
 		SummaryDetails:     jsonbString(details),
 	}
 	if v.SummaryDetails != "" {
-		var vd v2storage.VerdictDetails
+		var vd model.VerdictDetails
 		if json.Unmarshal([]byte(v.SummaryDetails), &vd) == nil {
 			v.Flags = vd.Flags
 		}
@@ -298,7 +298,7 @@ FROM verdicts WHERE replay_execution_id = $1 AND trace_id = $2`,
 // verdict: every beru-local shares one Postgres, and without those guards the
 // reaper would re-project foreign WAITING_FOR_ROLES rows onto the current
 // SESSION_ID (UI "session hopping").
-func (p *PostgresStore) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]v2storage.StaleIncompleteTrace, error) {
+func (p *PostgresStore) ListStaleIncompleteTraces(ctx context.Context, olderThan time.Time) ([]model.StaleIncompleteTrace, error) {
 	// Postgres does not allow SELECT aliases in HAVING, so the role counts are
 	// spelled out again rather than referenced as n_a / n_b / n_c.
 	rows, err := p.db.QueryContext(ctx, `
@@ -322,9 +322,9 @@ HAVING MIN(r.captured_at) <= $1
 	}
 	defer rows.Close()
 
-	var out []v2storage.StaleIncompleteTrace
+	var out []model.StaleIncompleteTrace
 	for rows.Next() {
-		var s v2storage.StaleIncompleteTrace
+		var s model.StaleIncompleteTrace
 		if err := rows.Scan(&s.TraceID, &s.FirstSeen); err != nil {
 			return nil, err
 		}
@@ -335,7 +335,7 @@ HAVING MIN(r.captured_at) <= $1
 }
 
 // SaveDiffVerdict upserts the trace's verdict and UI projection under the per-trace advisory lock.
-func (p *PostgresStore) SaveDiffVerdict(ctx context.Context, traceID string, verdict *v2storage.VerdictState) error {
+func (p *PostgresStore) SaveDiffVerdict(ctx context.Context, traceID string, verdict *model.VerdictState) error {
 	return p.saveDiffVerdictUnderLock(ctx, traceID, verdict)
 }
 
@@ -343,14 +343,14 @@ func (p *PostgresStore) projectTraceTx(
 	ctx context.Context,
 	tx *sql.Tx,
 	traceID string,
-	verdict *v2storage.VerdictState,
-	history []v2storage.RawReport,
+	verdict *model.VerdictState,
+	history []model.RawReport,
 ) error {
 	if len(history) == 0 {
 		return nil
 	}
 
-	var details v2storage.VerdictDetails
+	var details model.VerdictDetails
 	if verdict.SummaryDetails != "" {
 		_ = json.Unmarshal([]byte(verdict.SummaryDetails), &details)
 	}
@@ -411,10 +411,10 @@ ON CONFLICT (replay_execution_id, trace_id, signature) DO UPDATE SET
 	// Fan out to Tusk LISTEN/NOTIFY so The System ShadowDiff page can hydrate
 	// via GET then stream live verdict deltas without polling.
 	notifyPayload, err := json.Marshal(map[string]string{
-		"session_id":           p.sessionID,
-		"replay_execution_id":  p.replayExecutionID,
-		"trace_id":             traceID,
-		"verdict":              verdict.Status,
+		"session_id":          p.sessionID,
+		"replay_execution_id": p.replayExecutionID,
+		"trace_id":            traceID,
+		"verdict":             verdict.Status,
 	})
 	if err != nil {
 		return fmt.Errorf("project notify payload: %w", err)
@@ -426,7 +426,7 @@ ON CONFLICT (replay_execution_id, trace_id, signature) DO UPDATE SET
 }
 
 // signatureOrder lists each distinct signature once, in first-seen order.
-func signatureOrder(history []v2storage.RawReport) []string {
+func signatureOrder(history []model.RawReport) []string {
 	seen := make(map[string]struct{}, len(history))
 	var out []string
 	for _, r := range history {
@@ -439,8 +439,8 @@ func signatureOrder(history []v2storage.RawReport) []string {
 	return out
 }
 
-func reportsForSignature(history []v2storage.RawReport, signature string) []v2storage.RawReport {
-	var out []v2storage.RawReport
+func reportsForSignature(history []model.RawReport, signature string) []model.RawReport {
+	var out []model.RawReport
 	for _, r := range history {
 		if r.Signature == signature {
 			out = append(out, r)
@@ -449,7 +449,7 @@ func reportsForSignature(history []v2storage.RawReport, signature string) []v2st
 	return out
 }
 
-func sourceType(bucket []v2storage.RawReport) string {
+func sourceType(bucket []model.RawReport) string {
 	if len(bucket) == 0 {
 		return ""
 	}
@@ -462,7 +462,7 @@ func sourceType(bucket []v2storage.RawReport) string {
 // the same signature bucket and only its first payload is projected. raw_reports
 // keeps every occurrence; The System loads repeats lazily via Tusk
 // GET /api/v1/diffs/occurrences (not by widening the diff_reports unique key).
-func payloadJSON(bucket []v2storage.RawReport, role string) any {
+func payloadJSON(bucket []model.RawReport, role string) any {
 	for _, r := range bucket {
 		if r.ShadowRole != role {
 			continue
@@ -484,8 +484,8 @@ func payloadJSON(bucket []v2storage.RawReport, role string) any {
 	return nil
 }
 
-func stepsForSignature(steps []v2storage.VerdictStep, signature string) []v2storage.VerdictStep {
-	var out []v2storage.VerdictStep
+func stepsForSignature(steps []model.VerdictStep, signature string) []model.VerdictStep {
+	var out []model.VerdictStep
 	for _, s := range steps {
 		if s.Signature == signature {
 			out = append(out, s)
@@ -496,9 +496,9 @@ func stepsForSignature(steps []v2storage.VerdictStep, signature string) []v2stor
 
 // httpMethodPath recovers the request line from the HTTP ingress signature,
 // which report.HTTPSignature builds as "http:{METHOD}:{path}".
-func httpMethodPath(history []v2storage.RawReport) (method, path string) {
+func httpMethodPath(history []model.RawReport) (method, path string) {
 	for _, r := range history {
-		if r.Protocol != "http" || r.Direction != v2storage.DirectionIngress {
+		if r.Protocol != "http" || r.Direction != model.DirectionIngress {
 			continue
 		}
 		parts := strings.SplitN(r.Signature, ":", 3)
@@ -509,9 +509,9 @@ func httpMethodPath(history []v2storage.RawReport) (method, path string) {
 	return "", ""
 }
 
-func ingressStatus(history []v2storage.RawReport, role string) string {
+func ingressStatus(history []model.RawReport, role string) string {
 	for _, r := range history {
-		if r.ShadowRole == role && r.Direction == v2storage.DirectionIngress && r.StatusCode != "" {
+		if r.ShadowRole == role && r.Direction == model.DirectionIngress && r.StatusCode != "" {
 			return r.StatusCode
 		}
 	}
@@ -523,11 +523,11 @@ func jsonOrNil(v any) any {
 	switch typed := v.(type) {
 	case nil:
 		return nil
-	case []v2storage.VerdictStep:
+	case []model.VerdictStep:
 		if len(typed) == 0 {
 			return nil
 		}
-	case *v2storage.BaselineFailure:
+	case *model.BaselineFailure:
 		if typed == nil {
 			return nil
 		}
