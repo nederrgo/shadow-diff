@@ -130,15 +130,15 @@ kubectl api-resources | grep shadowtest   # short name: st
 kubectl api-resources | grep kaiselrule   # short name: kr
 ```
 
-**Minikube E2E** (Kaisel eBPF):
+**Local Kind E2E** (Kaisel eBPF):
 
 ```sh
-./testing/tools/e2e-reset-minikube.sh
+./testing/tools/e2e-reset-kind.sh
 make test-bats-integration      # HTTP ingress
 make test-bats-e2e              # full hybrid + HTTP egress → Shop
 ```
 
-Recommend **8GB+ Minikube memory** for the hybrid test (six dependency pods + three workers + igris + egress-relay).
+Recommend adequate Docker/Kind node resources for the hybrid test (six dependency pods + three workers + igris + egress-relay).
 
 ---
 

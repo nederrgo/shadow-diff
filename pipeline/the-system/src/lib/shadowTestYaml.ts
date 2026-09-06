@@ -2,7 +2,7 @@ import yaml from 'js-yaml'
 import type { ShadowTestFormState } from '@/components/ShadowTestForm'
 
 /** Build a valid engine.shadow-diff.io/v1alpha1 ShadowTest document from form state. */
-export function buildShadowTestDoc(form: ShadowTestFormState): Record<string, unknown> {
+function buildShadowTestDoc(form: ShadowTestFormState): Record<string, unknown> {
   const spec: Record<string, unknown> = {
     targetDeployment: form.targetDeployment,
     newImage: form.newImage,
@@ -39,6 +39,9 @@ export function buildShadowTestDoc(form: ShadowTestFormState): Record<string, un
   if (inp.driver === 'rabbitmq_message') {
     const amqp: Record<string, unknown> = {
       prodUrl: inp.prodUrl.trim(),
+      credentialsSecretRef: {
+        name: inp.amqpSecret.trim(),
+      },
       exchange: inp.exchange.trim(),
       routingKey: inp.routingKey.trim() || '#',
       targetDependency: inp.targetDependency.trim(),

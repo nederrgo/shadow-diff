@@ -14,6 +14,8 @@ type Props = {
   traces: TraceGroup[]
   selectedTraceId: string | null
   onSelectTrace: (traceId: string) => void
+  /** When set, scopes GET /api/v1/diffs/occurrences to this replay run. */
+  executionId?: string
 }
 
 function verdictBadge(verdict: Verdict) {
@@ -182,8 +184,8 @@ function NoiseBanner({ value }: { value: unknown }) {
   )
 }
 
-function cacheKey(traceId: string, signature: string) {
-  return `${traceId}\0${signature}`
+function cacheKey(traceId: string, signature: string, execId: string) {
+  return `${execId}\0${traceId}\0${signature}`
 }
 
 function firstRedIndex(mismatchIndexes: Set<number>): number {
@@ -191,7 +193,7 @@ function firstRedIndex(mismatchIndexes: Set<number>): number {
   return Math.min(...mismatchIndexes)
 }
 
-export function PayloadInspector({ traces, selectedTraceId, onSelectTrace }: Props) {
+export function PayloadInspector({ traces, selectedTraceId, onSelectTrace, executionId = '' }: Props) {
   const selected = traces.find((t) => t.trace_id === selectedTraceId) ?? null
   const [sigIndex, setSigIndex] = useState(0)
   const [occIndex, setOccIndex] = useState(0)
@@ -218,7 +220,9 @@ export function PayloadInspector({ traces, selectedTraceId, onSelectTrace }: Pro
     return set
   }, [payloadSteps])
 
-  const activeKey = activeDiff ? cacheKey(activeDiff.trace_id, activeDiff.signature) : null
+  const activeKey = activeDiff
+    ? cacheKey(activeDiff.trace_id, activeDiff.signature, executionId)
+    : null
   const loaded = activeKey ? occCache[activeKey] : undefined
   const occCacheRef = useRef(occCache)
   occCacheRef.current = occCache
@@ -249,10 +253,12 @@ export function PayloadInspector({ traces, selectedTraceId, onSelectTrace }: Pro
     const signature = activeDiff.signature
     setOccLoading(true)
     setOccError(null)
-    const url =
-      `${tuskHttpBase()}/api/v1/diffs/occurrences` +
-      `?trace_id=${encodeURIComponent(traceID)}` +
-      `&signature=${encodeURIComponent(signature)}`
+    const qs = new URLSearchParams({
+      trace_id: traceID,
+      signature,
+    })
+    if (executionId) qs.set('replay_execution_id', executionId)
+    const url = `${tuskHttpBase()}/api/v1/diffs/occurrences?${qs}`
 
     fetch(url, { signal: ac.signal })
       .then(async (res) => {
@@ -271,7 +277,7 @@ export function PayloadInspector({ traces, selectedTraceId, onSelectTrace }: Pro
       })
 
     return () => ac.abort()
-  }, [activeDiff?.trace_id, activeDiff?.signature, activeKey])
+  }, [activeDiff?.trace_id, activeDiff?.signature, activeKey, executionId])
 
   const occurrences: SignatureOccurrence[] = useMemo(() => {
     if (loaded?.occurrences?.length) return loaded.occurrences

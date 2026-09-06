@@ -1,0 +1,70 @@
+{{- if .Values.tusk.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "shadow-diff.tuskName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: tusk
+    app.kubernetes.io/component: bff
+spec:
+  replicas: {{ .Values.tusk.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "shadow-diff.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/name: tusk
+      app.kubernetes.io/component: bff
+  template:
+    metadata:
+      labels:
+        {{- include "shadow-diff.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/name: tusk
+        app.kubernetes.io/component: bff
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tusk
+          image: {{ include "shadow-diff.tuskImage" . }}
+          imagePullPolicy: {{ include "shadow-diff.pullPolicy" (list . .Values.tusk.image.pullPolicy) }}
+          ports:
+            - name: http
+              containerPort: 8082
+              protocol: TCP
+          env:
+            - name: TUSK_HTTP_ADDR
+              value: {{ .Values.tusk.httpAddr | quote }}
+            - name: MONARCH_GRPC_ADDR
+              value: {{ include "shadow-diff.monarchGrpcAddr" . | quote }}
+          envFrom:
+            - secretRef:
+                name: {{ include "shadow-diff.postgresSecretName" . }}
+                optional: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.tusk.resources | nindent 12 }}
+{{- end }}

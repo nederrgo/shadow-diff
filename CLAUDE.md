@@ -55,7 +55,7 @@ go test ./internal/v2/report/... -run TestEgressSignature -v
 ### E2E scripts (bats framework under `testing/bats/`)
 ```bash
 make test-bats-integration   # integration suite (mongo egress)
-make test-bats-e2e           # full E2E suite (python/nodejs hybrid + http-otel-rmq)
+make test-bats-e2e           # full E2E suite (http-ingress + rabbitmq-ingress + record; record→replay→Postgres)
 make test-bats               # both suites
 ```
 

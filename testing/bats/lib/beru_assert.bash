@@ -171,12 +171,66 @@ DELETE FROM diff_reports WHERE trace_id IN (
 DELETE FROM traces WHERE shadow_test_name = '${name}';
 DELETE FROM verdicts WHERE shadow_test_name = '${name}';
 DELETE FROM raw_reports WHERE shadow_test_name = '${name}';
+DELETE FROM replay_executions WHERE session_id IN (
+  SELECT session_id FROM shadow_sessions WHERE shadow_test_name = '${name}'
+);
+DELETE FROM shadow_sessions WHERE shadow_test_name = '${name}';
+DELETE FROM noise_filters WHERE shadow_test_name = '${name}';
 DELETE FROM shadow_tests WHERE name = '${name}';
 " >/dev/null
 }
 
+# Distinct shadow roles that have reported for a protocol (Postgres SoT).
+# HTTP defaults to direction=ingress (matches beru GET /api/v1/traces).
+# Usage: beru_reports_role_count_pg <trace_id> <protocol> [direction]
+beru_reports_role_count_pg() {
+  local trace_id="$1" protocol="$2" direction="${3:-}"
+  local tid prot dir sql count
+  tid="${trace_id//\'/\'\'}"
+  prot="${protocol//\'/\'\'}"
+  if [[ "$protocol" == "http" && -z "$direction" ]]; then
+    direction="ingress"
+  fi
+  dir="${direction//\'/\'\'}"
+  if [[ -n "$direction" ]]; then
+    sql="SELECT COUNT(DISTINCT shadow_role)::text FROM raw_reports
+WHERE trace_id = '${tid}' AND protocol = '${prot}' AND direction = '${dir}'"
+  else
+    sql="SELECT COUNT(DISTINCT shadow_role)::text FROM raw_reports
+WHERE trace_id = '${tid}' AND protocol = '${prot}'"
+  fi
+  count=$(beru_postgres_sql "$sql" 2>/dev/null | tr -d '[:space:]')
+  echo "${count:-0}"
+}
+
+beru_reports_complete_pg() {
+  local count
+  count=$(beru_reports_role_count_pg "$@" 2>/dev/null || echo "0")
+  [[ "${count:-0}" -ge 3 ]]
+}
+
+# Latest verdicts row for a trace: status|regression(0/1)|updated_at
+_beru_verdict_snapshot_pg() {
+  local trace_id="$1"
+  local tid snap
+  tid="${trace_id//\'/\'\'}"
+  snap=$(beru_postgres_sql "
+SELECT status || '|' || CASE WHEN has_count_regression THEN '1' ELSE '0' END || '|' || updated_at::text
+FROM verdicts
+WHERE trace_id = '${tid}'
+ORDER BY updated_at DESC
+LIMIT 1
+" 2>/dev/null | head -1 | tr -d '\r')
+  [[ -n "$snap" ]] || return 1
+  echo "$snap"
+}
+
 beru_reports_role_count() {
-  local trace_id="$1" protocol="$2" via="${3:-api}" direction="${4:-}"
+  local trace_id="$1" protocol="$2" via="${3:-postgres}" direction="${4:-}"
+  if [[ "$via" == "postgres" ]]; then
+    beru_reports_role_count_pg "$trace_id" "$protocol" "$direction"
+    return $?
+  fi
   local ns="${SHADOW_NS:-${BERU_NS:-monarch-system}}"
   local json roles
   json=$(beru_http_get_trace "$ns" "$trace_id" "$protocol" "$direction") || return 1
@@ -185,14 +239,14 @@ beru_reports_role_count() {
 }
 
 beru_reports_complete() {
-  local trace_id="$1" protocol="$2" via="${3:-api}" direction="${4:-}"
+  local trace_id="$1" protocol="$2" via="${3:-postgres}" direction="${4:-}"
   local count
   count=$(beru_reports_role_count "$trace_id" "$protocol" "$via" "$direction" 2>/dev/null || echo "0")
   [[ "${count:-0}" -ge 3 ]]
 }
 
-# Wait until Shop→Beru HTTP egress reports exist for all three roles and
-# mirrorLegacyLogs emits a clean egress match for protocol http.
+# Wait until Shop→Beru HTTP egress reports exist for all three roles and the
+# Postgres-backed verdict settles MATCH (optional signature equality check).
 # Usage: beru_wait_http_egress_match <trace_id> [--timeout=120] [--signature=http:GET:/path]
 beru_wait_http_egress_match() {
   local trace_id="$1"
@@ -230,7 +284,10 @@ beru_wait_http_egress_match() {
 
   local remain=$((timeout - i))
   [[ "$remain" -lt 30 ]] && remain=30
-  beru_wait_log --grep="$(beru_log_no_egress_regression "$trace_id" http)" --timeout="$remain"
+  # Egress completeness was asserted via HTTP API; keep settlement on API too
+  # (Postgres default wait gates HTTP on direction=ingress).
+  beru_wait_verdict_settled "$trace_id" http \
+    --expect-status=MATCH --timeout="$remain" --via=api
 }
 
 _beru_verdict_snapshot_api() {
@@ -256,10 +313,15 @@ beru_verdict_line_api() {
   echo "${status}|${reg}"
 }
 
+# Poll until 3 roles have reported for protocol and the Postgres verdict is stable.
+# Default --via=postgres (kubectl exec psql). Use --via=api for beru-local HTTP.
+# Usage:
+#   beru_wait_verdict_settled <trace> <protocol> [--expect-status=MATCH] \
+#     [--expect-count-regression=0|1] [--timeout=120] [--quiescence=5] [--via=postgres|api]
 beru_wait_verdict_settled() {
   local trace_id="$1" protocol="$2"
   shift 2
-  local expect_status="" expect_regression="" timeout=120 quiescence="${BERU_QUIESCENCE_SEC:-5}" via="api"
+  local expect_status="" expect_regression="" timeout=120 quiescence="${BERU_QUIESCENCE_SEC:-5}" via="postgres"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --expect-status=*) expect_status="${1#*=}"; shift ;;
@@ -279,7 +341,11 @@ beru_wait_verdict_settled() {
       continue
     fi
 
-    snap=$(_beru_verdict_snapshot_api "$trace_id" "$protocol" 2>/dev/null || true)
+    if [[ "$via" == "api" ]]; then
+      snap=$(_beru_verdict_snapshot_api "$trace_id" "$protocol" 2>/dev/null || true)
+    else
+      snap=$(_beru_verdict_snapshot_pg "$trace_id" 2>/dev/null || true)
+    fi
     IFS='|' read -r status reg updated <<<"$snap"
 
     [[ -z "$status" ]] && { sleep 1; i=$((i + 1)); continue; }
@@ -292,7 +358,7 @@ beru_wait_verdict_settled() {
       [[ -n "$expect_status" && "$status" != "$expect_status" ]] && ok=0
       [[ -n "$expect_regression" && "$reg" != "$expect_regression" ]] && ok=0
       if [[ "$ok" == "1" ]]; then
-        echo "settled status=${status} regression=${reg} trace=${trace_id} protocol=${protocol}"
+        echo "settled status=${status} regression=${reg} trace=${trace_id} protocol=${protocol} via=${via}"
         return 0
       fi
       echo "settled but predicate mismatch: status=${status} regression=${reg} want=${expect_status}/${expect_regression}" >&2
@@ -303,8 +369,23 @@ beru_wait_verdict_settled() {
     i=$((i + 1))
   done
 
-  echo "timeout waiting for verdict settlement trace=${trace_id} protocol=${protocol}" >&2
-  beru_dump_trace_diagnostics "$trace_id" "$protocol" >&2
+  echo "timeout waiting for verdict settlement trace=${trace_id} protocol=${protocol} via=${via}" >&2
+  if [[ "$via" == "postgres" ]]; then
+    local tid="${trace_id//\'/\'\'}"
+    echo "--- postgres raw_reports roles ---" >&2
+    beru_postgres_sql "
+SELECT protocol, direction, shadow_role, COUNT(*)
+FROM raw_reports WHERE trace_id = '${tid}'
+GROUP BY 1, 2, 3 ORDER BY 1, 2, 3
+" >&2 || true
+    echo "--- postgres verdicts ---" >&2
+    beru_postgres_sql "
+SELECT replay_execution_id, status, has_count_regression, updated_at
+FROM verdicts WHERE trace_id = '${tid}' ORDER BY updated_at DESC
+" >&2 || true
+  else
+    beru_dump_trace_diagnostics "$trace_id" "$protocol" >&2
+  fi
   return 1
 }
 
@@ -325,7 +406,7 @@ beru_dump_trace_diagnostics() {
   fi
 }
 
-# Build mirrorLegacyLogs strings (pipeline/beru/internal/v2/engine/logs.go).
+# Build mirrorLegacyLogs strings (pipeline/beru/internal/engine/logs.go).
 beru_log_egress_count_unit() {
   local protocol="$1" count="$2"
   case "$protocol" in

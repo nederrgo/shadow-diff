@@ -1,12 +1,21 @@
-Here is the complete, updated master blueprint containing the signature-based pairing algorithm guardrails. Save this text as docs/refactor/BERU_STATE_MACHINE_TARGET.md in your repository so Cursor can read the whole picture before you start prompting for individual steps.
+---
+type: Historical Design
+title: Beru Row-Level State Machine Target (Historical)
+description: Superseded design notes for Beru's row-level state-machine refactor; retained for the signature-pairing rationale.
+tags: [historical, beru, refactor, state-machine]
+---
 
-Markdown
+> **Historical document.** This was an implementation blueprint, not the current
+> storage specification. Beru now persists through PostgreSQL with a local Bbolt ingest
+> WAL. See [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md)
+> for the authoritative design.
+
 # Target Architecture: Beru Row-Level State Machine
 
 ## 1. Architectural Vision
 The goal of this refactor is to replace Beru’s volatile in-memory trace correlation buffers (`pt.diffDone`, `pt.ingest`, `pt.egressdiff`) with a resilient, event-driven, **Row-Level Upsert State Machine**. 
 
-Instead of waiting for a single, immutable snapshot via network timers (`BERU_EGRESS_WAIT`) and freezing a verdict, the database (SQLite in WAL mode) becomes the live source of truth. Every inbound event across any transport protocol is saved to the database immediately. Its arrival triggers a complete timeline re-evaluation for that `trace_id`, dynamically catching late-arriving messages and N+1 regressions.
+Instead of waiting for a single, immutable snapshot via network timers (`BERU_EGRESS_WAIT`) and freezing a verdict, the persistent report repository becomes the live source of truth. Every inbound event across any transport protocol is saved immediately. Its arrival triggers a complete timeline re-evaluation for that `trace_id`, dynamically catching late-arriving messages and N+1 regressions.
 
 [Ingress / Egress Sources]
 (HTTP ext_proc, Wire Ingest, RabbitMQ Relay, Future Kafka)
@@ -18,7 +27,7 @@ Instead of waiting for a single, immutable snapshot via network timers (`BERU_EG
 │
 ▼
 ┌──────────────────────────────┐
-│  repo.AppendReport(report)   │  ◄── Writes raw row to SQLite
+│  repo.AppendReport(report)   │  ◄── Writes a durable raw report
 └───────────┬──────────────────┘
 │
 ▼
@@ -177,7 +186,7 @@ To maintain code stability and prevent context limits from breaking compilation,
 
 Step 1 [CURRENT FOCUS]: Interface and Core Domain Models definitions (internal/storage/).
 
-Step 2: Pure-Go SQLite adapter implementation backed by concurrent performance configuration statements (PRAGMA journal_mode=WAL;).
+Step 2: Persistent repository adapter implementation. The delivered design uses PostgreSQL behind a local Bbolt ingest WAL; see the authoritative storage specification linked above.
 
 Step 3: Concurrency-gate Multiplexer Engine implementation (TraceRouter worker pools).
 

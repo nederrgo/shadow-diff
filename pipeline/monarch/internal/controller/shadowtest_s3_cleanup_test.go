@@ -139,7 +139,8 @@ func TestReplayAdminURL_AMQPOnly(t *testing.T) {
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
 					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
-					TargetDependency: "rabbitmq",
+					TargetDependency:     "rabbitmq",
+					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},
 			}},
 		},
@@ -160,7 +161,8 @@ func TestReplayWorkloadNames_AMQPOnly(t *testing.T) {
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
 					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
-					TargetDependency: "rabbitmq",
+					TargetDependency:     "rabbitmq",
+					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},
 			}},
 		},

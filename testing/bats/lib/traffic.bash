@@ -45,7 +45,7 @@ publish_igris_http() {
   local out
   out=$(kubectl run "bats-igris-${RANDOM}" --rm -i --restart=Never -n default \
     --image=curlimages/curl:latest -- \
-    curl -sS -w '__HTTP_CODE__%{http_code}' -o /dev/null \
+    curl -sS -w '__HTTP_CODE__%{http_code}\n' -o /dev/null \
     -X POST "$url" \
     -H "Content-Type: application/json" \
     -H "traceparent: ${trace_tp}" \
@@ -106,7 +106,7 @@ publish_prod_http() {
   local out
   out=$(kubectl run "bats-prod-${RANDOM}" --rm -i --restart=Never -n default \
     --image=curlimages/curl:latest -- \
-    curl -sS -w '__HTTP_CODE__%{http_code}' -o /dev/null \
+    curl -sS -w '__HTTP_CODE__%{http_code}\n' -o /dev/null \
     -X POST "$url" \
     -H "Content-Type: application/json" \
     -H "traceparent: ${trace_tp}" \

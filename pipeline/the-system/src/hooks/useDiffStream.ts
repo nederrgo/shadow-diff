@@ -6,8 +6,9 @@ import type { DiffSummary, DiffWsFrame } from '@/types/diffs'
 const MIN_BACKOFF_MS = 1000
 const MAX_BACKOFF_MS = 30_000
 
-const emptySummary = (sessionId: string): DiffSummary => ({
+const emptySummary = (sessionId: string, execId: string): DiffSummary => ({
   session_id: sessionId,
+  replay_execution_id: execId || undefined,
   total: 0,
   match: 0,
   mismatch: 0,
@@ -17,8 +18,9 @@ const emptySummary = (sessionId: string): DiffSummary => ({
 /**
  * Live session summary via Tusk `/ws/diffs`. On each verdict frame, callers
  * should refetch REST diffs for that trace (payloads stay off the wire).
+ * Empty executionId means Tusk resolves the latest run for the session.
  */
-export function useDiffStream(sessionId: string) {
+export function useDiffStream(sessionId: string, executionId = '') {
   const [summary, setSummary] = useState<DiffSummary | null>(null)
   const [lastVerdictTraceId, setLastVerdictTraceId] = useState<string | null>(null)
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
@@ -55,8 +57,10 @@ export function useDiffStream(sessionId: string) {
     const connect = () => {
       if (disposed) return
       clearReconnect()
+      const qs = new URLSearchParams({ session_id: sessionId })
+      if (executionId) qs.set('replay_execution_id', executionId)
       try {
-        ws = new WebSocket(`${tuskWsBase()}/ws/diffs?session_id=${encodeURIComponent(sessionId)}`)
+        ws = new WebSocket(`${tuskWsBase()}/ws/diffs?${qs}`)
       } catch {
         scheduleReconnect()
         return
@@ -75,6 +79,7 @@ export function useDiffStream(sessionId: string) {
           if (frame.type === 'summary') {
             setSummary({
               session_id: frame.session_id,
+              replay_execution_id: frame.replay_execution_id,
               total: frame.total,
               match: frame.match,
               mismatch: frame.mismatch,
@@ -98,7 +103,7 @@ export function useDiffStream(sessionId: string) {
       }
     }
 
-    setSummary(emptySummary(sessionId))
+    setSummary(emptySummary(sessionId, executionId))
     setLastVerdictTraceId(null)
     setConnectionStatus('reconnecting')
     connect()
@@ -115,7 +120,7 @@ export function useDiffStream(sessionId: string) {
       }
       setConnectionStatus('disconnected')
     }
-  }, [sessionId])
+  }, [sessionId, executionId])
 
   return { summary, lastVerdictTraceId, connectionStatus }
 }

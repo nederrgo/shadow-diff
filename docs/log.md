@@ -9,8 +9,105 @@ timestamp: 2026-06-27T19:40:00Z
 
 # Shadow-Diff Documentation Log
 
+## [2026-08-23]
+### Added
+* 'testing/stress/run_stress_test.sh': Poll S3 line counts until N before verify; default S3_FLUSH_WAIT_SEC=300
+* 'testing/stress/run_stress_test.sh': wait_ready accepts kaiselPhase=Disabled when ShadowTest spec.mode=replay
+* 'testing/tools/e2e-reset-kind.sh': Build and kind-load igris-rabbitmq, egress-relay-rabbitmq, and shadow-soldier :dev images
+* 'testing/stress/run_stress_test.sh': Fix fragile nested quotes in load_gen pass, kubectl mc exec blocks, and config.env inline comment parsing
+* 'testing/stress/run_stress_test.sh': Wait for ShadowTest CR finalizer before re-apply (reuse delete-shadowtest.sh)
+* 'testing/stress/verifiers/check_postgres_counts.py': Fix kubectl SQL GROUP BY for role/protocol/direction counts
+* 'testing/stress': Scope S3 verifier to reference trace_ids; mint fresh session per run (STRESS_FRESH_SESSION=1)
+* 'testing/stress/run_stress_test.sh': Download S3 JSONL via debian+mc (kubectl cp needs tar); abort before replay on S3 fail
+* 'testing/stress/run_stress_test.sh': Fix S3 flush wait (grep on host; minio/mc has no grep) and preserve env overrides over config.env
+* 'testing/stress,docs/verification/stress-load-test.md': Add standalone stress load suite (deterministic load_gen, eBPF/S3 zero-loss checks, replay Postgres integrity) and optional HTTP egress on http-rmq-python-worker
+* 'testing/tools/lib/e2e-reset-deploy.sh': Force Tusk rollout restart on Kind reset; TODO comment for startup Postgres retry
+* 'pipeline/beru/internal/storage': M2 projection hard-fail same-tx as verdict
+* 'pipeline/beru + docs/data-plane': M1 ingest idempotency via WAL seq ingest_id
+
+## [2026-08-22]
+### Added
+* 'Makefile, testing/bats': add test-bats-e2e-smoke (Python HTTP-otel + RMQ hybrid only)
+* 'testing/bats': Postgres verdict waits + teardown scrub (BATS_KEEP_POSTGRES)
+* 'testing/bats': shared record→replay cycle across five primary E2E suites
+* 'testing/bats/helpers/e2e-helpers.sh': trim kubectl pod-deleted suffix instead of dropping whole curl output line (spike_guard baseline parse)
+* 'testing/bats/lib/beru_seed.bash': fix seed probe HTTP code parse — curl newline + strip kubectl pod-deleted noise
+* 'testing/bats/lib/beru_seed.bash': beru_probe_seed_endpoint checks HTTP status (400/202) instead of grepping for 404/stale-image false positive
+* 'testing/bats,testing/tools,docs/': Phase 2e — delete Minikube bootstrap; Kind-only local E2E (drop e2e-reset-minikube.sh, cluster-minikube.sh)
+* 'docs/, READMEs, testing/bats/': Phase 2d Kind docs/DX retarget — e2e-reset-kind.sh + localhost:15432 default; Minikube opt-in until 2e
+* 'testing/bats,docs/infrastructure': Phase 2c — default E2E_CLUSTER=kind; Kind image load in bats_ensure_dev_image; integration green on Kind
+
+## [2026-08-21]
+### Added
+* 'testing/tools/e2e-reset-kind.sh': Phase 2b one-shot Kind reset + shared e2e-reset-deploy.sh; host Postgres DSN localhost:15432
+* 'testing/bats/lib/platform.bash,kind/config.yaml': Phase 2a Kind platform path (opt-in) + Postgres 15432→30432
+* 'docs/infrastructure/minikube-to-kind-migration.md': Phase 2 planned as 2a–2e (not started) with Cursor plan pointers; index hub refreshed
+* 'docs/infrastructure/minikube-to-kind-migration.md': Phase 2 split into 2a–2e with exit criteria; index hub refreshed
+* 'testing/bats/lib/kaisel.bash,cluster-kind.sh': Kind smoke green — WSL Docker Desktop DOCKER_HOST fallback; kaisel_setup_platform applies secret-source RBAC + Postgres BERU_DB_SECRET
+* 'testing/bats/helpers/cluster-kind.sh,e2e/kaisel-kind-smoke': Phase 1 Kind Kaisel smoke (E2E_CLUSTER=kind, NodePort 18080→30080, make test-bats-kaisel-kind); update minikube-to-kind-migration ADR
+* 'docs/infrastructure/minikube-to-kind-migration.md': ADR roadmap for Minikube→Kind local E2E (Kaisel traffic gate, Phase 1 smoke / Phase 2 switch); indexed from infrastructure hub with cross-links from bats, VERIFICATION, kernel-compatibility
+
+## [2026-08-20]
+### Added
+* 'pipeline/beru H2': WAL append on accept path; 202 means local Bbolt durable
+* 'pipeline/beru/internal/diff': H1 baseline A↔B uses signature-bucket counts; docs + audit checkbox
+* 'docs/data-plane/beru-bug-audit.md': Beru correctness audit from local service review — H1 baseline signature buckets, H2 WAL-on-accept, M1 ingest idempotency, M2 projection hard-fail; checkbox tracker
+* 'testing/bats/helpers/cluster-minikube.sh': Bump VM-driver minikube start to --memory=8192 --cpus=4
+
+## [2026-08-18]
+### Added
+* 'pipeline/monarch + docs': AMQP prodUrl host-only; broker creds from credentialsSecretRef
+* 'pipeline/monarch + docs': Narrow manager Secret read to BERU_DB_SECRET Role + secretSourceNamespaces
+
+## [2026-08-17]
+### Added
+* 'pipeline/monarch,docs/control-plane': stop creating durable prod AMQP exchanges; bind-only, missing exchange sticky-fails
+* 'docs/control-plane/monarch-bug-audit.md': Close H1 — markBootFailed on missing target / unresolvable defaults / unpinable oldImage; leftover 30s retry removed
+* 'pipeline/monarch': Target-not-found / unresolvable defaults / unpinable oldImage call markBootFailed immediately; drop leftover RequeueAfter 30s retry
+* 'pipeline/monarch + docs': Require BERU_DB_SECRET for beru-local — always envFrom the replicated Postgres Secret; unset or malformed config fails the ShadowTest
+
+## [2026-08-12]
+### Added
+* 'pipeline/monarch + docs/control-plane/monarch-controller.md': persist spec.oldImage on first reconcile; etcd is source of truth for control-a/b baseline image
+* 'testing/bats, pipeline/monarch/internal/controller/shadowtest_workload_ready.go': Align record session assert to sess-* mint; expect Mongo MONGO_URL on 127.0.0.1 plus soldier sidecar; raise workload boot timeout to 7m for RabbitMQ startup probe
+* 'pipeline/monarch/config/rbac/role.yaml': Restore cluster-wide get/list/watch on ConfigMaps and Services for the controller-runtime cache; writes stay on shadow-workload-role
+* 'pipeline/monarch/config/default/manager_bind_patch.yaml, config/admission': Grant bind on shadow-workload-role so RoleBinding create is not privilege-escalation; VAP also denies RoleBindings outside shadow-*'
+* 'pipeline/monarch/config/admission/namespace_guard_policy.yaml': Fix matchConditions placement under spec (not matchConstraints) for VAP v1 deploy
+* 'pipeline/monarch/config/admission, internal/controller': ValidatingAdmissionPolicy namespace-guard blocks Monarch from creating/deleting non-shadow-* namespaces; controller validateShadowNamespaceName guard
+* 'pipeline/monarch/config/rbac, internal/controller/shadowtest_rbac.go': Scope workload RBAC to shadow namespaces via shadow-workload-role ClusterRole and per-ns RoleBinding; narrow manager-role to read-only on prod
+* 'pipeline/monarch/internal/controller': C2 Kaisel target pods via Deployment→ReplicaSet ownership only (no label matching)
+
+## [2026-08-11]
+### Added
+* 'docs/control-plane/monarch-bug-audit.md': add per-finding fix checklists and C1/M2 resolution notes
+* 'pipeline/monarch/internal/controller': C1 shadow NS length reject + UID ownership checks (no truncation, sticky Failed on collision)
+* 'docs/control-plane/monarch-bug-audit.md': Consolidated Monarch correctness and security audit (C/H/M/L findings)
+
+## [2026-08-10]
+### Added
+* 'docs/data-plane/kaisel-ebpf.md': Document AF_PACKET vs eBPF roles, clone vs perf copy, request-head heuristic, admitted LRU capacity, gate-before-GSO-chunk order, and TCP-split re-admit edge case
+
+
+## [2026-08-03]
+### Added
+* 'pipeline/monarch/egress-relay': Roll egress-relay on REPLAY_EXECUTION_ID and wait before replay start so Firehose reconnect backoff cannot miss ABC publishes
+* 'pipeline/{beru,monarch,tusk,the-system},docs/control-plane/replay-execution-isolation.md': Session remint + replay_execution_id isolation — beru-local REPLAY_EXECUTION_ID env, Postgres scoped by execution, Tusk/UI Replay Run picker
+* 'pipeline/tusk,the-system': fix AMQP record topology — target→prod-amqp→igris; Kaisel→Shop only (no kaisel→queue)
+* 'pipeline/shadow-soldier,monarch,igris-http': soldier GET /healthz on :19191 + Monarch readinessProbe; igris-http replay dial retries 1s/3s/5s
+* 'pipeline/monarch': drop shadow-soldier TCP readinessProbe (loopback-only; was blocking ABC Ready)
+* 'pipeline/monarch': TCP readiness probes on Envoy + shadow-soldier; ReadyReplicas >= desired for replay gate
+* 'pipeline/tusk/Dockerfile': COPY pkg/shadowspec so replace resolves in docker build
+* 'shadowspec + monarchpb + tusk + the-system': ingressDrivers status + Prod AMQP topology node
+* 'pipeline/beru/internal/storage': Scope ListStaleIncompleteTraces to BERU_SHADOW_TEST_NAME and skip already-verdicted traces so WAITING_FOR_ROLES cannot hop between UI sessions
+* 'testing/bats/e2e': Migrate E2E suites to record→replay on one CR; assert Postgres verdicts via beru_wait_verdict_settled; fold record suite into test-bats-e2e
+
 ## [2026-08-02]
 ### Added
+* 'docs/architecture/ARCHITECTURE.md': Put The System on the right in the L5 observability Mermaid graph
+* 'docs/architecture/ARCHITECTURE.md': Document L5 observability plane — shared Postgres, Tusk BFF, and The System UI in layer stack and dedicated section
+* 'testing/tools + bats platform': set all Monarch helper image env vars for local :dev tags after ghcr defaults
+* 'deploy/charts/, pipeline/monarch, pipeline/tusk, pipeline/the-system, docs/infrastructure': Helm charts shadow-diff + shadow-agent; ghcr image defaults + ENVOY_IMAGE; the-system nginx/Tusk same-origin proxy
+* 'docs/architecture/ARCHITECTURE.md': Clarify analysis sink is per-ShadowTest beru-local (not cluster-wide); drop optional/SQLite wording
 * 'pipeline/tusk,the-system,beru': Lazy signature occurrence pager — Tusk GET /api/v1/diffs/occurrences from raw_reports (cap 50), Beru idx_raw_reports_trace_sig, PayloadInspector chips with red MISMATCH_PAYLOAD indexes
 * 'testing/bats/integration/beru': BATS_KEEP retains Postgres rows + SESSION_ID for The System /diffs
 * 'pipeline/tusk + the-system/diffs': sessions?with_diffs=true filter; UI defaults to diffs-only
@@ -161,7 +258,7 @@ timestamp: 2026-06-27T19:40:00Z
 
 ## [2026-07-23]
 ### Added
-* 'pipeline/beru/internal/v2': single-trace verdicts, baseline void, compound diffs, WAITING_FOR_ROLES timeout
+* 'pipeline/beru/internal': single-trace verdicts, baseline void, compound diffs, WAITING_FOR_ROLES timeout
 * 'pipeline/beru': purge legacy internal/diff package, wire user noise filters into v2 EvaluateTraceHistory, remove committed beru binary, add .gitignore
 * 'testing/bats/integration/monarch/deps_update.bats': add integration test for live dependency add (mongodb deps created, shadow app pods roll with MONGO_URL)
 * 'testing/bats/integration/monarch/lifecycle.bats': add 4 ShadowTest lifecycle integration tests (mid-delete, re-apply while deleting, recreate after clean, delete after Ready)

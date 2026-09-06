@@ -86,7 +86,8 @@ func TestValidateInputsAMQPOnly(t *testing.T) {
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
 					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "order.created",
-					TargetDependency: "rabbitmq",
+					TargetDependency:     "rabbitmq",
+					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},
 			}},
 		},
@@ -96,6 +97,16 @@ func TestValidateInputsAMQPOnly(t *testing.T) {
 	}
 	if !isAMQPOnlyShadowTest(st) {
 		t.Fatal("expected AMQP-only")
+	}
+
+	st.Spec.Inputs[0].AMQP.ProdURL = "amqp://guest:guest@prod:5672"
+	if err := validateInputs(st); err == nil || err.Error() == "" {
+		t.Fatal("expected error for userinfo in prodUrl")
+	}
+	st.Spec.Inputs[0].AMQP.ProdURL = "amqp://prod:5672"
+	st.Spec.Inputs[0].AMQP.CredentialsSecretRef = nil
+	if err := validateInputs(st); err == nil {
+		t.Fatal("expected error for missing credentialsSecretRef")
 	}
 }
 
@@ -107,6 +118,7 @@ func TestValidateInputsMixedDriversRejected(t *testing.T) {
 			Inputs: []enginev1alpha1.InputSpec{
 				{Driver: "rabbitmq_message", AMQP: &enginev1alpha1.AMQPInputSpec{
 					ProdURL: "amqp://x", Exchange: "e", RoutingKey: "k", TargetDependency: "rabbitmq",
+					CredentialsSecretRef: testAMQPCredentialsRef(),
 				}},
 				{Port: 80, Driver: "http_request"},
 			},
@@ -142,7 +154,8 @@ func TestKaiselIngressPortsAMQPOnlyIsEmpty(t *testing.T) {
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
 					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
-					TargetDependency: "rabbitmq",
+					TargetDependency:     "rabbitmq",
+					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},
 			}},
 			Dependencies: []enginev1alpha1.DependencySpec{{

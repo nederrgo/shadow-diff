@@ -102,7 +102,7 @@ docker-push: ## Push docker image with the manager.
 
 .PHONY: beru-docker-build
 beru-docker-build: ## Build the Beru gRPC service image.
-	docker build -f ../beru/Dockerfile -t ${BERU_IMG} ../beru
+	docker build -f ../beru/Dockerfile -t ${BERU_IMG} ..
 
 .PHONY: beru-docker-push
 beru-docker-push: ## Push the Beru gRPC service image.

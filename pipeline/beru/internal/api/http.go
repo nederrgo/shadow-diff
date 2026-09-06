@@ -7,19 +7,19 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/shadow-diff/beru/internal/engine"
+	"github.com/shadow-diff/beru/internal/model"
+	"github.com/shadow-diff/beru/internal/report"
 	"github.com/shadow-diff/beru/internal/roles"
 	"github.com/shadow-diff/beru/internal/storage"
-	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
-	v2report "github.com/shadow-diff/beru/internal/v2/report"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 // Server exposes HTTP ingest, seed, and slim trace-detail endpoints.
 type Server struct {
 	Log    *slog.Logger
-	Router *v2engine.TraceRouter
+	Router *engine.TraceRouter
 	DB     storage.RunStore
-	Repo   v2storage.TraceRepository
+	Repo   model.TraceRepository
 }
 
 type egressDiffRequest struct {
@@ -90,13 +90,16 @@ func (s *Server) handleEgressDiff(w http.ResponseWriter, r *http.Request) {
 	if shadowTest == "" && s.DB != nil {
 		shadowTest = s.DB.DefaultShadowTestName()
 	}
-	rawReport, err := v2report.FromEgressWithSignature(
+	rawReport, err := report.FromEgressWithSignature(
 		req.TraceID, req.Workload, req.Protocol, shadowTest, req.Signature, req.Payload)
 	if err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	s.Router.Route(rawReport)
+	if err := s.Router.Route(rawReport); err != nil {
+		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -117,7 +120,7 @@ func (s *Server) handleWireIngest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	var env v2report.NetworkEventEnvelope
+	var env report.NetworkEventEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
@@ -125,7 +128,7 @@ func (s *Server) handleWireIngest(w http.ResponseWriter, r *http.Request) {
 	if env.ShadowTestName == "" && s.DB != nil {
 		env.ShadowTestName = s.DB.DefaultShadowTestName()
 	}
-	rawReport, err := v2report.FromWireEnvelope(&env)
+	rawReport, err := report.FromWireEnvelope(&env)
 	if err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
@@ -133,7 +136,10 @@ func (s *Server) handleWireIngest(w http.ResponseWriter, r *http.Request) {
 	if rawReport.ShadowTestName == "" && s.DB != nil {
 		rawReport.ShadowTestName = s.DB.DefaultShadowTestName()
 	}
-	s.Router.Route(rawReport)
+	if err := s.Router.Route(rawReport); err != nil {
+		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -193,9 +199,9 @@ func (s *Server) handleSeedReports(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "shadow_role is invalid", http.StatusBadRequest)
 			return
 		}
-		dir := v2storage.DirectionEgress
-		if req.Direction == string(v2storage.DirectionIngress) {
-			dir = v2storage.DirectionIngress
+		dir := model.DirectionEgress
+		if req.Direction == string(model.DirectionIngress) {
+			dir = model.DirectionIngress
 		}
 		name := req.ShadowTestName
 		if name == "" {
@@ -210,12 +216,12 @@ func (s *Server) handleSeedReports(w http.ResponseWriter, r *http.Request) {
 		if len(payload) == 0 {
 			payload = []byte("{}")
 		}
-		if sig == "" && dir == v2storage.DirectionEgress {
-			if derived, err := v2report.FromEgress(req.TraceID, req.ShadowRole, req.Protocol, name, payload); err == nil {
+		if sig == "" && dir == model.DirectionEgress {
+			if derived, err := report.FromEgress(req.TraceID, req.ShadowRole, req.Protocol, name, payload); err == nil {
 				sig = derived.Signature
 			}
 		}
-		s.Router.Route(&v2storage.RawReport{
+		if err := s.Router.Route(&model.RawReport{
 			TraceID:        req.TraceID,
 			ShadowRole:     req.ShadowRole,
 			ShadowTestName: name,
@@ -225,7 +231,10 @@ func (s *Server) handleSeedReports(w http.ResponseWriter, r *http.Request) {
 			StatusCode:     req.StatusCode,
 			PayloadBytes:   append([]byte(nil), payload...),
 			CapturedAt:     captured.UTC(),
-		})
+		}); err != nil {
+			http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		accepted++
 	}
 

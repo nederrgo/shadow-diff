@@ -20,16 +20,34 @@ func targetNamespaceFor(st *enginev1alpha1.ShadowTest) string {
 }
 
 func shadowNamespaceForCR(st *enginev1alpha1.ShadowTest) string {
-	return sanitizeForDNS(fmt.Sprintf("shadow-%s-%s", st.Namespace, st.Name))
+	// Never truncate: names that project past 63 chars are rejected in reconcile
+	// (sticky Failed). Silent truncation caused cross-ShadowTest namespace collisions.
+	return sanitizeDNSLabel(fmt.Sprintf("shadow-%s-%s", st.Namespace, st.Name))
 }
 
-func sanitizeForDNS(s string) string {
+// validateShadowNamespaceName rejects namespace lifecycle outside shadow-*.
+// Kubernetes RBAC cannot express name-prefix rules on Namespace objects; this
+// guard is paired with ValidatingAdmissionPolicy/namespace-guard at deploy time.
+func validateShadowNamespaceName(name string) error {
+	if !strings.HasPrefix(name, "shadow-") {
+		return fmt.Errorf("refusing namespace lifecycle outside shadow-* prefix: %q", name)
+	}
+	return nil
+}
+
+// sanitizeDNSLabel lowercases and replaces invalid DNS chars. It does not truncate.
+func sanitizeDNSLabel(s string) string {
 	s = strings.ToLower(s)
 	s = invalidDNSChars.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	if s == "" {
 		s = "shadow"
 	}
+	return s
+}
+
+func sanitizeForDNS(s string) string {
+	s = sanitizeDNSLabel(s)
 	if len(s) > 63 {
 		s = s[:63]
 		s = strings.TrimRight(s, "-")
@@ -148,17 +166,10 @@ func safeServicePort(st *enginev1alpha1.ShadowTest) int32 {
 	return safe
 }
 
-// resolveSpecDefaults fills in OldImage, ApplicationPort, and ServicePort from the
-// target Deployment when the user omitted them. Mutates st.Spec in memory only —
-// the CR stored in k8s is never patched.
+// resolveSpecDefaults fills in ApplicationPort and ServicePort from the target
+// Deployment when the user omitted them. Mutates st.Spec in memory only — the CR
+// stored in k8s is never patched. OldImage is persisted via ensureOldImage.
 func resolveSpecDefaults(st *enginev1alpha1.ShadowTest, target *appsv1.Deployment) error {
-	if st.Spec.OldImage == "" {
-		if len(target.Spec.Template.Spec.Containers) == 0 {
-			return fmt.Errorf("target Deployment has no containers")
-		}
-		st.Spec.OldImage = target.Spec.Template.Spec.Containers[0].Image
-	}
-
 	if st.Spec.ApplicationPort == 0 {
 		port, err := primaryContainerPort(target)
 		if err != nil {
@@ -250,13 +261,4 @@ func isMongoDependency(dep enginev1alpha1.DependencySpec) bool {
 	}
 	_, port := resolveDependencyDefaults(dep)
 	return port == 27017
-}
-
-func hasMongoDependency(st *enginev1alpha1.ShadowTest) bool {
-	for _, dep := range st.Spec.Dependencies {
-		if isMongoDependency(dep) {
-			return true
-		}
-	}
-	return false
 }

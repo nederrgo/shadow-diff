@@ -1,42 +1,44 @@
 ---
 type: Architecture Specification
 title: HTTP Ingress E2E Test Flow
-description: End-to-end data and assertion flow for Node.js, Python, and Go http-ingress bats suites — Kaisel HTTP capture, igris-http fan-out, Mongo and RabbitMQ egress diffs.
+description: End-to-end record→replay flow for Node.js, Python, and Go http-ingress bats suites — MinIO capture, CR mode switch, Postgres-backed Beru verdicts for HTTP/Mongo/RMQ.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/http-ingress
-tags: [verification, e2e, bats, http-ingress, kaisel, igris, rabbitmq]
-timestamp: 2026-07-25T18:40:00Z
+tags: [verification, e2e, bats, http-ingress, kaisel, igris, rabbitmq, postgres, record-replay]
+timestamp: 2026-08-03T08:50:00Z
 ---
 
 # HTTP Ingress E2E Test Flow
 
-Three bats suites prove the full **Kaisel HTTP ingress** path across Node.js, Python, and Go workers. Each suite shares prod RMQ + Mongo and applies a language-specific prod target + ShadowTest.
+Three bats suites prove the **Kaisel HTTP ingress** path across Node.js, Python, and Go workers under async **record → replay**. Each suite shares prod RMQ + Mongo, applies a language-specific prod target + one ShadowTest CR (`mode: record` + MinIO `storage`), and switches that CR to `replay` for analysis. Durable asserts use `beru_wait_verdict_settled` (Postgres via beru-local HTTP).
 
 | Suite | Bats file | Prod deploy | Worker image |
 |-------|-----------|-------------|--------------|
 | Node | [`http_otel_rmq_nodejs.bats`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/http-ingress/http_otel_rmq_nodejs.bats) | `http-rmq-nodejs-prod` | `http-rmq-test-app:dev` |
 | Python | [`http_otel_rmq_python.bats`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/http-ingress/http_otel_rmq_python.bats) | `http-rmq-python-prod` | `http-rmq-python-worker:dev` |
 | Go | [`http_ingress_rmq_go.bats`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/http-ingress/http_ingress_rmq_go.bats) | `http-rmq-go-prod` | `http-rmq-go-worker:dev` |
+| Sampling | [`http_sampling.bats`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/http-ingress/http_sampling.bats) | `http-rmq-go-prod` | `http-rmq-go-worker:dev` |
 
 Run:
 
 ```bash
-# All E2E (includes these suites)
+# All E2E (http-ingress + rabbitmq-ingress + record)
 make test-bats-e2e
 
 # Single suite
 SKIP_BUILD=1 SKIP_LOAD=1 make test-bats-one FILE=e2e/http-ingress/http_ingress_rmq_go.bats
 ```
 
-**No third-party capture dependency.** `setup_file` calls `ensure_platform_ready`, which requires Monarch, Beru and the Kaisel DaemonSet only.
+`setup_file` calls `ensure_platform_ready` + `minio_ensure`. Fixtures require BYOB MinIO (`shadow-diff-s3`).
 
 ---
 
 ## What this suite covers
 
-1. **HTTP ingress** — `publish_prod_http` → prod Service → Kaisel → igris-http → three shadows → beru-local ingress diff  
-3. **RabbitMQ egress** — shadow workers publish → Firehose → egress-relay → Beru  
+1. **Record** — `publish_prod_http` → prod Service → Kaisel → igris-http → S3 (`sessions/<id>/ingress/`); no A/B/C  
+2. **Switch** — same CR patched to `mode: replay` + `sessionID`; Monarch GC KaiselRule, spins A/B/C, starts Igris replay  
+3. **Replay analysis** — ingress ext_proc + Firehose/Mongo egress → beru-local → Postgres; assert `MATCH` via `beru_wait_verdict_settled`
 
-Unlike [/verification/hybrid-rmq-e2e-flow.md](/verification/hybrid-rmq-e2e-flow.md), ingress is **HTTP via igris-http** (not RMQ fan-in), and these suites assert **clean** diffs (no intentional candidate N+1).
+Unlike [/verification/hybrid-rmq-e2e-flow.md](/verification/hybrid-rmq-e2e-flow.md), ingress is **HTTP via igris-http** (not RMQ fan-in). These suites assert **clean** diffs (no intentional candidate N+1). Switch uses `kaisel_switch_to_replay ingress` (no Shop HTTP egress objects on this path).
 
 ---
 
@@ -44,25 +46,24 @@ Unlike [/verification/hybrid-rmq-e2e-flow.md](/verification/hybrid-rmq-e2e-flow.
 
 ```mermaid
 flowchart TD
-  plat[ensure_platform_ready] --> deps[Deploy prod RMQ + Mongo]
+  plat[ensure_platform_ready + minio] --> deps[Deploy prod RMQ + Mongo]
   deps --> worker[Deploy prod-target lang]
-  worker --> st[Apply ShadowTest]
-  st --> wait[wait_shadowtest_ready mongo rmq-egress kaisel]
-  restart --> rollout[bats_http_otel_rollout_stack]
+  worker --> st[Apply ShadowTest mode=record + storage]
+  st --> wait[wait_shadowtest_ready Kaisel]
+  wait --> sinks[igris + Shop + beru-local record stack]
 ```
 
-1. `ensure_platform_ready`  
-3. Apply shared `prod-rabbitmq.yaml` + `prod-mongodb.yaml`  
-4. Apply `prod-target-<lang>.yaml` (Deployment + ClusterIP `:8080`)  
-5. Apply fixture ShadowTest — shadow ns, igris-http, egress-relay, Shop, beru-local  
-6. `wait_shadowtest_ready --require-mongo --require-rmq-egress --require-kaisel` — waits for `status.kaiselPhase == Ready` (`KaiselRule` reconciled)
-9. `bats_http_otel_rollout_stack` — igris + egress-relay + workers + wait for `KaiselRule`; warm beru-local ext_proc  
+1. `ensure_platform_ready` + `minio_ensure`  
+2. Apply shared `prod-rabbitmq.yaml` + `prod-mongodb.yaml`  
+3. Apply `prod-target-<lang>.yaml` (Deployment + ClusterIP `:8080`)  
+4. Apply fixture ShadowTest — record sinks only (no ABC)  
+5. `wait_shadowtest_ready --require-kaisel` + `OPERATING_MODE=record` + no ABC  
 
 ---
 
 ## Per-request runtime flow
 
-Every `@test` starts with `publish_prod_http(trace_id)` (`POST /publish` + W3C `traceparent`). Expects HTTP **200** from the prod app.
+**Record `@test`s** publish and assert MinIO. **Replay `@test`s** call `e2e_http_record_then_replay` (ensure record → publish → switch → firehose ready).
 
 ```mermaid
 sequenceDiagram
@@ -70,30 +71,36 @@ sequenceDiagram
   participant Prod as Prod Service pod
   participant Kaisel as Kaisel eBPF
   participant Igris as igris-http
+  participant S3 as MinIO
   participant Shadow as Shadow workers
   participant Beru as beru-local
-  participant Relay as egress-relay
+  participant PG as Postgres
 
+  Note over Test,S3: Record phase
   Test->>Prod: POST /publish + traceparent
-  Kaisel->>Igris: POST captured request (admit + sample)
-  Igris->>Shadow: fan-out control-a/b/candidate
-  Shadow->>Beru: ingress ext_proc ReportTraffic
-  Shadow->>Relay: AMQP publish on shadow brokers
-  Relay->>Beru: Firehose egress posts
+  Kaisel->>Igris: POST captured request
+  Igris->>S3: JSONL flush ingress/
+
+  Note over Test,PG: Replay phase after CR switch
+  Igris->>Shadow: multicast from S3
+  Shadow->>Beru: ingress ext_proc + egress diffs
+  Beru->>PG: verdict upsert
+  Test->>Beru: GET /api/v1/traces id verdict MATCH
 ```
 
 ---
 
 ## What each `@test` asserts
 
-| # | Test | Checks |
-|---|------|--------|
-| 1 | HTTP ingress via igris is clean in Beru | beru-local: `No regression for Trace <id>` within 120s |
-| 2 | Shadow workers publish RMQ egress without logging trace id | All roles: `rmq egress published exchange=egress-events`; trace ID absent from app logs |
-| 3 | Mongo egress is clean for isolated trace | All roles: `mongo insert ok`; beru-local: `No egress regression (mongodb)` within 120s |
-| 4 | RabbitMQ egress is clean for isolated trace | beru-local: `No egress regression (rabbitmq)` within 120s |
+| Phase | Test | Checks |
+|-------|------|--------|
+| Record | traced HTTP ingress flushes to MinIO | `e2e_assert_session_objects ingress` |
+| Replay | HTTP ingress verdict MATCH | `beru_wait_verdict_settled … http --expect-status=MATCH` |
+| Replay | workers publish RMQ without logging trace id | role logs: `rmq egress published…`; trace id absent |
+| Replay | RabbitMQ egress MATCH | `beru_wait_verdict_settled … rabbitmq --expect-status=MATCH` |
+| Replay | MongoDB egress MATCH (Node/Python) | `beru_wait_verdict_settled … mongodb --expect-status=MATCH` |
 
-`beru_wait_log` uses `--timeout=120` to absorb capture and export latency.
+Sampling suite: record asserts keep-trace MinIO objects; replay asserts keep `MATCH` and drop never reaches shadow workers.
 
 ---
 
@@ -102,38 +109,34 @@ sequenceDiagram
 ```
 testing/bats/manifests/http-otel-rmq-e2e/
 ├── prod-rabbitmq.yaml / prod-mongodb.yaml   # shared
-├── prod-target-{nodejs,python,go}.yaml
-└── shadowtest-{nodejs,python}.yaml          # also mirrored under fixtures/
+└── prod-target-{nodejs,python,go}.yaml
 ```
 
-Fixtures: `testing/bats/fixtures/e2e/http-otel-rmq-{nodejs,python,go}/shadowtest.yaml`.
+Fixtures: `testing/bats/fixtures/e2e/http-otel-rmq-{nodejs,python,go}/shadowtest.yaml` and `http-sampling/` — each with `mode: record` + MinIO `storage`.
 
 | App | Source | Endpoint | Egress |
 |-----|--------|----------|--------|
 | `http-rmq-test-app` | `testing/example-apps/http-rmq-test-app/` | `POST /publish` | Mongo + amqplib |
-| `http-rmq-python-worker` | `testing/example-apps/http-rmq-python-worker/` | `POST /publish` | Mongo + pika (AMQP connect per publish) |
+| `http-rmq-python-worker` | `testing/example-apps/http-rmq-python-worker/` | `POST /publish` | Mongo + pika |
 | `http-rmq-go-worker` | `testing/example-apps/http-rmq-go-worker/` | `POST /publish` | Mongo + amqp091-go |
-
-Workers crash at startup if `AMQP_URL` is empty or RMQ is unreachable — `rmq-prod-broker` must be Ready first. The Python worker opens a fresh pika connection on each `/publish` so long `setup_file` idle windows cannot kill a heartbeat-starved `BlockingConnection` (unlike Go/Node clients that keep IO alive in the background).
 
 ---
 
 ## Timing / debug
 
-If ingress diffs time out, check Kaisel and the rule:
-
 ```bash
 kubectl get kaiselrule -A
 kubectl logs -n kaisel-system -l app.kubernetes.io/name=kaisel --tail=100
+kubectl -n "$SHADOW_NS" port-forward svc/beru-local 8080:8080
+# GET /api/v1/traces/<id>?protocol=http
 ```
-
 
 ---
 
 ## Citations
 
 - Suite directory: [`testing/bats/e2e/http-ingress/`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/http-ingress)
-- Traffic helper: [`testing/bats/lib/traffic.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/traffic.bash) — `publish_prod_http`
-- Hybrid contrast: [/verification/hybrid-rmq-e2e-flow.md](/verification/hybrid-rmq-e2e-flow.md)
+- Helpers: [`testing/bats/lib/kaisel.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/kaisel.bash) — `e2e_http_record_then_replay`, `e2e_assert_session_objects`
+- Verdicts: [`testing/bats/lib/beru_assert.bash`](https://github.com/shadow-diff/monarch/tree/main/testing/bats/lib/beru_assert.bash) — `beru_wait_verdict_settled`
+- Hybrid: [/verification/hybrid-rmq-e2e-flow.md](/verification/hybrid-rmq-e2e-flow.md)
 - Bats harness: [/infrastructure/bats-testing-framework.md](/infrastructure/bats-testing-framework.md)
-- Egress record/replay (always-on Shop on these ShadowTests too): [/data-plane/egress-record-replay.md](/data-plane/egress-record-replay.md)

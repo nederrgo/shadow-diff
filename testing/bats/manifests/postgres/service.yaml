@@ -1,6 +1,6 @@
 # In-cluster DNS plus a fixed NodePort, so the Go conformance suite can run from
 # the host against the same database:
-#   BERU_TEST_POSTGRES_DSN="postgres://beru:beru@$(minikube ip):30432/beru?sslmode=disable"
+#   BERU_TEST_POSTGRES_DSN="postgres://beru:beru@localhost:15432/beru?sslmode=disable"
 apiVersion: v1
 kind: Service
 metadata:

@@ -35,6 +35,7 @@ func TestBuildTopologyGraph_RecordReady(t *testing.T) {
 		Components: &monarchpb.ComponentStatus{
 			IgrisReady: true, ShopReady: true, BeruReady: true,
 			KaiselRuleActive: true, AmqpBound: true, TargetDeployment: "checkout-api",
+			IngressDrivers: []string{"http_request"},
 		},
 	})
 
@@ -45,6 +46,9 @@ func TestBuildTopologyGraph_RecordReady(t *testing.T) {
 		if n := nodeByID(g, id); n == nil || n.Status != StatusReady {
 			t.Errorf("node %s = %v, want Ready", id, n)
 		}
+	}
+	if nodeByID(g, NodeProdAMQP) != nil {
+		t.Error("HTTP-only record must not emit prod-amqp")
 	}
 	// Record never provisions the roles; they render greyed out, not missing, so
 	// the graph keeps a stable shape across a mode switch.
@@ -63,6 +67,87 @@ func TestBuildTopologyGraph_RecordReady(t *testing.T) {
 		if !e.Animated {
 			t.Errorf("edge %s should animate when both ends are Ready", e.ID)
 		}
+	}
+}
+
+func TestBuildTopologyGraph_RecordAMQPReady(t *testing.T) {
+	g := BuildTopologyGraph(&monarchpb.ShadowTestStatusUpdate{
+		TestName:    "rmq",
+		Namespace:   "default",
+		Phase:       monarchpb.Phase_PHASE_READY,
+		BootStep:    monarchpb.BootStep_BOOT_STEP_READY,
+		Mode:        monarchpb.Mode_MODE_RECORD,
+		KaiselPhase: monarchpb.CapturePhase_CAPTURE_PHASE_READY,
+		Components: &monarchpb.ComponentStatus{
+			IgrisReady: true, ShopReady: true, BeruReady: true,
+			KaiselRuleActive: true, AmqpBound: true, TargetDeployment: "checkout-api",
+			IngressDrivers: []string{"rabbitmq_message"},
+		},
+	})
+
+	n := nodeByID(g, NodeProdAMQP)
+	if n == nil || n.Status != StatusReady || n.Type != "amqp" {
+		t.Fatalf("prod-amqp = %v, want Ready amqp", n)
+	}
+	if !hasEdge(g, NodeTargetApp, NodeProdAMQP) || !hasEdge(g, NodeProdAMQP, NodeIgris) {
+		t.Errorf("AMQP record edges missing: %+v", g.Edges)
+	}
+	if !hasEdge(g, NodeKaisel, NodeShop) {
+		t.Errorf("kaisel must still seed Shop: %+v", g.Edges)
+	}
+	if hasEdge(g, NodeKaisel, NodeProdAMQP) {
+		t.Error("kaisel must not wire into the prod AMQP queue")
+	}
+	if hasEdge(g, NodeKaisel, NodeIgris) {
+		t.Error("AMQP-only record must not wire kaisel→igris")
+	}
+	if hasEdge(g, NodeTargetApp, NodeKaisel) {
+		t.Error("AMQP-only record must not wire target→kaisel for ingress")
+	}
+}
+
+func TestBuildTopologyGraph_RecordHybridHTTPAMQP(t *testing.T) {
+	g := BuildTopologyGraph(&monarchpb.ShadowTestStatusUpdate{
+		Mode:        monarchpb.Mode_MODE_RECORD,
+		Phase:       monarchpb.Phase_PHASE_READY,
+		KaiselPhase: monarchpb.CapturePhase_CAPTURE_PHASE_READY,
+		Components: &monarchpb.ComponentStatus{
+			IgrisReady: true, ShopReady: true, BeruReady: true,
+			KaiselRuleActive: true, AmqpBound: true, TargetDeployment: "checkout-api",
+			IngressDrivers: []string{"http_request", "rabbitmq_message"},
+		},
+	})
+	if !hasEdge(g, NodeTargetApp, NodeKaisel) || !hasEdge(g, NodeKaisel, NodeIgris) {
+		t.Errorf("hybrid HTTP path missing: %+v", g.Edges)
+	}
+	if !hasEdge(g, NodeTargetApp, NodeProdAMQP) || !hasEdge(g, NodeProdAMQP, NodeIgris) {
+		t.Errorf("hybrid AMQP path missing: %+v", g.Edges)
+	}
+	if hasEdge(g, NodeKaisel, NodeProdAMQP) {
+		t.Error("kaisel must not wire into prod-amqp")
+	}
+}
+
+func TestBuildTopologyGraph_ReplayAMQPDisabled(t *testing.T) {
+	g := BuildTopologyGraph(&monarchpb.ShadowTestStatusUpdate{
+		Mode:        monarchpb.Mode_MODE_REPLAY,
+		Phase:       monarchpb.Phase_PHASE_READY,
+		BootStep:    monarchpb.BootStep_BOOT_STEP_READY,
+		KaiselPhase: monarchpb.CapturePhase_CAPTURE_PHASE_DISABLED,
+		Components: &monarchpb.ComponentStatus{
+			IgrisReady: true, ShopReady: true, BeruReady: true, AmqpBound: false,
+			TargetDeployment: "checkout-api",
+			IngressDrivers:   []string{"rabbitmq_message"},
+			ShadowRolesReady: map[string]bool{
+				monarchpb.RoleControlA: true, monarchpb.RoleControlB: true, monarchpb.RoleCandidate: true,
+			},
+		},
+	})
+	if n := nodeByID(g, NodeProdAMQP); n == nil || n.Status != StatusDisabled {
+		t.Fatalf("prod-amqp = %v, want Disabled in replay", n)
+	}
+	if hasEdge(g, NodeKaisel, NodeProdAMQP) {
+		t.Error("replay must not wire the prod AMQP capture path")
 	}
 }
 
@@ -202,12 +287,17 @@ func TestBuildTopologyGraph_NilIsNil(t *testing.T) {
 
 func TestBuildTopologyGraph_EveryNodeHasALabel(t *testing.T) {
 	g := BuildTopologyGraph(&monarchpb.ShadowTestStatusUpdate{
-		Mode:       monarchpb.Mode_MODE_REPLAY,
-		Components: &monarchpb.ComponentStatus{},
+		Mode: monarchpb.Mode_MODE_REPLAY,
+		Components: &monarchpb.ComponentStatus{
+			IngressDrivers: []string{"rabbitmq_message"},
+		},
 	})
 	for _, n := range g.Nodes {
 		if n.Label == "" {
 			t.Errorf("node %s has no label", n.ID)
 		}
+	}
+	if nodeByID(g, NodeProdAMQP) == nil {
+		t.Fatal("expected prod-amqp node when rabbitmq_message is listed")
 	}
 }

@@ -254,6 +254,168 @@ var _ = Describe("ShadowTest Controller", func() {
 
 	})
 
+	Context("When switching record to replay without oldImage in spec", func() {
+		const resourceName = "test-resource-record-replay-pin"
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			targetKey := types.NamespacedName{Name: "target-app", Namespace: "default"}
+			var target appsv1.Deployment
+			if err := k8sClient.Get(ctx, targetKey, &target); errors.IsNotFound(err) {
+				target = appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{Name: "target-app", Namespace: "default"},
+					Spec: appsv1.DeploymentSpec{
+						Replicas: int32Ptr(1),
+						Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "target-app"}},
+						Template: corev1.PodTemplateSpec{
+							ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "target-app"}},
+							Spec: corev1.PodSpec{Containers: []corev1.Container{{
+								Name:  "app",
+								Image: "busybox:1.36",
+							}}},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, &target)).To(Succeed())
+			}
+
+			secKey := types.NamespacedName{Name: "shadow-diff-s3", Namespace: "default"}
+			var sec corev1.Secret
+			if err := k8sClient.Get(ctx, secKey, &sec); errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "shadow-diff-s3", Namespace: "default"},
+					Data: map[string][]byte{
+						"AWS_ACCESS_KEY_ID":     []byte("minio"),
+						"AWS_SECRET_ACCESS_KEY": []byte("minio123"),
+					},
+				})).To(Succeed())
+			}
+
+			err := k8sClient.Get(ctx, typeNamespacedName, &enginev1alpha1.ShadowTest{})
+			if err != nil && errors.IsNotFound(err) {
+				st := &enginev1alpha1.ShadowTest{
+					ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+					Spec: enginev1alpha1.ShadowTestSpec{
+						TargetDeployment: "target-app",
+						TargetNamespace:  "default",
+						NewImage:         "busybox:1.36",
+						Mode:             modeRecord,
+						Storage: &enginev1alpha1.StorageConfig{
+							Type:       "s3",
+							BucketName: "shadow-diff-local",
+							Endpoint:   "http://minio:9000",
+							Region:     "us-east-1",
+							CredentialsSecretRef: &corev1.LocalObjectReference{
+								Name: "shadow-diff-s3",
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, st)).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			st := &enginev1alpha1.ShadowTest{}
+			err := k8sClient.Get(ctx, typeNamespacedName, st)
+			if err == nil {
+				shadowNS := shadowNamespaceForCR(st)
+				Expect(k8sClient.Delete(ctx, st)).To(Succeed())
+				_ = client.IgnoreNotFound(k8sClient.Delete(ctx, &corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{Name: shadowNS},
+				}))
+			}
+			rec := &ShadowTestReconciler{Client: k8sClient, Scheme: clientgoscheme.Scheme}
+			for i := 0; i < 25; i++ {
+				_, _ = rec.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				err = k8sClient.Get(ctx, typeNamespacedName, st)
+				if errors.IsNotFound(err) {
+					break
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+			if err := k8sClient.Get(ctx, typeNamespacedName, st); err == nil {
+				patch := client.RawPatch(types.MergePatchType, []byte(`{"metadata":{"finalizers":[]}}`))
+				Expect(k8sClient.Patch(ctx, st, patch)).To(Succeed())
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, st))).To(Succeed())
+			}
+		})
+
+		It("pins oldImage on record then creates ABC on replay switch", func() {
+			rec := &ShadowTestReconciler{
+				Client: k8sClient,
+				Scheme: clientgoscheme.Scheme,
+				ReplayStarter: func(ctx context.Context, url string) (int, error) {
+					return 202, nil
+				},
+			}
+
+			st := &enginev1alpha1.ShadowTest{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, st)).To(Succeed())
+			shadowNS := shadowNamespaceForCR(st)
+
+			markDeploymentRollReady := func(name string) {
+				var deploy appsv1.Deployment
+				if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: shadowNS, Name: name}, &deploy); err != nil {
+					return
+				}
+				if deploy.Status.ReadyReplicas >= 1 && deploy.Status.UpdatedReplicas == deploy.Status.Replicas && deploy.Status.Replicas >= 1 {
+					return
+				}
+				deploy.Status.AvailableReplicas = 1
+				deploy.Status.ReadyReplicas = 1
+				deploy.Status.Replicas = 1
+				deploy.Status.UpdatedReplicas = 1
+				Expect(k8sClient.Status().Update(ctx, &deploy)).To(Succeed())
+			}
+
+			for i := 0; i < 25; i++ {
+				_, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(k8sClient.Get(ctx, typeNamespacedName, st)).To(Succeed())
+				markDeploymentRollReady(localBeruName)
+				markDeploymentRollReady(igrisDeploymentName(st))
+				markDeploymentRollReady(shopServiceName())
+				if st.Spec.OldImage != "" && st.Status.Phase == "Ready" {
+					break
+				}
+			}
+
+			Expect(st.Spec.OldImage).To(Equal("busybox:1.36"))
+			Expect(st.Status.Phase).To(Equal("Ready"))
+			sessionID := st.Status.CurrentSessionID
+			Expect(sessionID).NotTo(BeEmpty())
+
+			st.Spec.Mode = modeReplay
+			st.Spec.SessionID = sessionID
+			Expect(k8sClient.Update(ctx, st)).To(Succeed())
+
+			for i := 0; i < 25; i++ {
+				_, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(k8sClient.Get(ctx, typeNamespacedName, st)).To(Succeed())
+				markDeploymentRollReady(localBeruName)
+				markDeploymentRollReady(igrisDeploymentName(st))
+				markDeploymentRollReady(shopServiceName())
+				for _, role := range []string{roleControlA, roleControlB, roleCandidate} {
+					markDeploymentRollReady(shadowDeploymentName(st, role))
+				}
+				if st.Status.ReplayState == replayStateStarted {
+					break
+				}
+			}
+
+			var controlA appsv1.Deployment
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: shadowNS,
+				Name:      shadowDeploymentName(st, roleControlA),
+			}, &controlA)).To(Succeed())
+			Expect(controlA.Spec.Template.Spec.Containers[0].Image).To(Equal("busybox:1.36"))
+			Expect(st.Status.ReplayState).To(Equal(replayStateStarted))
+		})
+	})
+
 	Context("When reconciling replay mode", func() {
 		const resourceName = "test-resource-replay"
 		ctx := context.Background()

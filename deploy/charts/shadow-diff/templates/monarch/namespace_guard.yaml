@@ -1,0 +1,47 @@
+{{- if and .Values.monarch.enabled .Values.monarch.rbac.create }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "shadow-diff.monarchName" . }}-namespace-guard
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, DELETE]
+        resources: [namespaces]
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [rolebindings]
+  matchConditions:
+    - name: monarch-manager-service-account
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:{{ .Release.Namespace }}:{{ include "shadow-diff.serviceAccountName" . }}'
+  validations:
+    - expression: >-
+        request.resource.resource == 'namespaces' ?
+          (request.operation == 'CREATE' ?
+            object.metadata.name.startsWith('shadow-') :
+            oldObject.metadata.name.startsWith('shadow-')) :
+          request.namespace.startsWith('shadow-')
+      message: Monarch may only create or delete shadow-* namespaces, and may only bind roles inside shadow-* namespaces
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "shadow-diff.monarchName" . }}-namespace-guard
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+spec:
+  policyName: {{ include "shadow-diff.monarchName" . }}-namespace-guard
+  validationActions:
+    - Deny
+{{- end }}

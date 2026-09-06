@@ -1,7 +1,7 @@
 package replay
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 )
 
@@ -26,10 +26,10 @@ func (s *MockStore) Put(hash string, resp EarlyResponse) {
 	// transparent-proxy races may also try to overwrite a real 2xx with a 599.
 	if existing, ok := s.data[hash]; ok && is2xx(existing.StatusCode) {
 		if is2xx(resp.StatusCode) {
-			log.Printf("shop mockstore: keep first 2xx key=%s (ignore duplicate seed)", hash)
+			slog.Info("mockstore keeping first successful response", "key", hash, "reason", "duplicate seed")
 			return
 		}
-		log.Printf("shop mockstore: keep 2xx key=%s (ignore status=%d)", hash, resp.StatusCode)
+		slog.Info("mockstore keeping successful response", "key", hash, "ignored_status", resp.StatusCode)
 		return
 	}
 	s.data[hash] = resp

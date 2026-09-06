@@ -1,0 +1,44 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/managed-by: kustomize
+  name: namespace-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups:
+      - ""
+      apiVersions:
+      - v1
+      operations:
+      - CREATE
+      - DELETE
+      resources:
+      - namespaces
+    - apiGroups:
+      - rbac.authorization.k8s.io
+      apiVersions:
+      - v1
+      operations:
+      - CREATE
+      - UPDATE
+      - DELETE
+      resources:
+      - rolebindings
+  matchConditions:
+  - name: monarch-manager-service-account
+    expression: >-
+      request.userInfo.username.startsWith('system:serviceaccount:') &&
+      (request.userInfo.username.endsWith(':controller-manager') ||
+       request.userInfo.username.endsWith(':monarch-controller-manager'))
+  validations:
+  - expression: >-
+      request.resource.resource == 'namespaces' ?
+        (request.operation == 'CREATE' ?
+          object.metadata.name.startsWith('shadow-') :
+          oldObject.metadata.name.startsWith('shadow-')) :
+        request.namespace.startsWith('shadow-')
+    message: Monarch may only create or delete shadow-* namespaces, and may only bind roles inside shadow-* namespaces

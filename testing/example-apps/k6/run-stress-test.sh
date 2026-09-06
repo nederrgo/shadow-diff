@@ -101,7 +101,7 @@ start_port_forward() {
     fi
   done
   echo "ERROR: port-forward to ${ns}/${svc}:${remote_port} -> localhost:${local_port} failed" >&2
-  echo "       Is the E2E stack up? Run: ${REPO}/testing/tools/e2e-reset-minikube.sh" >&2
+  echo "       Is the E2E stack up? Run: ${REPO}/testing/tools/e2e-reset-kind.sh" >&2
   exit 1
 }
 
@@ -117,7 +117,7 @@ fi
 SHADOW_NS=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" -o jsonpath='{.status.shadowNamespace}' 2>/dev/null || true)
 if [[ -z "$SHADOW_NS" ]]; then
   echo "ERROR: ShadowTest ${SHADOWTEST} not Ready (missing shadowNamespace)." >&2
-  echo "       Run: ${REPO}/testing/tools/e2e-reset-minikube.sh" >&2
+  echo "       Run: ${REPO}/testing/tools/e2e-reset-kind.sh" >&2
   exit 1
 fi
 echo "Shadow namespace: ${SHADOW_NS}"
@@ -165,7 +165,7 @@ if [[ "$health_code" == "200" ]]; then
 elif [[ "$health_code" == "404" ]]; then
   echo "ERROR: Beru returned HTTP 404 for ${BERU_HEALTH_URL}" >&2
   echo "       The running pod is an old image (no /healthz). Rebuild, reload, then restart beru-local:" >&2
-  echo "         eval \$(minikube docker-env) && make beru-docker-build BERU_IMG=beru:dev" >&2
+  echo "         make beru-docker-build BERU_IMG=beru:dev && kind load docker-image beru:dev --name shadow-diff" >&2
   echo "         kubectl rollout restart deployment/beru-local -n ${SHADOW_NS}" >&2
   echo "         kubectl rollout status deployment/beru-local -n ${SHADOW_NS}" >&2
   exit 1

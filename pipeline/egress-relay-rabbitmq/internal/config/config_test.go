@@ -10,13 +10,17 @@ func TestLoad(t *testing.T) {
 	t.Setenv("CONTROL_B_AMQP_URL", "amqp://b")
 	t.Setenv("CANDIDATE_AMQP_URL", "amqp://c")
 	t.Setenv("BERU_HTTP_URL", "http://beru:8080")
+	t.Setenv("SHADOW_TEST_NAME", "my-test")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.BeruEgressDiffURL() != "http://beru:8080/api/v1/egress/diff" {
-		t.Fatalf("url = %s", cfg.BeruEgressDiffURL())
+	if cfg.BeruHTTPURL != "http://beru:8080" {
+		t.Fatalf("BeruHTTPURL = %s", cfg.BeruHTTPURL)
+	}
+	if cfg.ShadowTestName != "my-test" {
+		t.Fatalf("ShadowTestName = %q", cfg.ShadowTestName)
 	}
 	if cfg.EgressExchange != "egress-events" {
 		t.Fatalf("EgressExchange = %q", cfg.EgressExchange)

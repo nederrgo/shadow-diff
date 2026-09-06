@@ -1,9 +1,10 @@
-/** HTTP base for Tusk REST (`:8082`), same host as The System. */
+/** HTTP base for Tusk REST — same origin (nginx proxies `/api/` → Tusk). */
 export function tuskHttpBase(): string {
-  return `http://${window.location.hostname}:8082`
+  return ''
 }
 
-/** WebSocket base for Tusk streams. */
+/** WebSocket base for Tusk streams — same host; nginx proxies `/ws/`. */
 export function tuskWsBase(): string {
-  return `ws://${window.location.hostname}:8082`
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}`
 }

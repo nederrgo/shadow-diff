@@ -12,8 +12,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ponytail: 90s backstop; CrashLoop/ImagePull fail as soon as kubelet reports them.
-const workloadBootTimeout = 90 * time.Second
+// ponytail: 7m backstop so RabbitMQ startup (trace_on probe budget ~6m) can finish;
+// CrashLoop/ImagePull still fail as soon as kubelet reports them.
+const workloadBootTimeout = 7 * time.Minute
 
 var terminalPodWaitingReasons = map[string]struct{}{
 	"ImagePullBackOff":           {},

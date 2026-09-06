@@ -85,6 +85,14 @@ func recordOrderSecret() *corev1.Secret {
 	}
 }
 
+func recordOrderBeruDBSecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "beru-postgres", Namespace: "monarch-system"},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{"DB_HOST": []byte("postgres")},
+	}
+}
+
 func markAvailable(t *testing.T, c client.Client, ns, name string) {
 	t.Helper()
 	var deploy appsv1.Deployment
@@ -110,6 +118,10 @@ func driveBeruLocalReady(
 	shadowNS string,
 ) {
 	t.Helper()
+	t.Setenv(envBeruDBSecret, "monarch-system/beru-postgres")
+	if err := c.Create(context.Background(), recordOrderBeruDBSecret()); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("seed beru db secret: %v", err)
+	}
 	for i := 0; i < 5; i++ {
 		if _, err := rec.Reconcile(context.Background(), req); err != nil {
 			t.Fatalf("reconcile beru bring-up %d: %v", i, err)
@@ -190,10 +202,11 @@ func TestRecordMode_AMQPBindAfterKaisel(t *testing.T) {
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{
 		Driver: "rabbitmq_message",
 		AMQP: &enginev1alpha1.AMQPInputSpec{
-			ProdURL:          "amqp://prod:5672",
-			Exchange:         "orders",
-			RoutingKey:       "k",
-			TargetDependency: "rabbitmq",
+			ProdURL:              "amqp://prod:5672",
+			Exchange:             "orders",
+			RoutingKey:           "k",
+			TargetDependency:     "rabbitmq",
+			CredentialsSecretRef: testAMQPCredentialsRef(),
 		},
 	}}
 	st.Spec.Dependencies = []enginev1alpha1.DependencySpec{{
@@ -207,7 +220,7 @@ func TestRecordMode_AMQPBindAfterKaisel(t *testing.T) {
 	var declareCalls, bindCalls int
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret()).
+		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret(), testAMQPCredentialsSecret(st.Namespace)).
 		WithStatusSubresource(&enginev1alpha1.ShadowTest{}, &enginev1alpha1.KaiselRule{}, &appsv1.Deployment{}).
 		Build()
 	rec := &ShadowTestReconciler{Client: c, Scheme: scheme}
@@ -264,12 +277,13 @@ func TestEnsureProdShadowQueue_DeclareThenBindHooks(t *testing.T) {
 		Driver: "rabbitmq_message",
 		AMQP: &enginev1alpha1.AMQPInputSpec{
 			ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
-			TargetDependency: "rabbitmq",
+			TargetDependency:     "rabbitmq",
+			CredentialsSecretRef: testAMQPCredentialsRef(),
 		},
 	}}
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(st.DeepCopy()).
+		WithObjects(st.DeepCopy(), testAMQPCredentialsSecret(st.Namespace)).
 		WithStatusSubresource(&enginev1alpha1.ShadowTest{}).
 		Build()
 
@@ -302,10 +316,11 @@ func amqpRecordShadowTest(name string) *enginev1alpha1.ShadowTest {
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{
 		Driver: "rabbitmq_message",
 		AMQP: &enginev1alpha1.AMQPInputSpec{
-			ProdURL:          "amqp://prod:5672",
-			Exchange:         "orders",
-			RoutingKey:       "k",
-			TargetDependency: "rabbitmq",
+			ProdURL:              "amqp://prod:5672",
+			Exchange:             "orders",
+			RoutingKey:           "k",
+			TargetDependency:     "rabbitmq",
+			CredentialsSecretRef: testAMQPCredentialsRef(),
 		},
 	}}
 	st.Spec.Dependencies = []enginev1alpha1.DependencySpec{{
@@ -326,7 +341,7 @@ func TestRecordMode_QueueDeclareFail_MarkBootFailed(t *testing.T) {
 
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret()).
+		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret(), testAMQPCredentialsSecret(st.Namespace)).
 		WithStatusSubresource(&enginev1alpha1.ShadowTest{}, &enginev1alpha1.KaiselRule{}, &appsv1.Deployment{}).
 		Build()
 	rec := &ShadowTestReconciler{Client: c, Scheme: scheme}
@@ -376,7 +391,7 @@ func TestRecordMode_QueueBindFail_MarkBootFailed(t *testing.T) {
 
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret()).
+		WithObjects(st.DeepCopy(), recordOrderTarget(), recordOrderSecret(), testAMQPCredentialsSecret(st.Namespace)).
 		WithStatusSubresource(&enginev1alpha1.ShadowTest{}, &enginev1alpha1.KaiselRule{}, &appsv1.Deployment{}).
 		Build()
 	rec := &ShadowTestReconciler{Client: c, Scheme: scheme}
@@ -390,7 +405,7 @@ func TestRecordMode_QueueBindFail_MarkBootFailed(t *testing.T) {
 		return name, nil
 	}
 	rec.ProdQueueEnsureBound = func(ctx context.Context, live *enginev1alpha1.ShadowTest) error {
-		return fmt.Errorf("queue bind %q: NOT_FOUND - no queue", live.Status.AmqpQueueName)
+		return fmt.Errorf("queue bind %q to exchange %q: NOT_FOUND - no exchange", live.Status.AmqpQueueName, live.Spec.Inputs[0].AMQP.Exchange)
 	}
 	nn := types.NamespacedName{Name: st.Name, Namespace: st.Namespace}
 	req := reconcile.Request{NamespacedName: nn}
@@ -412,8 +427,8 @@ func TestRecordMode_QueueBindFail_MarkBootFailed(t *testing.T) {
 	if live.Status.Phase != phaseFailed {
 		t.Fatalf("phase=%q want Failed", live.Status.Phase)
 	}
-	if !strings.Contains(live.Status.Message, "queue bind") {
-		t.Fatalf("message=%q want queue bind", live.Status.Message)
+	if !strings.Contains(live.Status.Message, "queue bind") || !strings.Contains(live.Status.Message, "exchange") {
+		t.Fatalf("message=%q want queue bind to exchange", live.Status.Message)
 	}
 	if len(live.Finalizers) < 2 {
 		t.Fatalf("finalizers should remain, got %v", live.Finalizers)

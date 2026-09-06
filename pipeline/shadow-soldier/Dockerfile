@@ -1,11 +1,15 @@
+# Build context must be pipeline/ so replace ../pkg/beruclient resolves.
+#   make docker-build  →  docker build -f Dockerfile -t … ..
 FROM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
-WORKDIR /workspace
-COPY go.mod go.sum ./
+WORKDIR /src
+COPY pkg/beruclient /src/pkg/beruclient
+COPY shadow-soldier/go.mod shadow-soldier/go.sum /src/shadow-soldier/
+WORKDIR /src/shadow-soldier
 RUN go mod download
-COPY . .
+COPY shadow-soldier/ /src/shadow-soldier/
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /shadow-soldier ./cmd/shadow-soldier
 

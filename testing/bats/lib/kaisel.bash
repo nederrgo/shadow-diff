@@ -27,9 +27,10 @@ KAISEL_EGRESS_EXTERNAL_HOST="httpbin.org"
 #   SKIP_BUILD=1   skip docker build (images must already exist in cluster)
 #   SKIP_LOAD=1    skip image load (images must already be in cluster registry)
 kaisel_setup_platform() {
+  bats_init_env
   bats_source_e2e_helpers
   bats_source_cluster_helpers
-  bats_init_env
+  bats_ensure_cluster || return 1
 
   if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
     echo "==> [kaisel] build images (monarch/kaisel/igris/beru/shop)"
@@ -43,19 +44,18 @@ kaisel_setup_platform() {
   fi
 
   if [[ "${SKIP_LOAD:-0}" != "1" ]]; then
-    echo "==> [kaisel] ensure images present in cluster docker"
-    # Builds above already target minikube docker when MINIKUBE_DRIVER != none.
+    echo "==> [kaisel] ensure images present in cluster"
     # Fail hard if a :dev image is missing — do not docker-pull (no registry) or
     # swallow errors (that produced silent ErrImagePull on beru-local).
-    if [[ "${MINIKUBE_DRIVER:-kvm2}" != none ]]; then
-      use_minikube_docker_env
-    fi
     if ! docker image inspect nginx:alpine >/dev/null 2>&1; then
       docker pull nginx:alpine
     fi
     for img in "${MONARCH_IMG}" "${KAISEL_IMG}" "${BERU_IMG}" "${SHOP_IMG}" \
       "${IGRIS_IMG}" "${EGRESS_TEST_IMG}" nginx:alpine; do
-      e2e_load_image "${img}"
+      e2e_load_image "${img}" || {
+        echo "FAIL: ${img} missing in Kind cluster" >&2
+        return 1
+      }
     done
   fi
 
@@ -64,9 +64,25 @@ kaisel_setup_platform() {
 
   echo "==> [kaisel] deploy Monarch operator (${MONARCH_IMG})"
   make -C "${REPO}/pipeline/monarch" deploy IMG="${MONARCH_IMG}"
-  # MONARCH_MODE=dev resolves helper images to locally-built :dev tags.
+
+  echo "==> [kaisel] secret-source RoleBinding (credentialsSecretRef in default)"
+  kubectl apply -f "${REPO}/testing/bats/manifests/monarch-secret-source-rbac.yaml"
+
+  echo "==> [kaisel] PostgreSQL fixture (BERU_DB_SECRET)"
+  kubectl apply -f "${REPO}/testing/bats/manifests/postgres/deployment.yaml"
+  kubectl apply -f "${REPO}/testing/bats/manifests/postgres/service.yaml"
+  kubectl rollout status deployment/postgres -n monarch-system --timeout=180s
+
+  # Env overrides keep bare local :dev tags (ghcr defaults apply when unset).
   kubectl set env deployment/monarch-controller-manager -n monarch-system \
-    MONARCH_MODE=dev 2>/dev/null || true
+    MONARCH_MODE=dev \
+    BERU_DB_SECRET=monarch-system/beru-postgres \
+    BERU_IMAGE="${BERU_IMG:-beru:dev}" \
+    SHOP_IMAGE="${SHOP_IMG:-shop:dev}" \
+    IGRIS_HTTP_IMAGE="${IGRIS_IMG:-igris-http:dev}" \
+    IGRIS_RABBITMQ_IMAGE="${IGRIS_RABBITMQ_IMG:-igris-rabbitmq:dev}" \
+    EGRESS_RELAY_RABBITMQ_IMAGE="${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:dev}" \
+    SHADOW_SOLDIER_IMAGE="${SHADOW_SOLDIER_IMG:-shadow-soldier:dev}" 2>/dev/null || true
   # Force a rollout so the pod picks up a rebuilt image with the same tag.
   kubectl rollout restart deployment/monarch-controller-manager -n monarch-system
   kubectl rollout status deployment/monarch-controller-manager \
@@ -557,4 +573,60 @@ kaisel_switch_to_replay() {
   monarch_wait_replay_started "$name" "$ns" 180
 
   echo "==> [kaisel] replay ready session=${session} ns=${SHADOW_NS}"
+}
+
+# Assert MinIO has objects for the CR's current session under ingress and/or egress.
+# Usage: e2e_assert_session_objects [ingress|egress|both] [timeout_seconds]
+e2e_assert_session_objects() {
+  local kind="${1:-both}" timeout="${2:-45}"
+  local name="${SHADOWTEST:?SHADOWTEST unset}"
+  local ns="${SHADOWTEST_NS:-default}"
+  local session prefix
+
+  session=$(kubectl get shadowtest "$name" -n "$ns" \
+    -o jsonpath='{.status.currentSessionID}')
+  [[ -n "$session" ]] || {
+    echo "e2e_assert_session_objects: currentSessionID empty" >&2
+    return 1
+  }
+
+  if [[ "$kind" == "ingress" || "$kind" == "both" ]]; then
+    prefix="$(minio_session_prefix "$ns" "$name" "$session" ingress)"
+    minio_wait_objects "$prefix" "$timeout" || return 1
+  fi
+  if [[ "$kind" == "egress" || "$kind" == "both" ]]; then
+    prefix="$(minio_session_prefix "$ns" "$name" "$session" egress)"
+    minio_wait_objects "$prefix" "$timeout" || return 1
+  fi
+  echo "==> [e2e] session objects ok session=${session} kind=${kind}"
+}
+
+# Record-mode HTTP publish then switch the same CR to replay (ingress-only S3 gate).
+# Usage: e2e_http_record_then_replay [trace_id]
+e2e_http_record_then_replay() {
+  local tid="${1:-${BATS_TRACE_ID:?BATS_TRACE_ID unset}}"
+  kaisel_ensure_record_mode || return 1
+  publish_prod_http "$tid" || return 1
+  kaisel_switch_to_replay ingress || return 1
+}
+
+# Record-mode RMQ publish (+ optional Kaisel egress seed) then switch to replay.
+# Usage: e2e_rmq_record_then_replay [ingress|egress|both] [--require-egress-seed]
+e2e_rmq_record_then_replay() {
+  local kind="${1:-both}"
+  local require_seed=0
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --require-egress-seed) require_seed=1; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  kaisel_ensure_record_mode || return 1
+  publish_rmq_order "${BATS_TRACE_ID:?}" "${BATS_ORDER_ID:?}" || return 1
+  if [[ "$require_seed" == "1" ]]; then
+    wait_kaisel_egress_seed || return 1
+  fi
+  kaisel_switch_to_replay "$kind" || return 1
 }

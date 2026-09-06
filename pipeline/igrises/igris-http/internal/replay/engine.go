@@ -33,5 +33,5 @@ func NewEngine(records []driver.IngressCapture, targets []payload.Target, client
 }
 
 func (e *Engine) Start() (total int, already bool) { return e.inner.Start() }
-func (e *Engine) Wait()                           { e.inner.Wait() }
-func (e *Engine) Running() bool                   { return e.inner.Running() }
+func (e *Engine) Wait()                            { e.inner.Wait() }
+func (e *Engine) Running() bool                    { return e.inner.Running() }

@@ -10,11 +10,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shadow-diff/beruclient"
 	"github.com/shadow-diff/shadow-soldier/internal/parsers"
 )
 
 const traceA = "4bf92f3577b34da6a3ce929d0e0e4736"
 const traceB = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+type Report = beruclient.Report
+
+var NewClient = beruclient.NewClient
+
+const egressDiffPath = beruclient.EgressDiffPath
 
 func report(trace, target string) parsers.QueryReport {
 	return parsers.QueryReport{
@@ -219,32 +226,6 @@ func TestReporterShardsByTraceID(t *testing.T) {
 	// Not an assertion about which shard, only that the function distinguishes.
 	_ = shardOf(traceB)
 }
-
-func TestRetryable(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{"503 is retryable", &statusError{Code: 503}, true},
-		{"500 is retryable", &statusError{Code: 500}, true},
-		{"400 is not", &statusError{Code: 400}, false},
-		{"404 is not", &statusError{Code: 404}, false},
-		{"timeout is not, to avoid duplicate rows", timeoutErr{}, false},
-	}
-	for _, tc := range tests {
-		if got := retryable(tc.err); got != tc.want {
-			t.Fatalf("%s: retryable(%v) = %v want %v", tc.name, tc.err, got, tc.want)
-		}
-	}
-}
-
-type timeoutErr struct{}
-
-func (timeoutErr) Error() string   { return "i/o timeout" }
-func (timeoutErr) Timeout() bool   { return true }
-func (timeoutErr) Temporary() bool { return true }
 
 func TestReporterRetriesOn5xxThenSucceeds(t *testing.T) {
 	t.Parallel()

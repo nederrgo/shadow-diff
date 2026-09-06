@@ -13,7 +13,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
+	"github.com/shadow-diff/beru/internal/model"
 )
 
 func openTestWAL(t *testing.T) *WALStore {
@@ -52,9 +52,9 @@ func openTestWAL(t *testing.T) *WALStore {
 
 func TestWAL_claimSkipsInFlight(t *testing.T) {
 	w := openTestWAL(t)
-	rep := v2storage.RawReport{
+	rep := model.RawReport{
 		TraceID: "trace-100", ShadowRole: "control-a", Protocol: "http",
-		Direction: v2storage.DirectionIngress, Signature: "http:GET:/x",
+		Direction: model.DirectionIngress, Signature: "http:GET:/x",
 		PayloadBytes: []byte(`{}`), CapturedAt: time.Now().UTC(),
 	}
 	if err := w.appendWAL(rep); err != nil {
@@ -87,9 +87,9 @@ func TestWAL_claimSkipsInFlight(t *testing.T) {
 
 func TestWAL_deadLetterAfterThreeRetries(t *testing.T) {
 	w := openTestWAL(t)
-	rep := v2storage.RawReport{
+	rep := model.RawReport{
 		TraceID: "trace-bad", ShadowRole: "control-a", Protocol: "http",
-		Direction: v2storage.DirectionIngress, Signature: "http:GET:/bad",
+		Direction: model.DirectionIngress, Signature: "http:GET:/bad",
 		PayloadBytes: []byte(`{}`), CapturedAt: time.Now().UTC(),
 	}
 	if err := w.appendWAL(rep); err != nil {

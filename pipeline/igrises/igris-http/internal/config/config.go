@@ -293,38 +293,6 @@ func validateTargetURL(name, raw string) error {
 	return nil
 }
 
-func validateTargetHost(name, raw string) error {
-	if raw == "" {
-		return fmt.Errorf("%s is required", name)
-	}
-	if strings.Contains(raw, "://") {
-		return fmt.Errorf("%s: must be host only, not a URL", name)
-	}
-	// Reject host:port in ADDR; port is appended per listener.
-	if h, _, err := splitHostPortOptional(raw); err != nil {
-		return fmt.Errorf("%s: %w", name, err)
-	} else if h != raw {
-		return fmt.Errorf("%s: must be host only (no port); got %q", name, raw)
-	}
-	return nil
-}
-
-func splitHostPortOptional(hostport string) (host, port string, err error) {
-	if !strings.Contains(hostport, ":") {
-		return hostport, "", nil
-	}
-	// Bracketed IPv6
-	if strings.HasPrefix(hostport, "[") {
-		idx := strings.LastIndex(hostport, "]:")
-		if idx < 0 {
-			return hostport, "", nil
-		}
-		return hostport[:idx+1], hostport[idx+2:], nil
-	}
-	host, port, _ = strings.Cut(hostport, ":")
-	return host, port, nil
-}
-
 // Targets returns HTTP multicast destinations in stable order.
 func (c Config) Targets() []TargetURL {
 	return []TargetURL{

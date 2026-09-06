@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -23,7 +24,7 @@ const shutdownTimeout = 10 * time.Second
 func main() {
 	log := slog.Default()
 
-	httpAddr := envOr("TUSK_HTTP_ADDR", ":8082")
+	httpAddr := tuskHTTPAddr()
 	monarchAddr := envOr("MONARCH_GRPC_ADDR", "monarch-status-grpc.monarch-system.svc.cluster.local:9090")
 
 	hub := server.NewHub()
@@ -39,6 +40,8 @@ func main() {
 	if cfg, ok := db.ConfigFromEnv(); ok {
 		opened, err := db.Open(cfg)
 		if err != nil {
+			// TODO: retry Open() with capped backoff (like db.Listen and MonarchClient)
+			// so a transient startup race or Postgres blip does not require a pod restart.
 			log.Error("Postgres open failed; running control-plane-only", "err", err)
 		} else {
 			pgStore = opened
@@ -47,10 +50,11 @@ func main() {
 			log.Info("Postgres connected", "host", cfg.Host, "db", cfg.Name)
 			go func() {
 				if err := db.Listen(ctx, cfg.DSN(), log, func(ev db.VerdictEvent) {
-					if sum, err := pgStore.SessionSummary(ctx, ev.SessionID); err == nil {
+					if sum, err := pgStore.SessionSummary(ctx, ev.SessionID, ev.ReplayExecutionID); err == nil {
 						diffHub.BroadcastSummary(sum)
 					} else {
-						log.Warn("SessionSummary after NOTIFY failed", "err", err, "session_id", ev.SessionID)
+						log.Warn("SessionSummary after NOTIFY failed", "err", err,
+							"session_id", ev.SessionID, "replay_execution_id", ev.ReplayExecutionID)
 					}
 					diffHub.BroadcastVerdict(ev)
 				}); err != nil && !errors.Is(err, context.Canceled) {
@@ -109,4 +113,20 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// tuskHTTPAddr prefers TUSK_HTTP_ADDR; else HTTP_PORT / PORT as ":{port}".
+func tuskHTTPAddr() string {
+	if v := os.Getenv("TUSK_HTTP_ADDR"); v != "" {
+		return v
+	}
+	for _, key := range []string{"HTTP_PORT", "PORT"} {
+		if p := strings.TrimSpace(os.Getenv(key)); p != "" {
+			if strings.HasPrefix(p, ":") {
+				return p
+			}
+			return ":" + p
+		}
+	}
+	return ":8082"
 }

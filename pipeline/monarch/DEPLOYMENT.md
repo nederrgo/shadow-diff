@@ -58,10 +58,12 @@ Monarch resolves helper container images at reconcile time:
 
 | `MONARCH_MODE` | Tag suffix | Example defaults |
 |----------------|------------|------------------|
-| `dev` or `development` | `:dev` | `igris-http:dev`, `shop:dev` |
-| unset / `prod` / `production` | `:latest` | `igris-http:latest`, `shop:latest`, … |
+| `dev` or `development` | `:dev` | `ghcr.io/shadow-diff/igris-http:dev`, `ghcr.io/shadow-diff/shop:dev` |
+| unset / `prod` / `production` | `:latest` | `ghcr.io/shadow-diff/igris-http:latest`, `ghcr.io/shadow-diff/shop:latest`, … |
 
-**Minikube E2E:** `./testing/tools/e2e-reset-minikube.sh` sets `MONARCH_MODE=dev` and rollout-restarts the operator after loading images. Use `MONARCH_NO_CACHE=1` when rebuilding Monarch to avoid stale Docker cache under the same tag.
+`ENVOY_IMAGE` overrides the Envoy sidecar (default `envoyproxy/envoy:v1.30-latest`).
+
+**Local Kind E2E:** `./testing/tools/e2e-reset-kind.sh` sets `MONARCH_MODE=dev` and rollout-restarts the operator after loading images via `kind load`. Use `MONARCH_NO_CACHE=1` when rebuilding Monarch to avoid stale Docker cache under the same tag.
 
 ---
 
@@ -111,7 +113,7 @@ kubectl api-resources | grep shadowtest   # short name: st
 
 Monarch deploys Beru itself: one `beru-local` Deployment and Service per shadow namespace, reachable at `beru-local.<shadow-ns>.svc.cluster.local:50051`. Nothing to install — only make sure the image is resolvable (`BERU_IMAGE` on the manager, or `spec.beru.image`).
 
-For diff history that outlives the ShadowTest, point every beru-local at a shared PostgreSQL with `BERU_DB_SECRET` — see [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md).
+Point the manager at a Secret with Beru's `DB_*` keys via `BERU_DB_SECRET` (`namespace/name` or a bare name in `monarch-system`). Monarch replicates it into each shadow namespace; a missing env or Secret fails the ShadowTest. The manager SA may `get` that Secret only through a namespaced Role (`resourceNames`). `storage.credentialsSecretRef` and AMQP `inputs[].amqp.credentialsSecretRef` additionally require an install-time RoleBinding of ClusterRole `secret-source-reader` in the ShadowTest CR namespace (Helm `monarch.secretSourceNamespaces`, default `default`; Kustomize e2e: `kubectl apply -f testing/bats/manifests/monarch-secret-source-rbac.yaml`). See [docs/data-plane/beru-postgres-storage.md](../../docs/data-plane/beru-postgres-storage.md).
 
 ---
 
@@ -184,8 +186,10 @@ When `inputs[].driver` is `rabbitmq_message`, Monarch skips HTTP Igris and deplo
 | `inputs[]` | Igris listener ports and drivers. Empty → single HTTP listener on `servicePort`. |
 | `inputs[].port` | TCP port Igris binds (omit for `rabbitmq_message`) |
 | `inputs[].driver` | `http_request` or `rabbitmq_message` |
-| `inputs[].amqp` | Required for `rabbitmq_message`: `prodUrl`, `exchange`, `routingKey`, `targetDependency` |
-| `inputs[].amqp.exchangeType` | `topic` (default), `direct`, `fanout`, `headers` |
+| `inputs[].amqp` | Required for `rabbitmq_message`: `prodUrl`, `credentialsSecretRef`, `exchange`, `routingKey`, `targetDependency` |
+| `inputs[].amqp.prodUrl` | Host-only broker URL: `amqp(s)://host[:port][/vhost]`. Userinfo is rejected. |
+| `inputs[].amqp.credentialsSecretRef` | Secret in the CR namespace with `username` / `password`. Not copied into the shadow namespace. |
+| `inputs[].amqp.exchangeType` | Exchange type igris-rabbitmq declares on **shadow** brokers (`topic` default; `direct`, `fanout`, `headers`). The production exchange named by `exchange` must already exist. |
 | `inputs[].addon` | Deprecated; use `driver` (`http` → `http_request`) |
 | `igris` | Optional override for **igris-http** image, replicas, resources (HTTP/TCP path) |
 | `igris.image` | Container image (default `igris-http:latest`, or `igris-http:dev` when `MONARCH_MODE=dev`) |
@@ -204,7 +208,7 @@ Used when any input has `driver: rabbitmq_message`.
 | `egressRelayRabbitmq.image` | Default `egress-relay-rabbitmq:latest` |
 | `egressRelayRabbitmq.replicas` | Default `1` |
 
-Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`** and sets `status.amqpQueueName`.
+Monarch declares the prod broker queue **`shadow-diff-<shadowtest-uid>`**, binds it to the existing `amqp.exchange`, and sets `status.amqpQueueName`. Prod writes are queue declare / bind / delete only, using the resolved DSN (`prodUrl` + Secret).
 
 ### Capture — Kaisel / sampling
 
@@ -341,7 +345,7 @@ Typical layout when prod listens on **:80** and Envoy ingress is **:8888**:
 | Shadow app (echo) | `:80` (`applicationPort`) |
 | Envoy egress proxy | `:15001` (`HTTP_PROXY`) |
 
-See `testing/tools/e2e-reset-minikube.sh` and `testing/bats/manifests/e2e-shadowtest.yaml`.
+See `testing/tools/e2e-reset-kind.sh`, `testing/tools/lib/e2e-reset-deploy.sh`, and `testing/bats/manifests/e2e-shadowtest.yaml`.
 
 ---
 

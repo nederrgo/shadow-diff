@@ -1,13 +1,26 @@
 package controller
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
+
+func testIgrisReconciler(t *testing.T) *ShadowTestReconciler {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	return &ShadowTestReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(testAMQPCredentialsSecret("default")).Build(),
+	}
+}
 
 func TestEgressRelayRabbitMQDeploymentName(t *testing.T) {
 	st := &enginev1alpha1.ShadowTest{ObjectMeta: metav1.ObjectMeta{Name: "rmq-test-shadow"}}
@@ -21,7 +34,7 @@ func TestEgressRelayRabbitMQImageFor(t *testing.T) {
 	t.Setenv(envEgressRelayRabbitMQImage, "")
 
 	st := &enginev1alpha1.ShadowTest{}
-	if got := egressRelayRabbitMQImageFor(st); got != "egress-relay-rabbitmq:latest" {
+	if got := egressRelayRabbitMQImageFor(st); got != imageRegistryDefault+"/egress-relay-rabbitmq:latest" {
 		t.Fatalf("default image = %q", got)
 	}
 	custom := "egress-relay-rabbitmq:dev"
@@ -40,13 +53,15 @@ func TestEgressRelayRabbitMQEnv(t *testing.T) {
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
 					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
-					TargetDependency: "rabbitmq",
+					TargetDependency:     "rabbitmq",
+					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},
 			}},
 			Dependencies: []enginev1alpha1.DependencySpec{{
 				Name: "rabbitmq", Type: "rabbitmq", Image: "rabbitmq:3", Port: 5672, EnvVarInjection: "AMQP_URL",
 			}},
 		},
+		Status: enginev1alpha1.ShadowTestStatus{CurrentReplayExecutionID: "exec-relay-1"},
 	}
 	env, err := r.egressRelayRabbitMQEnv(st, "shadow-default-rmq-test")
 	if err != nil {
@@ -61,6 +76,12 @@ func TestEgressRelayRabbitMQEnv(t *testing.T) {
 	}
 	if byName[envBeruHTTPURL] != "http://beru-local.shadow-default-rmq-test.svc.cluster.local:8080" {
 		t.Fatalf("BERU_HTTP_URL = %q", byName[envBeruHTTPURL])
+	}
+	if byName[envShadowTestName] != "rmq-test" {
+		t.Fatalf("SHADOW_TEST_NAME = %q", byName[envShadowTestName])
+	}
+	if byName[envReplayExecutionID] != "exec-relay-1" {
+		t.Fatalf("%s = %q, want exec-relay-1", envReplayExecutionID, byName[envReplayExecutionID])
 	}
 }
 
@@ -132,7 +153,8 @@ func TestEgressRelayRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
 					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
-					TargetDependency: "rabbitmq",
+					TargetDependency:     "rabbitmq",
+					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},
 			}},
 			Dependencies: []enginev1alpha1.DependencySpec{{
@@ -152,7 +174,7 @@ func TestEgressRelayRabbitMQEnv_DefaultRabbitMQPort(t *testing.T) {
 }
 
 func TestIgrisRabbitMQEnv_RecordOmitsShadowURLs(t *testing.T) {
-	r := &ShadowTestReconciler{}
+	r := testIgrisReconciler(t)
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
 		Status: enginev1alpha1.ShadowTestStatus{
@@ -165,7 +187,8 @@ func TestIgrisRabbitMQEnv_RecordOmitsShadowURLs(t *testing.T) {
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
 					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
-					TargetDependency: "rabbitmq",
+					TargetDependency:     "rabbitmq",
+					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},
 			}},
 			Dependencies: []enginev1alpha1.DependencySpec{{
@@ -174,7 +197,7 @@ func TestIgrisRabbitMQEnv_RecordOmitsShadowURLs(t *testing.T) {
 			Storage: &enginev1alpha1.StorageConfig{Type: "s3", BucketName: "b"},
 		},
 	}
-	env, err := r.igrisRabbitMQEnv(st, "shadow-default-rmq-test")
+	env, err := r.igrisRabbitMQEnv(context.Background(), st, "shadow-default-rmq-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +208,7 @@ func TestIgrisRabbitMQEnv_RecordOmitsShadowURLs(t *testing.T) {
 	if byName[envSamplePercentage] != "100" {
 		t.Fatalf("IGRIS_RMQ_SAMPLE_PERCENTAGE = %q, want default 100", byName[envSamplePercentage])
 	}
-	if byName[envProdURL] != "amqp://prod:5672" {
+	if byName[envProdURL] != "amqp://guest:guest@prod:5672" {
 		t.Fatalf("PROD_URL = %q", byName[envProdURL])
 	}
 	if byName[envShadowQueueName] != "shadow-diff-test" {
@@ -211,7 +234,8 @@ func TestIgrisRabbitMQEnv_ReplayIncludesShadowURLs(t *testing.T) {
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
 					ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
-					TargetDependency: "rabbitmq",
+					TargetDependency:     "rabbitmq",
+					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},
 			}},
 			Dependencies: []enginev1alpha1.DependencySpec{{
@@ -220,7 +244,7 @@ func TestIgrisRabbitMQEnv_ReplayIncludesShadowURLs(t *testing.T) {
 			Storage: &enginev1alpha1.StorageConfig{Type: "s3", BucketName: "b"},
 		},
 	}
-	env, err := r.igrisRabbitMQEnv(st, "shadow-default-rmq-test")
+	env, err := r.igrisRabbitMQEnv(context.Background(), st, "shadow-default-rmq-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +267,7 @@ func TestIgrisRabbitMQEnv_ReplayIncludesShadowURLs(t *testing.T) {
 }
 
 func TestIgrisRabbitMQSamplePercentageFromTopLevel(t *testing.T) {
-	r := &ShadowTestReconciler{}
+	r := testIgrisReconciler(t)
 	st := &enginev1alpha1.ShadowTest{
 		ObjectMeta: metav1.ObjectMeta{Name: "rmq-test", Namespace: "default"},
 		Spec: enginev1alpha1.ShadowTestSpec{
@@ -251,8 +275,9 @@ func TestIgrisRabbitMQSamplePercentageFromTopLevel(t *testing.T) {
 			Inputs: []enginev1alpha1.InputSpec{{
 				Driver: "rabbitmq_message",
 				AMQP: &enginev1alpha1.AMQPInputSpec{
-					ProdURL: "amqp://guest:guest@rmq-prod:5672/", Exchange: "orders", RoutingKey: "order.created",
-					TargetDependency: "rabbitmq",
+					ProdURL: "amqp://rmq-prod:5672/", Exchange: "orders", RoutingKey: "order.created",
+					TargetDependency:     "rabbitmq",
+					CredentialsSecretRef: testAMQPCredentialsRef(),
 				},
 			}},
 			Dependencies: []enginev1alpha1.DependencySpec{{
@@ -261,7 +286,7 @@ func TestIgrisRabbitMQSamplePercentageFromTopLevel(t *testing.T) {
 		},
 		Status: enginev1alpha1.ShadowTestStatus{AmqpQueueName: "shadow-diff.rmq-test"},
 	}
-	env, err := r.igrisRabbitMQEnv(st, "shadow-default-rmq-test")
+	env, err := r.igrisRabbitMQEnv(context.Background(), st, "shadow-default-rmq-test")
 	if err != nil {
 		t.Fatal(err)
 	}

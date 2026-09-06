@@ -1,0 +1,107 @@
+{{- if .Values.monarch.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "shadow-diff.monarchName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "shadow-diff.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monarch
+    app.kubernetes.io/component: controller
+    control-plane: controller-manager
+spec:
+  replicas: {{ .Values.monarch.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "shadow-diff.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/name: monarch
+      app.kubernetes.io/component: controller
+      control-plane: controller-manager
+  template:
+    metadata:
+      labels:
+        {{- include "shadow-diff.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/name: monarch
+        app.kubernetes.io/component: controller
+        control-plane: controller-manager
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+    spec:
+      serviceAccountName: {{ include "shadow-diff.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: manager
+          image: {{ include "shadow-diff.monarchImage" . }}
+          imagePullPolicy: {{ include "shadow-diff.pullPolicy" (list . .Values.monarch.image.pullPolicy) }}
+          command:
+            - /manager
+          args:
+            - --leader-elect
+            - --health-probe-bind-address=:8081
+          ports:
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+            - name: grpc
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: BERU_DB_SECRET
+              value: {{ include "shadow-diff.beruDbSecret" . | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_SERVICE_ACCOUNT
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.serviceAccountName
+            - name: MONARCH_SHADOW_WORKLOAD_CLUSTER_ROLE
+              value: {{ include "shadow-diff.shadowWorkloadClusterRole" . | quote }}
+            {{- if .Values.monarch.mode }}
+            - name: MONARCH_MODE
+              value: {{ .Values.monarch.mode | quote }}
+            {{- end }}
+            - name: IGRIS_HTTP_IMAGE
+              value: {{ include "shadow-diff.helperImage" (list . "igris-http" .Values.monarch.helperImages.igrisHttp) | quote }}
+            - name: IGRIS_RABBITMQ_IMAGE
+              value: {{ include "shadow-diff.helperImage" (list . "igris-rabbitmq" .Values.monarch.helperImages.igrisRabbitmq) | quote }}
+            - name: SHOP_IMAGE
+              value: {{ include "shadow-diff.helperImage" (list . "shop" .Values.monarch.helperImages.shop) | quote }}
+            - name: BERU_IMAGE
+              value: {{ include "shadow-diff.helperImage" (list . "beru" .Values.monarch.helperImages.beru) | quote }}
+            - name: SHADOW_SOLDIER_IMAGE
+              value: {{ include "shadow-diff.helperImage" (list . "shadow-soldier" .Values.monarch.helperImages.shadowSoldier) | quote }}
+            - name: EGRESS_RELAY_RABBITMQ_IMAGE
+              value: {{ include "shadow-diff.helperImage" (list . "egress-relay-rabbitmq" .Values.monarch.helperImages.egressRelayRabbitmq) | quote }}
+            - name: ENVOY_IMAGE
+              value: {{ .Values.monarch.helperImages.envoy | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.monarch.resources | nindent 12 }}
+{{- end }}

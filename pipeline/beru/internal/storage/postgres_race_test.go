@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shadow-diff/beru/internal/model"
 	"github.com/shadow-diff/beru/internal/roles"
-	v2storage "github.com/shadow-diff/beru/internal/v2/storage"
 )
 
 // TestPostgres_concurrentFlushSameTrace simulates two Beru pods flushing the
@@ -33,11 +33,11 @@ func TestPostgres_concurrentFlushSameTrace(t *testing.T) {
 	for i := 0; i < rounds; i++ {
 		traceID := fmt.Sprintf("race-trace-%02d", i)
 		repA := *report(traceID, roles.ControlA, "mongodb",
-			v2storage.DirectionEgress, sig, payload, "", now)
+			model.DirectionEgress, sig, payload, "", now)
 		repB := *report(traceID, roles.ControlB, "mongodb",
-			v2storage.DirectionEgress, sig, payload, "", now.Add(time.Millisecond))
+			model.DirectionEgress, sig, payload, "", now.Add(time.Millisecond))
 		repC := *report(traceID, roles.Candidate, "mongodb",
-			v2storage.DirectionEgress, sig, payload, "", now.Add(2*time.Millisecond))
+			model.DirectionEgress, sig, payload, "", now.Add(2*time.Millisecond))
 
 		start := make(chan struct{})
 		errCh := make(chan error, 2)
@@ -49,14 +49,14 @@ func TestPostgres_concurrentFlushSameTrace(t *testing.T) {
 			<-start
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			errCh <- storeA.flushReportsAndEvaluate(ctx, []v2storage.RawReport{repA}, nil, 10*time.Second)
+			errCh <- storeA.flushReportsAndEvaluate(ctx, []model.RawReport{repA}, nil, 10*time.Second)
 		}()
 		go func() {
 			defer wg.Done()
 			<-start
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			errCh <- storeB.flushReportsAndEvaluate(ctx, []v2storage.RawReport{repB, repC}, nil, 10*time.Second)
+			errCh <- storeB.flushReportsAndEvaluate(ctx, []model.RawReport{repB, repC}, nil, 10*time.Second)
 		}()
 
 		close(start)
@@ -90,7 +90,7 @@ func TestPostgres_concurrentFlushSameTrace(t *testing.T) {
 		if err != nil {
 			t.Fatalf("round %d GetVerdict: %v", i, err)
 		}
-		if verdict == nil || verdict.Status != v2storage.StatusMatch {
+		if verdict == nil || verdict.Status != model.StatusMatch {
 			t.Fatalf("round %d verdict = %+v, want MATCH", i, verdict)
 		}
 	}

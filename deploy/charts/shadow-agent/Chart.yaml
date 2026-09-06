@@ -1,0 +1,13 @@
+apiVersion: v2
+name: shadow-agent
+description: Kaisel eBPF HTTP capture DaemonSet for Shadow-Diff
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - shadow-diff
+  - kaisel
+  - ebpf
+home: https://github.com/shadow-diff/monarch
+maintainers:
+  - name: shadow-diff

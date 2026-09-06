@@ -1,8 +1,9 @@
-# Build context must be pipeline/ (parent of tusk/) so replace ../pkg/monarchpb resolves.
+# Build context must be pipeline/ (parent of tusk/) so replace ../pkg/{monarchpb,shadowspec} resolve.
 #   make docker-build  →  docker build -f Dockerfile -t … ..
 FROM golang:1.26-alpine AS builder
 WORKDIR /src
 COPY pkg/monarchpb /src/pkg/monarchpb
+COPY pkg/shadowspec /src/pkg/shadowspec
 COPY tusk/go.mod tusk/go.sum /src/tusk/
 WORKDIR /src/tusk
 RUN go mod download

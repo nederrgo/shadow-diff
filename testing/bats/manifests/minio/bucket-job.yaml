@@ -1,5 +1,5 @@
 # One-shot Job: create bucket shadow-diff-local on the local MinIO fixture.
-# Applied by testing/tools/e2e-reset-minikube.sh (not by Monarch).
+# Applied by testing/tools/e2e-reset-kind.sh (not by Monarch).
 apiVersion: batch/v1
 kind: Job
 metadata:

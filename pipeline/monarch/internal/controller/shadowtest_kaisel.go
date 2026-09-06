@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -17,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
+	"github.com/shadow-diff/shadowspec"
 )
 
 const (
@@ -43,7 +43,7 @@ func httpIngressCaptureEnabled(st *enginev1alpha1.ShadowTest, target *appsv1.Dep
 	svcPort := servicePortFor(st)
 	for _, in := range resolvedInputs(st) {
 		d := strings.TrimSpace(strings.ToLower(in.Driver))
-		if d != "http_request" {
+		if d != shadowspec.DriverHTTPRequest {
 			continue
 		}
 		if targetPorts[in.Port] || in.Port == appPort || in.Port == svcPort {
@@ -87,7 +87,7 @@ func kaiselIngressPorts(st *enginev1alpha1.ShadowTest) []int32 {
 	seen := map[int32]bool{}
 	for _, in := range resolvedInputs(st) {
 		d := strings.TrimSpace(strings.ToLower(in.Driver))
-		if d != "http_request" {
+		if d != shadowspec.DriverHTTPRequest {
 			continue
 		}
 		if in.Port <= 0 || seen[in.Port] {
@@ -146,36 +146,20 @@ func kaiselEgressBaseURL(shadowNS string) string {
 }
 
 // reconcileKaiselRule creates or updates a KaiselRule whose targetIPs are the
-// live, Running pod IPs for the target Deployment. Only pods that are Running,
-// have a non-empty PodIP, and have no DeletionTimestamp are included.
+// live, Running pod IPs owned by the target Deployment via ReplicaSet
+// ownerReferences. Only pods that are Running, have a non-empty PodIP, and
+// have no DeletionTimestamp are included.
 func (r *ShadowTestReconciler) reconcileKaiselRule(
 	ctx context.Context,
 	st *enginev1alpha1.ShadowTest,
 	shadowNS string,
 	target *appsv1.Deployment,
 ) error {
-	var podList corev1.PodList
-	if err := r.List(ctx, &podList,
-		client.InNamespace(targetNamespaceFor(st)),
-		client.MatchingLabels(target.Spec.Template.Labels),
-	); err != nil {
+	pods, err := r.listPodsOwnedByDeployment(ctx, targetNamespaceFor(st), target)
+	if err != nil {
 		return fmt.Errorf("list target pods: %w", err)
 	}
-
-	var ips []string
-	for _, pod := range podList.Items {
-		if pod.DeletionTimestamp != nil {
-			continue
-		}
-		if pod.Status.Phase != corev1.PodRunning {
-			continue
-		}
-		if pod.Status.PodIP == "" {
-			continue
-		}
-		ips = append(ips, pod.Status.PodIP)
-	}
-	sort.Strings(ips)
+	ips := runningPodIPs(pods)
 
 	ports := int32ToUint16Ports(kaiselIngressPorts(st))
 	igrisURL := kaiselIgrisBaseURL(st)
@@ -201,7 +185,7 @@ func (r *ShadowTestReconciler) reconcileKaiselRule(
 			Name:      kaiselRuleName(st),
 		},
 	}
-	_, err := ctrl.CreateOrPatch(ctx, r.Client, rule, func() error {
+	_, err = ctrl.CreateOrPatch(ctx, r.Client, rule, func() error {
 		rule.Labels = map[string]string{
 			labelManagedBy:      valueManagedBy,
 			labelShadowTestName: st.Name,

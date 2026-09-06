@@ -29,11 +29,16 @@ func replayAdminURL(st *enginev1alpha1.ShadowTest, shadowNS string) string {
 }
 
 func replayWorkloadNames(st *enginev1alpha1.ShadowTest) []string {
-	names := []string{shopServiceName()}
+	// beru-local / egress-relay first: REPLAY_EXECUTION_ID env rolls must finish
+	// before traffic so Firehose capture is subscribed before ABC publish.
+	names := []string{localBeruName, shopServiceName()}
 	if needsAMQPIngress(st) {
 		names = append(names, igrisRabbitMQDeploymentName(st))
 	} else {
 		names = append(names, igrisDeploymentName(st))
+	}
+	if needsEgressRelayRabbitMQ(st) {
+		names = append(names, egressRelayRabbitMQDeploymentName(st))
 	}
 	names = append(names,
 		shadowDeploymentName(st, roleControlA),
@@ -43,7 +48,7 @@ func replayWorkloadNames(st *enginev1alpha1.ShadowTest) []string {
 	return names
 }
 
-// deploymentsRollReady reports ReadyReplicas > 0 and UpdatedReplicas == Replicas.
+// deploymentsRollReady reports ReadyReplicas >= desired and UpdatedReplicas == Replicas.
 func (r *ShadowTestReconciler) deploymentsRollReady(
 	ctx context.Context,
 	shadowNS string,
@@ -61,7 +66,7 @@ func (r *ShadowTestReconciler) deploymentsRollReady(
 		if replicas < 1 {
 			replicas = 1
 		}
-		if deploy.Status.ReadyReplicas < 1 {
+		if deploy.Status.ReadyReplicas < replicas {
 			return false, nil
 		}
 		if deploy.Status.UpdatedReplicas != deploy.Status.Replicas || deploy.Status.Replicas < replicas {

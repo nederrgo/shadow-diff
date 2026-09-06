@@ -1,0 +1,130 @@
+# Default values for shadow-diff.
+
+global:
+  imageRegistry: ghcr.io/shadow-diff
+  imageTag: latest
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# BYOB S3 credentials used by ShadowTest specs (credentialsSecretRef).
+aws:
+  region: us-east-1
+  s3Bucket: ""
+  createSecret: true
+  accessKeyId: ""
+  secretAccessKey: ""
+  existingSecret: shadow-diff-s3
+
+# Shared Postgres for beru-local (via BERU_DB_SECRET) and Tusk ShadowDiff APIs.
+postgres:
+  createSecret: false
+  existingSecret: beru-postgres
+  host: ""
+  port: "5432"
+  user: ""
+  password: ""
+  name: ""
+  sslMode: require
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+monarch:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: monarch
+    tag: ""
+    pullPolicy: ""
+  # empty | dev — sets MONARCH_MODE for helper image tag suffix when env overrides unset
+  mode: ""
+  # namespace/secret consumed by Monarch and replicated into each shadow namespace.
+  # Empty → "<release-namespace>/<postgres.existingSecret or created secret>"
+  beruDbSecret: ""
+  # Namespaces where the manager may Get storage.credentialsSecretRef and
+  # AMQP inputs[].amqp.credentialsSecretRef.
+  # ShadowTests in other namespaces fail secret sync. Listed namespaces must exist.
+  secretSourceNamespaces:
+    - default
+  rbac:
+    create: true
+  # Images Monarch injects into shadow stacks (full refs; empty → global registry defaults).
+  helperImages:
+    igrisHttp: ""
+    igrisRabbitmq: ""
+    shop: ""
+    beru: ""
+    shadowSoldier: ""
+    egressRelayRabbitmq: ""
+    envoy: "envoyproxy/envoy:v1.30-latest"
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  service:
+    type: ClusterIP
+    port: 9090
+
+tusk:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: tusk
+    tag: ""
+    pullPolicy: ""
+  # Empty → "<fullname>-monarch-status-grpc.<namespace>.svc.cluster.local:9090"
+  monarchGrpcAddr: ""
+  httpAddr: ":8082"
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+  service:
+    type: ClusterIP
+    port: 8082
+
+theSystem:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: the-system
+    tag: ""
+    pullPolicy: ""
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+  service:
+    type: ClusterIP
+    port: 80
+
+ingress:
+  enabled: false
+  # nginx | alb
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: shadow-diff.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # Extra ALB annotations applied when className is alb (merged under annotations).
+  alb:
+    scheme: internet-facing
+    targetType: ip
+    listenPorts: '[{"HTTP": 80}]'

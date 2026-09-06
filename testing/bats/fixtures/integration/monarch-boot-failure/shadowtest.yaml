@@ -12,7 +12,9 @@ spec:
   inputs:
     - driver: rabbitmq_message
       amqp:
-        prodUrl: amqp://guest:guest@rmq-prod-broker.default.svc.cluster.local:5672/
+        prodUrl: amqp://rmq-prod-broker.default.svc.cluster.local:5672/
+        credentialsSecretRef:
+          name: rmq-prod-creds
         exchange: orders
         routingKey: order.created
         targetDependency: rabbitmq

@@ -6,7 +6,7 @@
 # traffic first, then patch mode=replay mid-test and assert against A/B/C.
 #
 # Requirements:
-#   - Cluster with docker/kind/minikube image load
+#   - Kind cluster with host docker + kind load
 #   - make test-bats-kaisel  (or SKIP_BUILD=1 SKIP_LOAD=1 when images are warm)
 
 load '../../test_helper'

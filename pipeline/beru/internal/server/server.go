@@ -4,16 +4,18 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/shadow-diff/beru/internal/engine"
+	"github.com/shadow-diff/beru/internal/report"
 	beruv1 "github.com/shadow-diff/beru/pkg/api/beru/v1"
-	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
-	v2report "github.com/shadow-diff/beru/internal/v2/report"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TrafficReporter implements the Beru TrafficReporter gRPC service.
 type TrafficReporter struct {
 	beruv1.UnimplementedTrafficReporterServer
-	Log              *slog.Logger
-	Router           *v2engine.TraceRouter
+	Log               *slog.Logger
+	Router            *engine.TraceRouter
 	DefaultShadowTest string
 }
 
@@ -22,8 +24,10 @@ func (s *TrafficReporter) ReportTraffic(ctx context.Context, req *beruv1.ReportT
 		return &beruv1.ReportTrafficResponse{}, nil
 	}
 	if s.Router != nil {
-		if raw, err := v2report.FromTrafficReport(req.Report, s.DefaultShadowTest); err == nil {
-			s.Router.Route(raw)
+		if raw, err := report.FromTrafficReport(req.Report, s.DefaultShadowTest); err == nil {
+			if err := s.Router.Route(raw); err != nil {
+				return nil, status.Errorf(codes.Unavailable, "wal append: %v", err)
+			}
 		}
 	}
 	return &beruv1.ReportTrafficResponse{}, nil

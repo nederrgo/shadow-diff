@@ -7,9 +7,10 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"github.com/shadow-diff/beruclient"
 	"github.com/shadow-diff/shop/internal/beru"
 	"github.com/shadow-diff/shop/internal/replay"
-	"github.com/shadow-diff/shop/internal/trace"
+	"github.com/shadow-diff/trace"
 )
 
 const (
@@ -99,7 +100,7 @@ func (s *Server) maybeReportEgress(state *egressState, status int) {
 		slog.Warn("shop beru report: marshal payload", "err", err)
 		return
 	}
-	report := beru.Report{
+	report := beruclient.Report{
 		TraceID:        state.traceID,
 		Workload:       state.role,
 		Protocol:       "http",

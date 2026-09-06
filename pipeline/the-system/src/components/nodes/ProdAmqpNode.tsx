@@ -1,0 +1,15 @@
+import { MessagesSquare } from 'lucide-react'
+import type { NodeProps } from '@xyflow/react'
+import { BaseTopologyNode } from './BaseTopologyNode'
+import type { TopologyNodeData } from '@/types/topology'
+
+export function ProdAmqpNode(props: NodeProps) {
+  return (
+    <BaseTopologyNode
+      {...props}
+      data={props.data as TopologyNodeData}
+      icon={MessagesSquare}
+      accent="text-amber-400"
+    />
+  )
+}

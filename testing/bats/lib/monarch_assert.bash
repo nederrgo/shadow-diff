@@ -267,7 +267,7 @@ monarch_shadow_app_pod_uids() {
 }
 
 # Assert the app container env on the shadow Deployment for $role contains $env_name
-# with a value that includes $want_substr (e.g. mongodb-control-a).
+# with a value that includes $want_substr (e.g. 127.0.0.1 for soldier-proxied Mongo).
 monarch_assert_shadow_app_env() {
   local shadow_ns="$1" shadowtest="$2" role="$3" env_name="$4" want_substr="$5"
   local deploy env_val
@@ -291,6 +291,20 @@ monarch_assert_shadow_app_env() {
     return 1
   }
   echo "    ${deploy} ${env_name}=${env_val}"
+}
+
+# Assert the shadow role Deployment includes the shadow-soldier sidecar.
+monarch_assert_shadow_has_soldier() {
+  local shadow_ns="$1" shadowtest="$2" role="$3"
+  local deploy names
+  deploy="${shadowtest}-${role}"
+  names=$(kubectl get deployment "$deploy" -n "$shadow_ns" \
+    -o jsonpath='{.spec.template.spec.containers[*].name}' 2>/dev/null || true)
+  [[ "$names" == *shadow-soldier* ]] || {
+    echo "FAIL: ${deploy} containers=[${names}], want shadow-soldier" >&2
+    return 1
+  }
+  echo "    ${deploy} has shadow-soldier"
 }
 
 # Print pod table and describe any non-Running pod. Called on failure for context.

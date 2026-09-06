@@ -27,9 +27,20 @@ MONARCH_TARGETS := all help manifests generate fmt vet test setup-test-e2e test-
 	install uninstall deploy undeploy kustomize controller-gen setup-envtest envtest golangci-lint \
 	beru-docker-build beru-docker-push beru-proto
 
-.PHONY: $(MONARCH_TARGETS) test-all
+.PHONY: $(MONARCH_TARGETS) fmt-check test-all
 $(MONARCH_TARGETS):
 	@$(MAKE) -C $(MONARCH_DIR) $(MAKECMDGOALS) IMG=$(IMG) BERU_IMG=$(BERU_IMG)
+
+fmt-check: ## Check that all repository-owned Go files are formatted.
+	@unformatted="$$(git ls-files --cached --others --exclude-standard -- '*.go' | \
+		while IFS= read -r file; do \
+			if [ -f "$$file" ]; then gofmt -l "$$file"; fi; \
+		done)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "Go files need gofmt:"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
 
 .PHONY: beru-test beru-build igris-test igris-build igris-docker-build \
 	kaisel-test kaisel-build kaisel-docker-build kaisel-generate kaisel-verify-generate \
@@ -151,7 +162,7 @@ test-all: ## Run Monarch, Beru, Shop, Igris, kaisel, igris-rabbitmq, egress-rela
 	@$(MAKE) -C $(EGRESS_RELAY_RABBITMQ_DIR) test
 	@$(MAKE) -C $(SHADOW_SOLDIER_DIR) test
 	@$(MAKE) -C $(TUSK_DIR) test
-.PHONY: test-bats test-bats-integration test-bats-e2e test-bats-kaisel test-bats-record
+.PHONY: test-bats test-bats-integration test-bats-e2e test-bats-e2e-smoke test-bats-kaisel test-bats-kaisel-kind test-bats-record test-stress
 test-bats-integration: ## Bats integration suite (one ShadowTest per .bats file).
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh integration
@@ -160,17 +171,30 @@ test-bats-e2e: ## Bats E2E suite (shared env per file, multi-@test).
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh e2e
 
+test-bats-e2e-smoke: ## Kind E2E smoke: Python HTTP-otel + Python RMQ hybrid only.
+	@chmod +x testing/bats/run-one.sh
+	@./testing/bats/run-one.sh e2e/http-ingress/http_otel_rmq_python.bats
+	@./testing/bats/run-one.sh e2e/rabbitmq-ingress/python_hybrid.bats
+
 test-bats-kaisel: ## Kaisel eBPF capture E2E test (requires root + cluster + pipeline/kaisel/bin/kaisel).
 	@chmod +x testing/bats/run-one.sh
 	@./testing/bats/run-one.sh e2e/kaisel-capture/kaisel_capture.bats
 
-test-bats-record: ## Record-mode S3 capture E2E (MinIO + Kaisel; not in test-bats-e2e until fixtures gain storage).
+test-bats-kaisel-kind: ## Kind Kaisel smoke (pod↔pod, pod→httpbin, host→NodePort).
+	@chmod +x testing/bats/run-one.sh
+	@./testing/bats/run-one.sh e2e/kaisel-kind-smoke/kaisel_kind_smoke.bats
+
+test-bats-record: ## Record-mode S3 capture E2E (also included in test-bats-e2e).
 	@chmod +x testing/bats/run-one.sh
 	@./testing/bats/run-one.sh e2e/record/record_http.bats
 
 test-bats: ## Run all Bats integration + E2E suites.
 	@chmod +x testing/bats/run.sh
 	@./testing/bats/run.sh all
+
+test-stress: ## Standalone stress suite (requires ready cluster; see testing/stress/README.md).
+	@chmod +x testing/stress/run_stress_test.sh testing/stress/verifiers/check_ebpf_drops.sh
+	@./testing/stress/run_stress_test.sh
 
 # Run one .bats file or filtered @test. Examples:
 #   make test-bats-one FILE=e2e/rabbitmq-ingress/python_hybrid.bats

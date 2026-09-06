@@ -1,5 +1,8 @@
 #!/usr/bin/env bats
-# E2E: Node.js hybrid — RMQ ingress + Mongo + HTTP; record→S3→replay A/B/C.
+# E2E: Node.js hybrid — RMQ ingress + Mongo + HTTP; record→S3→replay; Postgres verdicts.
+#
+# Ordering: record @test pins one trace and switches to replay once; replay @tests
+# reuse that trace (do not run replay @tests alone with -f).
 
 load '../../test_helper'
 
@@ -47,54 +50,46 @@ setup_file() {
   bats_write_suite_state
 }
 
-_hybrid_record_then_replay() {
+@test "record: RMQ ingress + HTTP egress flush to MinIO (nodejs)" {
   run kaisel_ensure_record_mode
   assert_success
   publish_rmq_order "$BATS_TRACE_ID" "$BATS_ORDER_ID"
   if ! wait_kaisel_egress_seed; then
     skip "Kaisel egress seed not available"
   fi
+  run e2e_assert_session_objects both 60
+  assert_success
+  bats_pin_suite_trace "$BATS_TRACE_ID" "$BATS_ORDER_ID"
   run kaisel_switch_to_replay both
   assert_success
 }
 
-@test "verify HTTP ingress reaches all shadow roles (nodejs)" {
-  _hybrid_record_then_replay
+@test "replay: HTTP egress reaches all shadow roles (nodejs)" {
+  bats_load_suite_state
+  bats_use_suite_trace
+  bats_assert_replay_mode
   for role in control-a control-b candidate; do
     run assert_worker_http_replay "$role" "$BATS_ORDER_ID"
     assert_success
   done
 }
 
-@test "verify RabbitMQ egress count regression (nodejs)" {
-  _hybrid_record_then_replay
-  for role in control-a control-b candidate; do
-    run assert_worker_processed_order "$role" "$BATS_ORDER_ID"
-    assert_success
-  done
-
-  run beru_wait_log --grep="$(beru_log_egress_count_regression "$BATS_TRACE_ID" rabbitmq)" --timeout=120
+@test "replay: RabbitMQ egress count regression in Postgres (nodejs)" {
+  bats_load_suite_state
+  bats_use_suite_trace
+  bats_assert_replay_mode
+  run beru_wait_verdict_settled "$BATS_TRACE_ID" rabbitmq \
+    --expect-status=MISMATCH --expect-count-regression=1 --timeout=120
   assert_success
 }
 
-@test "verify MongoDB egress is captured for all three roles (nodejs)" {
-  _hybrid_record_then_replay
-  # shadow-soldier proxies each role's Mongo connection and reports the command
-  # document; the worker embeds the traceparent in the BSON comment field.
-  run wait_mongodb_egress_reports "$BATS_TRACE_ID" 120
-  assert_success
-}
-
-@test "verify MongoDB egress count regression (nodejs)" {
-  _hybrid_record_then_replay
-  for role in control-a control-b candidate; do
-    run assert_worker_processed_order "$role" "$BATS_ORDER_ID"
-    assert_success
-  done
-  # candidate unconditionally inserts a second "candidate_n1_loop" document per
-  # order — this worker's Mongo egress never diffs clean, unlike the isolated-
-  # trace assertion used for the http-otel-rmq suites.
-  run beru_wait_log --grep="$(beru_log_egress_count_regression "$BATS_TRACE_ID" mongodb)" --timeout=120
+@test "replay: MongoDB egress count regression in Postgres (nodejs)" {
+  bats_load_suite_state
+  bats_use_suite_trace
+  bats_assert_replay_mode
+  # candidate unconditionally inserts a second "candidate_n1_loop" document per order.
+  run beru_wait_verdict_settled "$BATS_TRACE_ID" mongodb \
+    --expect-status=MISMATCH --expect-count-regression=1 --timeout=120
   assert_success
 }
 

@@ -1,10 +1,10 @@
 ---
 type: Architecture Specification
 title: Hybrid RMQ E2E Test Flow
-description: End-to-end data and assertion flow for Node.js and Python hybrid bats suites — RMQ ingress, Kaisel HTTP record/replay, RabbitMQ and MongoDB egress regressions, plus RMQ+Shop sampling.
+description: End-to-end record→replay flow for Node.js and Python hybrid bats suites — MinIO capture, CR mode switch, Postgres-backed RMQ/Mongo count regressions, plus RMQ+Shop sampling.
 resource: https://github.com/shadow-diff/monarch/tree/main/testing/bats/e2e/rabbitmq-ingress
-tags: [verification, e2e, bats, hybrid, rabbitmq, kaisel, shop, shadow-soldier, mongodb, sampling]
-timestamp: 2026-07-30T13:30:00Z
+tags: [verification, e2e, bats, hybrid, rabbitmq, kaisel, shop, shadow-soldier, mongodb, sampling, postgres, record-replay]
+timestamp: 2026-08-03T08:50:00Z
 ---
 
 # Hybrid RMQ E2E Test Flow
@@ -99,34 +99,23 @@ HTTP capture uses the dual-branch egress PxL (client `trace_role==1` + server `t
 
 ## What each `@test` asserts
 
-### 1. HTTP ingress reaches all shadow roles
+One ShadowTest CR per file. Record-phase tests stay in `mode: record`; replay-phase tests call `_hybrid_record_then_replay` (ensure record → publish → Kaisel egress seed → `kaisel_switch_to_replay both`).
 
-Misleading name historically — this is **RMQ ingress + HTTP replay**, not HTTP ingress via igris-http.
+### Record: RMQ ingress + HTTP egress flush to MinIO
 
-1. `publish_rmq_order`
-2. `wait_kaisel_egress_seed` (skip if the egress seed is not observed)
-3. For control-a, control-b, candidate: `assert_worker_http_replay`  
-   - log contains `order_id=…`  
-   - log contains `http egress via=replay status=200`
+`publish_rmq_order` + `wait_kaisel_egress_seed`, then `e2e_assert_session_objects both` under `sessions/<currentSessionID>/{ingress,egress}/`.
 
-### 2. RabbitMQ egress count regression
+### Replay: HTTP egress reaches all shadow roles
 
-Same publish/seed/process path; wait Beru log for RabbitMQ egress count regression. Candidate double-publishes on `egress-events` / `order.shipped`.
+RMQ ingress + HTTP Shop replay (not igris-http). For control-a/b/candidate: `assert_worker_http_replay` (`order_id=…`, `http egress via=replay status=200`).
 
-### 3. MongoDB egress is captured for all three roles
+### Replay: RabbitMQ egress count regression in Postgres
 
-shadow-soldier proxies each role's Mongo connection and reports the decoded
-command document to beru-local; the worker embeds the traceparent in the BSON
-`$comment` field. `wait_mongodb_egress_reports` polls until all three roles
-have a matching egress report for the trace.
+Same path; `beru_wait_verdict_settled … rabbitmq --expect-status=MISMATCH --expect-count-regression=1`. Candidate double-publishes on `egress-events` / `order.shipped`.
 
-### 4. MongoDB egress count regression
+### Replay: MongoDB egress count regression in Postgres
 
-Same publish/seed/process path; wait Beru log for Mongo **egress count
-regression**. Candidate unconditionally inserts a second `candidate_n1_loop`
-document per order (both language workers); controls insert one — the
-noise-filtered diff-of-diffs flags the count gap on every trace, not just a
-specific one, so this suite asserts the regression rather than a clean trace.
+Same path; `beru_wait_verdict_settled … mongodb --expect-status=MISMATCH --expect-count-regression=1`. Candidate inserts a second `candidate_n1_loop` document per order.
 
 ---
 
@@ -141,10 +130,10 @@ Prod still consumes and egresses every published order; absence asserts cover sh
 
 | Golden trace ID | V | At 10% | Expect |
 |-----------------|---|--------|--------|
-| `00000000000000000000000000000087` | `0` | keep | Kaisel `egress recorded` with `trace:<id>:…`; all three roles `assert_worker_http_replay` |
+| `00000000000000000000000000000087` | `0` | keep | MinIO ingress+egress; Shop seed; roles `assert_worker_http_replay`; HTTP egress `MATCH` in Postgres |
 | `000000000000000000000000000000f9` | `26` | drop | No shadow `order_id` / trace hex; no Kaisel `egress recorded` for `trace:<id>:` |
 
-Beru regression asserts are omitted here — covered by the non-sampling hybrid suites.
+Intentional RMQ/Mongo count regressions are covered by the non-sampling hybrid suites via `beru_wait_verdict_settled`.
 
 ---
 
@@ -152,10 +141,10 @@ Beru regression asserts are omitted here — covered by the non-sampling hybrid 
 
 | Signal | Where |
 |--------|--------|
-| Prod HTTP recorded | Prod worker: `http egress via=record status=200` |
-| Shop seeded | Kaisel: `egress recorded ... hash=trace:<id>:POST:<host>:/v1/log` |
+| Session objects | MinIO `e2e_assert_session_objects` / `minio_wait_objects` |
+| Shop seeded | Kaisel: `egress recorded ... hash=trace:<id>:…` |
 | Shadow HTTP replay | Shadow app: `http egress via=replay status=200` |
-| Mongo / RMQ regression | beru-local logs + `/api` verdict helpers in bats |
+| Mongo / RMQ / HTTP verdicts | `beru_wait_verdict_settled` → beru-local `GET /api/v1/traces/…` (Postgres) |
 
 ---
 

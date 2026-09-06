@@ -11,7 +11,7 @@ test:
 	go test ./...
 
 docker-build:
-	docker build -t $(SHADOW_SOLDIER_IMG) .
+	docker build -f Dockerfile -t $(SHADOW_SOLDIER_IMG) ..
 
 run: build
 	./bin/shadow-soldier

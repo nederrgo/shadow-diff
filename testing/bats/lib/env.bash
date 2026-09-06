@@ -30,8 +30,6 @@ bats_init_env() {
   export EGRESS_RELAY_RABBITMQ_IMG="${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:dev}"
   export MONGO_IMAGE="${MONGO_IMAGE:-mongo:4.4}"
 
-  export MINIKUBE_DRIVER="${MINIKUBE_DRIVER:-kvm2}"
-  export MINIKUBE_CNI="${MINIKUBE_CNI:-flannel}"
   export SHADOWTEST_NS="${SHADOWTEST_NS:-default}"
   export BERU_QUIESCENCE_SEC="${BERU_QUIESCENCE_SEC:-5}"
   export BATS_ISOLATE_MODE="${BATS_ISOLATE_MODE:-trace}"
@@ -41,6 +39,8 @@ bats_init_env() {
   export SKIP_PLATFORM_BOOTSTRAP="${SKIP_PLATFORM_BOOTSTRAP:-0}"
   # When 1, teardown_file / run.sh EXIT trap leave ShadowTest + beru-local up for UI inspection.
   export BATS_KEEP="${BATS_KEEP:-0}"
+  # When 1, still tear down the CR / ns but leave Postgres projection rows for ShadowDiff.
+  export BATS_KEEP_POSTGRES="${BATS_KEEP_POSTGRES:-0}"
 }
 
 # Stable ShadowTest name per .bats file (set in setup_file).

@@ -16,15 +16,16 @@ func ToStatusUpdate(st *enginev1alpha1.ShadowTest) *monarchpb.ShadowTestStatusUp
 	}
 	c := st.Status.Components
 	return &monarchpb.ShadowTestStatusUpdate{
-		TestName:         st.Name,
-		Namespace:        st.Namespace,
-		Phase:            toPhase(st.Status.Phase),
-		BootStep:         toBootStep(st.Status.BootStep),
-		CurrentSessionId: st.Status.CurrentSessionID,
-		ReplayState:      st.Status.ReplayState,
-		Mode:             toMode(st.OperatingMode()),
-		Message:          st.Status.Message,
-		KaiselPhase:      toCapturePhase(st.Status.KaiselPhase),
+		TestName:                 st.Name,
+		Namespace:                st.Namespace,
+		Phase:                    toPhase(st.Status.Phase),
+		BootStep:                 toBootStep(st.Status.BootStep),
+		CurrentSessionId:         st.Status.CurrentSessionID,
+		CurrentReplayExecutionId: st.Status.CurrentReplayExecutionID,
+		ReplayState:              st.Status.ReplayState,
+		Mode:                     toMode(st.OperatingMode()),
+		Message:                  st.Status.Message,
+		KaiselPhase:              toCapturePhase(st.Status.KaiselPhase),
 		Components: &monarchpb.ComponentStatus{
 			IgrisReady:       c.IgrisReady,
 			ShopReady:        c.ShopReady,
@@ -33,6 +34,7 @@ func ToStatusUpdate(st *enginev1alpha1.ShadowTest) *monarchpb.ShadowTestStatusUp
 			AmqpBound:        c.AMQPBound,
 			ShadowRolesReady: c.ShadowRolesReady,
 			TargetDeployment: c.TargetDeployment,
+			IngressDrivers:   c.IngressDrivers,
 		},
 	}
 }

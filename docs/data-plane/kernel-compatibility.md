@@ -155,14 +155,14 @@ traffic of a Tier 1 node at the same rate. Raise `-percpu-buffer` if `lost` appe
 
 | | Coverage |
 | --- | --- |
-| Tier 1 program | 15 gate tests + `TestGateAgreesWithPkgSample` (`BPF_PROG_TEST_RUN`), plus cluster E2E on minikube 6.6 via `make test-bats-kaisel` |
+| Tier 1 program | 15 gate tests + `TestGateAgreesWithPkgSample` (`BPF_PROG_TEST_RUN`), plus cluster E2E on Kind via `make test-bats-kaisel` |
 | Tier 2 object | `TestNoGateObjectLoads`, `TestNoGatePassesEverything`, `TestNoGateKeepsFlowFilters` — verifies, passes what Tier 1 gates, keeps every flow filter |
 | Tier selection | `TestPrefersGateWhenAvailable` and `TestFallsBackWhenGateRejected`, the latter through a test seam on the candidate list |
 | Tier 3 refusal | `TestRefusesWhenNoTierLoads` |
 
-**No pre-5.17 node has run this.** The development host is 6.18 and the E2E minikube is 6.6, so
+**No pre-5.17 node has run this.** The development host is 6.18 and local E2E runs on Kind, so
 Tier 1 is the only tier exercised on real traffic. The fallback path is proven by forcing the gated
-candidate to fail, not by meeting a kernel that rejects it.
+candidate to fail, not by meeting a kernel that rejects it. See [/infrastructure/minikube-to-kind-migration.md](/infrastructure/minikube-to-kind-migration.md) for cluster bootstrap details.
 
 # Citations
 

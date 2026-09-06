@@ -4,7 +4,7 @@ title: Beru Storage Backends
 description: Beru's Postgres-only persistence behind RunStore and TraceRepository, the Bbolt disk WAL with claimed parallel flushers, advisory-locked evaluate, and 3-retry dead-lettering.
 resource: https://github.com/shadow-diff/monarch/tree/main/pipeline/beru/internal/storage
 tags: [data-plane, beru, storage, postgres, wal, persistence, networking]
-timestamp: 2026-08-02T10:55:00Z
+timestamp: 2026-08-20T20:45:00Z
 ---
 
 # Beru Storage Backends
@@ -13,14 +13,14 @@ Beru persists behind two interfaces. Both are satisfied by `*storage.WALStore`, 
 
 | Interface | Owns | Consumers |
 | --- | --- | --- |
-| `v2/storage.TraceRepository` | `raw_reports`, `verdicts` | WAL flusher, slim HTTP traces API, reaper |
+| `model.TraceRepository` | `raw_reports`, `verdicts` | WAL flusher, slim HTTP traces API, reaper |
 | `storage.RunStore` | `shadow_tests`, `noise_filters` | TraceRouter, seed/ingest HTTP |
 
 PostgreSQL is the sole database engine. Missing `DB_HOST` / `DB_USER` / `DB_NAME` fails boot. There is no SQLite path.
 
 ## Ingest path and disk WAL
 
-HTTP/gRPC ingest hits `TraceRouter`, which only calls `AppendReport`. That appends a record to a Bbolt WAL at `/data/beru_wal.db` (`BERU_WAL_PATH` override) and returns immediately — handlers never wait on Postgres.
+HTTP/gRPC ingest hits `TraceRouter.Route`, which calls `AppendReport` on the accept goroutine. That appends a record to a Bbolt WAL at `/data/beru_wal.db` (`BERU_WAL_PATH` override) before the handler returns success (**202** / gRPC OK). Handlers wait on the local WAL, never on Postgres; WAL append failure returns **503** / `Unavailable` (ext_proc still CONTINUE and logs). Postgres flush stays async via WAL kick.
 
 A single-threaded dispatcher owns an `inFlightTraces` map:
 
@@ -29,7 +29,9 @@ A single-threaded dispatcher owns an `inFlightTraces` map:
 3. Skip traces that are inflight or before `nextRetryAt`.
 4. Non-blocking enqueue onto one of **8** sticky FNV-hashed worker channels; claim only after a successful send.
 
-Workers run `BEGIN` → `SELECT pg_advisory_xact_lock(hashtext(trace_id))` → insert reports → evaluate → upsert verdicts + UI projection → `COMMIT`, then delete exact WAL keys. On failure, keys stay on disk, `RetryCount` is bumped, and the dispatcher applies exponential backoff (`100ms` → `500ms` → `1s`, capped at `5s`).
+Workers run `BEGIN` → `SELECT pg_advisory_xact_lock(hashtext(replay_execution_id || ':' || trace_id))` → insert reports (with `ingest_id` from WAL seq; `ON CONFLICT DO NOTHING` on retry) → evaluate → upsert verdicts + UI projection → `COMMIT`, then delete exact WAL keys. A projection or `NOTIFY` error aborts the transaction (nothing persisted); WAL keys stay on disk, `RetryCount` is bumped, and the dispatcher applies exponential backoff (`100ms` → `500ms` → `1s`, capped at `5s`).
+
+Flush retries reuse the same Bbolt key bytes as `ingest_id`, so a Postgres commit followed by a failed WAL delete cannot duplicate `raw_reports` rows. The flusher still reloads the full trace history and re-diff on every attempt.
 
 After **3** consecutive failures for a batch, Beru appends a JSON line to `/data/dead_letters.jsonl` (`BERU_DEAD_LETTER_PATH`), deletes the WAL keys, and logs an error so a poison payload cannot block the pipeline.
 
@@ -43,11 +45,12 @@ Every ShadowTest gets a `beru-local` pod in the shadow namespace.
 
 | Step | Where |
 | --- | --- |
-| `BERU_DB_SECRET` on the manager names the Secret (`namespace/name` or bare name in `monarch-system`) | `beruDBSecretRef`, `shadowtest_beru_db.go` |
+| `BERU_DB_SECRET` on the manager names the Secret (`namespace/name` or bare name in `monarch-system`). Unset or malformed fails the ShadowTest | `beruDBSecretRef`, `shadowtest_beru_db.go` |
+| Manager SA `get`s that Secret via a namespaced Role (`resourceNames`); no cluster-wide Secret list/watch | `beru_db_secret_role.yaml`, `cmd/main.go` `DisableFor` Secrets |
 | Monarch replicates that Secret into `shadow-<ns>-<name>` on each reconcile | `syncBeruDBSecret` |
 | beru-local mounts it via `envFrom` and always mounts a disk EmptyDir at `/data` for the WAL + DLQ | `localBeruPodSpec` |
 
-`envFrom` passes through whatever keys the Secret holds. Monarch sets `SESSION_ID`, `SHADOW_NAMESPACE`, and `SHADOW_MODE` directly on the pod.
+`envFrom` passes through whatever keys the Secret holds. Monarch sets `SESSION_ID`, `REPLAY_EXECUTION_ID`, `SHADOW_NAMESPACE`, and `SHADOW_MODE` directly on the pod.
 
 ## Configuration
 
@@ -63,10 +66,11 @@ Every ShadowTest gets a `beru-local` pod in the shadow namespace.
 | `BERU_DEAD_LETTER_PATH` | `/data/dead_letters.jsonl` | Poison-pill DLQ |
 | `BERU_WAL_FLUSH_TIMEOUT` | `30s` | Per-attempt Postgres flush context bound |
 | `SESSION_ID` | `""` | Monarch session; keys `shadow_sessions` |
+| `REPLAY_EXECUTION_ID` | `legacy` | Monarch replay run; scopes diffs so re-plays do not inflate occurrences |
 | `SHADOW_NAMESPACE` | `""` | Recorded on the session row |
 | `SHADOW_MODE` | `""` | `record` or `replay` |
 
-`BERU_DB_SECRET` is read by Monarch, not Beru. Every beru-local shares one database, partitioned by `shadow_test_name` and `session_id`.
+`BERU_DB_SECRET` is required on the Monarch manager (not on Beru). Missing or malformed env, or a Secret that cannot be copied, fails the ShadowTest. Every beru-local shares one database, partitioned by `shadow_test_name`, `session_id`, and `replay_execution_id`. The incomplete-trace reaper only lists rows for `BERU_SHADOW_TEST_NAME` + this execution that lack a `verdicts` row, so one beru-local cannot re-project another test's `WAITING_FOR_ROLES` onto its own session.
 
 ## Schema layers
 
@@ -74,8 +78,8 @@ Every ShadowTest gets a `beru-local` pod in the shadow namespace.
 
 | Table | Key | Notes |
 | --- | --- | --- |
-| `raw_reports` | `id` | Append-only. `payload_bytes` is `BYTEA`. Index `idx_raw_reports_trace_sig` on `(trace_id, signature)` for Tusk occurrence pager |
-| `verdicts` | `trace_id` | Upserted; `summary_details` is `JSONB`. `shadow_test_name` denormalised for shared-DB filtering |
+| `raw_reports` | `id` | Append-only. Stamped with `session_id` + `replay_execution_id`. `ingest_id` is the Bbolt WAL sequence; unique on `(replay_execution_id, ingest_id)` for flush idempotency. Index on `(replay_execution_id, trace_id, signature)` for Tusk occurrence pager |
+| `verdicts` | `(replay_execution_id, trace_id)` | Upserted; `summary_details` is `JSONB`. `shadow_test_name` + `session_id` denormalised |
 | `shadow_tests` | `id` | Created lazily per shadow test name |
 | `noise_filters` | `(shadow_test_name, path)` | User ignore paths |
 
@@ -84,18 +88,21 @@ Every ShadowTest gets a `beru-local` pod in the shadow namespace.
 | Table | Key | Notes |
 | --- | --- | --- |
 | `shadow_sessions` | `session_id` | Written once at boot |
-| `traces` | `trace_id` | One status column per role |
-| `diff_reports` | `(trace_id, signature)` | One row per signature bucket (first payload per role; repeats stay in `raw_reports`) |
+| `replay_executions` | `replay_execution_id` | FK → `shadow_sessions`; one row per replay run |
+| `traces` | `(replay_execution_id, trace_id)` | One status column per role |
+| `diff_reports` | `(replay_execution_id, trace_id, signature)` | One row per signature bucket (first payload per role; repeats stay in `raw_reports`) |
 
 After each successful projection transaction, Beru emits Postgres `NOTIFY` on channel `verdict_events` so Tusk can stream live verdict deltas to The System ShadowDiff page:
 
 ```json
-{"session_id":"session-…","trace_id":"…","verdict":"MISMATCH"}
+{"session_id":"session-…","replay_execution_id":"exec-…","trace_id":"…","verdict":"MISMATCH"}
 ```
 
 Payload fields are always present; `session_id` may be `""` if `SESSION_ID` was unset at beru-local boot. Tusk `LISTEN`s this channel and fans frames to `/ws/diffs`.
 
-Migrations live in `pipeline/beru/migrations/*.sql`, embedded via `go:embed`.
+Migrations live in `pipeline/beru/migrations/*.sql`, embedded via `go:embed`. Schema is greenfield for the current testing phase — wipe Postgres when applying DDL changes rather than shipping ALTER migrations.
+
+See [/control-plane/replay-execution-isolation.md](/control-plane/replay-execution-isolation.md).
 
 ## Network surface
 
@@ -103,15 +110,15 @@ Beru runs unrestricted. NetworkPolicy is deny-only, so beru-local reaches Postgr
 
 ## Local fixture
 
-`testing/tools/e2e-reset-minikube.sh` always deploys PostgreSQL to `monarch-system` and sets `BERU_DB_SECRET=monarch-system/beru-postgres` on the manager. Host access:
+[`testing/tools/e2e-reset-kind.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/tools/e2e-reset-kind.sh) (and the shared deploy in [`e2e-reset-deploy.sh`](https://github.com/shadow-diff/monarch/tree/main/testing/tools/lib/e2e-reset-deploy.sh)) always deploys PostgreSQL to `monarch-system` and sets `BERU_DB_SECRET=monarch-system/beru-postgres` on the manager. Host access via Kind `extraPortMappings` (host `15432` → node `30432`):
 
 ```bash
-export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@$(minikube ip):30432/beru?sslmode=disable"
-go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection|WAL|concurrentFlushSameTrace' -v
+export BERU_TEST_POSTGRES_DSN="postgres://beru:beru@localhost:15432/beru?sslmode=disable"
+go -C pipeline/beru test ./internal/storage/... -run 'Conformance|Projection|WAL|concurrentFlushSameTrace|idempotency' -v
 go -C pipeline/monarch test ./internal/controller/... -run 'BeruDB|LocalBeruPodSpec' -v
 ```
 
-`TestPostgresConformance` skips when the DSN is unset. `TestPostgres_concurrentFlushSameTrace` opens two store pools and races `flushReportsAndEvaluate` on the same `trace_id` under `pg_advisory_xact_lock`. `TestWAL_*` exercises claim-skip and 3-strike dead-lettering against a temp Bbolt file. `TestLocalBeruPodSpec_*` asserts the WAL EmptyDir is always mounted and `envFrom` appears when the Secret is configured.
+`TestPostgresConformance` skips when the DSN is unset. `TestPostgres_concurrentFlushSameTrace` opens two store pools and races `flushReportsAndEvaluate` on the same `trace_id` under `pg_advisory_xact_lock`. `TestWAL_*` exercises claim-skip and 3-strike dead-lettering against a temp Bbolt file. `TestLocalBeruPodSpec_postgresAndWAL` asserts the WAL EmptyDir and Postgres `envFrom` are both mounted.
 
 # Citations
 

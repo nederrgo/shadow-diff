@@ -4,7 +4,7 @@ title: Asynchronous Record & Replay Pivot
 description: Accepted proposal to evolve Shadow-Diff from live-traffic shadow proxy to an S3-backed asynchronous Record-and-Replay platform.
 resource: https://github.com/shadow-diff/monarch/tree/main/docs/refactor
 tags: [refactor, adr, record-replay, s3, igris, shop, monarch, kaisel]
-timestamp: 2026-07-28T15:20:00Z
+timestamp: 2026-08-03T14:40:00Z
 ---
 
 # Architecture Proposal: Evolving Shadow-Diff to Asynchronous Record & Replay
@@ -63,7 +63,7 @@ Triggered manually, via a schedule, or by a CI/CD pipeline.
 
 Monarch will not have the IAM permissions to create S3 buckets. Bucket creation is an Infrastructure-as-Code (Terraform/Platform) responsibility. The ShadowTest CRD will simply accept a bucket name and credentials. Monarch never deploys object storage.
 
-**Developer experience fallback:** For local development and fast onboarding, [`testing/tools/e2e-reset-minikube.sh`](../../testing/tools/e2e-reset-minikube.sh) applies an ephemeral MinIO Deployment/Service under `monarch-system` (manifests in [`testing/bats/manifests/minio/`](../../testing/bats/manifests/minio/)), creates bucket `shadow-diff-local`, and a `shadow-diff-s3` credentials Secret in `default`.
+**Developer experience fallback:** For local development and fast onboarding, [`testing/tools/e2e-reset-kind.sh`](../../testing/tools/e2e-reset-kind.sh) applies an ephemeral MinIO Deployment/Service under `monarch-system` (manifests in [`testing/bats/manifests/minio/`](../../testing/bats/manifests/minio/)), creates bucket `shadow-diff-local`, and a `shadow-diff-s3` credentials Secret in `default`.
 
 ### Decision B: Igris and Shop are "Storage Gateways"
 
@@ -85,11 +85,11 @@ By utilizing a BYOB model inside the user's existing production cluster, product
 
 ### Decision E: One CR, two modes (`record` | `replay`)
 
-`spec.mode` is only `record` or `replay` (kubebuilder default `record`; empty resolves to `record`). There is no live-traffic mode. `spec.storage` is **required** for every ShadowTest. Optional `spec.sessionID` pins the S3 session folder; on record Monarch mints `status.currentSessionID` (`session-<unix>`) when unset; on replay a session must already be resolvable from spec or status.
+`spec.mode` is only `record` or `replay` (kubebuilder default `record`; empty resolves to `record`). There is no live-traffic mode. `spec.storage` is **required** for every ShadowTest. Optional `spec.sessionID` pins the S3 session folder; on record Monarch mints `status.currentSessionID` (`sess-<unix>-<4hex>`) when unset and remints on unpinned replay→record; on replay a session must already be resolvable from spec or status, and Monarch mints `status.currentReplayExecutionID` (`exec-<unix>-<4hex>`) injected as `REPLAY_EXECUTION_ID` on beru-local. See [/control-plane/replay-execution-isolation.md](/control-plane/replay-execution-isolation.md).
 
 **Phase 4:** Monarch injects `OPERATING_MODE` + S3 env into Igris and Shop (credentials Secret synced CR ns → shadow ns), exposes Igris admin `:9090`, and garbage-collects by mode — record deletes ABC Deployments/Services and clears `status.replayState`; replay deletes KaiselRule and skips creating it. When the replay stack is roll-ready and `status.replayState` is empty, Monarch `POST`s `…:9090/v1/replay/start` (202/409 → `status.replayState=started`). On CR deletion, finalizer `shadow-diff.io/s3-cleanup` deletes objects under `shadow-diff/<ns>/<name>/` when `retentionPolicy=Delete` (BYOB bucket is never deleted); `Retain` skips prefix cleanup.
 
-**Record-mode bats:** After MinIO is up (`e2e-reset-minikube.sh` or the suite’s `minio_ensure`), run `make test-bats-record` (or `make test-bats-one FILE=e2e/record/record_http.bats`). The suite applies `mode: record` + storage against the kaisel-capture prod target and asserts MinIO objects under `sessions/<status.currentSessionID>/{ingress,egress}/`. It is not part of `make test-bats-e2e` until other fixtures gain required `spec.storage`.
+**Record/replay bats:** All `make test-bats-e2e` fixtures use `mode: record` + MinIO `storage`. Suites assert MinIO under `sessions/<status.currentSessionID>/{ingress,egress}/` in record `@test`s, switch the same CR to `replay`, then assert Postgres-backed verdicts via `beru_wait_verdict_settled`. Deep record-only proof: `make test-bats-record` (`e2e/record/record_http.bats`, also included in `test-bats-e2e`).
 
 ## 4. Implementation Roadmap (The 5 Phases)
 
@@ -97,9 +97,9 @@ We will execute this transition in 5 incremental mini-plans to avoid breaking th
 
 | Phase | Focus | Scope |
 |-------|-------|-------|
-| 1 | Storage Foundation & Configuration | Update ShadowTest CRD with storage config (S3 endpoint, bucket, retention policy). Add MinIO via the minikube setup script for developer testing. Update Monarch to parse and validate these fields. |
+| 1 | Storage Foundation & Configuration | Update ShadowTest CRD with storage config (S3 endpoint, bucket, retention policy). Add MinIO via the Kind reset script for developer testing. Update Monarch to parse and validate these fields. |
 | 2 | Record Mode (S3 Writers) | Shared `pipeline/pkg/s3utils` BatchUploader (JSONL, 5s/100 flush). Igris-http and Shop honor `OPERATING_MODE=record`: buffer ingress/egress to `shadow-diff/<ns>/<test>/sessions/<id>/{ingress\|egress}/`. Kaisel stays a dumb POST pipe. Monarch env injection is Phase 4. |
-| 3 | Replay Mode (S3 Readers) | Shared `s3utils.S3Reader` (sorted FIFO ListObjectsV2 + GetObject). Shop `OPERATING_MODE=replay` preloads egress JSONL before gRPC (`/healthz` 503→200). Igris-http preloads ingress JSONL and exposes `POST /v1/replay/start` (202; 409 if already running) to multicast reconstructed requests with preserved `traceparent` and per-target `x-shadow-role`. |
+| 3 | Replay Mode (S3 Readers) | Shared `s3utils.S3Reader` (sorted FIFO ListObjectsV2 + GetObject). Shop `OPERATING_MODE=replay` preloads egress JSONL before gRPC (`/healthz` 503→200). Igris-http preloads ingress JSONL and exposes `POST /v1/replay/start` (202; 409 if already running) to multicast reconstructed requests with preserved `traceparent` and per-target `x-shadow-role`. Dial/transport errors on each target retry up to 3 times with 1s/3s/5s backoff (HTTP status codes are not retried). |
 | 4 | Monarch Orchestration & Lifecycle | Complete: mode record\|replay, required storage, session mint/pin, S3 env + Secret sync, Igris admin `:9090`, mode GC, auto `POST /v1/replay/start` → `replayState=started`, `shadow-diff.io/s3-cleanup` prefix delete when `retentionPolicy=Delete`. |
 | 5 | Cleanup & Productization (Shift-Left) | Remove legacy live-traffic race-condition handling from Kaisel and Envoy sidecars. Update Beru UI to display Session ID. Document triggering Replay from a GitHub Action. |
 

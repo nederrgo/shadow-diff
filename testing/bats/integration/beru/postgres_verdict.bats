@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Standalone Beru ↔ Postgres verdict suite.
-# Seeds the same histories as pipeline/beru/internal/v2/diff/diff_test.go via
+# Seeds the same histories as pipeline/beru/internal/diff/diff_test.go via
 # POST /api/v1/debug/seed-reports into a Deployment that is NOT owned by a
 # ShadowTest — only Postgres + the Bbolt WAL flusher are under test.
 #
@@ -30,8 +30,6 @@ setup_file() {
   echo "==> [postgres_verdict] ensure_platform_ready" >&3
   ensure_platform_ready
   bats_ensure_dev_image "${BERU_IMG}" "${REPO}/pipeline/beru" BERU_IMG
-  bats_source_cluster_helpers
-  e2e_load_image "${BERU_IMG}" 2>/dev/null || true
 
   echo "==> [postgres_verdict] apply Postgres fixture" >&3
   kubectl apply -f "${POSTGRES_DIR}/deployment.yaml"
@@ -65,21 +63,14 @@ setup_file() {
   }
   echo "$logs" | grep -Fq "WAL flusher ready" || {
     echo "missing 'WAL flusher ready' in beru-verdict logs (stale ${BERU_IMG}?)" >&2
-    echo "  rebuild+load: make -C pipeline/beru docker-build BERU_IMG=${BERU_IMG} && minikube image load ${BERU_IMG}" >&2
+    echo "  rebuild+load: make -C pipeline/beru docker-build BERU_IMG=${BERU_IMG} && kind load docker-image ${BERU_IMG} --name shadow-diff" >&2
     echo "  then re-run without SKIP_LOAD, or: kubectl -n monarch-system delete pod -l app=beru-verdict" >&2
     echo "$logs" >&2
     return 1
   }
 
   echo "==> [postgres_verdict] probe seed endpoint" >&3
-  local probe
-  # Empty reports → 400 from a live endpoint; 404 means stale image.
-  probe=$(beru_http_post "$BERU_NS" "/api/v1/debug/seed-reports" '{"reports":[]}' || true)
-  if echo "$probe" | grep -qi '404\|Not Found'; then
-    echo "seed endpoint missing — rebuild/load ${BERU_IMG}" >&2
-    echo "  make -C pipeline/beru docker-build BERU_IMG=${BERU_IMG} && minikube image load ${BERU_IMG}" >&2
-    return 1
-  fi
+  beru_probe_seed_endpoint "$BERU_NS" || return 1
 
   bats_suite_mark SETUP_COMPLETE 1
   bats_write_suite_state

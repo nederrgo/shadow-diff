@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -15,9 +17,9 @@ import (
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
 
-// ensureSessionID resolves the S3 session id: mint on record when unset; require
-// existing pin on replay. Patches status.currentSessionID when minting or when
-// spec.sessionID differs from status.
+// ensureSessionID resolves the S3 session id: mint on record when unset or when
+// leaving a prior replay (status.replayState set); require existing pin on replay.
+// Patches status.currentSessionID when minting or when spec.sessionID differs.
 func (r *ShadowTestReconciler) ensureSessionID(ctx context.Context, st *enginev1alpha1.ShadowTest) (string, error) {
 	mode := operatingMode(st)
 	specSID := strings.TrimSpace(st.Spec.SessionID)
@@ -34,12 +36,13 @@ func (r *ShadowTestReconciler) ensureSessionID(ctx context.Context, st *enginev1
 			return "", fmt.Errorf("replay mode requires spec.sessionID or status.currentSessionID")
 		}
 	default: // record
-		sid = specSID
-		if sid == "" {
+		if specSID != "" {
+			sid = specSID
+		} else if statusSID == "" || strings.TrimSpace(st.Status.ReplayState) != "" {
+			// Fresh capture folder: first record, or replay→record without a pin.
+			sid = mintID("sess")
+		} else {
 			sid = statusSID
-		}
-		if sid == "" {
-			sid = fmt.Sprintf("session-%d", time.Now().Unix())
 		}
 	}
 
@@ -52,6 +55,37 @@ func (r *ShadowTestReconciler) ensureSessionID(ctx context.Context, st *enginev1
 		return "", err
 	}
 	return sid, nil
+}
+
+// ensureReplayExecutionID mints status.currentReplayExecutionID once per replay
+// trigger window (empty replayState). Must run before beru-local is reconciled
+// so the Deployment picks up REPLAY_EXECUTION_ID.
+func (r *ShadowTestReconciler) ensureReplayExecutionID(ctx context.Context, st *enginev1alpha1.ShadowTest) (string, error) {
+	if operatingMode(st) != modeReplay {
+		return "", nil
+	}
+	if strings.TrimSpace(st.Status.ReplayState) != "" {
+		return strings.TrimSpace(st.Status.CurrentReplayExecutionID), nil
+	}
+	if id := strings.TrimSpace(st.Status.CurrentReplayExecutionID); id != "" {
+		return id, nil
+	}
+	id := mintID("exec")
+	base := st.DeepCopy()
+	st.Status.CurrentReplayExecutionID = id
+	if err := r.Status().Patch(ctx, st, client.MergeFrom(base)); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// mintID returns <prefix>-<unix>-<4hex> (e.g. sess-…, exec-…).
+func mintID(prefix string) string {
+	var b [2]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%s-%d-0000", prefix, time.Now().Unix())
+	}
+	return fmt.Sprintf("%s-%d-%s", prefix, time.Now().Unix(), hex.EncodeToString(b[:]))
 }
 
 // syncStorageSecret copies credentialsSecretRef from the CR namespace into the
@@ -143,13 +177,15 @@ func storageEnvVars(st *enginev1alpha1.ShadowTest, sessionID string) []corev1.En
 	return env
 }
 
-// clearReplayState zeros status.replayState when entering record mode.
+// clearReplayState zeros status.replayState and currentReplayExecutionID when entering record.
 func (r *ShadowTestReconciler) clearReplayState(ctx context.Context, st *enginev1alpha1.ShadowTest) error {
-	if strings.TrimSpace(st.Status.ReplayState) == "" {
+	if strings.TrimSpace(st.Status.ReplayState) == "" &&
+		strings.TrimSpace(st.Status.CurrentReplayExecutionID) == "" {
 		return nil
 	}
 	base := st.DeepCopy()
 	st.Status.ReplayState = ""
+	st.Status.CurrentReplayExecutionID = ""
 	return r.Status().Patch(ctx, st, client.MergeFrom(base))
 }
 

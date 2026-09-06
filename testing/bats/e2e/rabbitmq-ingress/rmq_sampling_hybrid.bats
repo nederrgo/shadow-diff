@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # E2E proof: RMQ ingress sampling + Kaisel HTTP egress sampling at 10%.
-# Record → S3; replay fans out to A/B/C with Shop mocks.
+# Record → S3; replay fans out to A/B/C with Shop mocks; Postgres for keep HTTP egress.
 # Golden keep: V=0; golden drop: V=26 (FNV-1a-64 of full 16-byte trace id).
 
 load '../../test_helper'
@@ -53,7 +53,18 @@ setup_file() {
   bats_write_suite_state
 }
 
-@test "RMQ+Shop sampling: in-sample trace seeds Shop and reaches all shadow roles" {
+@test "record: in-sample RMQ+Shop trace flushes to MinIO" {
+  local oid="keep-rec-${SAMPLE_KEEP_TID:0:8}"
+  run kaisel_ensure_record_mode
+  assert_success
+  publish_rmq_order "$SAMPLE_KEEP_TID" "$oid"
+  run kaisel_assert_egress_recorded "trace:${SAMPLE_KEEP_TID}:" 120
+  assert_success
+  run e2e_assert_session_objects both 60
+  assert_success
+}
+
+@test "replay: in-sample trace seeds Shop, reaches roles, HTTP egress MATCH" {
   local oid="keep-${SAMPLE_KEEP_TID:0:8}"
   run kaisel_ensure_record_mode
   assert_success
@@ -66,12 +77,15 @@ setup_file() {
     run assert_worker_http_replay "$role" "$oid"
     assert_success
   done
+  run beru_wait_verdict_settled "$SAMPLE_KEEP_TID" http --expect-status=MATCH --timeout=120
+  assert_success
 }
 
-@test "RMQ+Shop sampling: out-of-sample trace is not forwarded to shadows" {
+@test "replay: out-of-sample trace is not forwarded to shadows" {
   local oid="drop-${SAMPLE_DROP_TID:0:8}"
   run kaisel_ensure_record_mode
   assert_success
+  publish_rmq_order "$SAMPLE_KEEP_TID" "keep-gate-${SAMPLE_KEEP_TID:0:8}"
   publish_rmq_order "$SAMPLE_DROP_TID" "$oid"
   sleep 20
   run kaisel_switch_to_replay both
@@ -85,7 +99,7 @@ setup_file() {
   done
 }
 
-@test "RMQ+Shop sampling: out-of-sample trace never seeds Shop" {
+@test "record: out-of-sample trace never seeds Shop" {
   local oid="drop-shop-${SAMPLE_DROP_TID:0:8}"
   run kaisel_ensure_record_mode
   assert_success

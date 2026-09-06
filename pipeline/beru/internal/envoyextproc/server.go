@@ -8,9 +8,9 @@ import (
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"github.com/shadow-diff/beru/internal/trace"
-	v2engine "github.com/shadow-diff/beru/internal/v2/engine"
-	v2report "github.com/shadow-diff/beru/internal/v2/report"
+	"github.com/shadow-diff/beru/internal/engine"
+	"github.com/shadow-diff/beru/internal/report"
+	"github.com/shadow-diff/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -25,20 +25,20 @@ const (
 type Server struct {
 	extprocv3.UnimplementedExternalProcessorServer
 	Log               *slog.Logger
-	Router            *v2engine.TraceRouter
+	Router            *engine.TraceRouter
 	Role              string
 	DefaultShadowTest string
 }
 
 type streamState struct {
-	traceID         string
-	role            string
-	shadowTestName  string
-	method          string
-	path            string
-	responseMeta    map[string]string
-	responseStatus  string
-	contentType     string
+	traceID        string
+	role           string
+	shadowTestName string
+	method         string
+	path           string
+	responseMeta   map[string]string
+	responseStatus string
+	contentType    string
 }
 
 // Process handles the ext_proc bidirectional stream (ingress diff-of-diffs only).
@@ -129,11 +129,14 @@ func (s *Server) ingestResponseBody(state *streamState, body *extprocv3.HttpBody
 		meta[":status"] = state.responseStatus
 	}
 	if s.Router != nil {
-		if raw, err := v2report.FromHTTPIngress(
+		if raw, err := report.FromHTTPIngress(
 			state.traceID, state.role, state.shadowTestName, state.method, state.path,
 			meta, data, state.contentType,
 		); err == nil {
-			s.Router.Route(raw)
+			if err := s.Router.Route(raw); err != nil && s.Log != nil {
+				s.Log.Error("WAL append failed on ingress accept",
+					"trace_id", state.traceID, "role", state.role, "err", err)
+			}
 		}
 	}
 }

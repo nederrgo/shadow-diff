@@ -1,15 +1,18 @@
 import type { XYPosition } from '@xyflow/react'
 
 /** Fixed OpenShift-style left-to-right layout keyed by Tusk node id. */
-export const NODE_POSITIONS: Record<string, XYPosition> = {
+const NODE_POSITIONS: Record<string, XYPosition> = {
   'target-app': { x: 0, y: 180 },
-  kaisel: { x: 240, y: 180 },
-  igris: { x: 480, y: 180 },
-  'control-a': { x: 720, y: 40 },
-  'control-b': { x: 720, y: 180 },
-  candidate: { x: 720, y: 320 },
-  shop: { x: 960, y: 80 },
-  beru: { x: 960, y: 280 },
+  // AMQP path sits on the midline (target → queue → igris); Kaisel sits above
+  // and only feeds Shop for egress seed.
+  'prod-amqp': { x: 220, y: 180 },
+  kaisel: { x: 220, y: 40 },
+  igris: { x: 520, y: 180 },
+  'control-a': { x: 900, y: 40 },
+  'control-b': { x: 900, y: 180 },
+  candidate: { x: 900, y: 320 },
+  shop: { x: 1140, y: 40 },
+  beru: { x: 1140, y: 280 },
 }
 
 export function positionFor(id: string, index: number): XYPosition {

@@ -25,6 +25,25 @@ func (s *HTTPServer) handleListSessions(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, sessions)
 }
 
+func (s *HTTPServer) handleListExecutions(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		http.Error(w, "postgres not configured", http.StatusServiceUnavailable)
+		return
+	}
+	sessionID := r.PathValue("session_id")
+	if sessionID == "" {
+		http.Error(w, "session_id is required", http.StatusBadRequest)
+		return
+	}
+	execs, err := s.Store.ListExecutions(r.Context(), sessionID)
+	if err != nil {
+		s.Log.Warn("ListExecutions failed", "err", err, "session_id", sessionID)
+		http.Error(w, "list executions failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, execs)
+}
+
 func queryTruthy(v string) bool {
 	switch v {
 	case "1", "true", "TRUE", "yes", "on":
@@ -44,9 +63,10 @@ func (s *HTTPServer) handleGetDiffs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session_id is required", http.StatusBadRequest)
 		return
 	}
-	diffs, err := s.Store.GetSessionDiffs(r.Context(), sessionID)
+	execID := r.URL.Query().Get("replay_execution_id")
+	diffs, err := s.Store.GetSessionDiffs(r.Context(), sessionID, execID)
 	if err != nil {
-		s.Log.Warn("GetSessionDiffs failed", "err", err, "session_id", sessionID)
+		s.Log.Warn("GetSessionDiffs failed", "err", err, "session_id", sessionID, "replay_execution_id", execID)
 		http.Error(w, "get diffs failed", http.StatusInternalServerError)
 		return
 	}
@@ -64,7 +84,8 @@ func (s *HTTPServer) handleGetOccurrences(w http.ResponseWriter, r *http.Request
 		http.Error(w, "trace_id and signature are required", http.StatusBadRequest)
 		return
 	}
-	out, err := s.Store.GetSignatureOccurrences(r.Context(), traceID, signature)
+	execID := r.URL.Query().Get("replay_execution_id")
+	out, err := s.Store.GetSignatureOccurrences(r.Context(), traceID, signature, execID)
 	if err != nil {
 		s.Log.Warn("GetSignatureOccurrences failed", "err", err, "trace_id", traceID, "signature", signature)
 		http.Error(w, "get occurrences failed", http.StatusInternalServerError)
@@ -83,10 +104,17 @@ func (s *HTTPServer) handleDiffsWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session_id is required", http.StatusBadRequest)
 		return
 	}
+	execID := r.URL.Query().Get("replay_execution_id")
+	resolved, err := s.Store.ResolveExecutionID(r.Context(), sessionID, execID)
+	if err != nil {
+		s.Log.Warn("ResolveExecutionID failed", "err", err, "session_id", sessionID)
+		http.Error(w, "resolve execution failed", http.StatusInternalServerError)
+		return
+	}
 
 	// Fresh summary so a client attaching mid-session is not empty when the
-	// hub cache has never seen a NOTIFY for this session yet.
-	if sum, err := s.Store.SessionSummary(r.Context(), sessionID); err == nil {
+	// hub cache has never seen a NOTIFY for this execution yet.
+	if sum, err := s.Store.SessionSummary(r.Context(), sessionID, resolved); err == nil {
 		s.DiffHub.CacheSummary(sum)
 	} else {
 		s.Log.Warn("SessionSummary failed on WS connect", "err", err, "session_id", sessionID)
@@ -99,7 +127,7 @@ func (s *HTTPServer) handleDiffsWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	updates, snapshot, unsubscribe := s.DiffHub.Subscribe(sessionID)
+	updates, snapshot, unsubscribe := s.DiffHub.Subscribe(sessionID, resolved)
 	defer unsubscribe()
 
 	closed := make(chan struct{})

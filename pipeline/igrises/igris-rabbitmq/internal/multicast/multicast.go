@@ -3,7 +3,7 @@ package multicast
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -61,7 +61,7 @@ func NewShadowPublisher(cfg config.Config) (*ShadowPublisher, error) {
 		}
 		p.conns = append(p.conns, conn)
 		p.channels = append(p.channels, ch)
-		log.Printf("declared exchange %q type=%s on shadow broker %d", p.exchange, p.exchangeType, i)
+		slog.Info("declared exchange on shadow broker", "exchange", p.exchange, "type", p.exchangeType, "broker_index", i)
 	}
 	return p, nil
 }
@@ -113,9 +113,9 @@ type recordSink interface {
 
 // RecordRunner consumes the prod shadow queue and buffers captures to S3.
 type RecordRunner struct {
-	cfg    config.Config
-	sink   recordSink
-	wg     sync.WaitGroup
+	cfg  config.Config
+	sink recordSink
+	wg   sync.WaitGroup
 }
 
 func NewRecordRunner(cfg config.Config, sink recordSink) *RecordRunner {
@@ -145,7 +145,7 @@ func (r *RecordRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("consume %q: %w", r.cfg.ShadowQueueName, err)
 	}
-	log.Printf("record: consuming queue %s → S3", r.cfg.ShadowQueueName)
+	slog.Info("record mode consuming queue to S3", "queue", r.cfg.ShadowQueueName)
 
 	for {
 		select {
@@ -186,7 +186,7 @@ func (r *RecordRunner) handleDelivery(msg amqp.Delivery) {
 		Body:         msg.Body,
 	}
 	if err := r.sink.Add(rec); err != nil {
-		log.Printf("s3 capture failed: %v", err)
+		slog.Error("S3 capture failed", "trace_id", resolved.TraceID, "routing_key", msg.RoutingKey, "err", err)
 		_ = msg.Nack(false, true)
 		return
 	}
@@ -214,6 +214,6 @@ func (r *ReplayPublisher) Close() {
 
 func (r *ReplayPublisher) Dispatch(_ context.Context, rec capture.IngressCapture) {
 	if err := r.pub.PublishCapture(rec); err != nil {
-		log.Printf("replay publish failed: %v", err)
+		slog.Error("replay publish failed", "trace_id", rec.TraceID, "routing_key", rec.RoutingKey, "err", err)
 	}
 }

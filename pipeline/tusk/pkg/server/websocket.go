@@ -64,6 +64,7 @@ func (s *HTTPServer) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /ws/monitor", s.handleMonitor)
 	mux.HandleFunc("GET /api/v1/sessions", s.handleListSessions)
+	mux.HandleFunc("GET /api/v1/sessions/{session_id}/executions", s.handleListExecutions)
 	mux.HandleFunc("GET /api/v1/diffs", s.handleGetDiffs)
 	mux.HandleFunc("GET /api/v1/diffs/occurrences", s.handleGetOccurrences)
 	mux.HandleFunc("GET /ws/diffs", s.handleDiffsWS)

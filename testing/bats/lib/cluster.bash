@@ -1,9 +1,9 @@
-# Thin wrapper over cluster-minikube.sh for Bats suites.
+# Thin wrapper over cluster-kind.sh for Bats suites.
 # shellcheck shell=bash
 
 bats_source_cluster_helpers() {
-  # shellcheck source=testing/bats/helpers/cluster-minikube.sh
-  source "${REPO}/testing/bats/helpers/cluster-minikube.sh"
+  # shellcheck source=testing/bats/helpers/cluster-kind.sh
+  source "${REPO}/testing/bats/helpers/cluster-kind.sh"
 }
 
 bats_source_e2e_helpers() {
@@ -11,13 +11,14 @@ bats_source_e2e_helpers() {
   source "${REPO}/testing/bats/helpers/e2e-helpers.sh"
 }
 
-bats_ensure_minikube() {
+bats_ensure_cluster() {
   bats_source_cluster_helpers
   bats_source_e2e_helpers
-  ensure_minikube_ready
+  ensure_kind_ready
 }
 
-bats_minikube_running() {
+# True when the Kind cluster is up.
+bats_cluster_running() {
   bats_source_cluster_helpers
-  minikube -p "${MINIKUBE_PROFILE:-minikube}" status --format='{{.Host}}' 2>/dev/null | grep -qi running
+  kind_cluster_running
 }

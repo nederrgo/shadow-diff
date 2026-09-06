@@ -1,0 +1,13 @@
+apiVersion: v2
+name: shadow-diff
+description: Shadow-Diff control plane (Monarch), topology BFF (Tusk), and UI (the-system)
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - shadow-diff
+  - kubernetes
+  - differential-testing
+home: https://github.com/shadow-diff/monarch
+maintainers:
+  - name: shadow-diff

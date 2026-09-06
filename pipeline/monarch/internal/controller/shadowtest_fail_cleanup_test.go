@@ -69,7 +69,7 @@ func TestDeploymentBootReady_timeout(t *testing.T) {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = enginev1alpha1.AddToScheme(scheme)
 
-	old := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+	old := metav1.NewTime(time.Now().Add(-8 * time.Minute))
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "shop",
@@ -220,5 +220,77 @@ func TestReconcileStickyFailed_doesNotRecreateNamespace(t *testing.T) {
 	}
 	if live.Status.Phase != phaseFailed {
 		t.Fatalf("phase = %q want Failed", live.Status.Phase)
+	}
+}
+
+func TestReconcile_missingTargetStartsTeardown(t *testing.T) {
+	scheme := deleteLifecycleScheme(t)
+	st := &enginev1alpha1.ShadowTest{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "missing-target",
+			Namespace:  "default",
+			UID:        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+			Finalizers: []string{finalizerName, s3Finalizer},
+		},
+		Spec: enginev1alpha1.ShadowTestSpec{
+			TargetDeployment: "target-app",
+			Storage: &enginev1alpha1.StorageConfig{
+				Type:       "s3",
+				BucketName: "b",
+			},
+		},
+		Status: enginev1alpha1.ShadowTestStatus{
+			Phase:           phaseProgressing,
+			ShadowNamespace: "shadow-default-missing-target",
+		},
+	}
+	shadowNS := shadowNamespaceForCR(st)
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: shadowNS}}
+	rule := &enginev1alpha1.KaiselRule{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      kaiselRuleName(st),
+			Namespace: st.Namespace,
+		},
+		Spec: enginev1alpha1.KaiselRuleSpec{TargetIPs: []string{"10.0.0.1"}},
+	}
+
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&enginev1alpha1.ShadowTest{}, &enginev1alpha1.KaiselRule{}).
+		WithObjects(st.DeepCopy(), ns, rule).
+		Build()
+	rec := &ShadowTestReconciler{Client: c, Scheme: scheme}
+
+	res, err := rec.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: st.Name, Namespace: st.Namespace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RequeueAfter == 30*time.Second {
+		t.Fatal("leftover 30s target-retry must not run after Failed")
+	}
+	if res.RequeueAfter != 5*time.Second {
+		t.Fatalf("RequeueAfter = %s, want 5s while namespace terminates", res.RequeueAfter)
+	}
+
+	var live enginev1alpha1.ShadowTest
+	if err := c.Get(context.Background(), types.NamespacedName{Name: st.Name, Namespace: st.Namespace}, &live); err != nil {
+		t.Fatal(err)
+	}
+	if live.Status.Phase != phaseFailed {
+		t.Fatalf("phase = %q want Failed", live.Status.Phase)
+	}
+	if live.Status.BootStep != enginev1alpha1.BootStepFailed {
+		t.Fatalf("bootStep = %q want Failed", live.Status.BootStep)
+	}
+	if !strings.Contains(live.Status.Message, "not found") {
+		t.Fatalf("message = %q, want target not found", live.Status.Message)
+	}
+	if len(live.Finalizers) < 2 {
+		t.Fatalf("finalizers should remain, got %v", live.Finalizers)
+	}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(rule), &enginev1alpha1.KaiselRule{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("KaiselRule should be deleted: %v", err)
 	}
 }

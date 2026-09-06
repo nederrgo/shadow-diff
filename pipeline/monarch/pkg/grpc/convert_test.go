@@ -13,12 +13,13 @@ func TestToStatusUpdate_FullyPopulated(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "alpha", Namespace: "default"},
 		Spec:       enginev1alpha1.ShadowTestSpec{Mode: enginev1alpha1.ModeReplay},
 		Status: enginev1alpha1.ShadowTestStatus{
-			Phase:            enginev1alpha1.PhaseReady,
-			Message:          "replay mode ready",
-			BootStep:         enginev1alpha1.BootStepReady,
-			CurrentSessionID: "session-42",
-			ReplayState:      "started",
-			KaiselPhase:      enginev1alpha1.CapturePhaseDisabled,
+			Phase:                    enginev1alpha1.PhaseReady,
+			Message:                  "replay mode ready",
+			BootStep:                 enginev1alpha1.BootStepReady,
+			CurrentSessionID:         "session-42",
+			CurrentReplayExecutionID: "exec-99",
+			ReplayState:              "started",
+			KaiselPhase:              enginev1alpha1.CapturePhaseDisabled,
 			Components: enginev1alpha1.ComponentStatus{
 				IgrisReady:       true,
 				ShopReady:        true,
@@ -26,6 +27,7 @@ func TestToStatusUpdate_FullyPopulated(t *testing.T) {
 				KaiselRuleActive: false,
 				AMQPBound:        true,
 				TargetDeployment: "checkout-api",
+				IngressDrivers:   []string{"http_request", "rabbitmq_message"},
 				ShadowRolesReady: map[string]bool{
 					monarchpb.RoleControlA:  true,
 					monarchpb.RoleControlB:  true,
@@ -58,12 +60,19 @@ func TestToStatusUpdate_FullyPopulated(t *testing.T) {
 	if u.GetCurrentSessionId() != "session-42" || u.GetReplayState() != "started" {
 		t.Errorf("session/replay = %q/%q", u.GetCurrentSessionId(), u.GetReplayState())
 	}
+	if u.GetCurrentReplayExecutionId() != "exec-99" {
+		t.Errorf("currentReplayExecutionId = %q", u.GetCurrentReplayExecutionId())
+	}
 	c := u.GetComponents()
 	if !c.GetIgrisReady() || !c.GetShopReady() || !c.GetBeruReady() || !c.GetAmqpBound() {
 		t.Errorf("component flags lost: %+v", c)
 	}
 	if c.GetTargetDeployment() != "checkout-api" {
 		t.Errorf("targetDeployment = %q", c.GetTargetDeployment())
+	}
+	gotDrivers := c.GetIngressDrivers()
+	if len(gotDrivers) != 2 || gotDrivers[0] != "http_request" || gotDrivers[1] != "rabbitmq_message" {
+		t.Errorf("ingressDrivers = %v", gotDrivers)
 	}
 	roles := c.GetShadowRolesReady()
 	if !roles[monarchpb.RoleControlA] || !roles[monarchpb.RoleControlB] || roles[monarchpb.RoleCandidate] {

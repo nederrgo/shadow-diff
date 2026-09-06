@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,9 +19,9 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		exitWithError("load config failed", "err", err)
 	}
-	slogLog := slog.Default()
+	logger := slog.Default()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -31,7 +30,7 @@ func main() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
-		log.Println("igris-rabbitmq shutting down")
+		logger.Info("igris-rabbitmq shutting down")
 		cancel()
 	}()
 
@@ -39,11 +38,11 @@ func main() {
 	case s3utils.ModeRecord:
 		scfg, err := s3utils.ConfigFromEnv(s3utils.DataTypeIngress)
 		if err != nil {
-			log.Fatalf("record S3 config: %v", err)
+			exitWithError("load record S3 config failed", "err", err)
 		}
-		uploader, err := s3utils.NewBatchUploader(context.Background(), scfg, slogLog)
+		uploader, err := s3utils.NewBatchUploader(context.Background(), scfg, logger)
 		if err != nil {
-			log.Fatalf("record S3 uploader: %v", err)
+			exitWithError("create record S3 uploader failed", "err", err)
 		}
 		defer func() {
 			shutdownCtx, c := context.WithTimeout(context.Background(), 30*time.Second)
@@ -52,48 +51,48 @@ func main() {
 		}()
 		runner := multicast.NewRecordRunner(cfg, uploader)
 		defer runner.Close()
-		log.Printf("igris-rabbitmq record mode queue=%s prefix=%s", cfg.ShadowQueueName, scfg.ObjectKeyPrefix())
+		logger.Info("igris-rabbitmq record mode", "queue", cfg.ShadowQueueName, "prefix", scfg.ObjectKeyPrefix())
 		if err := runner.Run(ctx); err != nil && err != context.Canceled {
-			log.Fatalf("run: %v", err)
+			exitWithError("record runner failed", "err", err)
 		}
 
 	case s3utils.ModeReplay:
 		scfg, err := s3utils.ConfigFromEnv(s3utils.DataTypeIngress)
 		if err != nil {
-			log.Fatalf("replay S3 config: %v", err)
+			exitWithError("load replay S3 config failed", "err", err)
 		}
 		reader, err := s3utils.NewS3Reader(context.Background(), scfg)
 		if err != nil {
-			log.Fatalf("replay S3 reader: %v", err)
+			exitWithError("create replay S3 reader failed", "err", err)
 		}
 		loadCtx, loadCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		records, err := pkgreplay.LoadJSONL(loadCtx, reader, slogLog, func(rec capture.IngressCapture) bool {
+		records, err := pkgreplay.LoadJSONL(loadCtx, reader, logger, func(rec capture.IngressCapture) bool {
 			return rec.Traceparent != "" || rec.TraceID != ""
 		})
 		loadCancel()
 		if err != nil {
-			log.Fatalf("replay preload: %v", err)
+			exitWithError("replay preload failed", "err", err)
 		}
-		log.Printf("loaded %d AMQP ingress records from S3 session=%s", len(records), scfg.SessionID)
+		logger.Info("loaded AMQP ingress records from S3", "records", len(records), "session_id", scfg.SessionID)
 
 		publisher, err := multicast.NewReplayPublisher(cfg)
 		if err != nil {
-			log.Fatalf("shadow publishers: %v", err)
+			exitWithError("create shadow publishers failed", "err", err)
 		}
 		defer publisher.Close()
 
 		engine := &pkgreplay.Engine[capture.IngressCapture]{
 			Records:  records,
 			Dispatch: publisher.Dispatch,
-			Log:      slogLog,
+			Log:      logger,
 		}
 		mux := http.NewServeMux()
 		(&pkgreplay.Handler{Engine: engine}).Mount(mux)
 		adminSrv := &http.Server{Addr: cfg.AdminAddr, Handler: mux}
 		go func() {
-			log.Printf("igris-rabbitmq admin listening on %s", cfg.AdminAddr)
+			logger.Info("igris-rabbitmq admin listening", "addr", cfg.AdminAddr)
 			if err := adminSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("admin: %v", err)
+				exitWithError("admin server failed", "err", err)
 			}
 		}()
 
@@ -104,6 +103,11 @@ func main() {
 		engine.Wait()
 
 	default:
-		log.Fatalf("OPERATING_MODE must be record or replay, got %q", cfg.OperatingMode)
+		exitWithError("invalid operating mode", "mode", cfg.OperatingMode, "allowed", "record,replay")
 	}
+}
+
+func exitWithError(message string, args ...any) {
+	slog.Error(message, args...)
+	os.Exit(1)
 }

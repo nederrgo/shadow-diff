@@ -41,8 +41,8 @@ func (f *fakeBulkDeleter) DeleteKeys(_ context.Context, keys []string) error {
 func TestDeletePrefixWith(t *testing.T) {
 	t.Parallel()
 	f := &fakeBulkDeleter{keys: map[string]struct{}{
-		"shadow-diff/ns/t/sessions/s1/ingress/a.jsonl": {},
-		"shadow-diff/ns/t/sessions/s1/egress/b.jsonl":  {},
+		"shadow-diff/ns/t/sessions/s1/ingress/a.jsonl":    {},
+		"shadow-diff/ns/t/sessions/s1/egress/b.jsonl":     {},
 		"shadow-diff/other/x/sessions/s1/ingress/c.jsonl": {},
 	}}
 	prefix := TestKeyPrefix("ns", "t")

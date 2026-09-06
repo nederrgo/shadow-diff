@@ -8,7 +8,7 @@
 #   4. Traced prod egress pairs are POSTed to Shop and flushed under sessions/<id>/egress/.
 #
 # Requirements:
-#   - Cluster with docker/kind/minikube image load
+#   - Kind cluster with host docker + kind load
 #   - make test-bats-record  (or SKIP_BUILD=1 SKIP_LOAD=1 when images are warm)
 
 load '../../test_helper'
@@ -117,7 +117,7 @@ teardown_file() {
   session=$(kubectl get shadowtest "$SHADOWTEST" -n "$SHADOWTEST_NS" \
     -o jsonpath='{.status.currentSessionID}')
   [[ -n "$session" ]] || fail "status.currentSessionID empty"
-  [[ "$session" == session-* ]] || fail "unexpected session id: ${session}"
+  [[ "$session" == sess-* ]] || fail "unexpected session id: ${session}"
 }
 
 @test "record: traced ingress flushes JSONL under sessions/<id>/ingress/" {

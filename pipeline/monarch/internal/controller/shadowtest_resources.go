@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -19,6 +21,11 @@ import (
 
 	enginev1alpha1 "github.com/shadow-diff/monarch/api/v1alpha1"
 )
+
+// ErrNamespaceCollision is returned when a shadow namespace name is already owned
+// by a different ShadowTest (or an unlabeled foreign Namespace). Callers should
+// sticky-fail; do not tear down the foreign namespace.
+var ErrNamespaceCollision = errors.New("namespace collision")
 
 func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.NamespacedName, shadowNS string) (ctrl.Result, error) {
 	var shadowTest enginev1alpha1.ShadowTest
@@ -81,6 +88,9 @@ func (r *ShadowTestReconciler) reconcileDelete(ctx context.Context, nn types.Nam
 	}
 
 	if ns.DeletionTimestamp == nil {
+		if err := validateShadowNamespaceName(shadowNS); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := r.Delete(ctx, &ns); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
@@ -101,24 +111,58 @@ func (r *ShadowTestReconciler) publishDeleted(st *enginev1alpha1.ShadowTest) {
 	r.StatusPublisher.Publish(tomb)
 }
 
+func validateExistingNamespace(ns *corev1.Namespace, st *enginev1alpha1.ShadowTest) error {
+	if !ns.DeletionTimestamp.IsZero() {
+		return fmt.Errorf("namespace %s is currently terminating, waiting for deletion", ns.Name)
+	}
+	if ns.Labels[labelShadowTestUID] != string(st.UID) {
+		return fmt.Errorf("%w: '%s' is already in use by another ShadowTest. Please rename.", ErrNamespaceCollision, ns.Name)
+	}
+	return nil
+}
+
 func (r *ShadowTestReconciler) ensureShadowNamespace(ctx context.Context, st *enginev1alpha1.ShadowTest, name string) error {
+	if err := validateShadowNamespaceName(name); err != nil {
+		return err
+	}
 	var ns corev1.Namespace
 	err := r.Get(ctx, types.NamespacedName{Name: name}, &ns)
-	if apierrors.IsNotFound(err) {
-		ns = corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name,
-				Labels: map[string]string{
-					labelManagedBy:      valueManagedBy,
-					labelShadowTestName: st.Name,
-					labelShadowTestCRNS: st.Namespace,
-					labelShadowTestUID:  string(st.UID),
-				},
-			},
+	if err == nil {
+		if err := validateExistingNamespace(&ns, st); err != nil {
+			return err
 		}
-		return r.Create(ctx, &ns)
+		return r.ensureShadowNamespaceRBAC(ctx, st, name)
 	}
-	return err
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	ns = corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				labelManagedBy:      valueManagedBy,
+				labelShadowTestName: st.Name,
+				labelShadowTestCRNS: st.Namespace,
+				labelShadowTestUID:  string(st.UID),
+			},
+		},
+	}
+	err = r.Create(ctx, &ns)
+	if err == nil {
+		return r.ensureShadowNamespaceRBAC(ctx, st, name)
+	}
+	if !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+
+	if err := r.Get(ctx, types.NamespacedName{Name: name}, &ns); err != nil {
+		return err
+	}
+	if err := validateExistingNamespace(&ns, st); err != nil {
+		return err
+	}
+	return r.ensureShadowNamespaceRBAC(ctx, st, name)
 }
 
 func (r *ShadowTestReconciler) reconcileShadowDeployment(
@@ -185,7 +229,7 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 			},
 			{
 				Name:            containerEnvoySidecar,
-				Image:           envoyImage,
+				Image:           envoyImageFor(),
 				ImagePullPolicy: envoyImagePullPolicy,
 				Args:            []string{"-c", "/etc/envoy/envoy.yaml", "--log-level", "info"},
 				Ports:           envoyContainerPorts(st),
@@ -196,6 +240,16 @@ func (r *ShadowTestReconciler) reconcileShadowDeployment(
 				},
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: volumeNameEnvoyConfig, MountPath: "/etc/envoy", ReadOnly: true},
+				},
+				// Gate replay on Envoy actually accepting ingress (Igris dials this port).
+				ReadinessProbe: &corev1.Probe{
+					ProbeHandler: corev1.ProbeHandler{
+						TCPSocket: &corev1.TCPSocketAction{
+							Port: intstr.FromInt32(servicePortFor(st)),
+						},
+					},
+					InitialDelaySeconds: 2,
+					PeriodSeconds:       5,
 				},
 			},
 		}
@@ -307,10 +361,6 @@ func statusExtras(
 	}
 }
 
-func (r *ShadowTestReconciler) patchStatus(ctx context.Context, st *enginev1alpha1.ShadowTest, phase, message, shadowNS string) error {
-	return r.patchStatusCore(ctx, st, statusBase(st.Generation, phase, message, shadowNS))
-}
-
 // patchBootStatus is the progress-reporting variant used by every boot gate.
 func (r *ShadowTestReconciler) patchBootStatus(
 	ctx context.Context,
@@ -322,27 +372,6 @@ func (r *ShadowTestReconciler) patchBootStatus(
 	return r.patchStatusCore(ctx, st,
 		statusBase(st.Generation, phase, message, shadowNS),
 		statusBoot(step, comp),
-	)
-}
-
-func (r *ShadowTestReconciler) patchStatusIgrisRabbitMQ(
-	ctx context.Context,
-	st *enginev1alpha1.ShadowTest,
-	phase, message, shadowNS, igrisRMQPhase string,
-) error {
-	return r.patchStatusFull(ctx, st, phase, message, shadowNS, nil, "", "", igrisRMQPhase)
-}
-
-func (r *ShadowTestReconciler) patchStatusFull(
-	ctx context.Context,
-	st *enginev1alpha1.ShadowTest,
-	phase, message, shadowNS string,
-	captureTargets []string,
-	kaiselPhase, igrisEndpoint, igrisRabbitMQPhase string,
-) error {
-	return r.patchStatusCore(ctx, st,
-		statusBase(st.Generation, phase, message, shadowNS),
-		statusExtras(captureTargets, kaiselPhase, igrisEndpoint, igrisRabbitMQPhase),
 	)
 }
 

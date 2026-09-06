@@ -12,11 +12,11 @@ import (
 	"time"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/shadow-diff/beruclient"
 	"github.com/shadow-diff/s3utils"
 	"google.golang.org/grpc"
 
 	"github.com/shadow-diff/shop/internal/api"
-	"github.com/shadow-diff/shop/internal/beru"
 	"github.com/shadow-diff/shop/internal/envoyextproc"
 	"github.com/shadow-diff/shop/internal/replay"
 )
@@ -102,7 +102,7 @@ func main() {
 		ShadowTestName: os.Getenv("SHADOW_TEST_NAME"),
 	}
 	if beruURL := os.Getenv("BERU_HTTP_URL"); beruURL != "" {
-		extProc.Beru = beru.NewClient(beruURL)
+		extProc.Beru = beruclient.NewClient(beruURL)
 		log.Info("Shop Beru egress reporting enabled", "url", extProc.Beru.URL)
 	}
 

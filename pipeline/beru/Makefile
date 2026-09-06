@@ -24,4 +24,4 @@ test:
 	CGO_ENABLED=0 go test ./...
 
 docker-build:
-	docker build -t $(BERU_IMG) .
+	docker build -f Dockerfile -t $(BERU_IMG) ..

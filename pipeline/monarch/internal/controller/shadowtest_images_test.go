@@ -39,8 +39,9 @@ func TestResolveHelperImage_precedence(t *testing.T) {
 	}
 
 	t.Setenv(envIgrisHTTPImage, "")
-	if got := resolveHelperImage(imageBaseIgrisHTTP, "", envIgrisHTTPImage); got != "igris-http:latest" {
-		t.Fatalf("default: got %q want igris-http:latest", got)
+	want := imageRegistryDefault + "/igris-http:latest"
+	if got := resolveHelperImage(imageBaseIgrisHTTP, "", envIgrisHTTPImage); got != want {
+		t.Fatalf("default: got %q want %q", got, want)
 	}
 }
 
@@ -49,12 +50,24 @@ func TestIgrisHTTPImageFor(t *testing.T) {
 	t.Setenv(envIgrisHTTPImage, "")
 
 	st := &enginev1alpha1.ShadowTest{}
-	if got := igrisHTTPImageFor(st); got != "igris-http:dev" {
-		t.Fatalf("mode default: got %q", got)
+	want := imageRegistryDefault + "/igris-http:dev"
+	if got := igrisHTTPImageFor(st); got != want {
+		t.Fatalf("mode default: got %q want %q", got, want)
 	}
 
 	st.Spec.Igris = &enginev1alpha1.IgrisSpec{Image: "custom:tag"}
 	if got := igrisHTTPImageFor(st); got != "custom:tag" {
 		t.Fatalf("CR override: got %q", got)
+	}
+}
+
+func TestEnvoyImageFor(t *testing.T) {
+	t.Setenv(envEnvoyImage, "")
+	if got := envoyImageFor(); got != defaultEnvoyImage {
+		t.Fatalf("default: got %q want %q", got, defaultEnvoyImage)
+	}
+	t.Setenv(envEnvoyImage, "custom/envoy:v1")
+	if got := envoyImageFor(); got != "custom/envoy:v1" {
+		t.Fatalf("env override: got %q", got)
 	}
 }

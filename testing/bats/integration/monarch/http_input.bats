@@ -26,7 +26,7 @@ setup_file() {
   bats_prepare_shadowtest_slot "$SHADOWTEST" "$SHADOWTEST_NS"
 
   # Replay + rabbitmq/mongo deps need egress-relay + shadow-soldier. Platform
-  # "already healthy" skips image load — build into minikube docker if missing.
+  # "already healthy" skips image load — build+load into the E2E cluster if missing.
   bats_ensure_dev_image \
     "${EGRESS_RELAY_RABBITMQ_IMG:-egress-relay-rabbitmq:dev}" \
     "${REPO}/pipeline/egress-relay-rabbitmq" \

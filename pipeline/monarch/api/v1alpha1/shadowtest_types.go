@@ -25,8 +25,13 @@ import (
 
 // AMQPInputSpec configures native RabbitMQ shadow ingress (Phase 5b).
 type AMQPInputSpec struct {
-	// ProdURL is the production broker URL (e.g. amqp://prod-rabbitmq.default.svc:5672).
+	// ProdURL is the production broker location (amqp(s)://host[:port][/vhost]).
+	// Must not include userinfo; credentials come from credentialsSecretRef.
 	ProdURL string `json:"prodUrl"`
+
+	// CredentialsSecretRef names a Secret in the ShadowTest CR namespace with
+	// username and password keys. Required for rabbitmq_message.
+	CredentialsSecretRef *corev1.LocalObjectReference `json:"credentialsSecretRef"`
 
 	// Exchange is the production exchange to bind the shadow queue to.
 	Exchange string `json:"exchange"`
@@ -162,7 +167,7 @@ type IgrisSpec struct {
 // for asynchronous record/replay artifacts. Objects are keyed under
 // shadow-diff/<namespace>/<test-name>/sessions/<session-id>/[ingress|egress]/.
 // Monarch does not create buckets; callers provision storage out of band (e.g. AWS
-// or the local MinIO fixture from testing/tools/e2e-reset-minikube.sh).
+// or the local MinIO fixture from testing/tools/e2e-reset-kind.sh).
 type StorageConfig struct {
 	// Type selects the object-storage backend.
 	// +kubebuilder:validation:Enum=s3
@@ -205,7 +210,8 @@ type ShadowTestSpec struct {
 	TargetNamespace string `json:"targetNamespace,omitempty"`
 
 	// OldImage is the container image for Control-A and Control-B pods.
-	// When unset, Monarch derives it from the target Deployment's current running image.
+	// When unset, Monarch pins it from the target Deployment on first reconcile
+	// and persists it on the CR. It is not overwritten on later reconciles.
 	// +optional
 	OldImage string `json:"oldImage,omitempty"`
 
@@ -290,7 +296,8 @@ type ShadowTestSpec struct {
 	Mode string `json:"mode,omitempty"`
 
 	// SessionID pins the S3 session folder for replay (and optionally for record).
-	// When unset in record mode, Monarch mints status.currentSessionID.
+	// When unset in record mode, Monarch mints status.currentSessionID (and remints
+	// on each replay→record transition so capture does not append into the prior folder).
 	// +optional
 	SessionID string `json:"sessionID,omitempty"`
 
@@ -391,6 +398,11 @@ type ComponentStatus struct {
 	// +optional
 	AMQPBound bool `json:"amqpBound"`
 
+	// IngressDrivers lists resolved spec.inputs[].driver values
+	// (e.g. http_request, rabbitmq_message). Tusk uses this to gate topology nodes.
+	// +optional
+	IngressDrivers []string `json:"ingressDrivers,omitempty"`
+
 	// ShadowRolesReady maps control-a/control-b/candidate to Deployment readiness.
 	// Empty in record mode, where no shadow roles are provisioned.
 	// +optional
@@ -438,6 +450,11 @@ type ShadowTestStatus struct {
 	// CurrentSessionID is the active S3 session folder for this ShadowTest.
 	// +optional
 	CurrentSessionID string `json:"currentSessionID,omitempty"`
+
+	// CurrentReplayExecutionID scopes Postgres diffs for one replay run of CurrentSessionID.
+	// Minted when entering replay; injected as REPLAY_EXECUTION_ID on beru-local.
+	// +optional
+	CurrentReplayExecutionID string `json:"currentReplayExecutionID,omitempty"`
 
 	// ReplayState tracks automated replay trigger progress ("" | started | completed).
 	// +optional
