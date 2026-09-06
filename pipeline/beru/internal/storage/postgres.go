@@ -23,7 +23,7 @@ var _ RunStore = (*PostgresStore)(nil)
 const (
 	defaultPostgresPort    = "5432"
 	defaultPostgresSSLMode = "require"
-	startTimeLayout = "2006-01-02 15:04:05"
+	startTimeLayout        = "2006-01-02 15:04:05"
 )
 
 // PostgresConfig is the BYO-Postgres connection, read from DB_* env vars.
@@ -77,10 +77,10 @@ func PostgresConfigFromEnv() (PostgresConfig, error) {
 // longer than the WAL flush context (poison-pill / outage paths).
 func (c PostgresConfig) DSN() string {
 	u := &url.URL{
-		Scheme:   "postgres",
-		User:     url.UserPassword(c.User, c.Password),
-		Host:     net.JoinHostPort(c.Host, c.Port),
-		Path:     "/" + c.Name,
+		Scheme: "postgres",
+		User:   url.UserPassword(c.User, c.Password),
+		Host:   net.JoinHostPort(c.Host, c.Port),
+		Path:   "/" + c.Name,
 		RawQuery: url.Values{
 			"sslmode":         {c.SSLMode},
 			"connect_timeout": {"5"},
@@ -92,12 +92,12 @@ func (c PostgresConfig) DSN() string {
 // PostgresStore is the durable backend. One type satisfies both halves of
 // Beru's persistence: RunStore and model.TraceRepository.
 type PostgresStore struct {
-	db                 *sql.DB
-	log                *slog.Logger
-	retentionDays      int
-	defaultTestName    string
-	sessionID          string
-	replayExecutionID  string
+	db                *sql.DB
+	log               *slog.Logger
+	retentionDays     int
+	defaultTestName   string
+	sessionID         string
+	replayExecutionID string
 }
 
 const legacyReplayExecutionID = "legacy"

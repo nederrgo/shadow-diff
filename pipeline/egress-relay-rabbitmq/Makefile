@@ -11,7 +11,7 @@ test:
 	go test ./...
 
 docker-build:
-	docker build -t $(EGRESS_RELAY_RABBITMQ_IMG) .
+	docker build -f Dockerfile -t $(EGRESS_RELAY_RABBITMQ_IMG) ..
 
 run: build
 	./bin/egress-relay-rabbitmq

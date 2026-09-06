@@ -46,46 +46,44 @@ func (r *ShadowTestReconciler) reconcileRecordMode(
 		}
 	}
 
-	if err := r.reconcileShop(ctx, st, shadowNS); err != nil {
-		_ = r.patchBootStatus(ctx, st, phaseFailed, err.Error(), shadowNS,
-			enginev1alpha1.BootStepProvisioningSinks, boot)
-		return recordModeResult{components: boot, err: err}
-	}
-
-	if err := r.reconcileRecordIngressSinks(ctx, st, shadowNS); err != nil {
-		_ = r.patchBootStatus(ctx, st, phaseFailed, err.Error(), shadowNS,
-			enginev1alpha1.BootStepProvisioningSinks, boot)
-		return recordModeResult{components: boot, err: err}
-	}
-
-	shopReady, reason, err := r.shopDeploymentReady(ctx, shadowNS)
-	if err != nil {
-		return recordModeResult{components: boot, err: err}
-	}
-	boot.ShopReady = shopReady
-	if !shopReady {
-		if reason.terminal {
-			res, ferr := r.markBootFailed(ctx, st, shadowNS, reason.message, boot)
-			return recordModeResult{components: boot, requeue: res, err: ferr}
-		}
-		_ = r.patchBootStatus(ctx, st, phaseProgressing, "waiting for Shop", shadowNS,
-			enginev1alpha1.BootStepProvisioningSinks, boot)
-		return recordModeResult{components: boot, requeue: ctrl.Result{RequeueAfter: recordSinkRequeue}}
-	}
-
-	ingressReady, reason, err := r.recordIngressSinksReady(ctx, st, shadowNS)
-	if err != nil {
-		return recordModeResult{components: boot, err: err}
-	}
-	boot.IgrisReady = ingressReady
-	if !ingressReady {
-		if reason.terminal {
-			res, ferr := r.markBootFailed(ctx, st, shadowNS, reason.message, boot)
-			return recordModeResult{components: boot, requeue: res, err: ferr}
-		}
-		_ = r.patchBootStatus(ctx, st, phaseProgressing, "waiting for Igris", shadowNS,
-			enginev1alpha1.BootStepProvisioningSinks, boot)
-		return recordModeResult{components: boot, requeue: ctrl.Result{RequeueAfter: recordSinkRequeue}}
+	done, result, err := r.runBootGates(ctx, st, shadowNS, &boot, []bootGate{
+		{
+			name: "record sinks",
+			step: enginev1alpha1.BootStepProvisioningSinks,
+			reconcile: func(ctx context.Context) error {
+				if err := r.reconcileShop(ctx, st, shadowNS); err != nil {
+					return err
+				}
+				return r.reconcileRecordIngressSinks(ctx, st, shadowNS)
+			},
+		},
+		{
+			name:         "Shop",
+			step:         enginev1alpha1.BootStepProvisioningSinks,
+			waitMsg:      "waiting for Shop",
+			requeueAfter: recordSinkRequeue,
+			ready: func(ctx context.Context) (bool, workloadWaitReason, error) {
+				return r.shopDeploymentReady(ctx, shadowNS)
+			},
+			record: func(boot *enginev1alpha1.ComponentStatus, ready bool) {
+				boot.ShopReady = ready
+			},
+		},
+		{
+			name:         "Igris",
+			step:         enginev1alpha1.BootStepProvisioningSinks,
+			waitMsg:      "waiting for Igris",
+			requeueAfter: recordSinkRequeue,
+			ready: func(ctx context.Context) (bool, workloadWaitReason, error) {
+				return r.recordIngressSinksReady(ctx, st, shadowNS)
+			},
+			record: func(boot *enginev1alpha1.ComponentStatus, ready bool) {
+				boot.IgrisReady = ready
+			},
+		},
+	})
+	if !done {
+		return recordModeResult{components: boot, requeue: result, err: err}
 	}
 
 	// Phase 2: open eBPF tap once sinks are Available.
@@ -138,15 +136,7 @@ func (r *ShadowTestReconciler) reconcileRecordIngressSinks(
 		return r.reconcileIgrisRabbitMQStack(ctx, st, shadowNS)
 	}
 	if needsHTTPTCPIngress(st) {
-		if err := r.reconcileIgrisConfigMap(ctx, st, shadowNS); err != nil {
-			return err
-		}
-		if err := r.reconcileIgrisDeployment(ctx, st, shadowNS); err != nil {
-			return err
-		}
-		if err := r.reconcileIgrisService(ctx, st, shadowNS); err != nil {
-			return err
-		}
+		return r.reconcileIgrisStack(ctx, st, shadowNS)
 	}
 	return nil
 }

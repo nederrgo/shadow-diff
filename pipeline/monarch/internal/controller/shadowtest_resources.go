@@ -361,10 +361,6 @@ func statusExtras(
 	}
 }
 
-func (r *ShadowTestReconciler) patchStatus(ctx context.Context, st *enginev1alpha1.ShadowTest, phase, message, shadowNS string) error {
-	return r.patchStatusCore(ctx, st, statusBase(st.Generation, phase, message, shadowNS))
-}
-
 // patchBootStatus is the progress-reporting variant used by every boot gate.
 func (r *ShadowTestReconciler) patchBootStatus(
 	ctx context.Context,
@@ -376,27 +372,6 @@ func (r *ShadowTestReconciler) patchBootStatus(
 	return r.patchStatusCore(ctx, st,
 		statusBase(st.Generation, phase, message, shadowNS),
 		statusBoot(step, comp),
-	)
-}
-
-func (r *ShadowTestReconciler) patchStatusIgrisRabbitMQ(
-	ctx context.Context,
-	st *enginev1alpha1.ShadowTest,
-	phase, message, shadowNS, igrisRMQPhase string,
-) error {
-	return r.patchStatusFull(ctx, st, phase, message, shadowNS, nil, "", "", igrisRMQPhase)
-}
-
-func (r *ShadowTestReconciler) patchStatusFull(
-	ctx context.Context,
-	st *enginev1alpha1.ShadowTest,
-	phase, message, shadowNS string,
-	captureTargets []string,
-	kaiselPhase, igrisEndpoint, igrisRabbitMQPhase string,
-) error {
-	return r.patchStatusCore(ctx, st,
-		statusBase(st.Generation, phase, message, shadowNS),
-		statusExtras(captureTargets, kaiselPhase, igrisEndpoint, igrisRabbitMQPhase),
 	)
 }
 

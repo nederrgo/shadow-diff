@@ -35,8 +35,8 @@ func TestS3ReaderReadAllJSONL(t *testing.T) {
 	t.Parallel()
 	prefix := "shadow-diff/ns/t/sessions/s/egress/"
 	store := &memStore{objects: map[string][]byte{
-		prefix + "1.jsonl": []byte("{\"n\":1}\n{\"n\":2}\n"),
-		prefix + "2.jsonl": []byte("{\"n\":3}\n\n"),
+		prefix + "1.jsonl":  []byte("{\"n\":1}\n{\"n\":2}\n"),
+		prefix + "2.jsonl":  []byte("{\"n\":3}\n\n"),
 		prefix + "skip.txt": []byte("ignore"),
 		prefix + "dir/":     []byte(""),
 	}}

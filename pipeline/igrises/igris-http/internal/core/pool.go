@@ -4,8 +4,8 @@ import "sync"
 
 // Pool runs multicast jobs on a fixed number of workers.
 type Pool struct {
-	jobs    chan func()
-	wg      sync.WaitGroup
+	jobs     chan func()
+	wg       sync.WaitGroup
 	stopOnce sync.Once
 }
 

@@ -84,7 +84,7 @@ POST http://beru-local.<shadowNS>.svc.cluster.local:8081/api/v1/egress/diff
 
 | Field | Rule |
 | --- | --- |
-| `trace_id` | Bare 32-hex, lowercase — **not** the full traceparent. Beru stores it verbatim as the SQLite grouping key, so a full traceparent would bucket separately from Envoy's ext_proc reports |
+| `trace_id` | Bare 32-hex, lowercase — **not** the full traceparent. Beru stores it verbatim in `raw_reports.trace_id`, so a full traceparent would bucket separately from Envoy's ext_proc reports |
 | `workload` | The shadow role. Beru correlates on role, never on pod name |
 | `signature` | Supplied by the sidecar, which decoded the protocol and knows it exactly |
 | `payload` | For MongoDB, the command document verbatim; for everything else, the structured object above |

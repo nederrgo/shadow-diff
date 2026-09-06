@@ -243,8 +243,8 @@ func TestDiffsAPI_GetOccurrences(t *testing.T) {
 				TraceID:   "t1",
 				Signature: "mongodb:insert:orders",
 				Occurrences: []db.SignatureOccurrence{{
-					Index:           0,
-					ControlAPayload: json.RawMessage(`{"n":1}`),
+					Index:            0,
+					ControlAPayload:  json.RawMessage(`{"n":1}`),
 					CandidatePayload: json.RawMessage(`{"n":9}`),
 				}},
 			},

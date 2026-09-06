@@ -89,7 +89,7 @@ func recordOrderBeruDBSecret() *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "beru-postgres", Namespace: "monarch-system"},
 		Type:       corev1.SecretTypeOpaque,
-		Data: map[string][]byte{"DB_HOST": []byte("postgres")},
+		Data:       map[string][]byte{"DB_HOST": []byte("postgres")},
 	}
 }
 
@@ -276,7 +276,7 @@ func TestEnsureProdShadowQueue_DeclareThenBindHooks(t *testing.T) {
 	st.Spec.Inputs = []enginev1alpha1.InputSpec{{
 		Driver: "rabbitmq_message",
 		AMQP: &enginev1alpha1.AMQPInputSpec{
-			ProdURL:              "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
+			ProdURL: "amqp://prod:5672", Exchange: "orders", RoutingKey: "k",
 			TargetDependency:     "rabbitmq",
 			CredentialsSecretRef: testAMQPCredentialsRef(),
 		},

@@ -86,11 +86,6 @@ func (r *Registry) stop(ctx context.Context) error {
 
 var defaultRegistry = &Registry{}
 
-// StopAccepting shuts down all HTTP driver servers.
-func StopAccepting(ctx context.Context) error {
-	return defaultRegistry.stop(ctx)
-}
-
 func (d *Driver) StopAccepting(ctx context.Context) error {
 	return defaultRegistry.stop(ctx)
 }

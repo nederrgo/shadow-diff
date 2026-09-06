@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,7 +15,8 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		slog.Error("load config failed", "err", err)
+		os.Exit(1)
 	}
 
 	beruClient := beruclient.NewClient(cfg.BeruHTTPURL)
@@ -27,11 +28,11 @@ func main() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
-		log.Println("egress-relay-rabbitmq shutting down")
+		slog.Info("egress-relay-rabbitmq shutting down")
 		cancel()
 	}()
 
-	log.Println("egress-relay-rabbitmq starting")
+	slog.Info("egress-relay-rabbitmq starting")
 	consumer.StartAll(ctx, cfg, beruClient)
 	<-ctx.Done()
 }

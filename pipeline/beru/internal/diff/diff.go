@@ -398,13 +398,6 @@ func mustJSON(v any) string {
 	return string(b)
 }
 
-// hasPayloadRegression returns true when A→C contains at least one field difference
-// not explained by A/B natural noise or user-configured noise paths.
-func hasPayloadRegression(aP, bP, cP []byte, userNoise map[string]struct{}) bool {
-	_, ok := payloadRegressions(aP, bP, cP, userNoise)
-	return ok
-}
-
 // payloadRegressions returns filterable JSON leaf labels and whether a regression exists.
 // Non-JSON body inequality returns (nil, true) — mismatch without a noise-filter path.
 func payloadRegressions(aP, bP, cP []byte, userNoise map[string]struct{}) (fields []string, regressed bool) {

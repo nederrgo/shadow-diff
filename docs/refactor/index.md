@@ -15,4 +15,4 @@ Working proposals and target blueprints for major architectural shifts. Document
 
 * [/refactor/async-record-replay.md](/refactor/async-record-replay.md) — Accepted ADR: S3-backed async Record & Replay (BYOB; Phase 4 complete — mode GC, replay trigger, prefix retention finalizer).
 * [/refactor/ARCHITACTURE_SHIFT.md](/refactor/ARCHITACTURE_SHIFT.md) — Telemetry-dependent strategy: abandon absolute zero-touch; require W3C `traceparent` propagation.
-* [/refactor/BERU_STATE_MACHINE_TARGET.md](/refactor/BERU_STATE_MACHINE_TARGET.md) — Target blueprint for Beru's row-level upsert state machine and signature-based pairing.
+* [/refactor/BERU_STATE_MACHINE_TARGET.md](/refactor/BERU_STATE_MACHINE_TARGET.md) — Historical blueprint for Beru's row-level upsert state machine; retained for its signature-based pairing rationale. The delivered storage design is documented in [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md).

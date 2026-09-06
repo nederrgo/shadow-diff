@@ -1,7 +1,7 @@
 import { cn } from '@/lib/cn'
 import type { NodeStatus } from '@/types/topology'
 
-export function statusBorderClass(status: string): string {
+function statusBorderClass(status: string): string {
   switch (status as NodeStatus) {
     case 'Ready':
       return 'border-emerald-500 shadow-[0_0_0_1px_rgba(16,185,129,0.25)]'

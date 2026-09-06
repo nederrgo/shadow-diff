@@ -147,6 +147,10 @@ func main() {
 	updates := make(chan capture.MapUpdate, 16)
 	exporter := export.NewExporter(export.NewRouter(log), 0, 0, log)
 	defer exporter.Stop()
+	metrics.Registry.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: "kaisel_export_queue_dropped_total",
+		Help: "Number of admitted ingress and egress export jobs dropped because the exporter queue was full.",
+	}, func() float64 { return float64(exporter.Dropped()) }))
 
 	if err := kaiselcontroller.New(mgr.GetClient(), updates, exporter.Router()).SetupWithManager(mgr); err != nil {
 		log.Error("setup controller", "err", err)

@@ -2,7 +2,7 @@ package consumer
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -36,7 +36,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 		if err != nil {
-			log.Printf("workload=%s broker session ended: %v; reconnecting in %s", r.Workload, err, delay)
+			slog.Warn("broker session ended", "workload", r.Workload, "err", err, "reconnect_in", delay)
 		}
 		select {
 		case <-ctx.Done():
@@ -128,16 +128,17 @@ func (r *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 
 	traceID, spanID, err := firehose.TraceContextFromFirehose(msg.Headers)
 	if err != nil {
-		log.Printf("workload=%s skip firehose message routing_key=%s: %v", r.Workload, msg.RoutingKey, err)
+		slog.Warn("skipping firehose message with invalid trace context",
+			"workload", r.Workload, "routing_key", msg.RoutingKey, "err", err)
 		return
 	}
 	payload, err := firehose.BeruEgressPayload(msg.Headers, msg.RoutingKey, msg.Body)
 	if err != nil {
-		log.Printf("workload=%s skip firehose message trace=%s: %v", r.Workload, traceID, err)
+		slog.Warn("skipping invalid firehose message", "workload", r.Workload, "trace_id", traceID, "err", err)
 		return
 	}
 	if r.dedup != nil && !r.dedup.shouldForward(traceID, spanID, msg.Body) {
-		log.Printf("workload=%s dedup discard trace=%s span=%s", r.Workload, traceID, spanID)
+		slog.Info("discarding duplicate firehose message", "workload", r.Workload, "trace_id", traceID, "span_id", spanID)
 		return
 	}
 	report := beruclient.Report{
@@ -148,7 +149,7 @@ func (r *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 		ShadowTestName: r.ShadowTestName,
 	}
 	if err := r.Beru.PostReport(ctx, report); err != nil {
-		log.Printf("workload=%s beru post failed trace=%s: %v", r.Workload, traceID, err)
+		slog.Error("Beru post failed", "workload", r.Workload, "trace_id", traceID, "err", err)
 	}
 }
 
@@ -181,7 +182,7 @@ func StartAll(ctx context.Context, cfg config.Config, beruClient *beruclient.Cli
 		}
 		go func() {
 			if err := runner.Run(ctx); err != nil && err != context.Canceled {
-				log.Printf("workload=%s runner stopped: %v", w.workload, err)
+				slog.Error("runner stopped", "workload", w.workload, "err", err)
 			}
 		}()
 	}

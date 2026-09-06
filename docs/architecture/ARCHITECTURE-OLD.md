@@ -9,6 +9,11 @@ timestamp: 2026-07-26T13:20:00Z
 
 # Shadow-Diff — Architecture
 
+> **Historical document.** This describes the retired live-coupled architecture and is
+> retained only for context. For the current record/replay system and PostgreSQL-backed
+> analysis path, see [/architecture/ARCHITECTURE.md](/architecture/ARCHITECTURE.md) and
+> [/data-plane/beru-postgres-storage.md](/data-plane/beru-postgres-storage.md).
+
 Shadow-Diff is an open-source differential testing framework for Kubernetes. It replays captured or synthetic traffic across **three isolated shadow workloads** (two identical controls plus a candidate) and compares responses to find regressions while filtering non-deterministic noise.
 
 This document describes **how the components fit together and how data flows**. For install steps, CRD fields, and verification, see [DEPLOYMENT.md](../../pipeline/monarch/DEPLOYMENT.md), [VERIFICATION.md](../verification/VERIFICATION.md), and per-service READMEs under `pipeline/`.
@@ -406,7 +411,7 @@ Injected into every shadow pod. **Ingress listener:** observes app responses, fo
 | Ingress multicast | Go (`igris-http`, `igris-rabbitmq`) |
 | Shadow proxy | Envoy, `ext_proc`, ConfigMaps from Monarch |
 | Capture | Kaisel eBPF + `KaiselRule`; HTTP ingress → Igris; HTTP egress request/response pairs → Shop mocks |
-| Analysis | Go, gRPC, Beru OTLP + diff engine, SQLite |
+| Analysis | Go, gRPC, historical Beru OTLP + diff engine (storage design superseded) |
 | Mock store | Shop — in-memory `sync.RWMutex` map; seeded by Kaisel; served via gRPC ext_proc on `:50051` |
 | Egress parse | Kaisel — per-connection request/response pairing → Shop `POST /v1/record_egress` |
 

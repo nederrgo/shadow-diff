@@ -2,7 +2,7 @@ package engine
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -98,7 +98,7 @@ func (tr *TraceRouter) reapOnce() {
 	stale, err := tr.repo.ListStaleIncompleteTraces(ctx, olderThan)
 	cancel()
 	if err != nil {
-		log.Printf("[Engine] Reaper list fault: %v", err)
+		slog.Error("reaper failed to list stale traces", "err", err)
 		return
 	}
 	for _, candidate := range stale {
@@ -111,7 +111,7 @@ func (tr *TraceRouter) reapTrace(traceID string) {
 	defer cancel()
 	history, err := tr.repo.ListReports(ctx, traceID, "")
 	if err != nil {
-		log.Printf("[Engine] Reaper load fault for trace %s: %v", traceID, err)
+		slog.Error("reaper failed to load trace", "trace_id", traceID, "err", err)
 		return
 	}
 	var userNoise map[string]struct{}
@@ -123,6 +123,6 @@ func (tr *TraceRouter) reapTrace(traceID string) {
 		return
 	}
 	if err := tr.repo.SaveDiffVerdict(ctx, traceID, verdict); err != nil {
-		log.Printf("[Engine] Reaper save fault for trace %s: %v", traceID, err)
+		slog.Error("reaper failed to save verdict", "trace_id", traceID, "err", err)
 	}
 }

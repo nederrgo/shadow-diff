@@ -1,6 +1,6 @@
 module github.com/shadow-diff/beru
 
-go 1.25.7
+go 1.26.0
 
 require (
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0

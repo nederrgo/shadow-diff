@@ -262,12 +262,3 @@ func isMongoDependency(dep enginev1alpha1.DependencySpec) bool {
 	_, port := resolveDependencyDefaults(dep)
 	return port == 27017
 }
-
-func hasMongoDependency(st *enginev1alpha1.ShadowTest) bool {
-	for _, dep := range st.Spec.Dependencies {
-		if isMongoDependency(dep) {
-			return true
-		}
-	}
-	return false
-}

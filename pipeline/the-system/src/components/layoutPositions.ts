@@ -1,7 +1,7 @@
 import type { XYPosition } from '@xyflow/react'
 
 /** Fixed OpenShift-style left-to-right layout keyed by Tusk node id. */
-export const NODE_POSITIONS: Record<string, XYPosition> = {
+const NODE_POSITIONS: Record<string, XYPosition> = {
   'target-app': { x: 0, y: 180 },
   // AMQP path sits on the midline (target → queue → igris); Kaisel sits above
   // and only feeds Shop for egress seed.

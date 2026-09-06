@@ -27,9 +27,20 @@ MONARCH_TARGETS := all help manifests generate fmt vet test setup-test-e2e test-
 	install uninstall deploy undeploy kustomize controller-gen setup-envtest envtest golangci-lint \
 	beru-docker-build beru-docker-push beru-proto
 
-.PHONY: $(MONARCH_TARGETS) test-all
+.PHONY: $(MONARCH_TARGETS) fmt-check test-all
 $(MONARCH_TARGETS):
 	@$(MAKE) -C $(MONARCH_DIR) $(MAKECMDGOALS) IMG=$(IMG) BERU_IMG=$(BERU_IMG)
+
+fmt-check: ## Check that all repository-owned Go files are formatted.
+	@unformatted="$$(git ls-files --cached --others --exclude-standard -- '*.go' | \
+		while IFS= read -r file; do \
+			if [ -f "$$file" ]; then gofmt -l "$$file"; fi; \
+		done)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "Go files need gofmt:"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
 
 .PHONY: beru-test beru-build igris-test igris-build igris-docker-build \
 	kaisel-test kaisel-build kaisel-docker-build kaisel-generate kaisel-verify-generate \

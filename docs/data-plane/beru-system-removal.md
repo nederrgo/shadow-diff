@@ -16,11 +16,12 @@ Deployment pointed at by `spec.beruGRPCAddress`, or a `beru-local` pod that Mona
 provisions inside each shadow namespace.
 
 The shared instance existed to aggregate diff history across ShadowTests and to outlive
-any single test — `beru-local` stores SQLite on an in-memory EmptyDir that dies with its
-namespace. In practice it was never the default path: `beruGRPCAddressFor` returns the
-shadow-namespace address whenever the field is empty, no bats suite or fixture ever set
-it, the bats platform health gate for it had already been dropped, and its volume was an
-`emptyDir: {}` rather than the persistent volume the documentation described.
+any single test. Before the PostgreSQL migration, `beru-local` kept its database on an
+in-memory EmptyDir that died with its namespace. In practice the shared instance was
+never the default path: `beruGRPCAddressFor` returned the shadow-namespace address
+whenever the field was empty, no bats suite or fixture ever set it, the bats platform
+health gate for it had already been dropped, and its volume was an `emptyDir: {}` rather
+than the persistent volume the documentation described.
 
 Pointing every `beru-local` at a shared PostgreSQL (`BERU_DB_SECRET`) delivers the
 aggregation and durability a shared pod was meant to provide, and does it better: a
@@ -46,7 +47,8 @@ readiness unconditionally.
 **Storage moved down a layer.** Compute is per-test and ephemeral; history is shared and
 durable in PostgreSQL, partitioned by `shadow_test_name` and `session_id`. The manager
 requires `BERU_DB_SECRET`; Monarch replicates that Secret into each shadow namespace
-and mounts it on beru-local.
+and mounts it on beru-local. The pod's EmptyDir now holds only the Bbolt ingest WAL and
+dead-letter file; reports and verdicts are persisted in PostgreSQL.
 
 **Removing a CRD field is a breaking change.** Strict field validation rejects any
 manifest still carrying `beruGRPCAddress` or `beruIngestAddress`. A ShadowTest persisted

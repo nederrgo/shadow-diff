@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	dedupWindow    = 100 * time.Millisecond
-	pruneAge       = 5 * time.Second
-	pruneInterval  = 1 * time.Minute
+	dedupWindow   = 100 * time.Millisecond
+	pruneAge      = 5 * time.Second
+	pruneInterval = 1 * time.Minute
 )
 
 type publishDedup struct {

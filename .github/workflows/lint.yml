@@ -23,6 +23,9 @@ jobs:
         with:
           go-version-file: pipeline/monarch/go.mod
 
+      - name: Check Go formatting
+        run: make fmt-check
+
       - name: Check linter configuration
         working-directory: pipeline/monarch
         run: make lint-config

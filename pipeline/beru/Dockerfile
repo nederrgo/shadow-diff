@@ -1,11 +1,15 @@
-FROM golang:1.25 AS builder
+# Build context must be pipeline/ so replace ../pkg/trace resolves.
+#   make docker-build  →  docker build -f Dockerfile -t … ..
+FROM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
-WORKDIR /workspace
-COPY go.mod go.sum ./
+WORKDIR /src
+COPY pkg/trace /src/pkg/trace
+COPY beru/go.mod beru/go.sum /src/beru/
+WORKDIR /src/beru
 RUN go mod download
-COPY . .
+COPY beru/ /src/beru/
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /beru ./cmd/beru
 
